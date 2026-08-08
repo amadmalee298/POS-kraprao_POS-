@@ -31,6 +31,8 @@ jobs:
 
       - name: Build static files with Vite
         run: npx vite build
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
