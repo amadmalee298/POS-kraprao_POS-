@@ -2,7 +2,7 @@
   "name": "ครัวกะเพรา POS Enterprise",
   "short_name": "ครัวกะเพรา POS",
   "description": "ระบบบริหารจัดการร้านอาหาร ครัวกะเพรา POS ENTERPRISE",
-  "start_url": "./",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
