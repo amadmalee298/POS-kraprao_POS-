@@ -1,0 +1,8 @@
+{
+  "name": "Kaprao POS Enterprise",
+  "description": "ระบบบริหารจัดการร้านอาหารแบบครบวงจร สำหรับร้านผัดกะเพราและร้านอาหารทั่วไป (POS, KDS, Inventory, Accounting & Multi-Branch)",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

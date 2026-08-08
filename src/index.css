@@ -1,0 +1,10 @@
+@import "tailwindcss";
+@import "./styles/print-receipt.css";
+
+@utility no-scrollbar {
+  ::-webkit-scrollbar {
+    display: none;
+  }
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
