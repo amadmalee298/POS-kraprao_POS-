@@ -23,7 +23,9 @@ import {
   ShiftEntry,
   ShiftSwapRequest,
   CashShift,
-  CashMovement
+  CashMovement,
+  SecurityLogEntry,
+  StockAdjustmentLog
 } from '../types';
 import {
   INITIAL_BRANCHES,
@@ -39,9 +41,18 @@ import {
   INITIAL_STAFF_MEMBERS,
   INITIAL_SHIFTS,
   INITIAL_SHIFT_SWAP_REQUESTS,
-  INITIAL_CASH_SHIFTS
+  INITIAL_CASH_SHIFTS,
+  INITIAL_SECURITY_LOGS,
+  INITIAL_STOCK_ADJUSTMENT_LOGS
 } from '../data/initialData';
 import { calculateOrderTotals } from '../utils/tax';
+import { crc16 } from '../utils/promptpay';
+
+export function computeOrderChecksum(order: Order): string {
+  const itemsCount = order.items ? order.items.length : 0;
+  const rawStr = `${order.id}:${order.orderNumber || ''}:${order.grandTotal.toFixed(2)}:${itemsCount}:${order.createdAt || ''}:${order.paymentMethod}`;
+  return crc16(rawStr);
+}
 
 interface DiscountState {
   amount: number;
@@ -59,6 +70,9 @@ interface POSContextType {
   currentBranch: Branch;
   setCurrentBranch: (branch: Branch) => void;
   branches: Branch[];
+  updateBranch: (branch: Branch) => void;
+  addBranch: (branchData: Omit<Branch, 'id'>) => void;
+  deleteBranch: (branchId: string) => void;
   currentUser: User;
   setCurrentUser: (user: User) => void;
   users: User[];
@@ -152,6 +166,20 @@ interface POSContextType {
   addWasteLog: (log: Omit<WasteLog, 'id'>) => void;
   deleteWasteLog: (logId: string) => void;
 
+  // Stock Adjustment Log operations
+  stockAdjustmentLogs: StockAdjustmentLog[];
+  addStockAdjustmentLog: (entry: Omit<StockAdjustmentLog, 'id' | 'timestamp'>) => void;
+  recordStockAdjustment: (
+    ingredientId: string,
+    newStock: number,
+    reason: string,
+    notes?: string,
+    userName?: string,
+    userRole?: string
+  ) => void;
+  clearStockAdjustmentLogs: () => void;
+  deleteStockAdjustmentLog: (logId: string) => void;
+
   // Staff Scheduling & Roster operations
   staffMembers: StaffMember[];
   shifts: ShiftEntry[];
@@ -184,10 +212,17 @@ interface POSContextType {
   importStateJSON: (jsonString: string) => boolean;
   resetToDefaultData: () => void;
   
+  // Security Logs & PIN Audit
+  securityLogs: SecurityLogEntry[];
+  logSecurityEvent: (entry: Omit<SecurityLogEntry, 'id' | 'timestamp'>) => void;
+  clearSecurityLogs: () => void;
+  deleteSecurityLog: (logId: string) => void;
+
   // Sound trigger for KDS
   playKitchenChime: () => void;
 
   // Offline PWA & Storage Sync
+  isStorageLoaded: boolean;
   isOffline: boolean;
   forceOfflineMode: boolean;
   setForceOfflineMode: (val: boolean) => void;
@@ -204,7 +239,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [activeTab, setActiveTab] = useState<ActiveTab>('pos');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
-  const [branches] = useState<Branch[]>(INITIAL_BRANCHES);
+  const [branches, setBranches] = useState<Branch[]>(INITIAL_BRANCHES);
   const [currentBranch, setCurrentBranch] = useState<Branch>(INITIAL_BRANCHES[0]);
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
   const [currentUser, setCurrentUser] = useState<User>(INITIAL_USERS[0]);
@@ -221,6 +256,62 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [ingredients, setIngredients] = useState<Ingredient[]>(INITIAL_INGREDIENTS);
   const [stockLots, setStockLots] = useState<StockLot[]>(INITIAL_STOCK_LOTS);
   const [wasteLogs, setWasteLogs] = useState<WasteLog[]>(INITIAL_WASTE_LOGS);
+  const [stockAdjustmentLogs, setStockAdjustmentLogs] = useState<StockAdjustmentLog[]>(INITIAL_STOCK_ADJUSTMENT_LOGS);
+
+  const addStockAdjustmentLog = (entry: Omit<StockAdjustmentLog, 'id' | 'timestamp'>) => {
+    const newEntry: StockAdjustmentLog = {
+      ...entry,
+      id: `adj-log-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp: new Date().toISOString()
+    };
+    setStockAdjustmentLogs(prev => [newEntry, ...prev]);
+  };
+
+  const recordStockAdjustment = (
+    ingredientId: string,
+    newStock: number,
+    reason: string,
+    notes?: string,
+    userName?: string,
+    userRole?: string
+  ) => {
+    const targetIng = ingredients.find(i => i.id === ingredientId);
+    if (!targetIng) return;
+
+    const previousStock = targetIng.currentStock;
+    const sanitizedNewStock = Math.max(0, newStock);
+    const changeQty = parseFloat((sanitizedNewStock - previousStock).toFixed(3));
+
+    // Update stock level
+    setIngredients(prev =>
+      prev.map(ing => (ing.id === ingredientId ? { ...ing, currentStock: sanitizedNewStock } : ing))
+    );
+
+    // Record adjustment log
+    const performer = userName || currentUser?.name || 'ผู้ใช้งานระบบ';
+    const performerRole = userRole || currentUser?.role || 'staff';
+
+    addStockAdjustmentLog({
+      ingredientId: targetIng.id,
+      ingredientName: targetIng.name,
+      previousStock,
+      newStock: sanitizedNewStock,
+      changeQty,
+      unit: targetIng.unit,
+      reason,
+      notes: notes || '',
+      userName: performer,
+      userRole: performerRole
+    });
+  };
+
+  const clearStockAdjustmentLogs = () => {
+    setStockAdjustmentLogs([]);
+  };
+
+  const deleteStockAdjustmentLog = (logId: string) => {
+    setStockAdjustmentLogs(prev => prev.filter(l => l.id !== logId));
+  };
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>(INITIAL_STAFF_MEMBERS);
   const [shifts, setShifts] = useState<ShiftEntry[]>(INITIAL_SHIFTS);
   const [shiftSwapRequests, setShiftSwapRequests] = useState<ShiftSwapRequest[]>(INITIAL_SHIFT_SWAP_REQUESTS);
@@ -228,11 +319,35 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
   const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES);
   const [settings, setSettings] = useState<SystemSettings>(INITIAL_SETTINGS);
+  const [securityLogs, setSecurityLogs] = useState<SecurityLogEntry[]>(INITIAL_SECURITY_LOGS);
+
+  const logSecurityEvent = (entry: Omit<SecurityLogEntry, 'id' | 'timestamp'>) => {
+    const newLog: SecurityLogEntry = {
+      ...entry,
+      id: `sec-log-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp: new Date().toISOString(),
+      pinMasked: entry.pinMasked || '****',
+      ipAddress: entry.ipAddress || 'POS-Terminal-01'
+    };
+    setSecurityLogs(prev => [newLog, ...prev]);
+    console.log(`[Security Audit Log] 🛡️ [${newLog.status}] ${newLog.action} by ${newLog.userName}: ${newLog.details || ''}`);
+  };
+
+  const clearSecurityLogs = () => {
+    setSecurityLogs([]);
+  };
+
+  const deleteSecurityLog = (logId: string) => {
+    setSecurityLogs(prev => prev.filter(l => l.id !== logId));
+  };
   const [autoApproveQR, setAutoApproveQR] = useState<boolean>(false);
   const [tables, setTables] = useState<string[]>(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '12', '14']);
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discount, setDiscount] = useState<DiscountState>({ amount: 0, type: 'fixed' });
+
+  // Storage Load Flag to prevent race condition overwriting stored data on mount
+  const [isStorageLoaded, setIsStorageLoaded] = useState<boolean>(false);
 
   // Offline Network Detector & Sync Queue
   const [isOffline, setIsOffline] = useState<boolean>(!navigator.onLine);
@@ -263,18 +378,82 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const syncOfflineQueue = () => {
     const nowIso = new Date().toISOString();
-    setOrders(prev =>
-      prev.map(ord => {
+
+    setOrders(prevOrders => {
+      const pendingOrders = prevOrders.filter(o => o.isOfflineOrder && !o.isSynced);
+
+      if (pendingOrders.length === 0) {
+        console.log('[POS Sync Queue] ℹ️ No pending offline orders in queue.');
+        return prevOrders;
+      }
+
+      console.log(`[POS Sync Queue] 🔄 Initiating cloud synchronization for ${pendingOrders.length} offline order(s)...`);
+
+      const syncLogsTable: Array<{
+        'Order ID': string;
+        'Order #': string;
+        'Grand Total (฿)': string;
+        'Items': number;
+        'Payment': string;
+        'Checksum': string;
+        'Integrity Check': string;
+        'Sync Status': string;
+      }> = [];
+
+      let syncedCount = 0;
+      let corruptCount = 0;
+
+      const updatedOrders = prevOrders.map(ord => {
         if (ord.isOfflineOrder && !ord.isSynced) {
-          return {
-            ...ord,
-            isSynced: true,
-            syncedAt: nowIso
-          };
+          const computedChecksum = computeOrderChecksum(ord);
+          // Verify checksum if exists, or accept computed checksum
+          const isChecksumValid = !ord.checksum || ord.checksum === computedChecksum;
+
+          if (isChecksumValid) {
+            syncedCount++;
+            syncLogsTable.push({
+              'Order ID': ord.id,
+              'Order #': ord.orderNumber,
+              'Grand Total (฿)': ord.grandTotal.toFixed(2),
+              'Items': ord.items?.length || 0,
+              'Payment': ord.paymentMethod,
+              'Checksum': computedChecksum,
+              'Integrity Check': 'PASSED ✅',
+              'Sync Status': 'SYNCED ☁️'
+            });
+
+            return {
+              ...ord,
+              checksum: computedChecksum,
+              isSynced: true,
+              syncedAt: nowIso
+            };
+          } else {
+            corruptCount++;
+            console.error(`[POS Sync Queue] ❌ Checksum mismatch detected for order ${ord.id}! Stored: ${ord.checksum}, Computed: ${computedChecksum}`);
+            syncLogsTable.push({
+              'Order ID': ord.id,
+              'Order #': ord.orderNumber,
+              'Grand Total (฿)': ord.grandTotal.toFixed(2),
+              'Items': ord.items?.length || 0,
+              'Payment': ord.paymentMethod,
+              'Checksum': computedChecksum,
+              'Integrity Check': 'CORRUPTED ❌',
+              'Sync Status': 'REJECTED ⚠️'
+            });
+
+            return ord;
+          }
         }
         return ord;
-      })
-    );
+      });
+
+      console.log(`[POS Sync Queue] 📊 Synchronization complete: ${syncedCount} synced successfully, ${corruptCount} corrupted/rejected.`);
+      console.table(syncLogsTable);
+
+      return updatedOrders;
+    });
+
     setLastSyncedAt(nowIso);
   };
 
@@ -292,9 +471,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => clearInterval(intervalId);
   }, [settings.autoSyncEnabled, settings.syncIntervalSeconds, effectiveOffline]);
 
-  // Load state from localStorage on mount
+  // Load state from localStorage on mount with strict validation & logging
   useEffect(() => {
     try {
+      console.log(`[POS Storage Sync] Initializing LocalStorage data load for key '${LOCAL_STORAGE_KEY}'...`);
       const params = new URLSearchParams(window.location.search);
       if (params.get('table') || params.get('qr')) {
         setActiveTab('qr');
@@ -303,34 +483,81 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.menuItems && Array.isArray(parsed.menuItems)) setMenuItems(parsed.menuItems);
-        if (parsed.addOns && Array.isArray(parsed.addOns)) setAddOns(parsed.addOns);
-        if (parsed.ingredients) setIngredients(parsed.ingredients);
-        if (parsed.stockLots) setStockLots(parsed.stockLots);
-        if (parsed.wasteLogs && Array.isArray(parsed.wasteLogs)) setWasteLogs(parsed.wasteLogs);
-        if (parsed.staffMembers && Array.isArray(parsed.staffMembers)) setStaffMembers(parsed.staffMembers);
-        if (parsed.shifts && Array.isArray(parsed.shifts)) setShifts(parsed.shifts);
-        if (parsed.shiftSwapRequests && Array.isArray(parsed.shiftSwapRequests)) setShiftSwapRequests(parsed.shiftSwapRequests);
-        if (parsed.cashShifts && Array.isArray(parsed.cashShifts)) setCashShifts(parsed.cashShifts);
-        if (parsed.orders) setOrders(parsed.orders);
-        if (parsed.expenses) setExpenses(parsed.expenses);
-        if (parsed.settings) setSettings(parsed.settings);
-        if (typeof parsed.autoApproveQR === 'boolean') setAutoApproveQR(parsed.autoApproveQR);
-        if (parsed.users && Array.isArray(parsed.users)) setUsers(parsed.users);
-        if (parsed.branchId) {
-          const b = INITIAL_BRANCHES.find(item => item.id === parsed.branchId);
-          if (b) setCurrentBranch(b);
+        if (parsed && typeof parsed === 'object') {
+          let loadedOrdersCount = 0;
+          let loadedMenuItemsCount = 0;
+          let loadedShiftsCount = 0;
+
+          if (parsed.orders && Array.isArray(parsed.orders)) {
+            const validOrders = parsed.orders.filter((o: any) => o && typeof o === 'object' && o.id);
+            setOrders(validOrders);
+            loadedOrdersCount = validOrders.length;
+          }
+          if (parsed.menuItems && Array.isArray(parsed.menuItems)) {
+            const validItems = parsed.menuItems.filter((m: any) => m && typeof m === 'object' && m.id);
+            setMenuItems(validItems);
+            loadedMenuItemsCount = validItems.length;
+          }
+          if (parsed.addOns && Array.isArray(parsed.addOns)) setAddOns(parsed.addOns);
+          if (parsed.ingredients && Array.isArray(parsed.ingredients)) setIngredients(parsed.ingredients);
+          if (parsed.stockLots && Array.isArray(parsed.stockLots)) setStockLots(parsed.stockLots);
+          if (parsed.wasteLogs && Array.isArray(parsed.wasteLogs)) setWasteLogs(parsed.wasteLogs);
+          if (parsed.staffMembers && Array.isArray(parsed.staffMembers)) setStaffMembers(parsed.staffMembers);
+          if (parsed.shifts && Array.isArray(parsed.shifts)) setShifts(parsed.shifts);
+          if (parsed.shiftSwapRequests && Array.isArray(parsed.shiftSwapRequests)) setShiftSwapRequests(parsed.shiftSwapRequests);
+          if (parsed.cashShifts && Array.isArray(parsed.cashShifts)) {
+            setCashShifts(parsed.cashShifts);
+            loadedShiftsCount = parsed.cashShifts.length;
+          }
+          if (parsed.expenses && Array.isArray(parsed.expenses)) setExpenses(parsed.expenses);
+          if (parsed.settings && typeof parsed.settings === 'object') setSettings(parsed.settings);
+          if (parsed.securityLogs && Array.isArray(parsed.securityLogs)) setSecurityLogs(parsed.securityLogs);
+          if (typeof parsed.autoApproveQR === 'boolean') setAutoApproveQR(parsed.autoApproveQR);
+          if (parsed.tables && Array.isArray(parsed.tables)) setTables(parsed.tables);
+          if (parsed.users && Array.isArray(parsed.users)) setUsers(parsed.users);
+          if (parsed.cart && Array.isArray(parsed.cart)) {
+            const validCart = parsed.cart.filter((c: any) => c && typeof c === 'object' && c.cartItemId && c.menuItem);
+            setCart(validCart);
+          }
+          if (parsed.discount && typeof parsed.discount === 'object' && typeof parsed.discount.amount === 'number') {
+            setDiscount(parsed.discount);
+          }
+          if (parsed.branches && Array.isArray(parsed.branches)) {
+            setBranches(parsed.branches);
+            if (parsed.branchId) {
+              const b = parsed.branches.find((item: Branch) => item.id === parsed.branchId);
+              if (b) setCurrentBranch(b);
+            }
+          } else if (parsed.branchId) {
+            const b = INITIAL_BRANCHES.find(item => item.id === parsed.branchId);
+            if (b) setCurrentBranch(b);
+          }
+
+          console.log(`[POS Storage Sync] ✅ Successfully loaded and validated state from LocalStorage. Loaded: ${loadedOrdersCount} orders, ${loadedMenuItemsCount} menu items, ${loadedShiftsCount} cash shifts.`);
+        } else {
+          console.warn('[POS Storage Sync] ⚠️ Stored JSON was invalid format. Initializing with defaults.');
         }
+      } else {
+        console.log('[POS Storage Sync] ℹ️ No prior LocalStorage state found. Initializing new POS session.');
       }
     } catch (err) {
-      console.error('Failed to load local storage state:', err);
+      console.error('[POS Storage Sync] ❌ Failed to load state from LocalStorage:', err);
+    } finally {
+      setIsStorageLoaded(true);
     }
   }, []);
 
-  // Save state to localStorage whenever state updates
+  // Save state to localStorage whenever state updates (strictly ONLY after initial load completes)
   useEffect(() => {
+    if (!isStorageLoaded) {
+      console.log('[POS Storage Sync] ⏳ Storage load in progress... Skipping initial save to preserve existing LocalStorage.');
+      return;
+    }
+
     try {
       const stateToSave = {
+        cart,
+        discount,
         menuItems,
         addOns,
         ingredients,
@@ -343,16 +570,69 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         orders,
         expenses,
         settings,
+        securityLogs,
         autoApproveQR,
         tables,
         users,
-        branchId: currentBranch.id
+        branches,
+        currentBranch,
+        branchId: currentBranch?.id,
+        savedAt: new Date().toISOString()
       };
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
+      const pendingSync = orders.filter(o => o.isOfflineOrder && !o.isSynced).length;
+      console.log(`[POS Storage Sync] 💾 Persisted state & order draft (${cart.length} items) to LocalStorage at ${stateToSave.savedAt}. Orders: ${orders.length} (${pendingSync} pending sync), Cash Shifts: ${cashShifts.length}.`);
     } catch (err) {
-      console.error('Failed to save local storage state:', err);
+      console.error('[POS Storage Sync] ❌ Failed to save state to LocalStorage:', err);
     }
-  }, [menuItems, addOns, ingredients, stockLots, wasteLogs, staffMembers, shifts, shiftSwapRequests, cashShifts, orders, expenses, settings, autoApproveQR, tables, currentBranch]);
+  }, [
+    isStorageLoaded,
+    cart,
+    discount,
+    menuItems,
+    addOns,
+    ingredients,
+    stockLots,
+    wasteLogs,
+    staffMembers,
+    shifts,
+    shiftSwapRequests,
+    cashShifts,
+    orders,
+    expenses,
+    settings,
+    autoApproveQR,
+    tables,
+    users,
+    branches,
+    currentBranch
+  ]);
+
+  const updateBranch = (updatedBranch: Branch) => {
+    setBranches(prev => prev.map(b => b.id === updatedBranch.id ? updatedBranch : b));
+    if (currentBranch.id === updatedBranch.id) {
+      setCurrentBranch(updatedBranch);
+    }
+  };
+
+  const addBranch = (branchData: Omit<Branch, 'id'>) => {
+    const newBranch: Branch = {
+      ...branchData,
+      id: `branch-${Date.now()}`
+    };
+    setBranches(prev => [...prev, newBranch]);
+    setCurrentBranch(newBranch);
+  };
+
+  const deleteBranch = (branchId: string) => {
+    setBranches(prev => {
+      const filtered = prev.filter(b => b.id !== branchId);
+      if (currentBranch.id === branchId && filtered.length > 0) {
+        setCurrentBranch(filtered[0]);
+      }
+      return filtered;
+    });
+  };
 
   const addTable = (tableName: string) => {
     const trimmed = tableName.trim();
@@ -372,6 +652,26 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const updateSettings = (newSettings: Partial<SystemSettings>) => {
     setSettings(prev => ({ ...prev, ...newSettings }));
+    const newPromptPay = newSettings.promptpayMobileOrTaxId || newSettings.promptPayId;
+    const newTaxId = newSettings.taxId || newSettings.shopTaxId;
+    const newShopName = newSettings.shopName;
+    const newShopAddress = newSettings.shopAddress;
+    const newShopPhone = newSettings.shopPhone;
+
+    if (newPromptPay || newTaxId || newShopName || newShopAddress || newShopPhone) {
+      setCurrentBranch(prevBranch => {
+        const updated = {
+          ...prevBranch,
+          ...(newPromptPay ? { promptpayMobileOrTaxId: newPromptPay } : {}),
+          ...(newTaxId ? { taxId: newTaxId } : {}),
+          ...(newShopName ? { name: newShopName } : {}),
+          ...(newShopAddress ? { address: newShopAddress } : {}),
+          ...(newShopPhone ? { phone: newShopPhone } : {})
+        };
+        setBranches(prev => prev.map(b => b.id === updated.id ? updated : b));
+        return updated;
+      });
+    }
   };
 
   // Menu Item CRUD
@@ -578,6 +878,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       isSynced: !effectiveOffline,
       syncedAt: effectiveOffline ? undefined : nowIso
     };
+    newOrder.checksum = computeOrderChecksum(newOrder);
 
     // Deduct raw ingredients from inventory automatically based on recipes
     setIngredients(prevIngredients => {
@@ -677,6 +978,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       isSynced: !effectiveOffline,
       syncedAt: effectiveOffline ? undefined : nowIso
     };
+    newOrder.checksum = computeOrderChecksum(newOrder);
 
     // Deduct raw ingredients from inventory automatically based on recipes
     setIngredients(prevIngredients => {
@@ -1082,6 +1384,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       exportedAt: new Date().toISOString(),
       appName: 'Kaprao POS Enterprise',
       version: '1.0.0',
+      branches,
       branch: currentBranch,
       branchId: currentBranch.id,
       menuItems,
@@ -1106,6 +1409,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const importStateJSON = (jsonString: string): boolean => {
     try {
       const parsed = JSON.parse(jsonString);
+      if (parsed.branches && Array.isArray(parsed.branches)) setBranches(parsed.branches);
+      if (parsed.branch && typeof parsed.branch === 'object') setCurrentBranch(parsed.branch);
       if (parsed.menuItems && Array.isArray(parsed.menuItems)) setMenuItems(parsed.menuItems);
       if (parsed.addOns && Array.isArray(parsed.addOns)) setAddOns(parsed.addOns);
       if (parsed.ingredients && Array.isArray(parsed.ingredients)) setIngredients(parsed.ingredients);
@@ -1248,6 +1553,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         currentBranch,
         setCurrentBranch,
         branches,
+        updateBranch,
+        addBranch,
+        deleteBranch,
         currentUser,
         setCurrentUser,
         users,
@@ -1321,7 +1629,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         exportStateJSON,
         importStateJSON,
         resetToDefaultData,
+        securityLogs,
+        logSecurityEvent,
+        clearSecurityLogs,
+        deleteSecurityLog,
         playKitchenChime,
+        isStorageLoaded,
         isOffline,
         forceOfflineMode,
         setForceOfflineMode,

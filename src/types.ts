@@ -92,6 +92,7 @@ export interface Order {
   isOfflineOrder?: boolean;
   isSynced?: boolean;
   syncedAt?: string;
+  checksum?: string;
   cancelledBy?: CancelledInfo;
   cancelReason?: string;
   cancelNote?: string;
@@ -136,6 +137,32 @@ export interface StockLot {
 }
 
 export type WasteReason = 'expired' | 'spoiled' | 'damaged' | 'overcooked' | 'trimming' | 'other';
+
+export type StockAdjustmentReason =
+  | 'waste'
+  | 'spoilage'
+  | 'restock'
+  | 'expired'
+  | 'damaged'
+  | 'audit_correction'
+  | 'manual_adjustment'
+  | 'cooking_prep'
+  | 'other';
+
+export interface StockAdjustmentLog {
+  id: string;
+  ingredientId: string;
+  ingredientName: string;
+  previousStock: number;
+  newStock: number;
+  changeQty: number; // Positive for restock/add, negative for deduction/waste
+  unit: string;
+  reason: StockAdjustmentReason | string;
+  notes?: string;
+  userName: string;
+  userRole?: string;
+  timestamp: string; // ISO date string
+}
 
 export interface WasteLog {
   id: string;
@@ -423,6 +450,19 @@ export interface CashShift {
   cashMovements: CashMovement[];
   notes?: string;
   closingNotes?: string;
+}
+
+export interface SecurityLogEntry {
+  id: string;
+  timestamp: string; // ISO string
+  userId?: string;
+  userName: string;
+  userRole?: string;
+  action: string; // e.g. "PIN Login", "Manager Override", "System Reset Attempt", etc.
+  status: 'SUCCESS' | 'FAILED';
+  pinMasked?: string;
+  details?: string;
+  ipAddress?: string;
 }
 
 

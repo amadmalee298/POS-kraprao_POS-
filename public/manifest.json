@@ -2,8 +2,9 @@
   "name": "ครัวกะเพรา POS Enterprise",
   "short_name": "ครัวกะเพรา POS",
   "description": "ระบบบริหารจัดการร้านอาหาร ครัวกะเพรา POS ENTERPRISE",
-  "start_url": "./index.html",
+  "start_url": "./",
   "scope": "./",
+  "id": "./",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#0f172a",
@@ -13,13 +14,12 @@
       "src": "./icon.svg",
       "sizes": "512x512",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "./icon.svg",
+      "src": "./logo.png",
       "sizes": "192x192",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "type": "image/png"
     },
     {
       "src": "./logo.png",

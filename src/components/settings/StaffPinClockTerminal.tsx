@@ -26,7 +26,7 @@ interface StaffPinClockTerminalProps {
 }
 
 export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ onClose, isModal = false }) => {
-  const { staffMembers, shifts, addShift, updateShift } = usePOS();
+  const { staffMembers, shifts, addShift, updateShift, logSecurityEvent } = usePOS();
 
   // Active Selected Staff or direct PIN entry
   const [selectedStaffId, setSelectedStaffId] = useState<string>('');
@@ -116,10 +116,27 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
         }
 
         if (matched) {
+          logSecurityEvent({
+            userId: matched.id,
+            userName: matched.name,
+            userRole: matched.role,
+            action: 'Timeclock Terminal PIN',
+            status: 'SUCCESS',
+            details: `ยืนยันรหัส PIN พนักงาน (${matched.name}) หน้าเทอร์มินอลเข้างาน`
+          });
           setAuthenticatedStaff(matched);
           setSelectedStaffId(matched.id);
           setPinError('');
         } else {
+          const target = activeStaffList.find(s => s.id === selectedStaffId);
+          logSecurityEvent({
+            userId: target?.id,
+            userName: target?.name || 'พนักงาน',
+            userRole: target?.role || 'staff',
+            action: 'Timeclock Terminal PIN',
+            status: 'FAILED',
+            details: `รหัส PIN ไม่ถูกต้องที่เทอร์มินอลลงเวลาเข้างาน`
+          });
           setPinError('❌ รหัส PIN ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
           setTimeout(() => {
             setPinInput('');

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SHOP_LOGO_URL } from '../assets/logo';
 import { compressImageFile } from '../utils/imageCompressor';
+import { generatePromptPayPayload } from '../utils/promptpay';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -108,8 +109,8 @@ const getQrCodeImgSrc = (table: string, size = 300) => {
 };
 
 const getPromptPayQrCodeImgSrc = (amount: number, promptPayId = '0812345678', size = 220) => {
-  const data = `PROMPTPAY:${promptPayId}:${amount}`;
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(data)}&color=070b14&bgcolor=ffffff&margin=1`;
+  const payload = generatePromptPayPayload(promptPayId, amount);
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(payload)}&color=000000&bgcolor=ffffff&margin=1`;
 };
 
 const renderPaymentMethodBadge = (pm?: PaymentMethod) => {

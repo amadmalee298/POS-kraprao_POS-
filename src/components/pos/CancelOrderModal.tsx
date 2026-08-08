@@ -27,7 +27,7 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
   order,
   onSuccess
 }) => {
-  const { cancelOrder, currentUser, settings } = usePOS();
+  const { cancelOrder, currentUser, settings, logSecurityEvent } = usePOS();
 
   const [selectedReason, setSelectedReason] = useState<string>(CANCEL_REASONS[0]);
   const [customNote, setCustomNote] = useState<string>('');
@@ -65,9 +65,26 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
       const validPin = targetApprover.pin || (targetApprover.role === 'admin' ? (settings.adminPin || '1234') : (settings.managerPin || '5555'));
       
       if (pinInput !== validPin) {
+        logSecurityEvent({
+          userId: targetApprover.id,
+          userName: targetApprover.name,
+          userRole: targetApprover.role,
+          action: 'Cancel Order Manager Approval',
+          status: 'FAILED',
+          details: `รหัส PIN ผู้อนุมัติไม่ถูกต้องสำหรับยกเลิกออเดอร์ ${order?.orderNumber || ''}`
+        });
         setPinError(`รหัส PIN ของ ${targetApprover.name} ไม่ถูกต้อง`);
         return;
       }
+
+      logSecurityEvent({
+        userId: targetApprover.id,
+        userName: targetApprover.name,
+        userRole: targetApprover.role,
+        action: 'Cancel Order Manager Approval',
+        status: 'SUCCESS',
+        details: `อนุมัติยกเลิกออเดอร์ ${order?.orderNumber || ''} โดยแคชเชียร์ ${currentUser.name}`
+      });
 
       approverName = targetApprover.name;
       approverRole = targetApprover.role;

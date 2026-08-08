@@ -20,6 +20,7 @@ import {
 import { usePOS } from '../../context/POSContext';
 import { PaymentMethod, OrderType, CustomerTaxInfo, Order, QrPaymentOption } from '../../types';
 import { generatePromptPayPayload } from '../../utils/promptpay';
+import { PromptPayQR } from '../common/PromptPayQR';
 import { calculateOrderTotals } from '../../utils/tax';
 import { TouchNumpadModal } from './TouchNumpad';
 
@@ -428,35 +429,16 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             {/* PROMPTPAY PANEL */}
             {paymentMethod === 'promptpay' && (
               <div className="flex flex-col items-center justify-center py-1 sm:py-2 space-y-2 sm:space-y-3">
-                <div className="bg-white p-2.5 sm:p-3 rounded-2xl shadow-xl border-4 border-sky-500/80 flex flex-col items-center">
-                  <div className="bg-[#003B71] text-white text-[10px] sm:text-[11px] font-bold px-3 py-0.5 rounded-md mb-1.5 tracking-widest uppercase">
-                    PROMPTPAYพร้อมเพย์
-                  </div>
-                  <div className="w-36 h-36 sm:w-48 sm:h-48 bg-slate-100 flex flex-col items-center justify-center border border-slate-200 rounded-lg p-2 relative">
-                    <svg viewBox="0 0 100 100" className="w-full h-full text-slate-900">
-                      <rect width="100" height="100" fill="white" />
-                      <path
-                        d="M10,10 h30 v30 h-30 z M15,15 h20 v20 h-20 z M20,20 h10 v10 h-10 z
-                           M60,10 h30 v30 h-30 z M65,15 h20 v20 h-20 z M70,20 h10 v10 h-10 z
-                           M10,60 h30 v30 h-30 z M15,65 h20 v20 h-20 z M20,70 h10 v10 h-10 z
-                           M45,10 h10 v10 h-10 z M45,25 h10 v10 h-10 z M45,45 h20 v10 h-20 z
-                           M50,60 h10 v25 h-10 z M65,60 h25 v10 h-25 z M75,75 h15 v15 h-15 z
-                           M50,85 h20 v10 h-20 z"
-                        fill="#000000"
-                      />
-                    </svg>
-                  </div>
-                  <span className="text-[9px] sm:text-[10px] text-slate-500 mt-1 font-mono break-all text-center max-w-[180px] sm:max-w-[200px] line-clamp-1">
-                    {promptpayPayloadStr}
-                  </span>
-                </div>
+                <PromptPayQR
+                  promptPayId={currentBranch.promptpayMobileOrTaxId || settings.promptpayMobileOrTaxId || settings.promptPayId || '0812345678'}
+                  amount={grandTotal}
+                  branchName={currentBranch.name}
+                  size={220}
+                />
 
                 <div className="text-center">
                   <div className="text-xs sm:text-sm font-bold text-slate-200">
                     ยอดสแกนจ่าย: <span className="text-amber-400 text-base sm:text-lg font-extrabold">{grandTotal} ฿</span>
-                  </div>
-                  <div className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
-                    หมายเลขพร้อมเพย์: {currentBranch.promptpayMobileOrTaxId || settings.promptpayMobileOrTaxId} ({currentBranch.name})
                   </div>
                   <div className="text-[10px] sm:text-[11px] text-sky-400 font-mono mt-1">
                     หมดเวลาใน: {Math.floor(promptpayCountdown / 60)}:{(promptpayCountdown % 60).toString().padStart(2, '0')} นาที

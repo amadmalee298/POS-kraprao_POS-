@@ -21,7 +21,8 @@ import {
   Square,
   Edit3,
   Sliders,
-  Trash2
+  Trash2,
+  Download
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot } from '../../types';
@@ -356,6 +357,62 @@ export const InventoryView: React.FC = () => {
     setIsAddLotOpen(false);
   };
 
+  const handleDownloadCSV = () => {
+    if (ingredients.length === 0) return;
+
+    const headers = [
+      'ID วัตถุดิบ',
+      'ชื่อวัตถุดิบ',
+      'หมวดหมู่',
+      'คงเหลือปัจจุบัน',
+      'หน่วยนับ',
+      'จุดเตือนขั้นต่ำ',
+      'ต้นทุนต่อหน่วย (บาท)',
+      'มูลค่ารวมคงเหลือ (บาท)',
+      'สถานะสต๊อก'
+    ];
+
+    const categoryNames: Record<string, string> = {
+      meat: 'เนื้อสัตว์',
+      vegetable: 'ผักสด',
+      sauce: 'ซอส/เครื่องปรุง',
+      egg: 'ไข่',
+      dry_good: 'ของแห้ง',
+      beverage: 'เครื่องดื่ม/ไซรัป'
+    };
+
+    const targetList = filteredIngredients.length > 0 ? filteredIngredients : ingredients;
+
+    const rows = targetList.map(ing => {
+      const isLow = ing.currentStock <= ing.minStockAlert;
+      const catTh = categoryNames[ing.category] || ing.category;
+      const totalVal = ing.currentStock * ing.unitCost;
+
+      return [
+        `"${ing.id}"`,
+        `"${ing.name.replace(/"/g, '""')}"`,
+        `"${catTh}"`,
+        ing.currentStock,
+        `"${ing.unit}"`,
+        ing.minStockAlert,
+        ing.unitCost.toFixed(2),
+        totalVal.toFixed(2),
+        `"${isLow ? 'ใกล้หมดสต๊อก' : 'ปกติ'}"`
+      ].join(',');
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `inventory_export_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex flex-col min-h-screen bg-slate-950 text-slate-100 pb-12">
       {/* Top Header */}
@@ -375,7 +432,16 @@ export const InventoryView: React.FC = () => {
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleDownloadCSV}
+            className="px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
+            title="ดาวน์โหลดไฟล์ CSV ข้อมูลวัตถุดิบคงเหลือสำหรับการตรวจสอบบัญชีและสำรองข้อมูล"
+          >
+            <Download className="w-4 h-4 text-emerald-200" />
+            <span>ดาวน์โหลด CSV</span>
+          </button>
+
           <button
             onClick={() => setIsAddIngOpen(true)}
             className="px-4 py-2.5 bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-orange-950/60 transition flex items-center space-x-2 active:scale-95 whitespace-nowrap"
@@ -499,12 +565,55 @@ export const InventoryView: React.FC = () => {
           <div className="space-y-4">
             {/* Filter Bar */}
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div className="flex items-center space-x-2 text-xs text-slate-300 font-bold whitespace-nowrap">
-                <Filter className="w-4 h-4 text-orange-400" />
-                <span>คัดกรองวัตถุดิบ: {filteredIngredients.length} รายการ</span>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300 font-bold">
+                <div className="flex items-center space-x-1.5 text-orange-400 mr-1">
+                  <Filter className="w-4 h-4" />
+                  <span>คัดกรองวัตถุดิบ: {filteredIngredients.length} รายการ</span>
+                </div>
+
+                <select
+                  value={categoryFilter}
+                  onChange={e => setCategoryFilter(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 text-slate-200 text-xs font-semibold rounded-xl px-3 py-2 focus:outline-none focus:border-orange-500"
+                >
+                  <option value="all">📦 ทุกหมวดหมู่</option>
+                  <option value="meat">🥩 เนื้อสัตว์ (meat)</option>
+                  <option value="vegetable">🥦 ผักสด (vegetable)</option>
+                  <option value="sauce">🍾 ซอส/เครื่องปรุง (sauce)</option>
+                  <option value="egg">🥚 ไข่ (egg)</option>
+                  <option value="dry_good">🌾 ของแห้ง (dry_good)</option>
+                  <option value="beverage">🥤 เครื่องดื่ม/ไซรัป (beverage)</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={handleToggleSelectAll}
+                  className="px-3 py-2 bg-slate-950 border border-slate-800 hover:border-amber-500/50 text-slate-300 hover:text-amber-300 font-bold text-xs rounded-xl transition flex items-center space-x-1.5"
+                >
+                  {isAllSelected ? (
+                    <>
+                      <CheckSquare className="w-4 h-4 text-amber-400" />
+                      <span>ยกเลิกเลือกทั้งหมด</span>
+                    </>
+                  ) : (
+                    <>
+                      <Square className="w-4 h-4 text-slate-500" />
+                      <span>เลือกทั้งหมด ({filteredIngredients.length})</span>
+                    </>
+                  )}
+                </button>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleDownloadCSV}
+                  className="px-3 py-2 bg-slate-950 border border-slate-800 hover:border-emerald-500/50 text-emerald-400 hover:text-emerald-300 font-bold text-xs rounded-xl transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
+                  title="ส่งออกรายการวัตถุดิบเป็น CSV"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>ส่งออก CSV ({filteredIngredients.length})</span>
+                </button>
+
                 <button
                   onClick={() => setOnlyLowStock(!onlyLowStock)}
                   className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-2 border whitespace-nowrap ${
@@ -749,6 +858,19 @@ export const InventoryView: React.FC = () => {
                                 ) : (
                                   <span>บันทึก</span>
                                 )}
+                              </button>
+
+                              {/* Single Delete Button */}
+                              <button
+                                type="button"
+                                title="ลบวัตถุดิบรายการนี้"
+                                onClick={() => {
+                                  setSelectedIngIds([ing.id]);
+                                  setIsBulkDeleteConfirmOpen(true);
+                                }}
+                                className="p-1.5 bg-slate-900 hover:bg-rose-600/30 border border-slate-700 hover:border-rose-500 text-slate-400 hover:text-rose-400 font-bold rounded-lg text-xs transition active:scale-95"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </td>
@@ -1371,17 +1493,31 @@ export const InventoryView: React.FC = () => {
             </div>
 
             <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2 text-xs">
-              <p className="text-slate-300 font-semibold">
-                คุณกำลังจะลบวัตถุดิบจำนวน <span className="text-rose-400 font-extrabold">{selectedIngIds.length} รายการ</span> ดังนี้:
-              </p>
-              <ul className="max-h-32 overflow-y-auto space-y-1 pl-2 text-slate-400 font-mono text-[11px]">
+              <div className="flex items-center justify-between">
+                <p className="text-slate-300 font-semibold">
+                  คุณกำลังจะลบวัตถุดิบจำนวน <span className="text-rose-400 font-extrabold">{selectedIngIds.length} รายการ</span>:
+                </p>
+                <span className="text-emerald-400 font-mono font-bold text-[11px]">
+                  มูลค่ารวม: {ingredients
+                    .filter(i => selectedIngIds.includes(i.id))
+                    .reduce((sum, i) => sum + (i.currentStock * i.unitCost), 0)
+                    .toLocaleString('th-TH')} ฿
+                </span>
+              </div>
+              <ul className="max-h-36 overflow-y-auto space-y-1.5 pl-1 pr-1 text-slate-400 font-mono text-[11px]">
                 {ingredients
                   .filter(i => selectedIngIds.includes(i.id))
                   .map(i => (
-                    <li key={i.id} className="flex items-center space-x-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                      <span className="text-slate-200 font-sans">{i.name}</span>
-                      <span className="text-slate-500">(ID: {i.id})</span>
+                    <li key={i.id} className="flex items-center justify-between p-1.5 rounded bg-slate-900 border border-slate-800">
+                      <div className="flex items-center space-x-1.5 overflow-hidden">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 flex-shrink-0"></span>
+                        <span className="text-slate-200 font-sans font-semibold truncate">{i.name}</span>
+                        <span className="text-slate-500 flex-shrink-0">(ID: {i.id})</span>
+                      </div>
+                      <div className="text-right flex-shrink-0 ml-2">
+                        <span className="text-amber-400 font-bold block">{i.currentStock} {i.unit}</span>
+                        <span className="text-[10px] text-slate-400">{(i.currentStock * i.unitCost).toLocaleString('th-TH')} ฿</span>
+                      </div>
                     </li>
                   ))}
               </ul>

@@ -22,7 +22,7 @@ import {
 import { usePOS } from '../context/POSContext';
 
 export const LoginScreen: React.FC = () => {
-  const { users, setCurrentUser, setIsLocked, currentUser, shifts, addShift, updateShift, updateUserPin } = usePOS();
+  const { users, setCurrentUser, setIsLocked, currentUser, shifts, addShift, updateShift, updateUserPin, logSecurityEvent } = usePOS();
   const [loginMode, setLoginMode] = useState<'pin' | 'password'>('pin');
   const [selectedUserId, setSelectedUserId] = useState<string>(currentUser?.id || users[0]?.id || '');
   const [pin, setPin] = useState('');
@@ -167,6 +167,15 @@ export const LoginScreen: React.FC = () => {
 
       if (nextPin.length === 4) {
         if (nextPin === selectedUser.pin) {
+          logSecurityEvent?.({
+            userId: selectedUser.id,
+            userName: selectedUser.name,
+            userRole: selectedUser.role,
+            action: 'PIN Login Screen',
+            status: 'SUCCESS',
+            details: `เข้าสู่ระบบตำแหน่ง ${selectedUser.role} สำเร็จ${clockInAction ? ' (พร้อมลงเวลาเข้างาน)' : ''}`
+          });
+
           // Clock in logic if requested
           if (clockInAction) {
             const nowTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
@@ -204,12 +213,20 @@ export const LoginScreen: React.FC = () => {
             setSuccessNotice('');
           }, 300);
         } else {
+          logSecurityEvent?.({
+            userId: selectedUser.id,
+            userName: selectedUser.name,
+            userRole: selectedUser.role,
+            action: 'PIN Login Screen',
+            status: 'FAILED',
+            details: `ป้อนรหัส PIN ผิดพลาดสำหรับบัญชี ${selectedUser.name}`
+          });
           setError('รหัส PIN ไม่ถูกต้อง!');
           setTimeout(() => setPin(''), 400);
         }
       }
     }
-  }, [pin, selectedUser, clockInAction, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked]);
+  }, [pin, selectedUser, clockInAction, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
 
   const handleDelete = useCallback(() => {
     setPin(prev => prev.slice(0, -1));

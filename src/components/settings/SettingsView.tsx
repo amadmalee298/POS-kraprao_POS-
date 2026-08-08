@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { compressImageFile } from '../../utils/imageCompressor';
 import {
   Settings,
@@ -62,6 +62,7 @@ import { calculateOrderTotals } from '../../utils/tax';
 import { StaffSchedulingPanel } from './StaffSchedulingPanel';
 import { StaffPinClockTerminal } from './StaffPinClockTerminal';
 import { CashShiftManagementPanel } from './CashShiftManagementPanel';
+import { SecurityLogPanel } from './SecurityLogPanel';
 import { QrPaymentOption, StaffMember, StaffPermissions } from '../../types';
 import { SHOP_LOGO_URL } from '../../assets/logo';
 
@@ -116,6 +117,9 @@ export const SettingsView: React.FC = () => {
     currentBranch,
     branches,
     setCurrentBranch,
+    updateBranch,
+    addBranch,
+    deleteBranch,
     resetToDefaultData,
     isOffline,
     forceOfflineMode,
@@ -131,10 +135,11 @@ export const SettingsView: React.FC = () => {
     menuItems,
     orders,
     ingredients,
-    expenses
+    expenses,
+    logSecurityEvent
   } = usePOS();
 
-  const [settingsTab, setSettingsTab] = useState<'general' | 'scheduling' | 'timeclock' | 'shifts' | 'sync' | 'pins' | 'backup'>('general');
+  const [settingsTab, setSettingsTab] = useState<'general' | 'scheduling' | 'timeclock' | 'shifts' | 'sync' | 'pins' | 'security_logs' | 'backup'>('general');
 
   // Backup & Restore State
   const [backupCopySuccess, setBackupCopySuccess] = useState(false);
@@ -145,8 +150,21 @@ export const SettingsView: React.FC = () => {
   const [isResetConfirmModalOpen, setIsResetConfirmModalOpen] = useState(false);
   const [resetPinInput, setResetPinInput] = useState('');
   const [resetPinError, setResetPinError] = useState('');
-  const [promptPay, setPromptPay] = useState(settings.promptPayId || settings.promptpayMobileOrTaxId || '');
-  const [taxId, setTaxId] = useState(settings.taxId || settings.shopTaxId || '');
+  const [branchName, setBranchName] = useState(currentBranch?.name || '');
+  const [branchAddress, setBranchAddress] = useState(currentBranch?.address || '');
+  const [branchPhone, setBranchPhone] = useState(currentBranch?.phone || '');
+  const [promptPay, setPromptPay] = useState(currentBranch?.promptpayMobileOrTaxId || settings.promptPayId || settings.promptpayMobileOrTaxId || '');
+  const [taxId, setTaxId] = useState(currentBranch?.taxId || settings.taxId || settings.shopTaxId || '');
+
+  useEffect(() => {
+    if (currentBranch) {
+      setBranchName(currentBranch.name || '');
+      setBranchAddress(currentBranch.address || '');
+      setBranchPhone(currentBranch.phone || '');
+      setPromptPay(currentBranch.promptpayMobileOrTaxId || settings.promptpayMobileOrTaxId || settings.promptPayId || '');
+      setTaxId(currentBranch.taxId || settings.taxId || settings.shopTaxId || '');
+    }
+  }, [currentBranch.id]);
   const [receiptHeader, setReceiptHeader] = useState(settings.receiptHeader || settings.shopName || '');
   const [receiptFooter, setReceiptFooter] = useState(settings.receiptFooter || '');
   const [receiptPaperWidth, setReceiptPaperWidth] = useState<'80mm' | '58mm'>(settings.receiptPaperWidth || '80mm');
@@ -216,11 +234,25 @@ export const SettingsView: React.FC = () => {
     const validAdminPin = adminPin || settings.adminPin || '1234';
 
     if (authPinInput === validManagerPin || authPinInput === validAdminPin) {
+      logSecurityEvent({
+        userName: 'ผู้จัดการ / เจ้าของร้าน',
+        userRole: 'manager',
+        action: 'Manager PIN Authorization',
+        status: 'SUCCESS',
+        details: 'ยืนยันรหัส PIN ปลดล็อกเมนูการตั้งค่าระดับสูงสำเร็จ'
+      });
       setIsManagerAuthorized(true);
       setIsAuthModalOpen(false);
       setAuthPinInput('');
       setAuthError('');
     } else {
+      logSecurityEvent({
+        userName: 'ผู้ใช้งาน',
+        userRole: 'unknown',
+        action: 'Manager PIN Authorization',
+        status: 'FAILED',
+        details: 'ป้อนรหัส Manager/Admin PIN ไม่ถูกต้องในหน้าตั้งค่า'
+      });
       setAuthError('รหัส PIN ไม่ถูกต้อง! กรุณากรอกรหัส Manager PIN (5555) หรือ Admin PIN (1234)');
     }
   };
@@ -421,12 +453,26 @@ export const SettingsView: React.FC = () => {
     const validAdminPin = adminPin || settings.adminPin || '1234';
 
     if (resetPinInput === validManagerPin || resetPinInput === validAdminPin) {
+      logSecurityEvent({
+        userName: 'ผู้จัดการ / เจ้าของร้าน',
+        userRole: 'manager',
+        action: 'Factory Reset System',
+        status: 'SUCCESS',
+        details: 'ยืนยันรหัส PIN และรีเซ็ตคืนค่าเริ่มต้นของระบบทั้งหมด'
+      });
       resetToDefaultData();
       setIsResetConfirmModalOpen(false);
       setResetPinInput('');
       setResetPinError('');
       setRestoreSuccess('ล้างข้อมูลและคืนค่าเริ่มต้นของระบบเรียบร้อยแล้ว!');
     } else {
+      logSecurityEvent({
+        userName: 'ผู้ใช้งาน',
+        userRole: 'unknown',
+        action: 'Factory Reset System',
+        status: 'FAILED',
+        details: 'ป้อนรหัส PIN ผิดพลาดขณะพยายามทำ Factory Reset'
+      });
       setResetPinError('รหัส PIN ไม่ถูกต้อง! กรุณากรอก Manager PIN (5555) หรือ Admin PIN (1234)');
     }
   };
@@ -555,13 +601,34 @@ export const SettingsView: React.FC = () => {
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 1. Update Current Branch Details
+    if (currentBranch) {
+      updateBranch({
+        ...currentBranch,
+        name: branchName.trim() || currentBranch.name,
+        address: branchAddress.trim() || currentBranch.address,
+        phone: branchPhone.trim() || currentBranch.phone,
+        promptpayMobileOrTaxId: promptPay.trim(),
+        taxId: taxId.trim()
+      });
+    }
+
+    // 2. Update System Settings & Payment Methods
+    const updatedPaymentMethods = configuredPaymentMethods.map(m =>
+      m.type === 'promptpay' ? { ...m, accountNumber: promptPay.trim() } : m
+    );
+
     updateSettings({
-      promptPayId: promptPay,
-      promptpayMobileOrTaxId: promptPay,
-      taxId: taxId,
-      shopTaxId: taxId,
+      shopName: branchName.trim() || currentBranch?.name || 'ร้านค้า POS',
+      promptPayId: promptPay.trim(),
+      promptpayMobileOrTaxId: promptPay.trim(),
+      taxId: taxId.trim(),
+      shopTaxId: taxId.trim(),
+      shopAddress: branchAddress.trim(),
+      shopPhone: branchPhone.trim(),
       shopLogoUrl: shopLogoUrl,
-      receiptHeader: receiptHeader,
+      receiptHeader: receiptHeader || branchName.trim(),
       receiptFooter: receiptFooterNote,
       receiptFooterNote: receiptFooterNote,
       receiptPaperWidth: receiptPaperWidth,
@@ -576,7 +643,7 @@ export const SettingsView: React.FC = () => {
       kdsWarningMinutes: kdsWarnMin,
       adminPin: adminPin,
       managerPin: managerPin,
-      qrPaymentMethods: configuredPaymentMethods
+      qrPaymentMethods: updatedPaymentMethods
     });
 
     setIsSavedAlert(true);
@@ -705,6 +772,18 @@ export const SettingsView: React.FC = () => {
           >
             <RefreshCw className="w-4 h-4" />
             <span>🔄 ตั้งค่าการซิงค์ข้อมูล (Sync Settings)</span>
+          </button>
+
+          <button
+            onClick={() => setSettingsTab('security_logs')}
+            className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
+              settingsTab === 'security_logs'
+                ? 'bg-gradient-to-r from-rose-600 to-amber-600 text-white shadow-lg'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <ShieldAlert className="w-4 h-4 text-rose-300" />
+            <span>🛡️ ประวัติความปลอดภัย (Security Log)</span>
           </button>
 
           <button
@@ -1525,6 +1604,8 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
           </div>
+        ) : settingsTab === 'security_logs' ? (
+          <SecurityLogPanel />
         ) : (
           <>
             <form onSubmit={handleSaveSettings} className="max-w-4xl space-y-6">
@@ -1561,14 +1642,42 @@ export const SettingsView: React.FC = () => {
 
           {/* SECTION 1: STORE & BRANCH SELECTOR */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-            <div className="flex items-center space-x-2 text-amber-400 border-b border-slate-800 pb-3">
-              <Store className="w-5 h-5" />
-              <h3 className="font-bold text-slate-100 text-sm">ข้อมูลร้านค้า และการเลือกสาขาปัจจุบัน</h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-2 text-amber-400">
+                <Store className="w-5 h-5" />
+                <div>
+                  <h3 className="font-bold text-slate-100 text-sm">ข้อมูลร้านค้า และการจัดการสาขา</h3>
+                  <p className="text-[11px] text-slate-400">กำหนดชื่อร้านค้า, สาขาปัจจุบัน, ที่อยู่, เลขผู้เสียภาษี และเบอร์ PromptPay สำหรับสร้าง QR Code</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const newBranchName = prompt('ระบุชื่อสาขาใหม่:');
+                  if (!newBranchName || !newBranchName.trim()) return;
+                  const newAddress = prompt('ระบุที่อยู่สาขา:') || '';
+                  const newPhone = prompt('ระบุเบอร์โทรสาขา:') || '';
+                  const newPromptPay = prompt('ระบุเบอร์ PromptPay:') || promptPay;
+                  addBranch({
+                    name: newBranchName.trim(),
+                    nameEn: newBranchName.trim(),
+                    address: newAddress.trim(),
+                    phone: newPhone.trim(),
+                    taxId: taxId.trim(),
+                    promptpayMobileOrTaxId: newPromptPay.trim()
+                  });
+                  alert('เพิ่มสาขาใหม่เรียบร้อยแล้ว!');
+                }}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-slate-950 font-extrabold text-xs rounded-xl shadow transition flex items-center space-x-1 shrink-0 self-start sm:self-auto"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ เพิ่มสาขาใหม่</span>
+              </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div>
-                <label className="block text-slate-400 mb-1">เลือกสาขาปัจจุบันที่กำลังใช้งาน</label>
+                <label className="block text-slate-400 mb-1 font-semibold">เลือกสาขาปัจจุบันที่กำลังใช้งาน</label>
                 <select
                   value={currentBranch.id}
                   onChange={e => {
@@ -1579,34 +1688,67 @@ export const SettingsView: React.FC = () => {
                 >
                   {branches.map(b => (
                     <option key={b.id} value={b.id}>
-                      {b.name} ({b.address})
+                      {b.name} ({b.address || 'ไม่ระบุที่อยู่'})
                     </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1">เบอร์โทรศัพท์ PromptPay (สำหรับสร้าง QR Code ชำระเงิน)</label>
+                <label className="block text-slate-400 mb-1 font-semibold">ชื่อร้านค้า / ชื่อสาขาปัจจุบัน</label>
+                <input
+                  type="text"
+                  value={branchName}
+                  onChange={e => setBranchName(e.target.value)}
+                  placeholder="เช่น สาขาสยาม"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-bold focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1 font-semibold">เบอร์โทรศัพท์ PromptPay (สำหรับสร้าง QR Code ชำระเงิน)</label>
                 <div className="relative">
-                  <QrCode className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                  <QrCode className="w-4 h-4 text-sky-400 absolute left-3 top-2.5" />
                   <input
                     type="text"
                     value={promptPay}
                     onChange={e => setPromptPay(e.target.value)}
-                    placeholder="เช่น 0812345678"
+                    placeholder="เช่น 0812345678 หรือ 0105550000000"
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-slate-200 font-mono focus:border-amber-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1">เลขประจำตัวผู้เสียภาษี (Tax ID)</label>
+                <label className="block text-slate-400 mb-1 font-semibold">เลขประจำตัวผู้เสียภาษี (Tax ID)</label>
                 <input
                   type="text"
                   value={taxId}
                   onChange={e => setTaxId(e.target.value)}
                   placeholder="0105550000000"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1 font-semibold">เบอร์โทรศัพท์สาขา</label>
+                <input
+                  type="text"
+                  value={branchPhone}
+                  onChange={e => setBranchPhone(e.target.value)}
+                  placeholder="02-123-4567"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1 font-semibold">ที่อยู่สาขา (แสดงในใบเสร็จ)</label>
+                <input
+                  type="text"
+                  value={branchAddress}
+                  onChange={e => setBranchAddress(e.target.value)}
+                  placeholder="เลขที่... ถนน... แขวง... เขต..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:border-amber-500"
                 />
               </div>
             </div>

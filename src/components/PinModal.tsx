@@ -18,7 +18,7 @@ export const PinModal: React.FC<PinModalProps> = ({
   onSuccess,
   requiredRole
 }) => {
-  const { users, setCurrentUser, currentUser } = usePOS();
+  const { users, setCurrentUser, currentUser, logSecurityEvent } = usePOS();
   const [selectedUser, setSelectedUser] = useState<User>(targetUser || currentUser);
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -56,12 +56,28 @@ export const PinModal: React.FC<PinModalProps> = ({
     }
 
     if (pin === selectedUser.pin) {
+      logSecurityEvent({
+        userId: selectedUser.id,
+        userName: selectedUser.name,
+        userRole: selectedUser.role,
+        action: 'PIN Verification Modal',
+        status: 'SUCCESS',
+        details: `ยืนยันตัวตนสำเร็จสำหรับผู้ใช้ ${selectedUser.name}`
+      });
       setCurrentUser(selectedUser);
       if (onSuccess) onSuccess();
       onClose();
       setPin('');
       setError('');
     } else {
+      logSecurityEvent({
+        userId: selectedUser.id,
+        userName: selectedUser.name,
+        userRole: selectedUser.role,
+        action: 'PIN Verification Modal',
+        status: 'FAILED',
+        details: `รหัส PIN ไม่ถูกต้องขณะยืนยันตัวตนสำหรับผู้ใช้ ${selectedUser.name}`
+      });
       setError('รหัส PIN ไม่ถูกต้อง!');
       setPin('');
     }

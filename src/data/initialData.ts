@@ -12,7 +12,9 @@ import {
   StaffMember,
   ShiftEntry,
   ShiftSwapRequest,
-  CashShift
+  CashShift,
+  SecurityLogEntry,
+  StockAdjustmentLog
 } from '../types';
 
 export const INITIAL_BRANCHES: Branch[] = [
@@ -1029,4 +1031,133 @@ export const INITIAL_CASH_SHIFTS: CashShift[] = [
   }
 ];
 
+export const INITIAL_SECURITY_LOGS: SecurityLogEntry[] = [
+  {
+    id: 'sec-log-101',
+    timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
+    userName: 'ผู้จัดการ สมชาย',
+    userRole: 'manager',
+    action: 'PIN Login',
+    status: 'SUCCESS',
+    pinMasked: '****',
+    details: 'เข้าสู่ระบบแคชเชียร์และเปิดกะประจำวัน',
+    ipAddress: 'POS-Terminal-01'
+  },
+  {
+    id: 'sec-log-102',
+    timestamp: new Date(Date.now() - 3600000 * 1.5).toISOString(),
+    userName: 'ช่างเอก (ครัวร้อน)',
+    userRole: 'เชฟ',
+    action: 'Clock In Terminal',
+    status: 'SUCCESS',
+    pinMasked: '****',
+    details: 'ลงเวลาเข้างานผ่านเทอร์มินอล PIN',
+    ipAddress: 'KDS-Terminal-01'
+  },
+  {
+    id: 'sec-log-103',
+    timestamp: new Date(Date.now() - 3600000 * 1.2).toISOString(),
+    userName: 'น้องมายด์ (แคชเชียร์/การเงิน)',
+    userRole: 'แคชเชียร์',
+    action: 'Cancel Order Manager Approval',
+    status: 'FAILED',
+    pinMasked: '****',
+    details: 'ใส่รหัส PIN ผู้อนุมัติผิดพลาดขณะขอยกเลิกออเดอร์ ORD-102',
+    ipAddress: 'POS-Terminal-01'
+  },
+  {
+    id: 'sec-log-104',
+    timestamp: new Date(Date.now() - 3600000 * 1.1).toISOString(),
+    userName: 'ผู้จัดการ สมชาย',
+    userRole: 'manager',
+    action: 'Cancel Order Manager Approval',
+    status: 'SUCCESS',
+    pinMasked: '****',
+    details: 'อนุมัติยกเลิกออเดอร์ ORD-102 สำเร็จ',
+    ipAddress: 'POS-Terminal-01'
+  },
+  {
+    id: 'sec-log-105',
+    timestamp: new Date(Date.now() - 1800000).toISOString(),
+    userName: 'ไม่ระบุตัวตน (Unknown)',
+    userRole: 'unknown',
+    action: 'Settings Access Attempt',
+    status: 'FAILED',
+    pinMasked: '****',
+    details: 'พยายามปลดล็อกสิทธิ์ตั้งค่าผู้จัดการด้วย PIN ไม่ถูกต้อง',
+    ipAddress: 'POS-Terminal-01'
+  }
+];
 
+export const INITIAL_STOCK_ADJUSTMENT_LOGS: StockAdjustmentLog[] = [
+  {
+    id: 'adj-log-101',
+    ingredientId: 'ing-pork-minced',
+    ingredientName: 'หมูสับอนามัย CP',
+    previousStock: 12.0,
+    newStock: 15.0,
+    changeQty: 3.0,
+    unit: 'kg',
+    reason: 'restock',
+    notes: 'รับวัตถุดิบเติมเข้าคลังเพิ่มจากซัพพลายเออร์เบทาโกร',
+    userName: 'เชฟวิชัย (หัวหน้าเชฟ)',
+    userRole: 'เชฟใหญ่',
+    timestamp: new Date(Date.now() - 3600000 * 2.5).toISOString()
+  },
+  {
+    id: 'adj-log-102',
+    ingredientId: 'ing-basil',
+    ingredientName: 'ใบกะเพราป่าหอมสด',
+    previousStock: 2.5,
+    newStock: 2.0,
+    changeQty: -0.5,
+    unit: 'kg',
+    reason: 'spoilage',
+    notes: 'คัดส่วนที่เหี่ยวเน่าช้ำออกจากการจัดเก็บในตู้เย็น',
+    userName: 'พนักงานเตรียมวัตถุดิบ',
+    userRole: 'พนักงานครัว',
+    timestamp: new Date(Date.now() - 3600000 * 5.2).toISOString()
+  },
+  {
+    id: 'adj-log-103',
+    ingredientId: 'ing-crispy-pork',
+    ingredientName: 'หมูกรอบสูตรพิเศษ',
+    previousStock: 5000,
+    newStock: 4750,
+    changeQty: -250,
+    unit: 'g',
+    reason: 'waste',
+    notes: 'หมูกรอบไหม้ดำจากการทอดความร้อนสูงเกินไประหว่างช่วงออเดอร์หนาแน่น',
+    userName: 'เชฟวิชัย (หัวหน้าเชฟ)',
+    userRole: 'เชฟใหญ่',
+    timestamp: new Date(Date.now() - 3600000 * 18).toISOString()
+  },
+  {
+    id: 'adj-log-104',
+    ingredientId: 'ing-egg',
+    ingredientName: 'ไข่ไก่สด เบอร์ 0',
+    previousStock: 180,
+    newStock: 175,
+    changeQty: -5,
+    unit: 'pcs',
+    reason: 'damaged',
+    notes: 'ไข่แตกชำรุดระหว่างยกตู้ย้ายของ',
+    userName: 'ผู้จัดการ สมชาย',
+    userRole: 'manager',
+    timestamp: new Date(Date.now() - 86400000 * 1.5).toISOString()
+  },
+  {
+    id: 'adj-log-105',
+    ingredientId: 'ing-rice',
+    ingredientName: 'ข้าวหอมมะลิแท้ 100%',
+    previousStock: 40.0,
+    newStock: 42.0,
+    changeQty: 2.0,
+    unit: 'kg',
+    reason: 'audit_correction',
+    notes: 'ปรับยอดคงเหลือให้ตรงกับผลการนับสต็อกจริงประจำสัปดาห์',
+    userName: 'ผู้จัดการ สมชาย',
+    userRole: 'manager',
+    timestamp: new Date(Date.now() - 86400000 * 2).toISOString()
+  }
+];
