@@ -22,13 +22,16 @@ import {
   Edit3,
   Sliders,
   Trash2,
-  Download
+  Download,
+  Printer
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot } from '../../types';
 import { AIInventoryForecastPanel } from './AIInventoryForecastPanel';
 import { AIWasteAnalysisPanel } from './AIWasteAnalysisPanel';
 import { SmartAuditPanel } from './SmartAuditPanel';
+import { AdjustmentLogModal } from './AdjustmentLogModal';
+import { InventoryReportModal } from './InventoryReportModal';
 
 export const InventoryView: React.FC = () => {
   const {
@@ -39,7 +42,10 @@ export const InventoryView: React.FC = () => {
     bulkUpdateIngredients,
     updateIngredientStock,
     updateIngredientPriceAndRecalculate,
-    addStockLot
+    addStockLot,
+    recordStockAdjustment,
+    stockAdjustmentLogs,
+    currentUser
   } = usePOS();
 
   // Tab State
@@ -56,6 +62,9 @@ export const InventoryView: React.FC = () => {
   // Modal States
   const [isAddIngOpen, setIsAddIngOpen] = useState(false);
   const [isAddLotOpen, setIsAddLotOpen] = useState(false);
+  const [isAdjustmentLogOpen, setIsAdjustmentLogOpen] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [selectedIngForLog, setSelectedIngForLog] = useState<string | undefined>();
 
   // Bulk Selection & Operations State
   const [selectedIngIds, setSelectedIngIds] = useState<string[]>([]);
@@ -80,7 +89,19 @@ export const InventoryView: React.FC = () => {
     const rawVal = stockInputs[ingredientId];
     const parsedVal = rawVal !== undefined ? parseFloat(rawVal) : ing.currentStock;
     if (!isNaN(parsedVal) && parsedVal >= 0) {
-      updateIngredientStock(ingredientId, parsedVal);
+      if (parsedVal !== ing.currentStock) {
+        const diff = parsedVal - ing.currentStock;
+        recordStockAdjustment(
+          ingredientId,
+          parsedVal,
+          diff > 0 ? 'restock' : 'manual_adjustment',
+          'ปรับยอดสต็อกผ่านตารางคลังคงเหลือ',
+          currentUser?.name || 'ผู้จัดการ',
+          currentUser?.role || 'manager'
+        );
+      } else {
+        updateIngredientStock(ingredientId, parsedVal);
+      }
       setSavedIngId(ingredientId);
       setTimeout(() => setSavedIngId(null), 2000);
     }
@@ -434,6 +455,15 @@ export const InventoryView: React.FC = () => {
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
           <button
+            onClick={() => setIsReportModalOpen(true)}
+            className="px-3.5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
+            title="พิมพ์รายงานสรุปสต็อกคงเหลือปัจจุบัน (PDF / Print Report)"
+          >
+            <Printer className="w-4 h-4 text-sky-100" />
+            <span>พิมพ์รายงานสต็อก</span>
+          </button>
+
+          <button
             onClick={handleDownloadCSV}
             className="px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
             title="ดาวน์โหลดไฟล์ CSV ข้อมูลวัตถุดิบคงเหลือสำหรับการตรวจสอบบัญชีและสำรองข้อมูล"
@@ -448,6 +478,18 @@ export const InventoryView: React.FC = () => {
           >
             <Plus className="w-4 h-4" />
             <span>เพิ่มรหัสวัตถุดิบใหม่</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setSelectedIngForLog(undefined);
+              setIsAdjustmentLogOpen(true);
+            }}
+            className="px-3.5 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs rounded-xl shadow transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
+            title="ดูและบันทึกประวัติการปรับยอดสต็อกวัตถุดิบ"
+          >
+            <History className="w-4 h-4 text-amber-400" />
+            <span>ประวัติปรับสต็อก ({stockAdjustmentLogs.length})</span>
           </button>
 
           <button
@@ -861,6 +903,18 @@ export const InventoryView: React.FC = () => {
                               </button>
 
                               {/* Single Delete Button */}
+                              <button
+                                type="button"
+                                title="ดูประวัติ/ปรับยอดสต็อกวัตถุดิบนี้"
+                                onClick={() => {
+                                  setSelectedIngForLog(ing.id);
+                                  setIsAdjustmentLogOpen(true);
+                                }}
+                                className="p-1.5 bg-slate-900 hover:bg-amber-600/30 border border-slate-700 hover:border-amber-500 text-slate-400 hover:text-amber-400 font-bold rounded-lg text-xs transition active:scale-95"
+                              >
+                                <History className="w-3.5 h-3.5" />
+                              </button>
+
                               <button
                                 type="button"
                                 title="ลบวัตถุดิบรายการนี้"
@@ -1543,6 +1597,19 @@ export const InventoryView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* MODAL 5: ADJUSTMENT LOG MODAL */}
+      <AdjustmentLogModal
+        isOpen={isAdjustmentLogOpen}
+        onClose={() => setIsAdjustmentLogOpen(false)}
+        selectedIngredientId={selectedIngForLog}
+      />
+
+      {/* MODAL 6: INVENTORY REPORT PRINT MODAL */}
+      <InventoryReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+      />
     </div>
   );
 };

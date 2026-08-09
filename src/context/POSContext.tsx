@@ -211,6 +211,7 @@ interface POSContextType {
   exportStateJSON: () => string;
   importStateJSON: (jsonString: string) => boolean;
   resetToDefaultData: () => void;
+  cleanSlateForProduction: () => void;
   
   // Security Logs & PIN Audit
   securityLogs: SecurityLogEntry[];
@@ -502,6 +503,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (parsed.ingredients && Array.isArray(parsed.ingredients)) setIngredients(parsed.ingredients);
           if (parsed.stockLots && Array.isArray(parsed.stockLots)) setStockLots(parsed.stockLots);
           if (parsed.wasteLogs && Array.isArray(parsed.wasteLogs)) setWasteLogs(parsed.wasteLogs);
+          if (parsed.stockAdjustmentLogs && Array.isArray(parsed.stockAdjustmentLogs)) setStockAdjustmentLogs(parsed.stockAdjustmentLogs);
           if (parsed.staffMembers && Array.isArray(parsed.staffMembers)) setStaffMembers(parsed.staffMembers);
           if (parsed.shifts && Array.isArray(parsed.shifts)) setShifts(parsed.shifts);
           if (parsed.shiftSwapRequests && Array.isArray(parsed.shiftSwapRequests)) setShiftSwapRequests(parsed.shiftSwapRequests);
@@ -563,6 +565,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ingredients,
         stockLots,
         wasteLogs,
+        stockAdjustmentLogs,
         staffMembers,
         shifts,
         shiftSwapRequests,
@@ -1530,6 +1533,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIngredients(INITIAL_INGREDIENTS);
     setStockLots(INITIAL_STOCK_LOTS);
     setWasteLogs(INITIAL_WASTE_LOGS);
+    setStockAdjustmentLogs(INITIAL_STOCK_ADJUSTMENT_LOGS);
     setStaffMembers(INITIAL_STAFF_MEMBERS);
     setShifts(INITIAL_SHIFTS);
     setShiftSwapRequests(INITIAL_SHIFT_SWAP_REQUESTS);
@@ -1537,6 +1541,21 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setOrders(INITIAL_ORDERS);
     setExpenses(INITIAL_EXPENSES);
     setSettings(INITIAL_SETTINGS);
+    setCart([]);
+    localStorage.removeItem(LOCAL_STORAGE_KEY);
+  };
+
+  const cleanSlateForProduction = () => {
+    setOrders([]);
+    setExpenses([]);
+    setCashShifts([]);
+    setShifts([]);
+    setShiftSwapRequests([]);
+    setWasteLogs([]);
+    setStockAdjustmentLogs([]);
+    setStockLots([]);
+    setSecurityLogs([]);
+    setIngredients(prev => prev.map(ing => ({ ...ing, currentStock: 0 })));
     setCart([]);
     localStorage.removeItem(LOCAL_STORAGE_KEY);
   };
@@ -1605,6 +1624,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         wasteLogs,
         addWasteLog,
         deleteWasteLog,
+        stockAdjustmentLogs,
+        addStockAdjustmentLog,
+        recordStockAdjustment,
+        clearStockAdjustmentLogs,
+        deleteStockAdjustmentLog,
         staffMembers,
         shifts,
         shiftSwapRequests,
@@ -1629,6 +1653,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         exportStateJSON,
         importStateJSON,
         resetToDefaultData,
+        cleanSlateForProduction,
         securityLogs,
         logSecurityEvent,
         clearSecurityLogs,

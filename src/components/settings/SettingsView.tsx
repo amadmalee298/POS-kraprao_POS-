@@ -136,7 +136,8 @@ export const SettingsView: React.FC = () => {
     orders,
     ingredients,
     expenses,
-    logSecurityEvent
+    logSecurityEvent,
+    cleanSlateForProduction
   } = usePOS();
 
   const [settingsTab, setSettingsTab] = useState<'general' | 'scheduling' | 'timeclock' | 'shifts' | 'sync' | 'pins' | 'security_logs' | 'backup'>('general');
