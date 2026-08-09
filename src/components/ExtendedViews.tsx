@@ -32,6 +32,9 @@ import {
   CheckCircle,
   AlertTriangle,
   Plus,
+  FolderPlus,
+  Folder,
+  Edit2,
   Send,
   Download,
   Share2,
@@ -164,6 +167,7 @@ export const QrOrderingView: React.FC = () => {
     autoApproveQR,
     setAutoApproveQR,
     tables,
+    categories,
     addTable,
     updateTable,
     deleteTable,
@@ -1247,13 +1251,17 @@ export const QrOrderingView: React.FC = () => {
 
               {/* Category Pills Slider */}
               <div className="flex space-x-1.5 mt-2.5 overflow-x-auto no-scrollbar pb-1 text-[11px]">
-                {[
-                  { id: 'all', name: 'ทั้งหมด' },
-                  { id: 'kaprao', name: 'กะเพราเดิม' },
-                  { id: 'special', name: 'กะเพราฟิวชั่น' },
-                  { id: 'fry_soup', name: 'ซุป/แกง' },
-                  { id: 'drinks_dessert', name: 'เครื่องดื่ม/ของหวาน' }
-                ].map(cat => (
+                <button
+                  onClick={() => setSelectedCategory('all')}
+                  className={`px-3.5 py-1.5 rounded-xl whitespace-nowrap font-bold transition ${
+                    selectedCategory === 'all'
+                      ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-md'
+                      : 'bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  ทั้งหมด
+                </button>
+                {categories.map(cat => (
                   <button
                     key={cat.id}
                     onClick={() => setSelectedCategory(cat.id)}
@@ -1805,6 +1813,11 @@ export const QrOrderingView: React.FC = () => {
 export const RecipeCostingView: React.FC = () => {
   const {
     menuItems,
+    categories,
+    addCategory,
+    updateCategory,
+    deleteCategory,
+    getCategoryName,
     addOns,
     ingredients,
     addMenuItem,
@@ -1818,6 +1831,12 @@ export const RecipeCostingView: React.FC = () => {
 
   const [activeSubTab, setActiveSubTab] = useState<'menu' | 'toppings' | 'recipes' | 'bulk_edit' | 'ai_engineering'>('bulk_edit');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
+
+  // Category Manager Modal State
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [newCatNameInput, setNewCatNameInput] = useState('');
+  const [editingCatId, setEditingCatId] = useState<string | null>(null);
+  const [editingCatNameInput, setEditingCatNameInput] = useState('');
 
   // Menu Modal State
   const [isMenuModalOpen, setIsMenuModalOpen] = useState(false);
@@ -1863,7 +1882,7 @@ export const RecipeCostingView: React.FC = () => {
   const handleOpenAddMenu = () => {
     setEditingMenuItem(null);
     setMenuFormName('');
-    setMenuFormCategory('kaprao');
+    setMenuFormCategory(categories[0]?.id || 'kaprao');
     setMenuFormPrice(65);
     setMenuFormImage('https://images.unsplash.com/photo-1562967914-608f82629710?w=600&auto=format&fit=crop');
     setMenuFormDescription('');
@@ -2069,13 +2088,22 @@ export const RecipeCostingView: React.FC = () => {
         {/* Action Button depending on sub-tab */}
         <div>
           {activeSubTab === 'menu' && (
-            <button
-              onClick={handleOpenAddMenu}
-              className="px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-slate-950 font-black text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-orange-950/50 transition"
-            >
-              <Plus className="w-4 h-4 stroke-[3]" />
-              <span>เพิ่มเมนูอาหารใหม่</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition shadow-sm active:scale-95"
+              >
+                <FolderPlus className="w-4 h-4 text-amber-400" />
+                <span>จัดการหมวดหมู่ ({categories.length})</span>
+              </button>
+              <button
+                onClick={handleOpenAddMenu}
+                className="px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-slate-950 font-black text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-orange-950/50 transition active:scale-95"
+              >
+                <Plus className="w-4 h-4 stroke-[3]" />
+                <span>เพิ่มเมนูอาหารใหม่</span>
+              </button>
+            </div>
           )}
           {activeSubTab === 'toppings' && (
             <button
@@ -2167,17 +2195,17 @@ export const RecipeCostingView: React.FC = () => {
             >
               ทั้งหมด ({menuItems.length})
             </button>
-            {(Object.keys(categoryLabels) as MenuCategory[]).map(cat => (
+            {categories.map(cat => (
               <button
-                key={cat}
-                onClick={() => setSelectedCategoryFilter(cat)}
+                key={cat.id}
+                onClick={() => setSelectedCategoryFilter(cat.id)}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-                  selectedCategoryFilter === cat
+                  selectedCategoryFilter === cat.id
                     ? 'bg-amber-500/20 border border-amber-500/50 text-amber-300'
                     : 'bg-slate-900 border border-slate-800 text-slate-400 hover:bg-slate-800'
                 }`}
               >
-                {categoryLabels[cat]} ({menuItems.filter(m => m.category === cat).length})
+                {cat.name} ({menuItems.filter(m => m.category === cat.id).length})
               </button>
             ))}
           </div>
@@ -2195,7 +2223,7 @@ export const RecipeCostingView: React.FC = () => {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-1">
                         <span className="px-2 py-0.5 rounded bg-slate-800 text-[10px] font-bold text-amber-400">
-                          {categoryLabels[item.category] || item.category}
+                          {getCategoryName(item.category)}
                         </span>
                         <div className="flex items-center space-x-1">
                           <button
@@ -2483,6 +2511,166 @@ export const RecipeCostingView: React.FC = () => {
         <AIMenuEngineeringPanel />
       )}
 
+      {/* MODAL: MANAGE CATEGORIES */}
+      {isCategoryModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
+            <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
+              <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
+                <FolderPlus className="w-5 h-5 text-amber-400" />
+                <span>จัดการหมวดหมู่เมนูอาหาร (Manage Categories)</span>
+              </h3>
+              <button
+                onClick={() => {
+                  setIsCategoryModalOpen(false);
+                  setEditingCatId(null);
+                }}
+                className="p-1 text-slate-400 hover:text-slate-100 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs text-slate-200 overflow-y-auto flex-1">
+              {/* Form to add category */}
+              <form
+                onSubmit={e => {
+                  e.preventDefault();
+                  if (!newCatNameInput.trim()) return;
+                  addCategory(newCatNameInput);
+                  setNewCatNameInput('');
+                }}
+                className="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800 space-y-2"
+              >
+                <label className="block text-slate-300 font-bold text-xs">
+                  + เพิ่มหมวดหมู่ใหม่
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    required
+                    placeholder="เช่น สเต๊ก & ปิ้งย่าง, เครื่องดื่มสดชื่น..."
+                    value={newCatNameInput}
+                    onChange={e => setNewCatNameInput(e.target.value)}
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-amber-500 text-xs"
+                  />
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-slate-950 font-bold rounded-xl text-xs transition shrink-0 active:scale-95 shadow-md"
+                  >
+                    เพิ่มหมวดหมู่
+                  </button>
+                </div>
+              </form>
+
+              {/* List of categories */}
+              <div className="space-y-2">
+                <h4 className="font-bold text-slate-400 text-xs mb-2">
+                  รายการหมวดหมู่ทั้งหมด ({categories.length} หมวดหมู่)
+                </h4>
+                {categories.map(cat => {
+                  const itemCount = menuItems.filter(m => m.category === cat.id).length;
+                  const isEditingThis = editingCatId === cat.id;
+
+                  return (
+                    <div
+                      key={cat.id}
+                      className="flex items-center justify-between bg-slate-950 p-3 rounded-xl border border-slate-800 hover:border-slate-700 transition gap-2"
+                    >
+                      {isEditingThis ? (
+                        <div className="flex-1 flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={editingCatNameInput}
+                            onChange={e => setEditingCatNameInput(e.target.value)}
+                            className="flex-1 bg-slate-900 border border-amber-500/80 rounded-lg px-2.5 py-1 text-slate-100 text-xs focus:outline-none"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (editingCatNameInput.trim()) {
+                                updateCategory(cat.id, editingCatNameInput);
+                                setEditingCatId(null);
+                              }
+                            }}
+                            className="px-2.5 py-1 bg-amber-500 text-slate-950 font-bold rounded-lg text-xs hover:bg-amber-400 transition"
+                          >
+                            บันทึก
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingCatId(null)}
+                            className="px-2.5 py-1 bg-slate-800 text-slate-300 font-medium rounded-lg text-xs hover:bg-slate-700 transition"
+                          >
+                            ยกเลิก
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center space-x-2 min-w-0 flex-1">
+                            <Folder className="w-4 h-4 text-amber-400 shrink-0" />
+                            <span className="font-bold text-slate-100 text-xs truncate">
+                              {cat.name}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-slate-800 text-[10px] text-amber-300 font-mono shrink-0">
+                              {itemCount} เมนู
+                            </span>
+                          </div>
+
+                          <div className="flex items-center space-x-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCatId(cat.id);
+                                setEditingCatNameInput(cat.name);
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-amber-300 hover:bg-slate-800 rounded-lg transition"
+                              title="แก้ไขชื่อหมวดหมู่"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                let msg = `ต้องการลบหมวดหมู่ "${cat.name}" หรือไม่?`;
+                                if (itemCount > 0) {
+                                  msg += `\n\nหมายเหตุ: มีเมนูในหมวดนี้ ${itemCount} รายการ ระบบจะย้ายไปหมวดหมู่อื่นโดยอัตโนมัติ`;
+                                }
+                                if (confirm(msg)) {
+                                  deleteCategory(cat.id);
+                                }
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-950/50 rounded-lg transition"
+                              title="ลบหมวดหมู่"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-950 border-t border-slate-800 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCategoryModalOpen(false);
+                  setEditingCatId(null);
+                }}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs transition"
+              >
+                ปิดหน้าต่าง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: ADD/EDIT MENU ITEM */}
       {isMenuModalOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -2517,13 +2705,14 @@ export const RecipeCostingView: React.FC = () => {
                   <label className="block text-slate-400 font-bold mb-1">หมวดหมู่</label>
                   <select
                     value={menuFormCategory}
-                    onChange={e => setMenuFormCategory(e.target.value as MenuCategory)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-amber-500"
+                    onChange={e => setMenuFormCategory(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-amber-500 font-medium"
                   >
-                    <option value="kaprao">กะเพราโบราณ</option>
-                    <option value="fry_soup">เมนูผัด/ต้ม</option>
-                    <option value="drinks_dessert">เครื่องดื่ม & ขนม</option>
-                    <option value="special">เมนูพิเศษ</option>
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
 

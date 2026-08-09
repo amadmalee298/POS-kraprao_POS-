@@ -51,6 +51,8 @@ import { CashShiftManagementPanel } from '../settings/CashShiftManagementPanel';
 export const POSView: React.FC = () => {
   const {
     menuItems,
+    categories,
+    getCategoryName,
     cart,
     addToCart,
     updateCartQuantity,
@@ -331,55 +333,30 @@ export const POSView: React.FC = () => {
                   : 'bg-[#22160f] text-amber-200/80 hover:bg-[#2c1d14] border border-[#382419]'
               }`}
             >
-              ทั้งหมด
+              ทั้งหมด ({menuItems.length})
             </button>
 
-            <button
-              onClick={() => setSelectedCategory('kaprao')}
-              className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
-                selectedCategory === 'kaprao'
-                  ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 shadow-lg shadow-orange-950/50'
-                  : 'bg-[#22160f] text-amber-200/80 hover:bg-[#2c1d14] border border-[#382419]'
-              }`}
-            >
-              <Flame className="w-3.5 h-3.5 text-orange-400" />
-              <span>กะเพรา</span>
-            </button>
-
-            <button
-              onClick={() => setSelectedCategory('fry_soup')}
-              className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
-                selectedCategory === 'fry_soup'
-                  ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 shadow-lg shadow-orange-950/50'
-                  : 'bg-[#22160f] text-amber-200/80 hover:bg-[#2c1d14] border border-[#382419]'
-              }`}
-            >
-              <Utensils className="w-3.5 h-3.5 text-orange-400" />
-              <span>ผัด/ต้ม</span>
-            </button>
-
-            <button
-              onClick={() => setSelectedCategory('special')}
-              className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
-                selectedCategory === 'special'
-                  ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 shadow-lg shadow-orange-950/50'
-                  : 'bg-[#22160f] text-amber-200/80 hover:bg-[#2c1d14] border border-[#382419]'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>พิเศษ</span>
-            </button>
-
-            <button
-              onClick={() => setSelectedCategory('drinks_dessert')}
-              className={`px-4 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
-                selectedCategory === 'drinks_dessert'
-                  ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 shadow-lg shadow-orange-950/50'
-                  : 'bg-[#22160f] text-amber-200/80 hover:bg-[#2c1d14] border border-[#382419]'
-              }`}
-            >
-              เครื่องดื่ม
-            </button>
+            {categories.map(cat => {
+              const count = menuItems.filter(item => item.category === cat.id).length;
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(cat.id)}
+                  className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                    selectedCategory === cat.id
+                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 shadow-lg shadow-orange-950/50'
+                      : 'bg-[#22160f] text-amber-200/80 hover:bg-[#2c1d14] border border-[#382419]'
+                  }`}
+                >
+                  <span>{cat.name}</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                    selectedCategory === cat.id ? 'bg-slate-950/40 text-slate-950 font-extrabold' : 'bg-slate-800/80 text-amber-300'
+                  }`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 

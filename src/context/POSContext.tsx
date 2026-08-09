@@ -25,7 +25,8 @@ import {
   CashShift,
   CashMovement,
   SecurityLogEntry,
-  StockAdjustmentLog
+  StockAdjustmentLog,
+  CategoryItem
 } from '../types';
 import {
   INITIAL_BRANCHES,
@@ -43,7 +44,8 @@ import {
   INITIAL_SHIFT_SWAP_REQUESTS,
   INITIAL_CASH_SHIFTS,
   INITIAL_SECURITY_LOGS,
-  INITIAL_STOCK_ADJUSTMENT_LOGS
+  INITIAL_STOCK_ADJUSTMENT_LOGS,
+  DEFAULT_CATEGORIES
 } from '../data/initialData';
 import { calculateOrderTotals } from '../utils/tax';
 import { crc16 } from '../utils/promptpay';
@@ -93,6 +95,13 @@ interface POSContextType {
   updateTable: (oldName: string, newName: string) => void;
   deleteTable: (tableName: string) => void;
   
+  // Category CRUD
+  categories: CategoryItem[];
+  addCategory: (name: string, icon?: string) => void;
+  updateCategory: (id: string, name: string, icon?: string) => void;
+  deleteCategory: (id: string) => void;
+  getCategoryName: (id: string) => string;
+
   // Menu item CRUD
   addMenuItem: (itemData: Omit<MenuItem, 'id'>) => void;
   updateMenuItem: (item: MenuItem) => void;
@@ -252,6 +261,46 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
   
+  const [categories, setCategories] = useState<CategoryItem[]>(DEFAULT_CATEGORIES);
+
+  const addCategory = (name: string, icon?: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const newCat: CategoryItem = {
+      id: `cat-${Date.now()}`,
+      name: trimmed,
+      icon: icon || 'Tag'
+    };
+    setCategories(prev => [...prev, newCat]);
+  };
+
+  const updateCategory = (id: string, name: string, icon?: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, name: trimmed, icon: icon || c.icon } : c));
+  };
+
+  const deleteCategory = (id: string) => {
+    if (categories.length <= 1) {
+      alert('ไม่สามารถลบหมวดหมู่ทั้งหมดได้ ต้องมีอย่างน้อย 1 หมวดหมู่ในระบบ');
+      return;
+    }
+    const remaining = categories.filter(c => c.id !== id);
+    const fallbackCatId = remaining[0]?.id || 'kaprao';
+    setCategories(remaining);
+    setMenuItems(prev => prev.map(m => m.category === id ? { ...m, category: fallbackCatId } : m));
+  };
+
+  const getCategoryName = (id: string): string => {
+    const found = categories.find(c => c.id === id);
+    if (found) return found.name;
+    if (id === 'kaprao') return 'กะเพราโบราณ';
+    if (id === 'fry_soup') return 'เมนูผัด/ต้ม';
+    if (id === 'drinks_dessert') return 'เครื่องดื่ม & ขนม';
+    if (id === 'special') return 'เมนูพิเศษ';
+    return id || 'ทั่วไป';
+  };
+
   const [menuItems, setMenuItems] = useState<MenuItem[]>(INITIAL_MENU_ITEMS);
   const [addOns, setAddOns] = useState<AddOnOption[]>(STANDARD_ADD_ONS);
   const [ingredients, setIngredients] = useState<Ingredient[]>(INITIAL_INGREDIENTS);
@@ -494,6 +543,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setOrders(validOrders);
             loadedOrdersCount = validOrders.length;
           }
+          if (parsed.categories && Array.isArray(parsed.categories) && parsed.categories.length > 0) {
+            setCategories(parsed.categories);
+          }
           if (parsed.menuItems && Array.isArray(parsed.menuItems)) {
             const validItems = parsed.menuItems.filter((m: any) => m && typeof m === 'object' && m.id);
             setMenuItems(validItems);
@@ -560,6 +612,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const stateToSave = {
         cart,
         discount,
+        categories,
         menuItems,
         addOns,
         ingredients,
@@ -1543,6 +1596,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const currentOpenShift = cashShifts.find(s => s.status === 'open' && s.branchId === currentBranch.id) || null;
 
   const resetToDefaultData = () => {
+    setCategories(DEFAULT_CATEGORIES);
     setIngredients(INITIAL_INGREDIENTS);
     setStockLots(INITIAL_STOCK_LOTS);
     setWasteLogs(INITIAL_WASTE_LOGS);
@@ -1614,6 +1668,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addTable,
         updateTable,
         deleteTable,
+        categories,
+        addCategory,
+        updateCategory,
+        deleteCategory,
+        getCategoryName,
         cart,
         addToCart,
         updateCartQuantity,

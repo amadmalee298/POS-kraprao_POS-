@@ -22,6 +22,8 @@ import {
   Edit3,
   Sliders,
   Trash2,
+  MoreVertical,
+  PackagePlus,
   Download,
   Printer
 } from 'lucide-react';
@@ -82,6 +84,94 @@ export const InventoryView: React.FC = () => {
   // Manual Stock Editing State
   const [stockInputs, setStockInputs] = useState<Record<string, string>>({});
   const [savedIngId, setSavedIngId] = useState<string | null>(null);
+
+  // Quick Action Modal State (Add Stock & Log Waste per row)
+  const [quickActionModal, setQuickActionModal] = useState<{
+    type: 'add_stock' | 'log_waste';
+    ingredient: Ingredient;
+  } | null>(null);
+  const [quickQtyInput, setQuickQtyInput] = useState<string>('1');
+  const [quickNoteInput, setQuickNoteInput] = useState<string>('');
+  const [quickWasteReason, setQuickWasteReason] = useState<'waste' | 'expired' | 'damage'>('waste');
+  const [quickSupplierInput, setQuickSupplierInput] = useState<string>('');
+
+  const handleOpenQuickAddStock = (ing: Ingredient) => {
+    setQuickActionModal({ type: 'add_stock', ingredient: ing });
+    setQuickQtyInput('5');
+    setQuickNoteInput('เติมสต็อกด่วน');
+    setQuickSupplierInput('');
+  };
+
+  const handleOpenQuickLogWaste = (ing: Ingredient) => {
+    setQuickActionModal({ type: 'log_waste', ingredient: ing });
+    setQuickQtyInput('1');
+    setQuickNoteInput('ตัดสต็อกของเสีย/เสื่อมสภาพ');
+    setQuickWasteReason('waste');
+  };
+
+  const handleConfirmQuickAction = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickActionModal) return;
+
+    const { type, ingredient } = quickActionModal;
+    const qty = parseFloat(quickQtyInput);
+
+    if (isNaN(qty) || qty <= 0) {
+      alert('กรุณาระบุจำนวนที่ถูกต้อง');
+      return;
+    }
+
+    if (type === 'add_stock') {
+      const newStock = ingredient.currentStock + qty;
+      recordStockAdjustment(
+        ingredient.id,
+        newStock,
+        'restock',
+        quickNoteInput.trim() || 'รับสินค้าเข้าสต็อกด่วน',
+        currentUser?.name || 'ผู้จัดการ',
+        currentUser?.role || 'manager'
+      );
+
+      if (quickSupplierInput.trim()) {
+        addStockLot({
+          id: `lot-${Date.now()}`,
+          ingredientId: ingredient.id,
+          lotNumber: `LOT-QUICK-${Date.now().toString().slice(-4)}`,
+          quantityReceived: qty,
+          quantityRemaining: qty,
+          unitCost: ingredient.unitCost,
+          supplier: quickSupplierInput.trim(),
+          receivedDate: new Date().toISOString().slice(0, 10),
+          expiryDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 14).toISOString().slice(0, 10),
+          notes: quickNoteInput.trim()
+        });
+      }
+
+      setSavedIngId(ingredient.id);
+      setTimeout(() => setSavedIngId(null), 2500);
+    } else {
+      if (qty > ingredient.currentStock) {
+        if (!confirm(`จำนวนที่ตัดของเสีย (${qty} ${ingredient.unit}) มากกว่าสต็อกคงเหลือ (${ingredient.currentStock} ${ingredient.unit}) ยืนยันดำเนินการต่อหรือไม่?`)) {
+          return;
+        }
+      }
+
+      const newStock = Math.max(0, ingredient.currentStock - qty);
+      recordStockAdjustment(
+        ingredient.id,
+        newStock,
+        quickWasteReason,
+        quickNoteInput.trim() || 'ตัดสต็อกของเสีย/เสื่อมสภาพ',
+        currentUser?.name || 'ผู้จัดการ',
+        currentUser?.role || 'manager'
+      );
+
+      setSavedIngId(ingredient.id);
+      setTimeout(() => setSavedIngId(null), 2500);
+    }
+
+    setQuickActionModal(null);
+  };
 
   const handleSaveStock = (ingredientId: string) => {
     const ing = ingredients.find(i => i.id === ingredientId);
@@ -827,6 +917,29 @@ export const InventoryView: React.FC = () => {
                           {/* Manual Quantity Edit & Quick Adjust Controls */}
                           <td className="py-3.5 px-4 text-center whitespace-nowrap">
                             <div className="inline-flex items-center space-x-2 bg-slate-950/60 p-1.5 rounded-xl border border-slate-800">
+                              {/* Dedicated Quick Action Buttons */}
+                              <div className="flex items-center space-x-1.5 border-r border-slate-800/80 pr-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenQuickAddStock(ing)}
+                                  className="px-2.5 py-1.5 bg-emerald-500/15 hover:bg-emerald-500 hover:text-slate-950 border border-emerald-500/40 text-emerald-300 hover:font-black font-bold rounded-lg text-xs transition flex items-center space-x-1 active:scale-95 shadow-sm whitespace-nowrap"
+                                  title="เติมสต็อกด่วน (Add Stock)"
+                                >
+                                  <PackagePlus className="w-3.5 h-3.5" />
+                                  <span>+ เติมสต็อก</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenQuickLogWaste(ing)}
+                                  className="px-2.5 py-1.5 bg-rose-500/15 hover:bg-rose-600 hover:text-white border border-rose-500/40 text-rose-300 font-bold rounded-lg text-xs transition flex items-center space-x-1 active:scale-95 shadow-sm whitespace-nowrap"
+                                  title="บันทึกของเสีย/ตัดสต็อก (Log Waste)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>ตัดของเสีย</span>
+                                </button>
+                              </div>
+
                               {/* Direct Numeric Input */}
                               <div className="relative flex items-center">
                                 <input
@@ -1594,6 +1707,167 @@ export const InventoryView: React.FC = () => {
                 <span>ยืนยันลบ {selectedIngIds.length} รายการ</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* QUICK ACTION MODAL: ADD STOCK OR LOG WASTE */}
+      {quickActionModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className={`p-4 border-b border-slate-800 flex items-center justify-between ${
+              quickActionModal.type === 'add_stock' ? 'bg-emerald-950/40' : 'bg-rose-950/40'
+            }`}>
+              <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
+                {quickActionModal.type === 'add_stock' ? (
+                  <>
+                    <PackagePlus className="w-5 h-5 text-emerald-400" />
+                    <span>เติมสต็อกด่วน (Add Stock)</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-5 h-5 text-rose-400" />
+                    <span>บันทึกของเสีย / ตัดสต็อก (Log Waste)</span>
+                  </>
+                )}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setQuickActionModal(null)}
+                className="p-1 text-slate-400 hover:text-slate-100 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmQuickAction} className="p-5 space-y-4 text-xs text-slate-200">
+              {/* Ingredient summary banner */}
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-1">
+                <div className="text-slate-400 font-semibold text-[11px]">รายการวัตถุดิบ:</div>
+                <div className="text-slate-100 font-bold text-sm flex items-center justify-between">
+                  <span>{quickActionModal.ingredient.name}</span>
+                  <span className="text-xs text-amber-400 font-mono">
+                    คงเหลือ {quickActionModal.ingredient.currentStock} {quickActionModal.ingredient.unit}
+                  </span>
+                </div>
+              </div>
+
+              {/* Quantity input with preset pills */}
+              <div className="space-y-2">
+                <label className="block text-slate-300 font-bold">
+                  {quickActionModal.type === 'add_stock' ? 'จำนวนที่เพิ่มเข้าสต็อก *' : 'จำนวนที่สูญเสีย/ตัดสต็อก *'}
+                </label>
+
+                <div className="relative flex items-center">
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.001"
+                    required
+                    value={quickQtyInput}
+                    onChange={e => setQuickQtyInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-slate-100 font-mono font-bold text-sm focus:outline-none focus:border-amber-500"
+                  />
+                  <span className="absolute right-3 text-xs text-slate-400 font-bold font-mono">
+                    {quickActionModal.ingredient.unit}
+                  </span>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {[1, 5, 10, 20, 50].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setQuickQtyInput(val.toString())}
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-lg text-[11px] transition"
+                    >
+                      +{val} {quickActionModal.ingredient.unit}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Calculation Preview */}
+              <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+                <span className="text-slate-400 font-medium">คำนวณยอดคงเหลือใหม่:</span>
+                <span className="font-mono font-black text-sm">
+                  {quickActionModal.ingredient.currentStock}
+                  {quickActionModal.type === 'add_stock' ? ' + ' : ' - '}
+                  {parseFloat(quickQtyInput) || 0}
+                  {' = '}
+                  <span className={quickActionModal.type === 'add_stock' ? 'text-emerald-400' : 'text-rose-400'}>
+                    {quickActionModal.type === 'add_stock'
+                      ? (quickActionModal.ingredient.currentStock + (parseFloat(quickQtyInput) || 0)).toFixed(2)
+                      : Math.max(0, quickActionModal.ingredient.currentStock - (parseFloat(quickQtyInput) || 0)).toFixed(2)}
+                    {' '}{quickActionModal.ingredient.unit}
+                  </span>
+                </span>
+              </div>
+
+              {/* Waste Reason Selection (If Waste) */}
+              {quickActionModal.type === 'log_waste' && (
+                <div className="space-y-1.5">
+                  <label className="block text-slate-300 font-bold">สาเหตุการสูญเสีย</label>
+                  <select
+                    value={quickWasteReason}
+                    onChange={e => setQuickWasteReason(e.target.value as any)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-rose-500 font-medium"
+                  >
+                    <option value="waste">🗑️ ชำรุด / เสื่อมสภาพ (Spoiled / Waste)</option>
+                    <option value="expired">⏳ หมดอายุการใช้งาน (Expired)</option>
+                    <option value="damage">💥 ทำตกเสียหายระหว่างทำอาหาร (Damaged)</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Optional Supplier Field (If Add Stock) */}
+              {quickActionModal.type === 'add_stock' && (
+                <div className="space-y-1.5">
+                  <label className="block text-slate-300 font-bold">ผู้จัดจำหน่าย / ซัพพลายเออร์ (ตัวเลือกเพิ่มเติม)</label>
+                  <input
+                    type="text"
+                    placeholder="เช่น ซัพพลายเออร์ A, ตลาดสดสะพานใหม่..."
+                    value={quickSupplierInput}
+                    onChange={e => setQuickSupplierInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              )}
+
+              {/* Note Input */}
+              <div className="space-y-1.5">
+                <label className="block text-slate-300 font-bold">หมายเหตุ / บันทึกย่อ</label>
+                <input
+                  type="text"
+                  placeholder="เช่น รับสินค้าล็อตใหม่, ผักเหี่ยวแห้ง..."
+                  value={quickNoteInput}
+                  onChange={e => setQuickNoteInput(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="pt-2 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setQuickActionModal(null)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className={`px-5 py-2 font-bold rounded-xl text-xs transition shadow-lg active:scale-95 ${
+                    quickActionModal.type === 'add_stock'
+                      ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black hover:from-emerald-400 hover:to-teal-400'
+                      : 'bg-rose-600 hover:bg-rose-500 text-white font-black'
+                  }`}
+                >
+                  {quickActionModal.type === 'add_stock' ? 'บันทึกรับเข้าสต็อก' : 'ตัดสต็อกของเสีย'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

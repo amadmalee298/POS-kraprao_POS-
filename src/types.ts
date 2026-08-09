@@ -1,4 +1,10 @@
-export type MenuCategory = 'kaprao' | 'fry_soup' | 'drinks_dessert' | 'special';
+export type MenuCategory = string;
+
+export interface CategoryItem {
+  id: string;
+  name: string;
+  icon?: string;
+}
 
 export type SpiceLevel = 'ไม่เผ็ด' | 'เผ็ดน้อย' | 'เผ็ดปานกลาง' | 'เผ็ดมาก' | 'เผ็ดหูดับ';
 

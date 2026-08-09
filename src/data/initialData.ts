@@ -14,9 +14,17 @@ import {
   ShiftSwapRequest,
   CashShift,
   SecurityLogEntry,
-  StockAdjustmentLog
+  StockAdjustmentLog,
+  CategoryItem
 } from '../types';
 import { SHOP_LOGO_URL } from '../assets/logo';
+
+export const DEFAULT_CATEGORIES: CategoryItem[] = [
+  { id: 'kaprao', name: 'กะเพราโบราณ', icon: 'Flame' },
+  { id: 'fry_soup', name: 'เมนูผัด/ต้ม', icon: 'Utensils' },
+  { id: 'drinks_dessert', name: 'เครื่องดื่ม & ขนม', icon: 'CupSoda' },
+  { id: 'special', name: 'เมนูพิเศษ', icon: 'Sparkles' }
+];
 
 export const INITIAL_BRANCHES: Branch[] = [
   {
