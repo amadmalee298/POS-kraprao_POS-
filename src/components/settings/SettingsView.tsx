@@ -448,6 +448,8 @@ export const SettingsView: React.FC = () => {
     }
   };
 
+  const [resetType, setResetType] = useState<'clean_slate' | 'demo_data'>('clean_slate');
+
   const handleExecuteFactoryReset = (e: React.FormEvent) => {
     e.preventDefault();
     const validManagerPin = managerPin || settings.managerPin || '5555';
@@ -457,22 +459,27 @@ export const SettingsView: React.FC = () => {
       logSecurityEvent({
         userName: 'ผู้จัดการ / เจ้าของร้าน',
         userRole: 'manager',
-        action: 'Factory Reset System',
+        action: resetType === 'clean_slate' ? 'Clean Slate Reset' : 'Factory Demo Reset',
         status: 'SUCCESS',
-        details: 'ยืนยันรหัส PIN และรีเซ็ตคืนค่าเริ่มต้นของระบบทั้งหมด'
+        details: resetType === 'clean_slate' ? 'ล้างข้อมูลการขาย สต็อก กะ และประวัติทั้งหมดพร้อมเริ่มร้านจริง' : 'ยืนยันรหัส PIN และรีเซ็ตคืนค่าตัวอย่างเริ่มต้นของระบบ'
       });
-      resetToDefaultData();
+      if (resetType === 'clean_slate') {
+        cleanSlateForProduction();
+        setRestoreSuccess('ล้างข้อมูลเก่าทั้งหมดเรียบร้อยแล้ว! ระบบว่างสะอาดพร้อมสำหรับการใช้งานเปิดร้านจริง');
+      } else {
+        resetToDefaultData();
+        setRestoreSuccess('ล้างข้อมูลและคืนค่าเริ่มต้นของระบบเรียบร้อยแล้ว!');
+      }
       setIsResetConfirmModalOpen(false);
       setResetPinInput('');
       setResetPinError('');
-      setRestoreSuccess('ล้างข้อมูลและคืนค่าเริ่มต้นของระบบเรียบร้อยแล้ว!');
     } else {
       logSecurityEvent({
         userName: 'ผู้ใช้งาน',
         userRole: 'unknown',
         action: 'Factory Reset System',
         status: 'FAILED',
-        details: 'ป้อนรหัส PIN ผิดพลาดขณะพยายามทำ Factory Reset'
+        details: 'ป้อนรหัส PIN ผิดพลาดขณะพยายามทำ Reset'
       });
       setResetPinError('รหัส PIN ไม่ถูกต้อง! กรุณากรอก Manager PIN (5555) หรือ Admin PIN (1234)');
     }
@@ -1632,6 +1639,7 @@ export const SettingsView: React.FC = () => {
                   type="button"
                   onClick={() => {
                     if (!checkManagerAuth()) return;
+                    setResetType('clean_slate');
                     setIsResetConfirmModalOpen(true);
                   }}
                   className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-rose-600/20 transition flex items-center justify-center space-x-2 shrink-0 active:scale-95"
@@ -2919,15 +2927,19 @@ export const SettingsView: React.FC = () => {
       {/* FACTORY RESET CONFIRMATION MODAL */}
       {isResetConfirmModalOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-rose-500/40 rounded-3xl p-6 max-w-sm w-full shadow-2xl space-y-4 text-slate-100">
+          <div className="bg-slate-900 border border-rose-500/40 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 text-slate-100">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center space-x-2.5 text-rose-400">
                 <div className="p-2 bg-rose-500/10 rounded-xl border border-rose-500/20">
                   <AlertTriangle className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-extrabold text-slate-100 text-base">ยืนยันการล้างข้อมูลระบบ</h3>
-                  <p className="text-xs text-rose-300">กรอก Manager PIN เพื่อล้างข้อมูลเบราว์เซอร์</p>
+                  <h3 className="font-extrabold text-slate-100 text-base">
+                    {resetType === 'clean_slate' ? 'ล้างข้อมูลเพื่อเริ่มใช้งานจริง (Clean Slate)' : 'คืนค่าตัวอย่างเริ่มต้นระบบ'}
+                  </h3>
+                  <p className="text-xs text-rose-300">
+                    {resetType === 'clean_slate' ? 'ลบยอดขาย ออเดอร์ สต็อกคงเหลือ และกะทั้งหมด' : 'โหลดข้อมูลตัวอย่างสำหรับทดสอบ'}
+                  </p>
                 </div>
               </div>
               <button
@@ -2943,7 +2955,38 @@ export const SettingsView: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleExecuteFactoryReset} className="space-y-4 text-xs">
+            <div className="space-y-2 text-xs">
+              <label className="block text-slate-300 font-semibold mb-1">เลือกรูปแบบการรีเซ็ตข้อมูล:</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setResetType('clean_slate')}
+                  className={`p-3 rounded-xl border text-left transition ${
+                    resetType === 'clean_slate'
+                      ? 'bg-rose-500/20 border-rose-500 text-rose-200'
+                      : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <div className="font-bold text-xs text-rose-300">1. Clean Slate (เปิดร้านจริง)</div>
+                  <div className="text-[10px] mt-0.5 opacity-80">ลบยอดขายและสต็อกทดสอบทั้งหมดคงไว้เฉพาะเมนู</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setResetType('demo_data')}
+                  className={`p-3 rounded-xl border text-left transition ${
+                    resetType === 'demo_data'
+                      ? 'bg-amber-500/20 border-amber-500 text-amber-200'
+                      : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <div className="font-bold text-xs text-amber-300">2. Demo Data (ทดสอบ)</div>
+                  <div className="text-[10px] mt-0.5 opacity-80">รีเซ็ตคืนค่าตัวอย่างเริ่มต้นของระบบ</div>
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleExecuteFactoryReset} className="space-y-4 text-xs pt-1">
               <div>
                 <label className="block text-slate-300 font-bold mb-1.5 text-center">
                   ป้อนรหัส Manager PIN (5555) เพื่อยืนยัน
@@ -2984,7 +3027,7 @@ export const SettingsView: React.FC = () => {
                   type="submit"
                   className="py-2.5 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-extrabold rounded-xl shadow-lg transition active:scale-95"
                 >
-                  ยืนยันล้างข้อมูล
+                  ยืนยันการล้างข้อมูล
                 </button>
               </div>
             </form>
