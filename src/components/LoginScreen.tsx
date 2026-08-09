@@ -289,8 +289,8 @@ export const LoginScreen: React.FC = () => {
             alt="ครัวกะเพรา Logo"
             className="w-full h-full object-cover rounded-full"
             onError={(e) => {
-              if (e.currentTarget.src !== '/logo.png') {
-                e.currentTarget.src = '/logo.png';
+              if (e.currentTarget.src !== SHOP_LOGO_URL) {
+                e.currentTarget.src = SHOP_LOGO_URL;
               }
             }}
           />

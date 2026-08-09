@@ -168,8 +168,23 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     onClose();
   };
 
+  // Resolve active PromptPay and TrueMoney accounts from configured QR Payment Methods or Branch
+  const activePromptPayMethod = settings.qrPaymentMethods?.find(m => m.type === 'promptpay' && m.enabled !== false);
+  const activeTrueMoneyMethod = settings.qrPaymentMethods?.find(m => m.type === 'truemoney' && m.enabled !== false);
+
+  const activePromptPayId = activePromptPayMethod?.accountNumber?.trim()
+    || currentBranch.promptpayMobileOrTaxId
+    || settings.promptpayMobileOrTaxId
+    || settings.promptPayId
+    || '0812345678';
+
+  const activeTrueMoneyNumber = activeTrueMoneyMethod?.accountNumber?.trim()
+    || currentBranch.promptpayMobileOrTaxId
+    || settings.promptpayMobileOrTaxId
+    || '081-234-5678';
+
   const promptpayPayloadStr = generatePromptPayPayload(
-    currentBranch.promptpayMobileOrTaxId || settings.promptpayMobileOrTaxId,
+    activePromptPayId,
     grandTotal
   );
 
@@ -430,7 +445,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             {paymentMethod === 'promptpay' && (
               <div className="flex flex-col items-center justify-center py-1 sm:py-2 space-y-2 sm:space-y-3">
                 <PromptPayQR
-                  promptPayId={currentBranch.promptpayMobileOrTaxId || settings.promptpayMobileOrTaxId || settings.promptPayId || '0812345678'}
+                  promptPayId={activePromptPayId}
                   amount={grandTotal}
                   branchName={currentBranch.name}
                   size={220}
@@ -451,7 +466,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             {paymentMethod === 'truemoney' && (
               <div className="p-3 bg-slate-900 border border-orange-900/50 rounded-xl space-y-1.5 text-xs text-slate-200 text-center">
                 <div className="font-bold text-orange-400 text-xs sm:text-sm">TrueMoney Wallet</div>
-                <div>โอนเข้าเบอร์ TrueMoney: <strong className="text-amber-400 font-mono">{currentBranch.promptpayMobileOrTaxId || settings.promptpayMobileOrTaxId || '081-234-5678'}</strong></div>
+                <div>โอนเข้าเบอร์ TrueMoney: <strong className="text-amber-400 font-mono">{activeTrueMoneyNumber}</strong></div>
                 <div className="text-[10px] sm:text-[11px] text-slate-400">ชื่อบัญชี: {settings.shopName}</div>
                 <div className="p-2 bg-orange-500/10 rounded-lg text-orange-300 text-[10px] sm:text-[11px]">
                   กรุณาตรวจสอบสลิปโอนเงินบน TrueMoney Wallet ของลูกค้าก่อนกดยืนยันชำระเงิน

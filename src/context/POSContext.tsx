@@ -654,8 +654,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateSettings = (newSettings: Partial<SystemSettings>) => {
-    setSettings(prev => ({ ...prev, ...newSettings }));
-    const newPromptPay = newSettings.promptpayMobileOrTaxId || newSettings.promptPayId;
+    let newPromptPay = newSettings.promptpayMobileOrTaxId || newSettings.promptPayId;
+    if (!newPromptPay && newSettings.qrPaymentMethods) {
+      const pmPromptPay = newSettings.qrPaymentMethods.find(m => m.type === 'promptpay');
+      if (pmPromptPay?.accountNumber) {
+        newPromptPay = pmPromptPay.accountNumber.trim();
+      }
+    }
+
+    setSettings(prev => ({
+      ...prev,
+      ...newSettings,
+      ...(newPromptPay ? { promptpayMobileOrTaxId: newPromptPay, promptPayId: newPromptPay } : {})
+    }));
+
     const newTaxId = newSettings.taxId || newSettings.shopTaxId;
     const newShopName = newSettings.shopName;
     const newShopAddress = newSettings.shopAddress;
@@ -663,6 +675,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     if (newPromptPay || newTaxId || newShopName || newShopAddress || newShopPhone) {
       setCurrentBranch(prevBranch => {
+        if (!prevBranch) return prevBranch;
         const updated = {
           ...prevBranch,
           ...(newPromptPay ? { promptpayMobileOrTaxId: newPromptPay } : {}),

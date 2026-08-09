@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Wallet,
   Clock,
@@ -38,6 +38,7 @@ export const CashShiftManagementPanel: React.FC = () => {
     deleteCashShift,
     currentBranch,
     currentUser,
+    users,
     orders
   } = usePOS();
 
@@ -46,6 +47,15 @@ export const CashShiftManagementPanel: React.FC = () => {
   const [isCloseShiftModalOpen, setIsCloseShiftModalOpen] = useState(false);
   const [isCashMovementModalOpen, setIsCashMovementModalOpen] = useState(false);
   const [selectedReportShift, setSelectedReportShift] = useState<CashShift | null>(null);
+
+  // Sync operator names with logged-in user
+  useEffect(() => {
+    if (currentUser?.name) {
+      setOpenByInput(currentUser.name);
+      setCloseByInput(currentUser.name);
+      setMovRecordedBy(currentUser.name);
+    }
+  }, [currentUser]);
 
   // Open shift form state
   const [openFloatInput, setOpenFloatInput] = useState<number>(2000);
@@ -520,13 +530,31 @@ export const CashShiftManagementPanel: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1">ผู้เปิดกะ / รับผิดชอบลิ้นชัก</label>
-                <input
-                  type="text"
-                  value={openByInput}
-                  onChange={(e) => setOpenByInput(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 text-sm focus:outline-none focus:border-amber-500"
-                  placeholder="เช่น ผู้จัดการ สมชาย"
-                />
+                <div className="flex gap-2">
+                  <select
+                    value={users?.some(u => u.name === openByInput) ? openByInput : 'custom'}
+                    onChange={(e) => {
+                      if (e.target.value !== 'custom') {
+                        setOpenByInput(e.target.value);
+                      }
+                    }}
+                    className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2 text-slate-200 text-xs font-medium focus:outline-none focus:border-amber-500 max-w-[150px]"
+                  >
+                    {users?.map(u => (
+                      <option key={u.id} value={u.name}>
+                        {u.name} ({u.role === 'admin' ? 'เจ้าของ' : u.role === 'manager' ? 'ผู้จัดการ' : 'แคชเชียร์'})
+                      </option>
+                    ))}
+                    <option value="custom">ระบุเอง...</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={openByInput}
+                    onChange={(e) => setOpenByInput(e.target.value)}
+                    className="flex-1 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 text-sm focus:outline-none focus:border-amber-500"
+                    placeholder="ชื่อผู้รับผิดชอบกะ"
+                  />
+                </div>
               </div>
 
               <div>
@@ -705,12 +733,30 @@ export const CashShiftManagementPanel: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1">ผู้ปิดกะ / รับผิดชอบตรวจสอบ</label>
-                <input
-                  type="text"
-                  value={closeByInput}
-                  onChange={(e) => setCloseByInput(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 text-sm focus:outline-none focus:border-amber-500"
-                />
+                <div className="flex gap-2">
+                  <select
+                    value={users?.some(u => u.name === closeByInput) ? closeByInput : 'custom'}
+                    onChange={(e) => {
+                      if (e.target.value !== 'custom') {
+                        setCloseByInput(e.target.value);
+                      }
+                    }}
+                    className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2 text-slate-200 text-xs font-medium focus:outline-none focus:border-amber-500 max-w-[150px]"
+                  >
+                    {users?.map(u => (
+                      <option key={u.id} value={u.name}>
+                        {u.name} ({u.role === 'admin' ? 'เจ้าของ' : u.role === 'manager' ? 'ผู้จัดการ' : 'แคชเชียร์'})
+                      </option>
+                    ))}
+                    <option value="custom">ระบุเอง...</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={closeByInput}
+                    onChange={(e) => setCloseByInput(e.target.value)}
+                    className="flex-1 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 text-sm focus:outline-none focus:border-amber-500"
+                  />
+                </div>
               </div>
 
               <div>
@@ -819,12 +865,30 @@ export const CashShiftManagementPanel: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1">ผู้บันทึกรายการ</label>
-                <input
-                  type="text"
-                  value={movRecordedBy}
-                  onChange={(e) => setMovRecordedBy(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 text-sm focus:outline-none focus:border-amber-500"
-                />
+                <div className="flex gap-2">
+                  <select
+                    value={users?.some(u => u.name === movRecordedBy) ? movRecordedBy : 'custom'}
+                    onChange={(e) => {
+                      if (e.target.value !== 'custom') {
+                        setMovRecordedBy(e.target.value);
+                      }
+                    }}
+                    className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2 text-slate-200 text-xs font-medium focus:outline-none focus:border-amber-500 max-w-[150px]"
+                  >
+                    {users?.map(u => (
+                      <option key={u.id} value={u.name}>
+                        {u.name} ({u.role === 'admin' ? 'เจ้าของ' : u.role === 'manager' ? 'ผู้จัดการ' : 'แคชเชียร์'})
+                      </option>
+                    ))}
+                    <option value="custom">ระบุเอง...</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={movRecordedBy}
+                    onChange={(e) => setMovRecordedBy(e.target.value)}
+                    className="flex-1 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 text-sm focus:outline-none focus:border-amber-500"
+                  />
+                </div>
               </div>
             </div>
 

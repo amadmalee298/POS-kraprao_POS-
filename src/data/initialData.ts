@@ -16,6 +16,7 @@ import {
   SecurityLogEntry,
   StockAdjustmentLog
 } from '../types';
+import { SHOP_LOGO_URL } from '../assets/logo';
 
 export const INITIAL_BRANCHES: Branch[] = [
   {
@@ -518,6 +519,7 @@ export const INITIAL_SETTINGS: SystemSettings = {
   syncIntervalSeconds: 30,
   promptpayMobileOrTaxId: '0812345678',
   shopName: 'บริษัท กะเพรา เอ็นเตอร์ไพรส์ จำกัด (สำนักงานใหญ่)',
+  shopLogoUrl: SHOP_LOGO_URL,
   shopTaxId: '0105562089123',
   shopAddress: '991 อาคารสยามพารากอน ชั้น G ถ.พระราม 1 ปทุมวัน กรุงเทพมหานคร 10330',
   shopPhone: '02-123-4567',

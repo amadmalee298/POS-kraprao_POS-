@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Calendar,
   Clock,
@@ -109,6 +109,86 @@ export const StaffSchedulingPanel: React.FC = () => {
     day: { dayOfWeek: 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun'; dateStr: string; label: string };
     existingShift?: ShiftEntry;
   } | null>(null);
+
+  // Controlled shift modal fields
+  const [modalShiftType, setModalShiftType] = useState<ShiftType>('morning');
+  const [modalStart, setModalStart] = useState<string>('08:00');
+  const [modalEnd, setModalEnd] = useState<string>('16:00');
+  const [modalHours, setModalHours] = useState<number>(8);
+  const [modalNotes, setModalNotes] = useState<string>('');
+
+  const calculateHoursBetween = (startStr: string, endStr: string): number => {
+    if (!startStr || !endStr) return 0;
+    const [sh, sm] = startStr.split(':').map(Number);
+    const [eh, em] = endStr.split(':').map(Number);
+    let startMins = (sh || 0) * 60 + (sm || 0);
+    let endMins = (eh || 0) * 60 + (em || 0);
+    if (endMins <= startMins && endMins !== 0) {
+      endMins += 24 * 60;
+    } else if (endMins === 0 && startMins > 0) {
+      endMins = 24 * 60;
+    }
+    const diff = (endMins - startMins) / 60;
+    return Math.max(0, Math.round(diff * 10) / 10);
+  };
+
+  useEffect(() => {
+    if (editingShift) {
+      const s = editingShift.existingShift;
+      const initialType = s?.shiftType || 'morning';
+      const initialStart = s?.scheduledStart || (initialType === 'evening' ? '16:00' : initialType === 'fullday' ? '09:00' : initialType === 'off' ? '' : '08:00');
+      const initialEnd = s?.scheduledEnd || (initialType === 'evening' ? '00:00' : initialType === 'fullday' ? '21:00' : initialType === 'off' ? '' : '16:00');
+      const initialHours = s?.scheduledHours ?? (initialType === 'fullday' ? 12 : initialType === 'off' ? 0 : 8);
+
+      setModalShiftType(initialType);
+      setModalStart(initialStart);
+      setModalEnd(initialEnd);
+      setModalHours(initialHours);
+      setModalNotes(s?.notes || '');
+    }
+  }, [editingShift]);
+
+  const handleShiftTypeSelect = (newType: ShiftType) => {
+    setModalShiftType(newType);
+    if (newType === 'morning') {
+      setModalStart('08:00');
+      setModalEnd('16:00');
+      setModalHours(8);
+    } else if (newType === 'evening') {
+      setModalStart('16:00');
+      setModalEnd('00:00');
+      setModalHours(8);
+    } else if (newType === 'fullday') {
+      setModalStart('09:00');
+      setModalEnd('21:00');
+      setModalHours(12);
+    } else if (newType === 'off') {
+      setModalStart('');
+      setModalEnd('');
+      setModalHours(0);
+    } else if (newType === 'custom') {
+      const hrs = calculateHoursBetween(modalStart, modalEnd);
+      setModalHours(hrs);
+    }
+  };
+
+  const handleStartChange = (newStart: string) => {
+    setModalStart(newStart);
+    if (modalShiftType !== 'custom' && modalShiftType !== 'off') {
+      setModalShiftType('custom');
+    }
+    const hrs = calculateHoursBetween(newStart, modalEnd);
+    setModalHours(hrs);
+  };
+
+  const handleEndChange = (newEnd: string) => {
+    setModalEnd(newEnd);
+    if (modalShiftType !== 'custom' && modalShiftType !== 'off') {
+      setModalShiftType('custom');
+    }
+    const hrs = calculateHoursBetween(modalStart, newEnd);
+    setModalHours(hrs);
+  };
 
   // Clock In / Out Modal
   const [clockingShift, setClockingShift] = useState<ShiftEntry | null>(null);
@@ -276,23 +356,16 @@ export const StaffSchedulingPanel: React.FC = () => {
     e.preventDefault();
     if (!editingShift) return;
 
-    const formData = new FormData(e.currentTarget);
-    const shiftType = formData.get('shiftType') as ShiftType;
-    const scheduledStart = formData.get('scheduledStart') as string;
-    const scheduledEnd = formData.get('scheduledEnd') as string;
-    const scheduledHours = Number(formData.get('scheduledHours') || 8);
-    const notes = formData.get('notes') as string;
-
     const existing = editingShift.existingShift;
 
     if (existing) {
       updateShift({
         ...existing,
-        shiftType,
-        scheduledStart,
-        scheduledEnd,
-        scheduledHours,
-        notes
+        shiftType: modalShiftType,
+        scheduledStart: modalStart,
+        scheduledEnd: modalEnd,
+        scheduledHours: modalHours,
+        notes: modalNotes
       });
     } else {
       addShift({
@@ -300,12 +373,12 @@ export const StaffSchedulingPanel: React.FC = () => {
         staffName: editingShift.staff.name,
         date: editingShift.day.dateStr,
         dayOfWeek: editingShift.day.dayOfWeek,
-        shiftType,
-        scheduledStart,
-        scheduledEnd,
-        scheduledHours,
-        status: shiftType === 'off' ? 'completed' : 'scheduled',
-        notes
+        shiftType: modalShiftType,
+        scheduledStart: modalStart,
+        scheduledEnd: modalEnd,
+        scheduledHours: modalHours,
+        status: modalShiftType === 'off' ? 'completed' : 'scheduled',
+        notes: modalNotes
       });
     }
 
@@ -1559,7 +1632,8 @@ export const StaffSchedulingPanel: React.FC = () => {
                 <label className="block text-slate-300 mb-1 font-bold">ประเภทกะการทำงาน (Shift Type)</label>
                 <select
                   name="shiftType"
-                  defaultValue={editingShift.existingShift?.shiftType || 'morning'}
+                  value={modalShiftType}
+                  onChange={(e) => handleShiftTypeSelect(e.target.value as ShiftType)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 font-bold focus:border-amber-500"
                 >
                   <option value="morning">☀️ กะเช้า (08:00 - 16:00) [8 ชม.]</option>
@@ -1576,8 +1650,10 @@ export const StaffSchedulingPanel: React.FC = () => {
                   <input
                     type="time"
                     name="scheduledStart"
-                    defaultValue={editingShift.existingShift?.scheduledStart || '08:00'}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono font-bold"
+                    value={modalStart}
+                    onChange={(e) => handleStartChange(e.target.value)}
+                    disabled={modalShiftType === 'off'}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono font-bold disabled:opacity-40"
                   />
                 </div>
 
@@ -1586,8 +1662,10 @@ export const StaffSchedulingPanel: React.FC = () => {
                   <input
                     type="time"
                     name="scheduledEnd"
-                    defaultValue={editingShift.existingShift?.scheduledEnd || '16:00'}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono font-bold"
+                    value={modalEnd}
+                    onChange={(e) => handleEndChange(e.target.value)}
+                    disabled={modalShiftType === 'off'}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono font-bold disabled:opacity-40"
                   />
                 </div>
               </div>
@@ -1600,8 +1678,10 @@ export const StaffSchedulingPanel: React.FC = () => {
                   min="0"
                   max="24"
                   name="scheduledHours"
-                  defaultValue={editingShift.existingShift?.scheduledHours ?? 8}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono font-bold"
+                  value={modalHours}
+                  onChange={(e) => setModalHours(parseFloat(e.target.value) || 0)}
+                  disabled={modalShiftType === 'off'}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono font-bold disabled:opacity-40"
                 />
               </div>
 
@@ -1611,7 +1691,8 @@ export const StaffSchedulingPanel: React.FC = () => {
                   type="text"
                   name="notes"
                   placeholder="เช่น สลับกะกับคุณนภา, เตรียมพีควันศุกร์"
-                  defaultValue={editingShift.existingShift?.notes || ''}
+                  value={modalNotes}
+                  onChange={(e) => setModalNotes(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200"
                 />
               </div>

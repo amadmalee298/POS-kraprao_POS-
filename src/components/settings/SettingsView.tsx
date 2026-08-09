@@ -491,6 +491,17 @@ export const SettingsView: React.FC = () => {
       ? settings.qrPaymentMethods
       : DEFAULT_QR_METHODS
   );
+
+  useEffect(() => {
+    if (settings.qrPaymentMethods && settings.qrPaymentMethods.length > 0) {
+      setConfiguredPaymentMethods(settings.qrPaymentMethods);
+      const promptPayItem = settings.qrPaymentMethods.find(m => m.type === 'promptpay');
+      if (promptPayItem?.accountNumber) {
+        setPromptPay(promptPayItem.accountNumber);
+      }
+    }
+  }, [settings.qrPaymentMethods]);
+
   const [editingPaymentMethod, setEditingPaymentMethod] = useState<QrPaymentOption | null>(null);
   const [isPaymentMethodModalOpen, setIsPaymentMethodModalOpen] = useState(false);
   const [paymentMethodForm, setPaymentMethodForm] = useState<Partial<QrPaymentOption>>({
@@ -571,7 +582,27 @@ export const SettingsView: React.FC = () => {
     }
 
     setConfiguredPaymentMethods(updated);
-    updateSettings({ qrPaymentMethods: updated });
+
+    const promptPayItem = updated.find(m => m.type === 'promptpay');
+    const cleanPromptPay = promptPayItem?.accountNumber?.trim();
+
+    if (cleanPromptPay) {
+      setPromptPay(cleanPromptPay);
+      updateSettings({
+        qrPaymentMethods: updated,
+        promptPayId: cleanPromptPay,
+        promptpayMobileOrTaxId: cleanPromptPay
+      });
+      if (currentBranch) {
+        updateBranch({
+          ...currentBranch,
+          promptpayMobileOrTaxId: cleanPromptPay
+        });
+      }
+    } else {
+      updateSettings({ qrPaymentMethods: updated });
+    }
+
     setEditingPaymentMethod(null);
     setIsPaymentMethodModalOpen(false);
   };
