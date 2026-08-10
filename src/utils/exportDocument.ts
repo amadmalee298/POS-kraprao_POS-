@@ -90,31 +90,20 @@ export function convertCssColorToRgb(colorStr: string): string {
  */
 export function sanitizeDocForHtml2Canvas(clonedDoc: Document, targetId?: string, paperType: 'a4' | '80mm' | '58mm' = 'a4') {
   try {
-    // 1. Intercept getComputedStyle on cloned document window
-    if (clonedDoc.defaultView) {
-      const origGetComputedStyle = clonedDoc.defaultView.getComputedStyle;
-      clonedDoc.defaultView.getComputedStyle = function (elt: Element, pseudoElt?: string | null) {
-        const style = origGetComputedStyle.call(this, elt, pseudoElt);
-        if (!style) return style;
-
-        return new Proxy(style, {
-          get(target, prop, receiver) {
-            if (prop === 'getPropertyValue') {
-              return (propertyName: string) => {
-                const val = target.getPropertyValue(propertyName);
-                return convertCssColorToRgb(val);
-              };
-            }
-            const val = Reflect.get(target, prop, receiver);
-            if (typeof val === 'string') {
-              return convertCssColorToRgb(val);
-            }
-            if (typeof val === 'function') {
-              return val.bind(target);
-            }
-            return val;
+    // 1. Safely intercept CSSStyleDeclaration.prototype.getPropertyValue on cloned document
+    if (clonedDoc.defaultView && clonedDoc.defaultView.CSSStyleDeclaration) {
+      const proto = clonedDoc.defaultView.CSSStyleDeclaration.prototype;
+      const origGetPropertyValue = proto.getPropertyValue;
+      proto.getPropertyValue = function (propertyName: string) {
+        try {
+          const val = origGetPropertyValue.call(this, propertyName);
+          if (val && typeof val === 'string' && /oklch|oklab|color\(/i.test(val)) {
+            return convertCssColorToRgb(val);
           }
-        });
+          return val;
+        } catch {
+          return '';
+        }
       };
     }
 
@@ -149,59 +138,65 @@ export function sanitizeDocForHtml2Canvas(clonedDoc: Document, targetId?: string
       targetEl = clonedDoc.getElementById(targetId);
     }
     if (!targetEl) {
-      targetEl = clonedDoc.querySelector('.printable-document, #printable-quotation, #printable-tax-invoice, #printable-receipt, #po-printable-doc') as HTMLElement;
+      targetEl = clonedDoc.querySelector('.printable-document, #printable-quotation, #printable-tax-invoice, #printable-receipt, #po-printable-doc, #accounting-report-content, #cashflow-report-content') as HTMLElement;
     }
 
     if (targetEl) {
-      targetEl.style.backgroundColor = '#ffffff';
-      targetEl.style.color = '#0f172a';
-      targetEl.style.boxSizing = 'border-box';
-      targetEl.style.borderRadius = '0px';
-      targetEl.style.border = 'none';
-      targetEl.style.boxShadow = 'none';
+      const isWhiteDocument = targetEl.classList.contains('printable-a4') ||
+        targetEl.classList.contains('printable-document') ||
+        ['printable-quotation', 'printable-tax-invoice', 'printable-receipt', 'po-printable-doc', 'printable-qr-card'].includes(targetEl.id);
 
-      if (paperType === 'a4' || targetEl.classList.contains('printable-a4') || targetEl.id === 'printable-quotation' || targetEl.id === 'printable-tax-invoice' || targetEl.id === 'po-printable-doc') {
-        targetEl.style.width = '800px';
-        targetEl.style.minWidth = '800px';
-        targetEl.style.maxWidth = '800px';
-        targetEl.style.padding = '32px';
-        targetEl.style.margin = '0 auto';
-      } else if (paperType === '80mm' || targetEl.id === 'printable-receipt') {
-        targetEl.style.width = '380px';
-        targetEl.style.minWidth = '380px';
-        targetEl.style.maxWidth = '380px';
-        targetEl.style.padding = '16px';
-        targetEl.style.margin = '0 auto';
-      } else if (paperType === '58mm') {
-        targetEl.style.width = '280px';
-        targetEl.style.minWidth = '280px';
-        targetEl.style.maxWidth = '280px';
-        targetEl.style.padding = '12px';
-        targetEl.style.margin = '0 auto';
+      if (isWhiteDocument) {
+        targetEl.style.backgroundColor = '#ffffff';
+        targetEl.style.color = '#0f172a';
+        targetEl.style.boxSizing = 'border-box';
+        targetEl.style.borderRadius = '0px';
+        targetEl.style.border = 'none';
+        targetEl.style.boxShadow = 'none';
+
+        if (paperType === 'a4' || targetEl.classList.contains('printable-a4') || targetEl.id === 'printable-quotation' || targetEl.id === 'printable-tax-invoice' || targetEl.id === 'po-printable-doc') {
+          targetEl.style.width = '800px';
+          targetEl.style.minWidth = '800px';
+          targetEl.style.maxWidth = '800px';
+          targetEl.style.padding = '32px';
+          targetEl.style.margin = '0 auto';
+        } else if (paperType === '80mm' || targetEl.id === 'printable-receipt') {
+          targetEl.style.width = '380px';
+          targetEl.style.minWidth = '380px';
+          targetEl.style.maxWidth = '380px';
+          targetEl.style.padding = '16px';
+          targetEl.style.margin = '0 auto';
+        } else if (paperType === '58mm') {
+          targetEl.style.width = '280px';
+          targetEl.style.minWidth = '280px';
+          targetEl.style.maxWidth = '280px';
+          targetEl.style.padding = '12px';
+          targetEl.style.margin = '0 auto';
+        }
+
+        // Override dark background boxes inside white document
+        const darkBoxes = targetEl.querySelectorAll('.bg-slate-900, .bg-slate-950, .bg-slate-800');
+        darkBoxes.forEach((box) => {
+          const hBox = box as HTMLElement;
+          hBox.style.backgroundColor = '#f8fafc';
+          hBox.style.color = '#0f172a';
+          hBox.style.borderColor = '#cbd5e1';
+        });
+
+        // Override light gray info boxes to explicit clean RGB
+        const lightBoxes = targetEl.querySelectorAll('.bg-slate-50, .bg-slate-100, .bg-slate-200');
+        lightBoxes.forEach((box) => {
+          const hBox = box as HTMLElement;
+          hBox.style.backgroundColor = '#f8fafc';
+          hBox.style.color = '#0f172a';
+          hBox.style.borderColor = '#e2e8f0';
+        });
       }
 
       // Hide all non-printable interactive elements inside target
       const noPrintEls = targetEl.querySelectorAll('.no-print, .print\\:hidden, button');
       noPrintEls.forEach((el) => {
         (el as HTMLElement).style.display = 'none';
-      });
-
-      // Override any dark background boxes inside the document
-      const darkBoxes = targetEl.querySelectorAll('.bg-slate-900, .bg-slate-950, .bg-slate-800');
-      darkBoxes.forEach((box) => {
-        const hBox = box as HTMLElement;
-        hBox.style.backgroundColor = '#f8fafc';
-        hBox.style.color = '#0f172a';
-        hBox.style.borderColor = '#cbd5e1';
-      });
-
-      // Override light gray info boxes to explicit clean RGB
-      const lightBoxes = targetEl.querySelectorAll('.bg-slate-50, .bg-slate-100, .bg-slate-200');
-      lightBoxes.forEach((box) => {
-        const hBox = box as HTMLElement;
-        hBox.style.backgroundColor = '#f8fafc';
-        hBox.style.color = '#0f172a';
-        hBox.style.borderColor = '#e2e8f0';
       });
     }
   } catch (err) {
@@ -226,7 +221,7 @@ export async function exportToPNG(
     const targetId = typeof elementOrId === 'string' ? elementOrId : el.id;
 
     const canvas = await html2canvas(el, {
-      scale: 2.5, // High DPI
+      scale: 2,
       useCORS: true,
       backgroundColor: '#ffffff',
       logging: false,
@@ -255,28 +250,52 @@ export async function exportToPNG(
 export async function exportToPDF(
   elementOrId: HTMLElement | string,
   filename: string = 'document.pdf',
-  paperType: 'a4' | '80mm' | '58mm' = 'a4'
+  paperType: 'a4' | '80mm' | '58mm' = 'a4',
+  bgColor?: string,
+  targetIdOverride?: string
 ): Promise<boolean> {
+  let el: HTMLElement | null = null;
   try {
-    const el = typeof elementOrId === 'string' ? document.getElementById(elementOrId) : elementOrId;
+    el = typeof elementOrId === 'string' ? document.getElementById(elementOrId) : elementOrId;
     if (!el) {
       console.error('Element not found for PDF export:', elementOrId);
       return false;
     }
 
-    const targetId = typeof elementOrId === 'string' ? elementOrId : el.id;
+    const targetId = targetIdOverride || (typeof elementOrId === 'string' ? elementOrId : el.id);
+
+    // Calculate maximum safe canvas dimension for iOS Safari / Mobile webviews (max ~3800px)
+    const targetWidth = el.scrollWidth || el.clientWidth || 800;
+    const targetHeight = el.scrollHeight || el.clientHeight || 1200;
+    const maxCanvasDim = 3800;
+    let scale = 2;
+    if (targetHeight * scale > maxCanvasDim || targetWidth * scale > maxCanvasDim) {
+      scale = Math.max(1, Math.min(2, maxCanvasDim / Math.max(targetWidth, targetHeight)));
+    }
+
+    const defaultBgColor = bgColor || (paperType === '80mm' || paperType === '58mm' ? '#ffffff' : '#0f172a');
 
     const canvas = await html2canvas(el, {
-      scale: 2.5,
+      scale: scale,
       useCORS: true,
-      backgroundColor: '#ffffff',
+      allowTaint: true,
+      backgroundColor: defaultBgColor,
       logging: false,
+      windowWidth: targetWidth,
+      windowHeight: targetHeight,
       onclone: (clonedDoc) => {
         sanitizeDocForHtml2Canvas(clonedDoc, targetId, paperType);
       }
     });
 
+    if (!canvas || canvas.width === 0 || canvas.height === 0) {
+      throw new Error('Canvas rendering produced zero-dimension output');
+    }
+
     const imgData = canvas.toDataURL('image/png');
+    if (!imgData || imgData === 'data:,' || imgData.length < 100) {
+      throw new Error('Canvas toDataURL returned empty image data');
+    }
 
     if (paperType === '80mm' || paperType === '58mm') {
       const widthMm = paperType === '80mm' ? 80 : 58;
@@ -302,7 +321,7 @@ export async function exportToPDF(
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
       if (imgHeight <= pdfHeight - margin * 2) {
-        // Fits perfectly on single page
+        // Fits on single page
         pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight);
       } else {
         // Multi-page slicing
@@ -326,6 +345,11 @@ export async function exportToPDF(
     return true;
   } catch (error) {
     console.error('Failed to export PDF:', error);
+    if (el) {
+      console.log('Falling back to printElement due to PDF export error');
+      printElement(el, filename.replace('.pdf', ''));
+      return true;
+    }
     return false;
   }
 }

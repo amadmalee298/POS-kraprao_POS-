@@ -22,16 +22,12 @@ export const CustomizationModal: React.FC<CustomizationModalProps> = ({
   const [specialNotes, setSpecialNotes] = useState('');
   const [isNumpadOpen, setIsNumpadOpen] = useState(false);
 
-  // Fallback Fried Egg Addon if not present in context addOns
-  const friedEggAddon: AddOnOption = addOns?.find(a => 
-    a.id === 'add-egg-fried' || a.name.includes('ไข่ดาว')
-  ) || {
-    id: 'add-egg-fried',
-    name: 'เพิ่มไข่ดาว',
-    price: 10,
-    ingredientId: 'ing-egg',
-    ingredientAmount: 1
-  };
+  // Find featured topping (e.g. 'add-egg-fried' or 'เพิ่มไข่ดาว') or default to first topping
+  const featuredAddon: AddOnOption | undefined = addOns?.find(a => 
+    a.id === 'add-egg-fried' || a.name === 'เพิ่มไข่ดาว'
+  );
+
+  const primaryAddon: AddOnOption | null = featuredAddon || (addOns && addOns.length > 0 ? addOns[0] : null);
 
   useEffect(() => {
     if (menuItem) {
@@ -45,21 +41,21 @@ export const CustomizationModal: React.FC<CustomizationModalProps> = ({
 
   const handleToggleAddOn = (addon: AddOnOption) => {
     setSelectedAddOns(prev => {
-      const exists = prev.some(a => a.id === addon.id || (a.name === addon.name && a.price === addon.price));
+      const exists = prev.some(a => a.id === addon.id);
       if (exists) {
-        return prev.filter(a => !(a.id === addon.id || (a.name === addon.name && a.price === addon.price)));
+        return prev.filter(a => a.id !== addon.id);
       }
       return [...prev, addon];
     });
   };
 
-  const isFriedEggSelected = selectedAddOns.some(
-    a => a.id === friedEggAddon.id || a.name.includes('ไข่ดาว')
-  );
+  const isPrimarySelected = primaryAddon ? selectedAddOns.some(
+    a => a.id === primaryAddon.id
+  ) : false;
 
-  // Other add-ons excluding the primary fried egg
+  // Other add-ons excluding the primary featured addon
   const otherAddOns = (addOns || []).filter(
-    a => a.id !== friedEggAddon.id && !a.name.includes('ไข่ดาว')
+    a => !primaryAddon || a.id !== primaryAddon.id
   );
 
   // Calculate Unit Price
@@ -106,56 +102,58 @@ export const CustomizationModal: React.FC<CustomizationModalProps> = ({
         {/* Scrollable Body Options */}
         <div className="p-5 overflow-y-auto space-y-5 flex-1 text-slate-200">
           
-          {/* Prominent Featured Toggle: Extra Fried Egg (+10฿) */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between">
-              <span>ตัวเลือกยอดนิยม (Featured Extra)</span>
-            </label>
-            <div
-              onClick={() => handleToggleAddOn(friedEggAddon)}
-              className={`p-3.5 rounded-2xl border flex items-center justify-between cursor-pointer transition shadow-md select-none ${
-                isFriedEggSelected
-                  ? 'bg-gradient-to-r from-amber-950/60 via-amber-900/40 to-slate-900 border-amber-500 text-amber-200 ring-2 ring-amber-500/30'
-                  : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center space-x-3">
-                <div className={`p-2.5 rounded-xl flex items-center justify-center transition ${
-                  isFriedEggSelected ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30' : 'bg-slate-800 text-amber-400'
-                }`}>
-                  <Egg className="w-5 h-5 stroke-[2.5]" />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-slate-100 flex items-center space-x-2">
-                    <span>{friedEggAddon.name}</span>
-                    <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30 font-black">
-                      +{friedEggAddon.price} ฿
-                    </span>
+          {/* Prominent Featured Toggle: Primary/Featured Topping */}
+          {primaryAddon && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between">
+                <span>ตัวเลือกยอดนิยม (Featured Extra)</span>
+              </label>
+              <div
+                onClick={() => handleToggleAddOn(primaryAddon)}
+                className={`p-3.5 rounded-2xl border flex items-center justify-between cursor-pointer transition shadow-md select-none ${
+                  isPrimarySelected
+                    ? 'bg-gradient-to-r from-amber-950/60 via-amber-900/40 to-slate-900 border-amber-500 text-amber-200 ring-2 ring-amber-500/30'
+                    : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center space-x-3">
+                  <div className={`p-2.5 rounded-xl flex items-center justify-center transition ${
+                    isPrimarySelected ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30' : 'bg-slate-800 text-amber-400'
+                  }`}>
+                    <Egg className="w-5 h-5 stroke-[2.5]" />
                   </div>
-                  <p className="text-xs text-slate-400 mt-0.5">ไข่ดาวทอดขอบกรอบ ไข่แดงเยิ้มฉ่ำ เพิ่มความอร่อยให้มื้ออาหาร</p>
+                  <div>
+                    <div className="text-sm font-bold text-slate-100 flex items-center space-x-2">
+                      <span>{primaryAddon.name}</span>
+                      <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30 font-black">
+                        +{primaryAddon.price} ฿
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">ท็อปปิ้งยอดนิยม เพิ่มความอร่อยให้มื้ออาหาร</p>
+                  </div>
                 </div>
-              </div>
 
-              {/* Toggle Switch Checkbox */}
-              <div className="flex items-center space-x-2 shrink-0 ml-2">
-                <div
-                  className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
-                    isFriedEggSelected
-                      ? 'bg-amber-500 border-amber-400 text-slate-950 scale-110 shadow-sm'
-                      : 'bg-slate-900 border-slate-700 hover:border-slate-500'
-                  }`}
-                >
-                  {isFriedEggSelected && <Check className="w-4 h-4 stroke-[3]" />}
+                {/* Toggle Switch Checkbox */}
+                <div className="flex items-center space-x-2 shrink-0 ml-2">
+                  <div
+                    className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                      isPrimarySelected
+                        ? 'bg-amber-500 border-amber-400 text-slate-950 scale-110 shadow-sm'
+                        : 'bg-slate-900 border-slate-700 hover:border-slate-500'
+                    }`}
+                  >
+                    {isPrimarySelected && <Check className="w-4 h-4 stroke-[3]" />}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Other Add-on Toppings Section */}
           {otherAddOns.length > 0 && (
             <div>
               <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block mb-2">
-                ตัวเลือกเพิ่มเติมอื่นๆ (Other Toppings)
+                {primaryAddon ? 'ตัวเลือกเพิ่มเติมอื่นๆ' : 'รายการ Toppings / ท็อปปิ้งเสริม'} ({otherAddOns.length} รายการ)
               </span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {otherAddOns.map(addon => {
@@ -163,6 +161,7 @@ export const CustomizationModal: React.FC<CustomizationModalProps> = ({
                   return (
                     <button
                       key={addon.id}
+                      type="button"
                       onClick={() => handleToggleAddOn(addon)}
                       className={`p-2.5 rounded-xl border flex items-center justify-between transition ${
                         isSelected
@@ -170,9 +169,9 @@ export const CustomizationModal: React.FC<CustomizationModalProps> = ({
                           : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800'
                       }`}
                     >
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-2 truncate mr-2">
                         <div
-                          className={`w-4 h-4 rounded border flex items-center justify-center transition ${
+                          className={`w-4 h-4 rounded border flex items-center justify-center transition shrink-0 ${
                             isSelected
                               ? 'bg-amber-500 border-amber-400 text-slate-950'
                               : 'border-slate-600 bg-slate-900'
@@ -180,9 +179,9 @@ export const CustomizationModal: React.FC<CustomizationModalProps> = ({
                         >
                           {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
                         </div>
-                        <span className="text-xs font-medium text-slate-200">{addon.name}</span>
+                        <span className="text-xs font-medium text-slate-200 truncate">{addon.name}</span>
                       </div>
-                      <span className="text-xs font-bold text-amber-400">+{addon.price} ฿</span>
+                      <span className="text-xs font-bold text-amber-400 shrink-0">+{addon.price} ฿</span>
                     </button>
                   );
                 })}

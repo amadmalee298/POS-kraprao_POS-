@@ -8,6 +8,7 @@ import {
   Expense,
   Branch,
   User,
+  UserRole,
   SystemSettings,
   CartItem,
   SpiceLevel,
@@ -1055,7 +1056,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       isFullTaxInvoiceRequested,
       isOfflineOrder: effectiveOffline,
       isSynced: !effectiveOffline,
-      syncedAt: effectiveOffline ? undefined : nowIso
+      syncedAt: effectiveOffline ? undefined : nowIso,
+      isQrOrder: false,
+      orderSource: 'pos'
     };
     newOrder.checksum = computeOrderChecksum(newOrder);
 
@@ -1155,7 +1158,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       discountNote: noteText,
       isOfflineOrder: effectiveOffline,
       isSynced: !effectiveOffline,
-      syncedAt: effectiveOffline ? undefined : nowIso
+      syncedAt: effectiveOffline ? undefined : nowIso,
+      isQrOrder: true,
+      orderSource: 'qr'
     };
     newOrder.checksum = computeOrderChecksum(newOrder);
 

@@ -62,7 +62,6 @@ import {
   Settings,
   Sliders,
   Play,
-  Edit2,
   Building2,
   Building,
   CreditCard,
@@ -389,16 +388,12 @@ export const QrOrderingView: React.FC = () => {
   const [selectedQrOptionId, setSelectedQrOptionId] = useState<string>('promptpay');
   const [orderSuccessTicket, setOrderSuccessTicket] = useState<{ orderNumber: string; table: string; total: number; paymentMethod: PaymentMethod } | null>(null);
 
-  // Fallback Fried egg addon
-  const friedEggAddon: AddOnOption = addOns?.find(a => 
-    a.id === 'add-egg-fried' || a.name.includes('ไข่ดาว')
-  ) || {
-    id: 'add-egg-fried',
-    name: 'เพิ่มไข่ดาว',
-    price: 10,
-    ingredientId: 'ing-egg',
-    ingredientAmount: 1
-  };
+  // Featured / Primary Addon for QR Ordering simulator
+  const primarySimAddon: AddOnOption | null = (addOns && addOns.length > 0)
+    ? (addOns.find(a => a.id === 'add-egg-fried' || a.name === 'เพิ่มไข่ดาว') || addOns[0])
+    : null;
+
+  const simOtherAddOns = (addOns || []).filter(a => !primarySimAddon || a.id !== primarySimAddon.id);
 
   const handleOpenSim = (table: string) => {
     setSelectedSimTable(table);
@@ -434,17 +429,17 @@ export const QrOrderingView: React.FC = () => {
 
   const handleToggleAddOn = (addon: AddOnOption) => {
     setSimSelectedAddOns(prev => {
-      const exists = prev.some(a => a.id === addon.id || (a.name === addon.name && a.price === addon.price));
+      const exists = prev.some(a => a.id === addon.id);
       if (exists) {
-        return prev.filter(a => !(a.id === addon.id || (a.name === addon.name && a.price === addon.price)));
+        return prev.filter(a => a.id !== addon.id);
       }
       return [...prev, addon];
     });
   };
 
-  const isFriedEggSelected = simSelectedAddOns.some(
-    a => a.id === friedEggAddon.id || a.name.includes('ไข่ดาว')
-  );
+  const isPrimarySimSelected = primarySimAddon ? simSelectedAddOns.some(
+    a => a.id === primarySimAddon.id
+  ) : false;
 
   const handleAddCustomizedToSimCart = () => {
     if (!customizingItem) return;
@@ -1370,38 +1365,76 @@ export const QrOrderingView: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Featured Extra Fried Egg Toggle */}
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
-                      ท็อปปิ้งแนะนำ (Featured Extra)
-                    </label>
-                    <div
-                      onClick={() => handleToggleAddOn(friedEggAddon)}
-                      className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition select-none ${
-                        isFriedEggSelected
-                          ? 'bg-amber-950/60 border-amber-500 text-amber-200 ring-1 ring-amber-500/40'
-                          : 'bg-slate-950 border-slate-800 text-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2.5">
-                        <div className={`p-1.5 rounded-lg ${isFriedEggSelected ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-amber-400'}`}>
-                          <Egg className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-slate-100 flex items-center space-x-1">
-                            <span>{friedEggAddon.name}</span>
-                            <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-extrabold">+{friedEggAddon.price}฿</span>
+                  {/* Featured / Primary Topping Toggle */}
+                  {primarySimAddon && (
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
+                        ท็อปปิ้งแนะนำ (Featured Extra)
+                      </label>
+                      <div
+                        onClick={() => handleToggleAddOn(primarySimAddon)}
+                        className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition select-none ${
+                          isPrimarySimSelected
+                            ? 'bg-amber-950/60 border-amber-500 text-amber-200 ring-1 ring-amber-500/40'
+                            : 'bg-slate-950 border-slate-800 text-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2.5">
+                          <div className={`p-1.5 rounded-lg ${isPrimarySimSelected ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-amber-400'}`}>
+                            <Egg className="w-4 h-4" />
                           </div>
-                          <div className="text-[10px] text-slate-400">ทอดกรอบขอบทอง ไข่แดงเยิ้ม</div>
+                          <div>
+                            <div className="text-xs font-bold text-slate-100 flex items-center space-x-1">
+                              <span>{primarySimAddon.name}</span>
+                              <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-extrabold">+{primarySimAddon.price}฿</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400">ท็อปปิ้งเพิ่มความอร่อย</div>
+                          </div>
                         </div>
-                      </div>
-                      <div className={`w-5 h-5 rounded-md border flex items-center justify-center ${
-                        isFriedEggSelected ? 'bg-amber-500 border-amber-400 text-slate-950' : 'bg-slate-900 border-slate-700'
-                      }`}>
-                        {isFriedEggSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                        <div className={`w-5 h-5 rounded-md border flex items-center justify-center ${
+                          isPrimarySimSelected ? 'bg-amber-500 border-amber-400 text-slate-950' : 'bg-slate-900 border-slate-700'
+                        }`}>
+                          {isPrimarySimSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
+
+                  {/* Other Add-on Toppings for QR Ordering */}
+                  {simOtherAddOns.length > 0 && (
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                        {primarySimAddon ? 'ตัวเลือกท็อปปิ้งเพิ่มเติม' : 'รายการท็อปปิ้ง'} ({simOtherAddOns.length} รายการ)
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {simOtherAddOns.map(addon => {
+                          const isSelected = simSelectedAddOns.some(a => a.id === addon.id);
+                          return (
+                            <button
+                              key={addon.id}
+                              type="button"
+                              onClick={() => handleToggleAddOn(addon)}
+                              className={`p-2 rounded-xl border flex items-center justify-between text-left transition ${
+                                isSelected
+                                  ? 'bg-amber-950/40 border-amber-500/60 text-amber-300 ring-1 ring-amber-500/30'
+                                  : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                              }`}
+                            >
+                              <div className="flex items-center space-x-2 truncate mr-1">
+                                <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                                  isSelected ? 'bg-amber-500 border-amber-400 text-slate-950' : 'border-slate-700 bg-slate-900'
+                                }`}>
+                                  {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                                </div>
+                                <span className="text-[11px] font-medium text-slate-200 truncate">{addon.name}</span>
+                              </div>
+                              <span className="text-[11px] font-bold text-amber-400 shrink-0">+{addon.price}฿</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Notes */}
                   <div>

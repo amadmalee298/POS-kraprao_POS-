@@ -1,7 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import { sanitizeDocForHtml2Canvas } from '../../utils/exportDocument';
+import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import {
   BarChart3,
   TrendingUp,
@@ -1038,50 +1036,17 @@ export const AccountingView: React.FC = () => {
     setIsGeneratingPDF(true);
 
     try {
-      const element = reportRef.current;
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#0f172a',
-        logging: false,
-        windowWidth: element.scrollWidth,
-        windowHeight: element.scrollHeight,
-        onclone: (clonedDoc) => {
-          sanitizeDocForHtml2Canvas(clonedDoc);
-        }
-      });
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
-
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pdfWidth;
-      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pdfHeight;
-
-      while (heightLeft > 0) {
-        position -= pdfHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pdfHeight;
-      }
-
       const branchCleanName = (currentBranch?.name || 'Branch').replace(/[^a-zA-Z0-9ก-๙]/g, '_');
       const fileName = `Financial_Report_${branchCleanName}_${selectedMonth}.pdf`;
-      pdf.save(fileName);
+      const ok = await exportToPDF(reportRef.current, fileName, 'a4', '#0f172a', 'accounting-report-content');
+      if (!ok && reportRef.current) {
+        printElement(reportRef.current, `Financial Report ${selectedMonth}`);
+      }
     } catch (err) {
       console.error('Failed to generate PDF report:', err);
-      alert('เกิดข้อผิดพลาดในการสร้างไฟล์ PDF โปรดลองอีกครั้ง');
+      if (reportRef.current) {
+        printElement(reportRef.current, `Financial Report ${selectedMonth}`);
+      }
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -1178,49 +1143,17 @@ export const AccountingView: React.FC = () => {
     setIsGeneratingPDF(true);
 
     try {
-      const canvas = await html2canvas(targetEl, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#0f172a',
-        logging: false,
-        windowWidth: targetEl.scrollWidth,
-        windowHeight: targetEl.scrollHeight,
-        onclone: (clonedDoc) => {
-          sanitizeDocForHtml2Canvas(clonedDoc);
-        }
-      });
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
-
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pdfWidth;
-      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pdfHeight;
-
-      while (heightLeft > 0) {
-        position -= pdfHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pdfHeight;
-      }
-
       const branchCleanName = (currentBranch?.name || 'Branch').replace(/[^a-zA-Z0-9ก-๙]/g, '_');
       const fileName = `CashFlow_Statement_${branchCleanName}_${selectedMonth}.pdf`;
-      pdf.save(fileName);
+      const ok = await exportToPDF(targetEl, fileName, 'a4', '#0f172a', 'cashflow-report-content');
+      if (!ok) {
+        printElement(targetEl, `Cash Flow Statement ${selectedMonth}`);
+      }
     } catch (err) {
       console.error('Failed to generate Cash Flow PDF:', err);
-      alert('เกิดข้อผิดพลาดในการสร้างไฟล์ PDF โปรดลองอีกครั้ง');
+      if (targetEl) {
+        printElement(targetEl, `Cash Flow Statement ${selectedMonth}`);
+      }
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -2269,7 +2202,7 @@ export const AccountingView: React.FC = () => {
             </div>
 
             {/* Printable & Printable Ref Section */}
-            <div ref={cashFlowReportRef} className="space-y-4">
+            <div ref={cashFlowReportRef} id="cashflow-report-content" className="space-y-4">
               {/* Detailed 3 Activity Breakdown */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 {/* 1. Operating Activities */}

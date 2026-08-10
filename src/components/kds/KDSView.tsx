@@ -12,10 +12,12 @@ import {
   ChevronRight,
   ArrowRight,
   UtensilsCrossed,
-  Sparkles
+  Sparkles,
+  QrCode,
+  Store
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { Order, OrderStatus } from '../../types';
+import { Order, OrderStatus, isQrOrderCheck } from '../../types';
 import { CancelOrderModal } from '../pos/CancelOrderModal';
 
 export const KDSView: React.FC = () => {
@@ -33,7 +35,20 @@ export const KDSView: React.FC = () => {
   // Filter branch orders
   const branchOrders = orders.filter(o => o.branchId === currentBranch.id);
 
-  const filteredOrders = branchOrders.filter(o => {
+  // Source filter setting: 'all' (POS + QR) vs 'qr_only' (สแกน QR เท่านั้น)
+  const sourceFilter = settings.kdsOrderSourceFilter || 'all';
+
+  const qrOrdersCount = branchOrders.filter(o => isQrOrderCheck(o) && ['pending', 'cooking', 'ready'].includes(o.status)).length;
+  const posOrdersCount = branchOrders.filter(o => !isQrOrderCheck(o) && ['pending', 'cooking', 'ready'].includes(o.status)).length;
+
+  const filteredBySource = branchOrders.filter(o => {
+    if (sourceFilter === 'qr_only') {
+      return isQrOrderCheck(o);
+    }
+    return true;
+  });
+
+  const filteredOrders = filteredBySource.filter(o => {
     if (statusFilter === 'active') {
       return o.status === 'pending' || o.status === 'cooking' || o.status === 'ready';
     }
@@ -124,6 +139,35 @@ export const KDSView: React.FC = () => {
             )}
           </div>
 
+          {/* Kitchen Order Source Selector (ทั้งหมด POS+QR vs เฉพาะสแกน QR) */}
+          <div className="flex p-1 bg-slate-950 border border-slate-800 rounded-xl text-xs font-semibold">
+            <button
+              onClick={() => updateSettings({ kdsOrderSourceFilter: 'all' })}
+              className={`px-3 py-1.5 rounded-lg transition flex items-center space-x-1.5 ${
+                sourceFilter === 'all'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="เปิดรับออเดอร์ทุกช่องทาง (POS หน้าร้าน + ลูกค้าสแกน QR)"
+            >
+              <Store className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">ออเดอร์ทั้งหมด</span>
+              <span className="sm:hidden">ทั้งหมด</span>
+            </button>
+            <button
+              onClick={() => updateSettings({ kdsOrderSourceFilter: 'qr_only' })}
+              className={`px-3 py-1.5 rounded-lg transition flex items-center space-x-1.5 ${
+                sourceFilter === 'qr_only'
+                  ? 'bg-cyan-500 text-slate-950 font-bold shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="เปิดเฉพาะออเดอร์ที่ลูกค้าสแกน QR Code เท่านั้น"
+            >
+              <QrCode className="w-3.5 h-3.5 text-cyan-400" />
+              <span>เฉพาะสแกน QR ({qrOrdersCount})</span>
+            </button>
+          </div>
+
           <div className="flex p-1 bg-slate-950 border border-slate-800 rounded-xl text-xs font-semibold">
             <button
               onClick={() => setStatusFilter('active')}
@@ -131,7 +175,7 @@ export const KDSView: React.FC = () => {
                 statusFilter === 'active' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              กำลังทำ ({branchOrders.filter(o => ['pending', 'cooking', 'ready'].includes(o.status)).length})
+              กำลังทำ ({filteredBySource.filter(o => ['pending', 'cooking', 'ready'].includes(o.status)).length})
             </button>
             <button
               onClick={() => setStatusFilter('pending')}
@@ -139,7 +183,7 @@ export const KDSView: React.FC = () => {
                 statusFilter === 'pending' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              รอทำ ({branchOrders.filter(o => o.status === 'pending').length})
+              รอทำ ({filteredBySource.filter(o => o.status === 'pending').length})
             </button>
             <button
               onClick={() => setStatusFilter('cooking')}
@@ -147,7 +191,7 @@ export const KDSView: React.FC = () => {
                 statusFilter === 'cooking' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              กำลังปรุง ({branchOrders.filter(o => o.status === 'cooking').length})
+              กำลังปรุง ({filteredBySource.filter(o => o.status === 'cooking').length})
             </button>
             <button
               onClick={() => setStatusFilter('ready')}
@@ -155,7 +199,7 @@ export const KDSView: React.FC = () => {
                 statusFilter === 'ready' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              พร้อมเสิร์ฟ ({branchOrders.filter(o => o.status === 'ready').length})
+              พร้อมเสิร์ฟ ({filteredBySource.filter(o => o.status === 'ready').length})
             </button>
             <button
               onClick={() => setStatusFilter('served')}
@@ -186,6 +230,36 @@ export const KDSView: React.FC = () => {
         </div>
       </div>
 
+      {/* Banner Indicator for Active Kitchen Source Mode */}
+      {sourceFilter === 'qr_only' ? (
+        <div className="mx-4 mt-3 p-3 bg-cyan-950/80 border border-cyan-500/40 rounded-xl text-cyan-200 text-xs font-semibold flex items-center justify-between shadow-lg">
+          <div className="flex items-center space-x-2">
+            <QrCode className="w-4 h-4 text-cyan-400 animate-bounce shrink-0" />
+            <span>⚡ ครัวเปิดรับเฉพาะ: ออเดอร์จากลูกค้าที่สแกน QR Code เท่านั้น (ซ่อนรายการจาก POS หน้าร้าน {posOrdersCount} รายการ)</span>
+          </div>
+          <button
+            onClick={() => updateSettings({ kdsOrderSourceFilter: 'all' })}
+            className="px-3 py-1 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 rounded-lg text-cyan-100 font-bold text-[11px] transition shrink-0 ml-2"
+          >
+            เปิดรับทั้งหมด (POS + QR)
+          </button>
+        </div>
+      ) : (
+        <div className="mx-4 mt-3 px-3.5 py-2 bg-slate-900/60 border border-slate-800 rounded-xl text-slate-400 text-xs flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center space-x-2">
+            <Store className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>🏪 ครัวเปิดรับออเดอร์ทุกช่องทาง (POS หน้าร้าน {posOrdersCount} รายการ | สแกน QR {qrOrdersCount} รายการ)</span>
+          </div>
+          <button
+            onClick={() => updateSettings({ kdsOrderSourceFilter: 'qr_only' })}
+            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-cyan-300 font-bold text-[11px] transition flex items-center space-x-1"
+          >
+            <QrCode className="w-3 h-3 text-cyan-400" />
+            <span>เปิดเฉพาะสแกน QR</span>
+          </button>
+        </div>
+      )}
+
       {/* Main Order Grid */}
       <div className="flex-1 p-5 overflow-y-auto">
         {filteredOrders.length === 0 ? (
@@ -193,8 +267,16 @@ export const KDSView: React.FC = () => {
             <div className="p-4 bg-slate-900 rounded-full border border-slate-800 text-slate-600">
               <UtensilsCrossed className="w-12 h-12" />
             </div>
-            <p className="text-base font-semibold text-slate-300">ไม่มีรายการออเดอร์ในคิวห้องครัวขณะนี้</p>
-            <p className="text-xs text-slate-500">รายการอาหารใหม่จะปรากฏที่นี่ทันทีเมื่อมีการชำระเงินที่ POS</p>
+            <p className="text-base font-semibold text-slate-300">
+              {sourceFilter === 'qr_only'
+                ? 'ไม่มีรายการออเดอร์จากลูกค้าสแกน QR ในคิวห้องครัวขณะนี้'
+                : 'ไม่มีรายการออเดอร์ในคิวห้องครัวขณะนี้'}
+            </p>
+            <p className="text-xs text-slate-500">
+              {sourceFilter === 'qr_only'
+                ? 'รายการอาหารใหม่จะปรากฏที่นี่เมื่อลูกค้าสแกนสั่งจากโต๊ะ'
+                : 'รายการอาหารใหม่จะปรากฏที่นี่ทันทีเมื่อมีการชำระเงินที่ POS หรือ สแกนสั่งจาก QR'}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -202,6 +284,7 @@ export const KDSView: React.FC = () => {
               const elapsed = getElapsed(order.createdAt);
               const timerBadgeClass = getTimerBadge(elapsed.minutes);
               const statusBadge = getStatusBadge(order.status);
+              const isQr = isQrOrderCheck(order);
 
               return (
                 <div
@@ -229,7 +312,7 @@ export const KDSView: React.FC = () => {
                   {/* Ticket Header */}
                   <div className="p-3.5 bg-slate-850 border-b border-slate-800 flex items-center justify-between">
                     <div>
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-2 flex-wrap gap-1">
                         <span className="font-extrabold text-slate-100 text-base font-mono">
                           {order.orderNumber}
                         </span>
@@ -240,6 +323,18 @@ export const KDSView: React.FC = () => {
                             ? 'กลับบ้าน'
                             : 'เดลิเวอรี่'}
                         </span>
+                        {/* Order Source Tag */}
+                        {isQr ? (
+                          <span className="text-[10px] font-bold text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/30 flex items-center space-x-1">
+                            <QrCode className="w-3 h-3 text-cyan-400" />
+                            <span>สแกน QR</span>
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700 flex items-center space-x-1">
+                            <Store className="w-3 h-3 text-slate-400" />
+                            <span>POS</span>
+                          </span>
+                        )}
                       </div>
                       <span className="text-[10px] text-slate-400">
                         สั่งเมื่อ {new Date(order.createdAt).toLocaleTimeString('th-TH', {

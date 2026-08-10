@@ -147,11 +147,9 @@ export const InventoryView: React.FC = () => {
 
       if (quickSupplierInput.trim()) {
         addStockLot({
-          id: `lot-${Date.now()}`,
           ingredientId: ingredient.id,
           lotNumber: `LOT-QUICK-${Date.now().toString().slice(-4)}`,
-          quantityReceived: qty,
-          quantityRemaining: qty,
+          quantity: qty,
           unitCost: ingredient.unitCost,
           supplier: quickSupplierInput.trim(),
           receivedDate: new Date().toISOString().slice(0, 10),

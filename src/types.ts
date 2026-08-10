@@ -103,6 +103,14 @@ export interface Order {
   cancelledBy?: CancelledInfo;
   cancelReason?: string;
   cancelNote?: string;
+  isQrOrder?: boolean;
+  orderSource?: 'pos' | 'qr';
+}
+
+export function isQrOrderCheck(order: Order): boolean {
+  if (order.isQrOrder === true || order.orderSource === 'qr') return true;
+  if (order.discountNote?.includes('QR') || order.discountNote?.includes('ลูกค้า') || order.discountNote?.includes('สแกน') || order.discountNote?.includes('คิวอาร์')) return true;
+  return false;
 }
 
 export interface IngredientCategory {
@@ -273,7 +281,7 @@ export interface Branch {
   isMainBranch?: boolean;
 }
 
-export type UserRole = 'admin' | 'manager' | 'cashier';
+export type UserRole = 'admin' | 'manager' | 'cashier' | 'staff' | 'kitchen';
 
 export type ActiveTab =
   | 'dashboard'
@@ -338,6 +346,7 @@ export interface SystemSettings {
   shopPhone: string;
   enableKitchenSound: boolean;
   kdsWarningMinutes: number; // yellow after X mins, red after 2X mins
+  kdsOrderSourceFilter?: 'all' | 'qr_only'; // filter orders shown in kitchen (all vs qr_only)
   promptPayId?: string;
   taxId?: string;
   receiptHeader?: string;

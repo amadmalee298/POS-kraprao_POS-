@@ -182,6 +182,7 @@ export const SettingsView: React.FC = () => {
   const [vatRate, setVatRate] = useState<number>(settings.vatRate ?? 7);
   const [vatType, setVatType] = useState<'inclusive' | 'exclusive' | 'none'>(settings.vatType || 'inclusive');
   const [kdsWarnMin, setKdsWarnMin] = useState(settings.kdsWarningMinutes || 10);
+  const [kdsSourceFilter, setKdsSourceFilter] = useState<'all' | 'qr_only'>(settings.kdsOrderSourceFilter || 'all');
   const [adminPin, setAdminPin] = useState(settings.adminPin || '1234');
   const [managerPin, setManagerPin] = useState(settings.managerPin || '5555');
 
@@ -682,6 +683,7 @@ export const SettingsView: React.FC = () => {
       vatRate: Number(vatRate),
       vatType: vatType,
       kdsWarningMinutes: kdsWarnMin,
+      kdsOrderSourceFilter: kdsSourceFilter,
       adminPin: adminPin,
       managerPin: managerPin,
       qrPaymentMethods: updatedPaymentMethods
@@ -2427,6 +2429,44 @@ export const SettingsView: React.FC = () => {
               <p className="text-[11px] text-slate-500">
                 เมื่อออเดอร์ในครัวรอนานเกิน {kdsWarnMin} นาที การ์ดออเดอร์จะเปลี่ยนเป็นสีแดงและกะพริบแจ้งเตือน
               </p>
+            </div>
+
+            {/* Kitchen Order Source Option */}
+            <div className="text-xs space-y-2.5 pt-3 border-t border-slate-800">
+              <label className="block text-slate-300 font-bold">ช่องทางรับออเดอร์เข้าแสดงผลในห้องครัว (KDS Source Filter)</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setKdsSourceFilter('all')}
+                  className={`p-3.5 rounded-xl border text-left transition flex items-start space-x-3 ${
+                    kdsSourceFilter === 'all'
+                      ? 'bg-amber-500/10 border-amber-500/60 text-amber-200 shadow'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <Store className={`w-5 h-5 shrink-0 mt-0.5 ${kdsSourceFilter === 'all' ? 'text-amber-400' : 'text-slate-500'}`} />
+                  <div>
+                    <div className="font-bold text-slate-100 text-xs">เปิดรับออเดอร์ทั้งหมด</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">แสดงผลทั้งออเดอร์ POS หน้าร้าน และ ลูกค้าสแกนสั่งจาก QR Code</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setKdsSourceFilter('qr_only')}
+                  className={`p-3.5 rounded-xl border text-left transition flex items-start space-x-3 ${
+                    kdsSourceFilter === 'qr_only'
+                      ? 'bg-cyan-500/10 border-cyan-500/60 text-cyan-200 shadow'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <QrCode className={`w-5 h-5 shrink-0 mt-0.5 ${kdsSourceFilter === 'qr_only' ? 'text-cyan-400' : 'text-slate-500'}`} />
+                  <div>
+                    <div className="font-bold text-slate-100 text-xs">เฉพาะลูกค้าสแกน QR</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">แสดงเฉพาะออเดอร์ที่ลูกค้าสแกนสั่งเองจากโต๊ะเท่านั้น</div>
+                  </div>
+                </button>
+              </div>
             </div>
           </div>
 

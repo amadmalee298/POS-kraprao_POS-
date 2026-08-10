@@ -333,6 +333,7 @@ export const INITIAL_SETTINGS: SystemSettings = {
   shopPhone: '02-123-4567',
   enableKitchenSound: true,
   kdsWarningMinutes: 10,
+  kdsOrderSourceFilter: 'all',
   receiptPaperWidth: '80mm',
   receiptFontSize: 'md',
   receiptShowLogo: true,
