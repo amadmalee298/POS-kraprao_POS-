@@ -66,18 +66,39 @@ export const INITIAL_USERS: User[] = [
     avatarColor: 'from-amber-500 to-orange-600',
   },
   {
-    id: 'usr-mgr',
+    id: 'staff-3',
     name: 'คุณนภา (ผู้จัดการสาขา)',
     role: 'manager',
     pin: '5555',
     avatarColor: 'from-emerald-500 to-teal-600',
   },
   {
-    id: 'usr-cashier',
+    id: 'staff-4',
     name: 'น้องมายด์ (แคชเชียร์)',
     role: 'cashier',
     pin: '0000',
     avatarColor: 'from-sky-500 to-blue-600',
+  },
+  {
+    id: 'staff-5',
+    name: 'น้องแพรว (พนักงานต้อนรับ/เสิร์ฟ)',
+    role: 'staff',
+    pin: '4444',
+    avatarColor: 'from-rose-500 to-pink-600',
+  },
+  {
+    id: 'staff-1',
+    name: 'เชฟวิชัย (หัวหน้าเชฟ)',
+    role: 'staff',
+    pin: '1111',
+    avatarColor: 'from-purple-500 to-indigo-600',
+  },
+  {
+    id: 'staff-2',
+    name: 'กุ๊กต้น (ผู้ช่วยเชฟ)',
+    role: 'staff',
+    pin: '2222',
+    avatarColor: 'from-teal-500 to-emerald-600',
   },
 ];
 

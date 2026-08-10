@@ -104,6 +104,12 @@ export interface Order {
   cancelNote?: string;
 }
 
+export interface IngredientCategory {
+  id: string;
+  name: string;
+  icon?: string;
+}
+
 export interface Ingredient {
   id: string;
   name: string;
@@ -111,7 +117,7 @@ export interface Ingredient {
   currentStock: number;
   minStockAlert: number;
   unitCost: number; // cost per unit
-  category: 'meat' | 'vegetable' | 'sauce' | 'egg' | 'dry_good' | 'beverage';
+  category: string;
   barcode?: string;
 }
 

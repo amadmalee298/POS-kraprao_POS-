@@ -25,7 +25,9 @@ import {
   MoreVertical,
   PackagePlus,
   Download,
-  Printer
+  Printer,
+  Tag,
+  Edit2
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot } from '../../types';
@@ -47,8 +49,19 @@ export const InventoryView: React.FC = () => {
     addStockLot,
     recordStockAdjustment,
     stockAdjustmentLogs,
-    currentUser
+    currentUser,
+    ingredientCategories,
+    addIngredientCategory,
+    updateIngredientCategory,
+    deleteIngredientCategory
   } = usePOS();
+
+  // Ingredient Categories Modal State
+  const [isManageIngCatsOpen, setIsManageIngCatsOpen] = useState(false);
+  const [newCatNameInput, setNewCatNameInput] = useState('');
+  const [newCatIconInput, setNewCatIconInput] = useState('🏷️');
+  const [editingIngCatId, setEditingIngCatId] = useState<string | null>(null);
+  const [editingIngCatName, setEditingIngCatName] = useState('');
 
   // Tab State
   const [activeTab, setActiveTab] = useState<'smart_audit' | 'forecast' | 'waste' | 'current' | 'usage' | 'stockcard'>('smart_audit');
@@ -709,13 +722,22 @@ export const InventoryView: React.FC = () => {
                   className="bg-slate-950 border border-slate-800 text-slate-200 text-xs font-semibold rounded-xl px-3 py-2 focus:outline-none focus:border-orange-500"
                 >
                   <option value="all">📦 ทุกหมวดหมู่</option>
-                  <option value="meat">🥩 เนื้อสัตว์ (meat)</option>
-                  <option value="vegetable">🥦 ผักสด (vegetable)</option>
-                  <option value="sauce">🍾 ซอส/เครื่องปรุง (sauce)</option>
-                  <option value="egg">🥚 ไข่ (egg)</option>
-                  <option value="dry_good">🌾 ของแห้ง (dry_good)</option>
-                  <option value="beverage">🥤 เครื่องดื่ม/ไซรัป (beverage)</option>
+                  {ingredientCategories.map(cat => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.icon || '🏷️'} {cat.name}
+                    </option>
+                  ))}
                 </select>
+
+                <button
+                  type="button"
+                  onClick={() => setIsManageIngCatsOpen(true)}
+                  className="px-3 py-2 bg-orange-950/40 border border-orange-500/30 hover:border-orange-500 text-orange-400 font-bold text-xs rounded-xl transition flex items-center space-x-1.5 active:scale-95 cursor-pointer"
+                  title="เพิ่มหรือลดหมวดหมู่วัตถุดิบ"
+                >
+                  <Tag className="w-3.5 h-3.5 text-orange-400" />
+                  <span>จัดการหมวดหมู่ ({ingredientCategories.length})</span>
+                </button>
 
                 <button
                   type="button"
@@ -1355,16 +1377,26 @@ export const InventoryView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-slate-400 mb-1">หมวดหมู่</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-slate-400">หมวดหมู่</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsManageIngCatsOpen(true)}
+                      className="text-[11px] text-orange-400 hover:text-orange-300 font-bold underline cursor-pointer"
+                    >
+                      + จัดการ/เพิ่มหมวดหมู่
+                    </button>
+                  </div>
                   <select
                     value={ingCat}
                     onChange={e => setIngCat(e.target.value as any)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200"
                   >
-                    <option value="meat">เนื้อสัตว์</option>
-                    <option value="vegetable">ผักสด</option>
-                    <option value="sauce">ซอส</option>
-                    <option value="egg">ไข่สด</option>
+                    {ingredientCategories.map(cat => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.icon || '🏷️'} {cat.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1884,6 +1916,174 @@ export const InventoryView: React.FC = () => {
         isOpen={isReportModalOpen}
         onClose={() => setIsReportModalOpen(false)}
       />
+
+      {/* MODAL 7: MANAGE INGREDIENT CATEGORIES MODAL */}
+      {isManageIngCatsOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl space-y-0">
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-9 h-9 rounded-xl bg-orange-950/80 border border-orange-500/30 text-orange-400 flex items-center justify-center font-bold">
+                  <Tag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-100 text-base">จัดการหมวดหมู่วัตถุดิบ</h3>
+                  <p className="text-xs text-slate-400">เพิ่ม แก้ไข หรือลบหมวดหมู่สำหรับจัดกลุ่มวัตถุดิบ</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsManageIngCatsOpen(false)}
+                className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5 max-h-[75vh] overflow-y-auto">
+              {/* Add New Category Form */}
+              <div className="bg-slate-950/80 border border-slate-800/80 p-4 rounded-xl space-y-3">
+                <div className="text-xs font-bold text-orange-400 flex items-center space-x-1.5">
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มหมวดหมู่วัตถุดิบใหม่</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    value={newCatIconInput}
+                    onChange={e => setNewCatIconInput(e.target.value)}
+                    placeholder="ไอคอน/อิโมจิ"
+                    className="w-16 px-2.5 py-2 bg-slate-900 border border-slate-800 rounded-xl text-center text-sm focus:outline-none focus:border-orange-500"
+                  />
+                  <input
+                    type="text"
+                    value={newCatNameInput}
+                    onChange={e => setNewCatNameInput(e.target.value)}
+                    placeholder="ระบุชื่อหมวดหมู่ เช่น ซอสปรุงรส, เมล็ดกาแฟ..."
+                    className="flex-1 px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-100 focus:outline-none focus:border-orange-500 font-medium"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (newCatNameInput.trim()) {
+                          addIngredientCategory(newCatNameInput.trim(), newCatIconInput || '🏷️');
+                          setNewCatNameInput('');
+                          setNewCatIconInput('🏷️');
+                        }
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (newCatNameInput.trim()) {
+                        addIngredientCategory(newCatNameInput.trim(), newCatIconInput || '🏷️');
+                        setNewCatNameInput('');
+                        setNewCatIconInput('🏷️');
+                      }
+                    }}
+                    className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs rounded-xl shadow transition active:scale-95 whitespace-nowrap cursor-pointer"
+                  >
+                    + เพิ่มหมวดหมู่
+                  </button>
+                </div>
+              </div>
+
+              {/* List of Existing Categories */}
+              <div className="space-y-2">
+                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider px-1">
+                  รายการหมวดหมู่ทั้งหมด ({ingredientCategories.length})
+                </div>
+                <div className="divide-y divide-slate-800/80 border border-slate-800 rounded-xl overflow-hidden bg-slate-950/40">
+                  {ingredientCategories.map(cat => {
+                    const itemCount = ingredients.filter(i => i.category === cat.id || i.category === cat.name).length;
+                    const isEditing = editingIngCatId === cat.id;
+
+                    return (
+                      <div key={cat.id} className="p-3 flex items-center justify-between hover:bg-slate-900/60 transition">
+                        {isEditing ? (
+                          <div className="flex items-center space-x-2 flex-1 mr-2">
+                            <input
+                              type="text"
+                              value={editingIngCatName}
+                              onChange={e => setEditingIngCatName(e.target.value)}
+                              className="px-2.5 py-1.5 bg-slate-900 border border-orange-500 rounded-lg text-xs text-slate-100 font-bold flex-1"
+                            />
+                            <button
+                              onClick={() => {
+                                if (editingIngCatName.trim()) {
+                                  updateIngredientCategory(cat.id, editingIngCatName.trim(), cat.icon);
+                                }
+                                setEditingIngCatId(null);
+                              }}
+                              className="px-3 py-1.5 bg-emerald-600 text-white font-bold text-xs rounded-lg"
+                            >
+                              บันทึก
+                            </button>
+                            <button
+                              onClick={() => setEditingIngCatId(null)}
+                              className="px-3 py-1.5 bg-slate-800 text-slate-400 font-bold text-xs rounded-lg"
+                            >
+                              ยกเลิก
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center space-x-3">
+                            <span className="text-lg">{cat.icon || '🏷️'}</span>
+                            <div>
+                              <div className="font-bold text-slate-100 text-xs flex items-center space-x-2">
+                                <span>{cat.name}</span>
+                                <span className="text-[10px] text-slate-500 font-mono">({cat.id})</span>
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                วัตถุดิบในหมวดนี้: <strong className="text-amber-400">{itemCount}</strong> รายการ
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {!isEditing && (
+                          <div className="flex items-center space-x-1.5">
+                            <button
+                              onClick={() => {
+                                setEditingIngCatId(cat.id);
+                                setEditingIngCatName(cat.name);
+                              }}
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition"
+                              title="แก้ไขชื่อหมวดหมู่"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบหมวดหมู่ "${cat.name}"?`)) {
+                                  deleteIngredientCategory(cat.id);
+                                }
+                              }}
+                              className="p-1.5 bg-rose-950/40 hover:bg-rose-900/80 text-rose-400 hover:text-rose-200 rounded-lg transition"
+                              title="ลบหมวดหมู่นี้"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-950/80 border-t border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsManageIngCatsOpen(false)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition"
+              >
+                ปิดหน้าต่าง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

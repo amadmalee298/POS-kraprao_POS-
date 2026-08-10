@@ -4468,11 +4468,35 @@ export const POManagementView: React.FC = () => {
   const { ingredients, updateIngredientStock } = usePOS();
   const [activeSubTab, setActiveSubTab] = useState<'po' | 'suppliers'>('po');
   const [poList, setPoList] = useState<POItem[]>(INITIAL_PO_LIST);
-  const [suppliers, setSuppliers] = useState<Supplier[]>(INITIAL_SUPPLIERS);
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
+    try {
+      const saved = localStorage.getItem('POS_SUPPLIERS');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse suppliers from localStorage', e);
+    }
+    return INITIAL_SUPPLIERS;
+  });
+
+  // Save suppliers to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('POS_SUPPLIERS', JSON.stringify(suppliers));
+    } catch (e) {
+      console.error('Failed to save suppliers to localStorage', e);
+    }
+  }, [suppliers]);
 
   // Modals state
   const [isAddPoOpen, setIsAddPoOpen] = useState(false);
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
+
+  // Supplier Editing & Deletion Modals State
+  const [editingFullSupplier, setEditingFullSupplier] = useState<Supplier | null>(null);
+  const [supplierToDelete, setSupplierToDelete] = useState<Supplier | null>(null);
 
   // Bank Info Edit Modal State (Screenshot 4)
   const [editingBankSupplier, setEditingBankSupplier] = useState<Supplier | null>(null);
@@ -4582,6 +4606,32 @@ export const POManagementView: React.FC = () => {
     setNewSuppContact('');
     setNewSuppPhone('');
     setNewSuppAddress('');
+  };
+
+  // Handle Save Edited Full Supplier Info
+  const handleSaveFullSupplier = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingFullSupplier) return;
+    setSuppliers(prev =>
+      prev.map(s => (s.id === editingFullSupplier.id ? editingFullSupplier : s))
+    );
+    setEditingFullSupplier(null);
+  };
+
+  // Handle Delete Supplier
+  const handleDeleteSupplierConfirm = () => {
+    if (!supplierToDelete) return;
+    setSuppliers(prev => prev.filter(s => s.id !== supplierToDelete.id));
+    setSupplierToDelete(null);
+  };
+
+  // Handle Toggle Supplier Active Status
+  const handleToggleSupplierStatus = (id: string) => {
+    setSuppliers(prev =>
+      prev.map(s =>
+        s.id === id ? { ...s, status: s.status === 'Active' ? 'Inactive' : 'Active' } : s
+      )
+    );
   };
 
   // Handle Receive PO items into stock
@@ -4862,7 +4912,7 @@ export const POManagementView: React.FC = () => {
           {/* Supplier Cards List */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {suppliers.map(supp => (
-              <div key={supp.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-lg">
+              <div key={supp.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-lg hover:border-slate-700 transition">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-3">
                     <div className="w-10 h-10 rounded-xl bg-orange-950/80 border border-orange-500/30 text-orange-400 flex items-center justify-center font-bold">
@@ -4873,9 +4923,39 @@ export const POManagementView: React.FC = () => {
                       <div className="text-xs text-slate-400 font-mono">ID: {supp.id}</div>
                     </div>
                   </div>
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950/80 border border-emerald-500/40 text-emerald-300">
-                    {supp.status}
-                  </span>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSupplierStatus(supp.id)}
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition cursor-pointer ${
+                        supp.status === 'Active'
+                          ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900'
+                          : 'bg-rose-950/80 border-rose-500/40 text-rose-300 hover:bg-rose-900'
+                      }`}
+                      title="คลิกเพื่อเปลี่ยนสถานะคู่ค้า"
+                    >
+                      {supp.status === 'Active' ? '🟢 Active' : '🔴 Inactive'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingFullSupplier(supp)}
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition border border-slate-700"
+                      title="แก้ไขข้อมูลคู่ค้า"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSupplierToDelete(supp)}
+                      className="p-1.5 bg-rose-950/50 hover:bg-rose-900/80 text-rose-400 hover:text-rose-200 rounded-lg transition border border-rose-800/50"
+                      title="ลบคู่ค้าออกจากระบบ"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-1 text-xs text-slate-300 border-t border-b border-slate-800/80 py-3">
@@ -5006,6 +5086,170 @@ export const POManagementView: React.FC = () => {
                 className="px-5 py-2.5 bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-orange-950/50 transition active:scale-95"
               >
                 บันทึกการตั้งค่า
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Edit Full Supplier Details */}
+      {editingFullSupplier && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-100 flex items-center space-x-2">
+                <Building className="w-5 h-5 text-orange-400" />
+                <span>แก้ไขข้อมูลซัพพลายเออร์ / คู่ค้า</span>
+              </h3>
+              <button
+                onClick={() => setEditingFullSupplier(null)}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveFullSupplier} className="p-5 space-y-3.5 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-300 mb-1">ชื่อซัพพลายเออร์ / ร้านค้า *</label>
+                <input
+                  type="text"
+                  required
+                  value={editingFullSupplier.name}
+                  onChange={e => setEditingFullSupplier({ ...editingFullSupplier, name: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-orange-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-300 mb-1">ชื่อผู้ติดต่อ</label>
+                  <input
+                    type="text"
+                    value={editingFullSupplier.contactPerson}
+                    onChange={e => setEditingFullSupplier({ ...editingFullSupplier, contactPerson: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-orange-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-300 mb-1">เบอร์โทรศัพท์</label>
+                  <input
+                    type="text"
+                    value={editingFullSupplier.phone}
+                    onChange={e => setEditingFullSupplier({ ...editingFullSupplier, phone: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-orange-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-300 mb-1">ที่อยู่ / จังหวัด</label>
+                <input
+                  type="text"
+                  value={editingFullSupplier.address}
+                  onChange={e => setEditingFullSupplier({ ...editingFullSupplier, address: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-orange-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-300 mb-1">ระยะเวลาส่งของ (Lead time - วัน)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={editingFullSupplier.leadTimeDays}
+                    onChange={e => setEditingFullSupplier({ ...editingFullSupplier, leadTimeDays: Number(e.target.value) })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-orange-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-300 mb-1">สถานะ</label>
+                  <select
+                    value={editingFullSupplier.status}
+                    onChange={e => setEditingFullSupplier({ ...editingFullSupplier, status: e.target.value as any })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="Active">🟢 Active (เปิดใช้งาน)</option>
+                    <option value="Inactive">🔴 Inactive (ปิดใช้งาน)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-800 pt-3 space-y-2">
+                <div className="font-bold text-orange-400">ข้อมูลบัญชีธนาคารสำหรับจ่ายเงิน</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    placeholder="ชื่อธนาคาร"
+                    value={editingFullSupplier.bankName}
+                    onChange={e => setEditingFullSupplier({ ...editingFullSupplier, bankName: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100"
+                  />
+                  <input
+                    type="text"
+                    placeholder="เลขที่บัญชี"
+                    value={editingFullSupplier.bankAccountNo}
+                    onChange={e => setEditingFullSupplier({ ...editingFullSupplier, bankAccountNo: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 font-mono"
+                  />
+                </div>
+                <input
+                  type="text"
+                  placeholder="ชื่อบัญชี"
+                  value={editingFullSupplier.bankAccountName}
+                  onChange={e => setEditingFullSupplier({ ...editingFullSupplier, bankAccountName: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingFullSupplier(null)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-xl font-bold shadow-lg"
+                >
+                  บันทึกการแก้ไข
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Delete Supplier Confirm */}
+      {supplierToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center space-x-3 text-rose-400">
+              <div className="w-10 h-10 rounded-full bg-rose-950/80 border border-rose-800 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <h3 className="font-bold text-slate-100 text-base">ยืนยันการลบคู่ค้า / ซัพพลายเออร์</h3>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              คุณแน่ใจหรือไม่ว่าต้องการลบซัพพลายเออร์ <strong className="text-slate-100">{supplierToDelete.name}</strong> ออกจากระบบ? การดำเนินการนี้จะลบบัญชีคู่ค้าออกจากฐานข้อมูลอย่างถาวร
+            </p>
+            <div className="flex justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setSupplierToDelete(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteSupplierConfirm}
+                className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-lg transition active:scale-95"
+              >
+                ยืนยันการลบ
               </button>
             </div>
           </div>

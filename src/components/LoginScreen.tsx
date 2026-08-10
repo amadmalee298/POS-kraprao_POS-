@@ -51,8 +51,23 @@ export const LoginScreen: React.FC = () => {
   const [forgotError, setForgotError] = useState('');
   const [forgotSuccess, setForgotSuccess] = useState('');
 
-  const selectedUser = users.find(u => u.id === selectedUserId) || users[0];
+  const selectedUser = users.find(u => u.id === selectedUserId) || users[0] || {
+    id: 'usr-admin',
+    name: 'เจ้าของร้าน',
+    role: 'admin',
+    pin: '1234',
+    avatarColor: 'from-amber-500 to-orange-600'
+  };
   const managerUsers = users.filter(u => u.role === 'admin' || u.role === 'manager');
+
+  // Keep selectedUserId synchronized when users array updates
+  useEffect(() => {
+    if (users.length > 0) {
+      if (!selectedUserId || !users.some(u => u.id === selectedUserId)) {
+        setSelectedUserId(currentUser?.id && users.some(u => u.id === currentUser.id) ? currentUser.id : users[0].id);
+      }
+    }
+  }, [users, selectedUserId, currentUser]);
 
   // Countdown timer for resending email code
   useEffect(() => {
@@ -349,7 +364,7 @@ export const LoginScreen: React.FC = () => {
               <label className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
                 เลือกพนักงาน / ผู้ใช้งาน
               </label>
-              <div className="flex justify-center space-x-2 overflow-x-auto py-1">
+              <div className="flex flex-wrap justify-center gap-2 max-h-48 overflow-y-auto p-1 border border-slate-800/80 rounded-2xl bg-slate-950/40 custom-scrollbar">
                 {users.map(u => (
                   <button
                     key={u.id}
@@ -359,9 +374,9 @@ export const LoginScreen: React.FC = () => {
                       setPin('');
                       setError('');
                     }}
-                    className={`px-3 py-2 rounded-xl border text-xs font-semibold transition flex flex-col items-center space-y-1 ${
+                    className={`px-3 py-2 rounded-xl border text-xs font-semibold transition flex flex-col items-center space-y-1 min-w-[76px] ${
                       selectedUserId === u.id
-                        ? 'bg-red-950/60 border-red-500 text-red-300 ring-2 ring-red-500/50'
+                        ? 'bg-red-950/60 border-red-500 text-red-300 ring-2 ring-red-500/50 shadow-md'
                         : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800'
                     }`}
                   >

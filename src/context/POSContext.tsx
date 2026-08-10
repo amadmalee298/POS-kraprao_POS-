@@ -26,7 +26,8 @@ import {
   CashMovement,
   SecurityLogEntry,
   StockAdjustmentLog,
-  CategoryItem
+  CategoryItem,
+  IngredientCategory
 } from '../types';
 import {
   INITIAL_BRANCHES,
@@ -101,6 +102,12 @@ interface POSContextType {
   updateCategory: (id: string, name: string, icon?: string) => void;
   deleteCategory: (id: string) => void;
   getCategoryName: (id: string) => string;
+
+  // Ingredient Category CRUD
+  ingredientCategories: IngredientCategory[];
+  addIngredientCategory: (name: string, icon?: string) => void;
+  updateIngredientCategory: (id: string, name: string, icon?: string) => void;
+  deleteIngredientCategory: (id: string) => void;
 
   // Menu item CRUD
   addMenuItem: (itemData: Omit<MenuItem, 'id'>) => void;
@@ -256,12 +263,57 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const updateUserPin = (userId: string, newPin: string) => {
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, pin: newPin } : u));
+    setStaffMembers(prev => prev.map(s => s.id === userId ? { ...s, pin: newPin } : s));
     if (currentUser?.id === userId) {
       setCurrentUser(prev => prev ? { ...prev, pin: newPin } : prev);
     }
   };
   
   const [categories, setCategories] = useState<CategoryItem[]>(DEFAULT_CATEGORIES);
+
+  // Ingredient Categories state & CRUD
+  const [ingredientCategories, setIngredientCategories] = useState<IngredientCategory[]>([
+    { id: 'meat', name: 'เนื้อสัตว์', icon: '🥩' },
+    { id: 'vegetable', name: 'ผักสด', icon: '🥦' },
+    { id: 'sauce', name: 'ซอส/เครื่องปรุง', icon: '🍾' },
+    { id: 'egg', name: 'ไข่สด', icon: '🥚' },
+    { id: 'dry_good', name: 'ของแห้ง', icon: '🌾' },
+    { id: 'beverage', name: 'เครื่องดื่ม/ไซรัป', icon: '🥤' },
+    { id: 'seafood', name: 'อาหารทะเล/ซีฟู้ด', icon: '🦐' },
+    { id: 'packaging', name: 'บรรจุภัณฑ์', icon: '📦' },
+  ]);
+
+  const addIngredientCategory = (name: string, icon?: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const exists = ingredientCategories.some(c => c.name.toLowerCase() === trimmed.toLowerCase());
+    if (exists) return;
+    const newCat: IngredientCategory = {
+      id: `ingcat-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      name: trimmed,
+      icon: icon || '🏷️'
+    };
+    setIngredientCategories(prev => [...prev, newCat]);
+  };
+
+  const updateIngredientCategory = (id: string, name: string, icon?: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setIngredientCategories(prev => prev.map(c => c.id === id ? { ...c, name: trimmed, icon: icon || c.icon } : c));
+  };
+
+  const deleteIngredientCategory = (id: string) => {
+    if (ingredientCategories.length <= 1) {
+      alert('ไม่สามารถลบหมวดหมู่วัตถุดิบทั้งหมดได้ ต้องมีอย่างน้อย 1 หมวดหมู่ในระบบ');
+      return;
+    }
+    const target = ingredientCategories.find(c => c.id === id);
+    if (!target) return;
+    const remaining = ingredientCategories.filter(c => c.id !== id);
+    const fallbackCatId = remaining[0]?.id || 'dry_good';
+    setIngredientCategories(remaining);
+    setIngredients(prev => prev.map(ing => ing.category === id || ing.category === target.name ? { ...ing, category: fallbackCatId } : ing));
+  };
 
   const addCategory = (name: string, icon?: string) => {
     const trimmed = name.trim();
@@ -546,6 +598,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (parsed.categories && Array.isArray(parsed.categories) && parsed.categories.length > 0) {
             setCategories(parsed.categories);
           }
+          if (parsed.ingredientCategories && Array.isArray(parsed.ingredientCategories) && parsed.ingredientCategories.length > 0) {
+            setIngredientCategories(parsed.ingredientCategories);
+          }
           if (parsed.menuItems && Array.isArray(parsed.menuItems)) {
             const validItems = parsed.menuItems.filter((m: any) => m && typeof m === 'object' && m.id);
             setMenuItems(validItems);
@@ -601,6 +656,59 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, []);
 
+  // Synchronize users state with staffMembers automatically so PIN screen and login reflect latest staff edits
+  useEffect(() => {
+    if (!isStorageLoaded) return;
+    if (!staffMembers || staffMembers.length === 0) return;
+
+    const colors = [
+      'from-amber-500 to-orange-600',
+      'from-emerald-500 to-teal-600',
+      'from-sky-500 to-blue-600',
+      'from-rose-500 to-pink-600',
+      'from-purple-500 to-indigo-600',
+      'from-teal-500 to-emerald-600'
+    ];
+
+    const activeStaff = staffMembers.filter(s => s.status !== 'inactive');
+
+    const staffAsUsers: User[] = activeStaff.map((staff, idx) => {
+      const existingUser = users.find(u => u.id === staff.id);
+      let role: UserRole = 'staff';
+      const roleLower = (staff.role || '').toLowerCase();
+      if (roleLower.includes('ผู้จัดการ') || roleLower.includes('manager')) {
+        role = 'manager';
+      } else if (roleLower.includes('เจ้าของ') || roleLower.includes('เชฟใหญ่') || roleLower.includes('admin') || roleLower.includes('แอดมิน')) {
+        role = 'admin';
+      } else if (roleLower.includes('แคชเชียร์') || roleLower.includes('cashier')) {
+        role = 'cashier';
+      }
+
+      return {
+        id: staff.id,
+        name: staff.name,
+        role,
+        pin: staff.pin || '1234',
+        branchId: staff.branchId,
+        avatarColor: existingUser?.avatarColor || colors[idx % colors.length]
+      };
+    });
+
+    const extraAdmin = users.find(u => u.id === 'usr-admin' && !staffAsUsers.some(s => s.id === 'usr-admin'));
+    const finalUsers = extraAdmin ? [extraAdmin, ...staffAsUsers] : staffAsUsers;
+
+    const isDifferent =
+      finalUsers.length !== users.length ||
+      finalUsers.some((fu, idx) => {
+        const u = users[idx];
+        return !u || u.id !== fu.id || u.name !== fu.name || u.pin !== fu.pin || u.role !== fu.role;
+      });
+
+    if (isDifferent) {
+      setUsers(finalUsers);
+    }
+  }, [staffMembers, isStorageLoaded, users]);
+
   // Save state to localStorage whenever state updates (strictly ONLY after initial load completes)
   useEffect(() => {
     if (!isStorageLoaded) {
@@ -613,6 +721,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cart,
         discount,
         categories,
+        ingredientCategories,
         menuItems,
         addOns,
         ingredients,
@@ -1673,6 +1782,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateCategory,
         deleteCategory,
         getCategoryName,
+        ingredientCategories,
+        addIngredientCategory,
+        updateIngredientCategory,
+        deleteIngredientCategory,
         cart,
         addToCart,
         updateCartQuantity,
