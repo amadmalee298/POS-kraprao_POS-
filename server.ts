@@ -688,6 +688,78 @@ ${JSON.stringify(menuItems || [], null, 2)}
     }
   });
 
+  // API Route: Send Telegram Notification
+  app.post('/api/notify/telegram', async (req, res) => {
+    try {
+      const { botToken, chatId, message } = req.body;
+      if (!botToken || !chatId || !message) {
+        return res.status(400).json({ error: 'กรุณาระบุ Bot Token, Group Chat ID และข้อความ' });
+      }
+
+      // Clean token if user prefixed with "bot"
+      const cleanToken = botToken.trim().startsWith('bot') ? botToken.trim().slice(3) : botToken.trim();
+      const telegramUrl = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
+
+      const response = await fetch(telegramUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId.trim(),
+          text: message
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        console.error('Telegram API error:', data);
+        return res.status(400).json({
+          error: data.description || 'เกิดข้อผิดพลาดจาก Telegram Bot API (โปรดตรวจสอบ Token และ Chat ID)',
+          details: data
+        });
+      }
+
+      return res.json({ success: true, result: data.result });
+    } catch (err: any) {
+      console.error('Telegram notification error:', err);
+      return res.status(500).json({ error: err.message || 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ Telegram ได้' });
+    }
+  });
+
+  // API Route: Send LINE Notification
+  app.post('/api/notify/line', async (req, res) => {
+    try {
+      const { lineToken, message } = req.body;
+      if (!lineToken || !message) {
+        return res.status(400).json({ error: 'กรุณาระบุ LINE Token และข้อความ' });
+      }
+
+      const params = new URLSearchParams();
+      params.append('message', message);
+
+      const response = await fetch('https://notify-api.line.me/api/notify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Bearer ${lineToken.trim()}`
+        },
+        body: params
+      });
+
+      const data = await response.json();
+      if (!response.ok || data.status !== 200) {
+        return res.status(400).json({
+          error: data.message || 'เกิดข้อผิดพลาดจาก LINE Notify API (โปรดตรวจสอบ Token)',
+          details: data
+        });
+      }
+
+      return res.json({ success: true, result: data });
+    } catch (err: any) {
+      console.error('LINE notification error:', err);
+      return res.status(500).json({ error: err.message || 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ LINE ได้' });
+    }
+  });
+
   // Vite middleware in dev or static files in production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

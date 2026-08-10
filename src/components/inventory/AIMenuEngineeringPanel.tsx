@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { calcRecipeItemCostAndDeduction } from '../../utils/recipeUtils';
 import {
   Sparkles,
   TrendingUp,
@@ -107,7 +108,12 @@ export const AIMenuEngineeringPanel: React.FC = () => {
           if (ing && simulatedFluctuations[ing.id]) {
             unitCost = unitCost * (1 + simulatedFluctuations[ing.id] / 100);
           }
-          return sum + r.amountNeeded * unitCost;
+          const lineCost = calcRecipeItemCostAndDeduction(
+            ing ? { ...ing, unitCost } : { unit: 'pcs', unitCost },
+            r.amountNeeded,
+            r.recipeUnit
+          ).lineCost;
+          return sum + lineCost;
         }, 0);
       }
 

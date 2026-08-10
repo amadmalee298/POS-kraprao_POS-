@@ -20,6 +20,7 @@ import { usePOS } from '../context/POSContext';
 import { PinModal } from './PinModal';
 import { OfflineSyncModal } from './OfflineSyncModal';
 import { SyncHealthMonitor } from './SyncHealthMonitor';
+import { MerchantConnectionModal } from './common/MerchantConnectionModal';
 import { SHOP_LOGO_URL } from '../assets/logo';
 
 export const HeaderNavbar: React.FC = () => {
@@ -43,6 +44,7 @@ export const HeaderNavbar: React.FC = () => {
 
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isOfflineModalOpen, setIsOfflineModalOpen] = useState(false);
+  const [isMerchantModalOpen, setIsMerchantModalOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
 
   useEffect(() => {
@@ -189,8 +191,23 @@ export const HeaderNavbar: React.FC = () => {
 
             </nav>
 
-            {/* Right: Sync Health Monitor, Clock, User Badge & Logout */}
+            {/* Right: Sync Health Monitor, Merchant Pro, Clock, User Badge & Logout */}
             <div className="flex items-center space-x-2.5">
+              {/* Merchant Pro Connection Status Pill */}
+              <button
+                onClick={() => setIsMerchantModalOpen(true)}
+                className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-blue-950/60 hover:bg-blue-900/80 border border-blue-500/40 text-blue-200 transition active:scale-95 shadow-sm"
+                title="คลิกเพื่อจัดการการเชื่อมต่อแอป Merchant Pro"
+              >
+                <Store className="w-3.5 h-3.5 text-blue-400" />
+                <span>Merchant Pro</span>
+                {settings.merchantSettings?.isConnected !== false ? (
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-slate-500" />
+                )}
+              </button>
+
               {/* Sync Health & Connection Monitor */}
               <SyncHealthMonitor />
 
@@ -287,6 +304,12 @@ export const HeaderNavbar: React.FC = () => {
       <OfflineSyncModal
         isOpen={isOfflineModalOpen}
         onClose={() => setIsOfflineModalOpen(false)}
+      />
+
+      {/* Merchant Pro Connection Modal */}
+      <MerchantConnectionModal
+        isOpen={isMerchantModalOpen}
+        onClose={() => setIsMerchantModalOpen(false)}
       />
     </>
   );

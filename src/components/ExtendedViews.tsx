@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { calcRecipeItemCostAndDeduction, getAvailableRecipeUnits } from '../utils/recipeUtils';
 import { SHOP_LOGO_URL } from '../assets/logo';
 import { compressImageFile } from '../utils/imageCompressor';
 import { generatePromptPayPayload } from '../utils/promptpay';
@@ -1388,8 +1389,8 @@ export const QrOrderingView: React.FC = () => {
                         </div>
                         <div>
                           <div className="text-xs font-bold text-slate-100 flex items-center space-x-1">
-                            <span>Extra Fried Egg (เพิ่มไข่ดาว)</span>
-                            <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-extrabold">+10฿</span>
+                            <span>{friedEggAddon.name}</span>
+                            <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-extrabold">+{friedEggAddon.price}฿</span>
                           </div>
                           <div className="text-[10px] text-slate-400">ทอดกรอบขอบทอง ไข่แดงเยิ้ม</div>
                         </div>
@@ -1968,12 +1969,44 @@ export const RecipeCostingView: React.FC = () => {
   const handleAddToppingRecipeItem = () => {
     if (!toppingSelectedIngToAdd) return;
     if (toppingFormRecipe.some(r => r.ingredientId === toppingSelectedIngToAdd)) return;
-    setToppingFormRecipe(prev => [...prev, { ingredientId: toppingSelectedIngToAdd, amountNeeded: 1 }]);
+    const ing = ingredients.find(i => i.id === toppingSelectedIngToAdd);
+    let defaultUnit = ing?.unit || 'pcs';
+    let defaultAmount = 1;
+    if (['kg', 'กิโลกรัม', 'กก.'].includes(ing?.unit || '')) {
+      defaultUnit = 'g';
+      defaultAmount = 50;
+    } else if (['l', 'liter', 'ลิตร'].includes(ing?.unit || '')) {
+      defaultUnit = 'ml';
+      defaultAmount = 10;
+    }
+    setToppingFormRecipe(prev => [...prev, { ingredientId: toppingSelectedIngToAdd, amountNeeded: defaultAmount, recipeUnit: defaultUnit }]);
   };
 
   const handleUpdateToppingRecipeAmount = (ingredientId: string, amountNeeded: number) => {
     setToppingFormRecipe(prev =>
       prev.map(r => (r.ingredientId === ingredientId ? { ...r, amountNeeded: Math.max(0, amountNeeded) } : r))
+    );
+  };
+
+  const handleUpdateToppingRecipeUnit = (ingredientId: string, newUnit: string) => {
+    setToppingFormRecipe(prev =>
+      prev.map(r => {
+        if (r.ingredientId !== ingredientId) return r;
+        const ing = ingredients.find(i => i.id === ingredientId);
+        const oldUnit = r.recipeUnit || ing?.unit || 'pcs';
+        let newAmount = r.amountNeeded;
+
+        if (oldUnit === 'kg' && newUnit === 'g') newAmount = r.amountNeeded * 1000;
+        else if (oldUnit === 'g' && newUnit === 'kg') newAmount = r.amountNeeded / 1000;
+        else if (oldUnit === 'l' && newUnit === 'ml') newAmount = r.amountNeeded * 1000;
+        else if (oldUnit === 'ml' && newUnit === 'l') newAmount = r.amountNeeded / 1000;
+
+        return {
+          ...r,
+          amountNeeded: Number(newAmount.toFixed(4)),
+          recipeUnit: newUnit
+        };
+      })
     );
   };
 
@@ -2020,12 +2053,47 @@ export const RecipeCostingView: React.FC = () => {
   const handleAddIngredientToRecipe = (ingredientId: string) => {
     if (!ingredientId) return;
     if (editableRecipe.some(r => r.ingredientId === ingredientId)) return;
-    setEditableRecipe(prev => [...prev, { ingredientId, amountNeeded: 10 }]);
+    const ing = ingredients.find(i => i.id === ingredientId);
+    let defaultAmount = 100;
+    let defaultUnit = ing?.unit || 'g';
+    if (['kg', 'กิโลกรัม', 'กก.'].includes(ing?.unit || '')) {
+      defaultUnit = 'g';
+      defaultAmount = 150;
+    } else if (['l', 'liter', 'ลิตร'].includes(ing?.unit || '')) {
+      defaultUnit = 'ml';
+      defaultAmount = 10;
+    } else if (['pcs', 'ชิ้น', 'ฟอง', 'ลูก'].includes(ing?.unit || '')) {
+      defaultUnit = ing?.unit || 'pcs';
+      defaultAmount = 1;
+    }
+    setEditableRecipe(prev => [...prev, { ingredientId, amountNeeded: defaultAmount, recipeUnit: defaultUnit }]);
   };
 
   const handleUpdateRecipeAmount = (ingredientId: string, amountNeeded: number) => {
     setEditableRecipe(prev =>
       prev.map(r => (r.ingredientId === ingredientId ? { ...r, amountNeeded: Math.max(0, amountNeeded) } : r))
+    );
+  };
+
+  const handleUpdateRecipeUnit = (ingredientId: string, newUnit: string) => {
+    setEditableRecipe(prev =>
+      prev.map(r => {
+        if (r.ingredientId !== ingredientId) return r;
+        const ing = ingredients.find(i => i.id === ingredientId);
+        const oldUnit = r.recipeUnit || ing?.unit || 'pcs';
+        let newAmount = r.amountNeeded;
+
+        if (oldUnit === 'kg' && newUnit === 'g') newAmount = r.amountNeeded * 1000;
+        else if (oldUnit === 'g' && newUnit === 'kg') newAmount = r.amountNeeded / 1000;
+        else if (oldUnit === 'l' && newUnit === 'ml') newAmount = r.amountNeeded * 1000;
+        else if (oldUnit === 'ml' && newUnit === 'l') newAmount = r.amountNeeded / 1000;
+
+        return {
+          ...r,
+          amountNeeded: Number(newAmount.toFixed(4)),
+          recipeUnit: newUnit
+        };
+      })
     );
   };
 
@@ -2039,7 +2107,7 @@ export const RecipeCostingView: React.FC = () => {
     editableRecipe.forEach(r => {
       const ing = ingredients.find(i => i.id === r.ingredientId);
       if (ing) {
-        calculatedCost += r.amountNeeded * ing.unitCost;
+        calculatedCost += calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).lineCost;
       }
     });
 
@@ -2062,7 +2130,7 @@ export const RecipeCostingView: React.FC = () => {
   // Calculated recipe cost
   const totalRecipeCalculatedCost = editableRecipe.reduce((sum, r) => {
     const ing = ingredients.find(i => i.id === r.ingredientId);
-    return sum + (ing ? r.amountNeeded * ing.unitCost : 0);
+    return sum + (ing ? calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).lineCost : 0);
   }, 0);
 
   const recipeMargin = currentRecipeMenuItem ? currentRecipeMenuItem.price - totalRecipeCalculatedCost : 0;
@@ -2430,7 +2498,8 @@ export const RecipeCostingView: React.FC = () => {
                     ) : (
                       editableRecipe.map(rec => {
                         const ing = ingredients.find(i => i.id === rec.ingredientId);
-                        const lineCost = ing ? rec.amountNeeded * ing.unitCost : 0;
+                        const calc = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit);
+                        const availableUnits = ing ? getAvailableRecipeUnits(ing.unit) : [];
 
                         return (
                           <tr key={rec.ingredientId} className="hover:bg-slate-800/40">
@@ -2445,16 +2514,28 @@ export const RecipeCostingView: React.FC = () => {
                                 <input
                                   type="number"
                                   min="0"
-                                  step="1"
+                                  step="any"
                                   value={rec.amountNeeded}
                                   onChange={e => handleUpdateRecipeAmount(rec.ingredientId, parseFloat(e.target.value) || 0)}
                                   className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-amber-300 font-bold font-mono focus:outline-none focus:border-amber-500"
                                 />
-                                <span className="text-slate-400 font-medium">{ing?.unit}</span>
+                                {availableUnits.length > 1 ? (
+                                  <select
+                                    value={rec.recipeUnit || (availableUnits.some(u => u.val === ing?.unit) ? ing?.unit : availableUnits[0]?.val)}
+                                    onChange={e => handleUpdateRecipeUnit(rec.ingredientId, e.target.value)}
+                                    className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-amber-300 font-bold focus:outline-none focus:border-amber-500"
+                                  >
+                                    {availableUnits.map(u => (
+                                      <option key={u.val} value={u.val}>{u.label}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="text-slate-400 font-medium">{ing?.unit}</span>
+                                )}
                               </div>
                             </td>
                             <td className="p-3 font-mono font-bold text-rose-400">
-                              ฿{lineCost.toFixed(2)}
+                              ฿{calc.lineCost.toFixed(2)}
                             </td>
                             <td className="p-3 text-right">
                               <button
@@ -2917,22 +2998,35 @@ export const RecipeCostingView: React.FC = () => {
                     {toppingFormRecipe.map(rec => {
                       const ing = ingredients.find(i => i.id === rec.ingredientId);
                       if (!ing) return null;
+                      const availableUnits = getAvailableRecipeUnits(ing.unit);
                       return (
                         <div key={rec.ingredientId} className="flex items-center space-x-2 bg-slate-950 p-2 rounded-xl border border-slate-800">
                           <div className="flex-1 min-w-0">
                             <div className="font-bold text-slate-200 text-xs truncate">{ing.name}</div>
                             <div className="text-[10px] text-slate-500 font-mono">คงเหลือ: {ing.currentStock} {ing.unit}</div>
                           </div>
-                          <div className="flex items-center space-x-1.5 shrink-0">
+                          <div className="flex items-center space-x-1 shrink-0">
                             <input
                               type="number"
-                              min="0.1"
-                              step="0.1"
+                              min="0"
+                              step="any"
                               value={rec.amountNeeded}
                               onChange={e => handleUpdateToppingRecipeAmount(rec.ingredientId, parseFloat(e.target.value) || 0)}
-                              className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-slate-100 font-bold font-mono text-center focus:outline-none focus:border-amber-500 text-xs"
+                              className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-1.5 py-1 text-amber-300 font-bold font-mono text-center focus:outline-none focus:border-amber-500 text-xs"
                             />
-                            <span className="text-[10px] text-slate-400 font-medium w-8">{ing.unit}</span>
+                            {availableUnits.length > 1 ? (
+                              <select
+                                value={rec.recipeUnit || (availableUnits.some(u => u.val === ing.unit) ? ing.unit : availableUnits[0]?.val)}
+                                onChange={e => handleUpdateToppingRecipeUnit(rec.ingredientId, e.target.value)}
+                                className="bg-slate-900 border border-slate-700 rounded-lg px-1 py-1 text-[11px] text-amber-300 font-bold focus:outline-none focus:border-amber-500"
+                              >
+                                {availableUnits.map(u => (
+                                  <option key={u.val} value={u.val}>{u.label}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-medium px-1">{ing.unit}</span>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleRemoveToppingRecipeItem(rec.ingredientId)}
@@ -4634,6 +4728,17 @@ export const POManagementView: React.FC = () => {
     );
   };
 
+  // Handle Delete PO
+  const handleDeletePo = (poId: string) => {
+    const targetPo = poList.find(p => p.id === poId);
+    if (window.confirm(`คุณต้องการลบใบสั่งซื้อ (PO) ${targetPo ? targetPo.poNumber : ''} นี้ออกจากระบบใช่หรือไม่?`)) {
+      setPoList(prev => prev.filter(p => p.id !== poId));
+      if (viewingPoDoc?.id === poId) {
+        setViewingPoDoc(null);
+      }
+    }
+  };
+
   // Handle Receive PO items into stock
   const handleReceiveStock = (poId: string) => {
     setPoList(prev =>
@@ -4884,6 +4989,13 @@ export const POManagementView: React.FC = () => {
                             รับของเข้าสต๊อก
                           </button>
                         )}
+                        <button
+                          onClick={() => handleDeletePo(po.id)}
+                          className="p-1.5 bg-rose-950/60 hover:bg-rose-900 border border-rose-500/40 text-rose-300 font-bold text-xs rounded-xl transition flex items-center justify-center shadow active:scale-95"
+                          title="ลบใบสั่งซื้อ PO นี้"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -5640,6 +5752,14 @@ export const POManagementView: React.FC = () => {
                 >
                   <Printer className="w-4 h-4" />
                   <span>พิมพ์เอกสาร</span>
+                </button>
+                <button
+                  onClick={() => handleDeletePo(viewingPoDoc.id)}
+                  className="px-3.5 py-2 bg-rose-950/80 hover:bg-rose-900 border border-rose-500/40 text-rose-300 font-bold rounded-xl transition flex items-center space-x-1.5 active:scale-95 shadow"
+                  title="ลบใบสั่งซื้อ PO นี้"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>ลบ PO นี้</span>
                 </button>
               </div>
             </div>
@@ -6949,6 +7069,17 @@ export const LineNotifyView: React.FC = () => {
   const [telegramToken, setTelegramToken] = useState('bot68392019:AAHk98231_KapraoBot');
   const [telegramChatId, setTelegramChatId] = useState('-1001928374650');
   const [tokenSavedToast, setTokenSavedToast] = useState<string | null>(null);
+  const [isSendingChannel, setIsSendingChannel] = useState<'line' | 'telegram' | null>(null);
+
+  useEffect(() => {
+    const savedTelegramToken = localStorage.getItem('kaprao_telegram_token');
+    const savedTelegramChatId = localStorage.getItem('kaprao_telegram_chat_id');
+    const savedLineToken = localStorage.getItem('kaprao_line_token');
+
+    if (savedTelegramToken) setTelegramToken(savedTelegramToken);
+    if (savedTelegramChatId) setTelegramChatId(savedTelegramChatId);
+    if (savedLineToken) setLineToken(savedLineToken);
+  }, []);
 
   // Enabled Notification Triggers
   const [triggers, setTriggers] = useState({
@@ -7048,6 +7179,9 @@ export const LineNotifyView: React.FC = () => {
   // Save Token Handler
   const handleSaveTokens = (e: React.FormEvent) => {
     e.preventDefault();
+    localStorage.setItem('kaprao_telegram_token', telegramToken);
+    localStorage.setItem('kaprao_telegram_chat_id', telegramChatId);
+    localStorage.setItem('kaprao_line_token', lineToken);
     setTokenSavedToast('บันทึกการตั้งค่า LINE Token & Telegram Bot เรียบร้อยแล้ว!');
     setTimeout(() => setTokenSavedToast(null), 3500);
   };
@@ -7181,8 +7315,8 @@ ${displayStock}
 💡 โปรดประสานงานเชฟในครัวเพื่อเร่งปรุงอาหารให้ลูกค้า`;
   };
 
-  // Open simulated mobile preview
-  const handleTriggerTest = (channel: 'line' | 'telegram', type: 'daily' | 'stock' | 'void' | 'new_order' | 'kds') => {
+  // Send real notification via Telegram/LINE API & open mobile preview
+  const handleTriggerTest = async (channel: 'line' | 'telegram', type: 'daily' | 'stock' | 'void' | 'new_order' | 'kds') => {
     const titles: Record<string, string> = {
       daily: 'สรุปยอดขายประจำวัน (Daily Sales Summary)',
       stock: 'เตือนวัตถุดิบใกล้หมดสต็อก (Low Stock Alert)',
@@ -7191,11 +7325,93 @@ ${displayStock}
       kds: 'เตือนออเดอร์ช้าในครัว (KDS Kitchen Delay)'
     };
 
-    const msg = getMessageContent(type);
+    const titleText = titles[type] || 'การแจ้งเตือนระบบ';
+    const msgContent = getMessageContent(type);
+    const fullMessage = `🔔 [ครัวกะเพรา POS - ${titleText}]\n\n${msgContent}`;
+
     setSimulatedChannel(channel);
-    setSimulatedTitle(titles[type] || 'การแจ้งเตือนระบบ');
-    setSimulatedMessage(msg);
+    setSimulatedTitle(titleText);
+    setSimulatedMessage(msgContent);
     setIsSimulatedMobileOpen(true);
+    setIsSendingChannel(channel);
+
+    let isSuccess = false;
+    let statusLogText = '';
+    let errorMessage = '';
+
+    try {
+      if (channel === 'telegram') {
+        if (!telegramToken.trim() || !telegramChatId.trim()) {
+          throw new Error('กรุณากรอก Bot Token และ Group Chat ID ให้ครบถ้วน');
+        }
+
+        // Try sending via server endpoint first
+        let res = await fetch('/api/notify/telegram', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            botToken: telegramToken,
+            chatId: telegramChatId,
+            message: fullMessage
+          })
+        });
+
+        let data = await res.json().catch(() => ({}));
+
+        if (res.ok && data.success) {
+          isSuccess = true;
+          statusLogText = 'ส่งสำเร็จ (200 OK - Telegram Real)';
+        } else {
+          // Fallback to client-side direct fetch to Telegram Bot API
+          const cleanToken = telegramToken.trim().startsWith('bot') ? telegramToken.trim().slice(3) : telegramToken.trim();
+          const directRes = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: telegramChatId.trim(),
+              text: fullMessage
+            })
+          });
+
+          const directData = await directRes.json().catch(() => ({}));
+
+          if (directRes.ok && directData.ok) {
+            isSuccess = true;
+            statusLogText = 'ส่งสำเร็จ (200 OK - Direct Telegram)';
+          } else {
+            throw new Error(data.error || directData.description || 'เกิดข้อผิดพลาดจาก Telegram Bot API');
+          }
+        }
+      } else {
+        // LINE
+        if (!lineToken.trim()) {
+          throw new Error('กรุณากรอก LINE Notify Token');
+        }
+
+        const res = await fetch('/api/notify/line', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lineToken,
+            message: fullMessage
+          })
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+          isSuccess = true;
+          statusLogText = 'ส่งสำเร็จ (200 OK - LINE Real)';
+        } else {
+          throw new Error(data.error || 'เกิดข้อผิดพลาดจาก LINE Notify API');
+        }
+      }
+    } catch (err: any) {
+      isSuccess = false;
+      errorMessage = err.message || 'ส่งข้อความไม่สำเร็จ';
+      statusLogText = `ล้มเหลว (${errorMessage})`;
+    } finally {
+      setIsSendingChannel(null);
+    }
 
     const newLog = {
       id: `log-${Date.now()}`,
@@ -7203,13 +7419,18 @@ ${displayStock}
       date: 'วันนี้',
       channel: channel === 'line' ? 'LINE' : 'Telegram',
       event: titles[type],
-      status: 'ส่งสำเร็จ (200 OK)',
-      recipient: channel === 'line' ? 'กลุ่มผู้บริหาร LINE' : '@KapraoBot Channel'
+      status: statusLogText,
+      recipient: channel === 'line' ? 'กลุ่ม LINE Notify' : `Chat ID: ${telegramChatId || 'Telegram'}`
     };
 
     setLogs(prev => [newLog, ...prev.slice(0, 9)]);
-    setTestToast(`ส่งการแจ้งเตือนทดสอบไปยัง ${channel.toUpperCase()} เรียบร้อยแล้ว!`);
-    setTimeout(() => setTestToast(null), 3500);
+
+    if (isSuccess) {
+      setTestToast(`✅ ส่งการแจ้งเตือนจริงไปยัง ${channel.toUpperCase()} (${channel === 'telegram' ? telegramChatId : 'LINE'}) เรียบร้อยแล้ว!`);
+    } else {
+      setTestToast(`❌ เกิดข้อผิดพลาดในการส่ง ${channel.toUpperCase()}: ${errorMessage}`);
+    }
+    setTimeout(() => setTestToast(null), 6000);
   };
 
   // Copy message text
@@ -7307,11 +7528,12 @@ ${displayStock}
                   <span className="text-[10px] text-slate-500">สำหรับส่งเตือนเข้ากลุ่ม Line</span>
                   <button
                     type="button"
+                    disabled={isSendingChannel !== null}
                     onClick={() => handleTriggerTest('line', activeTab)}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] rounded-xl shadow transition active:scale-95 flex items-center space-x-1"
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-[11px] rounded-xl shadow transition active:scale-95 flex items-center space-x-1"
                   >
-                    <Send className="w-3 h-3" />
-                    <span>ทดสอบ LINE</span>
+                    <Send className={`w-3 h-3 ${isSendingChannel === 'line' ? 'animate-spin' : ''}`} />
+                    <span>{isSendingChannel === 'line' ? 'กำลังส่ง...' : 'ทดสอบ LINE'}</span>
                   </button>
                 </div>
               </div>
@@ -7334,6 +7556,7 @@ ${displayStock}
                       type="text"
                       value={telegramToken}
                       onChange={e => setTelegramToken(e.target.value)}
+                      placeholder="เช่น 8712743364:AAFcwX0..."
                       className="w-full px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-cyan-300 font-mono font-bold focus:border-cyan-500"
                     />
                   </div>
@@ -7343,6 +7566,7 @@ ${displayStock}
                       type="text"
                       value={telegramChatId}
                       onChange={e => setTelegramChatId(e.target.value)}
+                      placeholder="เช่น -5424457109"
                       className="w-full px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-cyan-300 font-mono font-bold focus:border-cyan-500"
                     />
                   </div>
@@ -7351,11 +7575,12 @@ ${displayStock}
                   <span className="text-[10px] text-slate-500">สำหรับส่งเตือนด่วน Telegram</span>
                   <button
                     type="button"
+                    disabled={isSendingChannel !== null}
                     onClick={() => handleTriggerTest('telegram', activeTab)}
-                    className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-[11px] rounded-xl shadow transition active:scale-95 flex items-center space-x-1"
+                    className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-bold text-[11px] rounded-xl shadow transition active:scale-95 flex items-center space-x-1"
                   >
-                    <Send className="w-3 h-3" />
-                    <span>ทดสอบ Telegram</span>
+                    <Send className={`w-3 h-3 ${isSendingChannel === 'telegram' ? 'animate-spin' : ''}`} />
+                    <span>{isSendingChannel === 'telegram' ? 'กำลังส่ง...' : 'ทดสอบ Telegram'}</span>
                   </button>
                 </div>
               </div>

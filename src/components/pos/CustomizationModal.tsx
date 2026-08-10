@@ -127,9 +127,9 @@ export const CustomizationModal: React.FC<CustomizationModalProps> = ({
                 </div>
                 <div>
                   <div className="text-sm font-bold text-slate-100 flex items-center space-x-2">
-                    <span>Extra Fried Egg (เพิ่มไข่ดาว)</span>
+                    <span>{friedEggAddon.name}</span>
                     <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30 font-black">
-                      +10 ฿
+                      +{friedEggAddon.price} ฿
                     </span>
                   </div>
                   <p className="text-xs text-slate-400 mt-0.5">ไข่ดาวทอดขอบกรอบ ไข่แดงเยิ้มฉ่ำ เพิ่มความอร่อยให้มื้ออาหาร</p>

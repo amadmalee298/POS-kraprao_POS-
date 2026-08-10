@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { calcRecipeItemCostAndDeduction } from '../../utils/recipeUtils';
 import { usePOS } from '../../context/POSContext';
 import {
   Sparkles,
@@ -73,8 +74,9 @@ export const AIInventoryForecastPanel: React.FC = () => {
           const mItem = menuItems.find(m => m.id === cartItem.menuItem?.id || m.name === cartItem.menuItem?.name);
           if (mItem && mItem.recipe && Array.isArray(mItem.recipe)) {
             mItem.recipe.forEach(r => {
-              const qty = (r.amountNeeded || 0) * (cartItem.quantity || 1);
-              ingredientConsumedMap[r.ingredientId] = (ingredientConsumedMap[r.ingredientId] || 0) + qty;
+              const ing = ingredients.find(i => i.id === r.ingredientId);
+              const deduction = calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).stockDeduction * (cartItem.quantity || 1);
+              ingredientConsumedMap[r.ingredientId] = (ingredientConsumedMap[r.ingredientId] || 0) + deduction;
             });
           }
         });

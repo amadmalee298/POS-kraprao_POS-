@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { calcRecipeItemCostAndDeduction } from '../utils/recipeUtils';
 import {
   MenuItem,
   Ingredient,
@@ -1069,7 +1070,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
           if (ingIndex > -1) {
             const ing = updated[ingIndex];
-            const needed = rec.amountNeeded * qty;
+            const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
             updated[ingIndex] = {
               ...ing,
               currentStock: Math.max(0, ing.currentStock - needed)
@@ -1084,7 +1085,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
               if (ingIndex > -1) {
                 const ing = updated[ingIndex];
-                const needed = rec.amountNeeded * qty;
+                const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
                 updated[ingIndex] = {
                   ...ing,
                   currentStock: Math.max(0, ing.currentStock - needed)
@@ -1095,7 +1096,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const ingIndex = updated.findIndex(ing => ing.id === addon.ingredientId);
             if (ingIndex > -1) {
               const ing = updated[ingIndex];
-              const needed = addon.ingredientAmount * qty;
+              const needed = calcRecipeItemCostAndDeduction(ing, addon.ingredientAmount).stockDeduction * qty;
               updated[ingIndex] = {
                 ...ing,
                 currentStock: Math.max(0, ing.currentStock - needed)
@@ -1170,7 +1171,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
           if (ingIndex > -1) {
             const ing = updated[ingIndex];
-            const needed = rec.amountNeeded * qty;
+            const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
             updated[ingIndex] = {
               ...ing,
               currentStock: Math.max(0, ing.currentStock - needed)
@@ -1185,7 +1186,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
               if (ingIndex > -1) {
                 const ing = updated[ingIndex];
-                const needed = rec.amountNeeded * qty;
+                const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
                 updated[ingIndex] = {
                   ...ing,
                   currentStock: Math.max(0, ing.currentStock - needed)
@@ -1196,7 +1197,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const ingIndex = updated.findIndex(ing => ing.id === addon.ingredientId);
             if (ingIndex > -1) {
               const ing = updated[ingIndex];
-              const needed = addon.ingredientAmount * qty;
+              const needed = calcRecipeItemCostAndDeduction(ing, addon.ingredientAmount).stockDeduction * qty;
               updated[ingIndex] = {
                 ...ing,
                 currentStock: Math.max(0, ing.currentStock - needed)
@@ -1342,8 +1343,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         let recalculatedCost = 0;
         item.recipe.forEach(r => {
+          const ingObj = ingredients.find(i => i.id === r.ingredientId);
           const costPerUnit = r.ingredientId === ingredientId ? newUnitCost : (ingCostMap.get(r.ingredientId) ?? 0);
-          recalculatedCost += r.amountNeeded * costPerUnit;
+          const lineCost = calcRecipeItemCostAndDeduction(
+            ingObj ? { ...ingObj, unitCost: costPerUnit } : { unit: 'pcs', unitCost: costPerUnit },
+            r.amountNeeded,
+            r.recipeUnit
+          ).lineCost;
+          recalculatedCost += lineCost;
         });
 
         const newPrice = (updatedMenuPrices && updatedMenuPrices[item.id] !== undefined)

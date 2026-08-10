@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { calcRecipeItemCostAndDeduction } from '../../utils/recipeUtils';
 import { usePOS } from '../../context/POSContext';
 import {
   Sparkles,
@@ -71,10 +72,16 @@ export const BulkIngredientCostEditorPanel: React.FC = () => {
 
       // Calculate new total cost for this menu item
       const newCost = m.recipe ? m.recipe.reduce((sum, r) => {
+        const ing = ingredients.find(i => i.id === r.ingredientId);
         const cost = r.ingredientId === selectedIngredientId
           ? newUnitCost
-          : (ingredients.find(i => i.id === r.ingredientId)?.unitCost || 0);
-        return sum + r.amountNeeded * cost;
+          : (ing?.unitCost || 0);
+        const lineCost = calcRecipeItemCostAndDeduction(
+          ing ? { ...ing, unitCost: cost } : { unit: 'pcs', unitCost: cost },
+          r.amountNeeded,
+          r.recipeUnit
+        ).lineCost;
+        return sum + lineCost;
       }, 0) : 0;
 
       // Calculate suggested retail price based on target food cost %

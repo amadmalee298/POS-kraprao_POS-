@@ -21,7 +21,8 @@ export interface AddOnOption {
 
 export interface RecipeIngredient {
   ingredientId: string;
-  amountNeeded: number; // in unit specified in Ingredient
+  amountNeeded: number; // in unit specified in Ingredient or recipeUnit
+  recipeUnit?: string; // e.g. 'g', 'kg', 'ml', 'l', 'pcs'
 }
 
 export interface MenuItem {
@@ -299,6 +300,17 @@ export interface User {
   avatarColor: string;
 }
 
+export interface MerchantConnectionSettings {
+  isConnected: boolean;
+  merchantName: string;
+  merchantId: string;
+  terminalId: string;
+  apiKey?: string;
+  provider: 'bbl_merchant_pro' | 'promptpay_dynamic' | 'scb_merchant' | 'kbank_merchant' | 'delivery_merchant';
+  autoConfirmPayment: boolean;
+  lastConnectedAt?: string;
+}
+
 export interface QrPaymentOption {
   id: string;
   name: string;
@@ -340,6 +352,7 @@ export interface SystemSettings {
   receiptShowItemDetails?: boolean;
   receiptUseMonospace?: boolean;
   receiptFooterNote?: string;
+  merchantSettings?: MerchantConnectionSettings;
 }
 
 export interface StaffPermissions {
