@@ -217,54 +217,77 @@ export const AdjustmentLogModal: React.FC<AdjustmentLogModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-6 animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-1.5 sm:p-6 animate-in fade-in duration-200">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-5xl h-[98vh] sm:h-[90vh] flex flex-col overflow-hidden shadow-2xl">
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-950 border-b border-slate-800 shrink-0">
-          <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20">
-              <History className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h2 className="text-base font-bold text-white tracking-tight">
-                  ประวัติการปรับยอดสต็อกวัตถุดิบ (Stock Adjustment Log)
-                </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  {stockAdjustmentLogs.length} รายการ
-                </span>
+        <div className="p-3 sm:px-6 sm:py-4 bg-slate-950 border-b border-slate-800 shrink-0 space-y-2 sm:space-y-0">
+          <div className="flex items-start sm:items-center justify-between gap-2">
+            <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+              <div className="p-2 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20 shrink-0">
+                <History className="w-4 h-4 sm:w-5 sm:h-5" />
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                บันทึกเหตุการณ์ปรับเพิ่ม/ลดสต็อกแบบละเอียด พร้อมระบุสาเหตุ (เสีย, เติมสต๊อก, ชำรุด) และผู้ทำรายการ
-              </p>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                  <h2 className="text-xs sm:text-base font-bold text-white tracking-tight break-words sm:whitespace-normal">
+                    ประวัติการปรับยอดสต็อกวัตถุดิบ (Stock Adjustment Log)
+                  </h2>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+                    {stockAdjustmentLogs.length} รายการ
+                  </span>
+                </div>
+                <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5 hidden sm:block">
+                  บันทึกเหตุการณ์ปรับเพิ่ม/ลดสต็อกแบบละเอียด พร้อมระบุสาเหตุ (เสีย, เติมสต๊อก, ชำรุด) และผู้ทำรายการ
+                </p>
+              </div>
+            </div>
+
+            {/* Desktop Buttons & Close */}
+            <div className="flex items-center space-x-1.5 shrink-0">
+              <button
+                onClick={() => setIsAddFormOpen(!isAddFormOpen)}
+                className="hidden sm:flex px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-lg transition items-center space-x-1.5 active:scale-95"
+              >
+                <Plus className="w-4 h-4" />
+                <span>บันทึกการปรับสต็อกใหม่</span>
+              </button>
+
+              <button
+                onClick={handleExportCSV}
+                disabled={filteredLogs.length === 0}
+                className="hidden sm:flex px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl transition items-center space-x-1"
+                title="ส่งออก CSV"
+              >
+                <Download className="w-4 h-4" />
+                <span>CSV</span>
+              </button>
+
+              <button
+                onClick={onClose}
+                className="p-1.5 sm:p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
+          {/* Mobile Action Bar */}
+          <div className="flex sm:hidden items-center space-x-2 pt-1 border-t border-slate-900">
             <button
               onClick={() => setIsAddFormOpen(!isAddFormOpen)}
-              className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95"
+              className="flex-1 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-extrabold text-xs rounded-xl transition flex items-center justify-center space-x-1 active:scale-95"
             >
-              <Plus className="w-4 h-4" />
-              <span>บันทึกการปรับสต็อกใหม่</span>
+              <Plus className="w-3.5 h-3.5" />
+              <span>{isAddFormOpen ? 'ปิดแบบฟอร์ม' : 'บันทึกการปรับสต็อกใหม่'}</span>
             </button>
 
             <button
               onClick={handleExportCSV}
               disabled={filteredLogs.length === 0}
-              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl transition flex items-center space-x-1"
+              className="p-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl transition flex items-center justify-center"
               title="ส่งออก CSV"
             >
-              <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">CSV</span>
-            </button>
-
-            <button
-              onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition"
-            >
-              <X className="w-5 h-5" />
+              <Download className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -402,8 +425,8 @@ export const AdjustmentLogModal: React.FC<AdjustmentLogModalProps> = ({
         )}
 
         {/* Filter Controls Bar */}
-        <div className="p-4 bg-slate-950 border-b border-slate-800 space-y-3 shrink-0">
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs">
+        <div className="p-3 sm:p-4 bg-slate-950 border-b border-slate-800 space-y-3 shrink-0">
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 text-xs">
             {/* Search Box */}
             <div className="relative flex-1">
               <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -421,68 +444,71 @@ export const AdjustmentLogModal: React.FC<AdjustmentLogModalProps> = ({
               )}
             </div>
 
-            {/* Ingredient Filter Dropdown */}
-            <div className="flex items-center space-x-2">
-              <Package className="w-4 h-4 text-slate-500 shrink-0" />
-              <select
-                value={ingFilter}
-                onChange={e => setIngFilter(e.target.value)}
-                className="px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-amber-500 font-medium"
-              >
-                <option value="all">วัตถุดิบทั้งหมด (All Items)</option>
-                {ingredients.map(ing => (
-                  <option key={ing.id} value={ing.id}>{ing.name}</option>
-                ))}
-              </select>
-            </div>
+            {/* Filter Group for mobile */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 md:flex md:items-center gap-2">
+              {/* Ingredient Filter Dropdown */}
+              <div className="flex items-center space-x-2 bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-800">
+                <Package className="w-4 h-4 text-slate-500 shrink-0" />
+                <select
+                  value={ingFilter}
+                  onChange={e => setIngFilter(e.target.value)}
+                  className="w-full bg-transparent text-slate-200 focus:outline-none font-medium truncate"
+                >
+                  <option value="all" className="bg-slate-900">วัตถุดิบทั้งหมด (All Items)</option>
+                  {ingredients.map(ing => (
+                    <option key={ing.id} value={ing.id} className="bg-slate-900">{ing.name}</option>
+                  ))}
+                </select>
+              </div>
 
-            {/* Reason Filter Dropdown */}
-            <div className="flex items-center space-x-2">
-              <Filter className="w-4 h-4 text-slate-500 shrink-0" />
-              <select
-                value={reasonFilter}
-                onChange={e => setReasonFilter(e.target.value)}
-                className="px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-amber-500 font-medium"
-              >
-                <option value="all">สาเหตุทั้งหมด (All Reasons)</option>
-                {Object.entries(REASON_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v.label}</option>
-                ))}
-              </select>
-            </div>
+              {/* Reason Filter Dropdown */}
+              <div className="flex items-center space-x-2 bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-800">
+                <Filter className="w-4 h-4 text-slate-500 shrink-0" />
+                <select
+                  value={reasonFilter}
+                  onChange={e => setReasonFilter(e.target.value)}
+                  className="w-full bg-transparent text-slate-200 focus:outline-none font-medium truncate"
+                >
+                  <option value="all" className="bg-slate-900">สาเหตุทั้งหมด (All Reasons)</option>
+                  {Object.entries(REASON_LABELS).map(([k, v]) => (
+                    <option key={k} value={k} className="bg-slate-900">{v.label}</option>
+                  ))}
+                </select>
+              </div>
 
-            {/* Time Filter Buttons */}
-            <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800 shrink-0">
-              <button
-                onClick={() => setTimeFilter('all')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                  timeFilter === 'all' ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                ทั้งหมด
-              </button>
-              <button
-                onClick={() => setTimeFilter('today')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                  timeFilter === 'today' ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                วันนี้
-              </button>
-              <button
-                onClick={() => setTimeFilter('7days')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                  timeFilter === '7days' ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                7 วัน
-              </button>
+              {/* Time Filter Buttons */}
+              <div className="flex items-center justify-center bg-slate-900 p-1 rounded-xl border border-slate-800 shrink-0">
+                <button
+                  onClick={() => setTimeFilter('all')}
+                  className={`flex-1 sm:flex-none px-3 py-1 rounded-lg text-xs font-bold transition ${
+                    timeFilter === 'all' ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  ทั้งหมด
+                </button>
+                <button
+                  onClick={() => setTimeFilter('today')}
+                  className={`flex-1 sm:flex-none px-3 py-1 rounded-lg text-xs font-bold transition ${
+                    timeFilter === 'today' ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  วันนี้
+                </button>
+                <button
+                  onClick={() => setTimeFilter('7days')}
+                  className={`flex-1 sm:flex-none px-3 py-1 rounded-lg text-xs font-bold transition ${
+                    timeFilter === '7days' ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  7 วัน
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Content Table Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4">
           {filteredLogs.length === 0 ? (
             <div className="p-12 text-center space-y-3 bg-slate-950/50 rounded-2xl border border-slate-800/80 my-4">
               <div className="p-3.5 bg-slate-800 text-slate-500 rounded-2xl w-fit mx-auto border border-slate-700">
@@ -494,7 +520,7 @@ export const AdjustmentLogModal: React.FC<AdjustmentLogModalProps> = ({
               </p>
             </div>
           ) : (
-            <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-x-auto shadow-xl">
               <table className="w-full text-left text-xs text-slate-300">
                 <thead className="bg-slate-900 text-slate-400 font-mono text-[11px] uppercase tracking-wider border-b border-slate-800">
                   <tr>
