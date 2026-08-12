@@ -128,6 +128,7 @@ export const SettingsView: React.FC = () => {
     pendingOfflineCount,
     syncOfflineQueue,
     staffMembers,
+    currentUser,
     addStaffMember,
     updateStaffMember,
     deleteStaffMember,
@@ -307,6 +308,24 @@ export const SettingsView: React.FC = () => {
       ...staff,
       status: newStatus
     });
+  };
+
+  const handleDeleteEmployee = (staff: StaffMember) => {
+    if (!checkManagerAuth()) return;
+    if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบพนักงาน "${staff.name}" (${staff.role}) ออกจากระบบอย่างถาวร?\n\nการดำเนินการนี้จะลบข้อมูลและอัพเดทสิทธิ์เข้าถึงของทั้งระบบทันที`)) {
+      deleteStaffMember(staff.id);
+      logSecurityEvent?.({
+        userId: currentUser?.id || 'usr-admin',
+        userName: currentUser?.name || 'ผู้จัดการ',
+        userRole: currentUser?.role || 'admin',
+        action: 'Delete Staff Member',
+        status: 'SUCCESS',
+        details: `ลบพนักงาน ${staff.name} (ตำแหน่ง: ${staff.role}) ออกจากระบบถาวร`
+      });
+      if (isEmployeePinModalOpen) {
+        setIsEmployeePinModalOpen(false);
+      }
+    }
   };
 
   const handleGenerateRandomPinForStaff = (staff: StaffMember) => {
@@ -1169,27 +1188,39 @@ export const SettingsView: React.FC = () => {
                             <span className="text-[11px] text-slate-600">ไม่มีเบอร์โทร</span>
                           )}
 
-                          <button
-                            type="button"
-                            onClick={() => handleToggleRevokeAccess(staff)}
-                            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition flex items-center space-x-1 border ${
-                              isRevoked
-                                ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                                : 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30'
-                            }`}
-                          >
-                            {isRevoked ? (
-                              <>
-                                <UserCheck className="w-3.5 h-3.5" />
-                                <span>คืนสิทธิ์ใช้งาน</span>
-                              </>
-                            ) : (
-                              <>
-                                <UserX className="w-3.5 h-3.5" />
-                                <span>ระงับสิทธิ์ (Revoke)</span>
-                              </>
-                            )}
-                          </button>
+                          <div className="flex items-center space-x-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleRevokeAccess(staff)}
+                              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition flex items-center space-x-1 border ${
+                                isRevoked
+                                  ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                  : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30'
+                              }`}
+                            >
+                              {isRevoked ? (
+                                <>
+                                  <UserCheck className="w-3.5 h-3.5" />
+                                  <span>คืนสิทธิ์</span>
+                                </>
+                              ) : (
+                                <>
+                                  <UserX className="w-3.5 h-3.5" />
+                                  <span>ระงับสิทธิ์</span>
+                                </>
+                              )}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteEmployee(staff)}
+                              className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded-xl text-[11px] font-bold transition flex items-center space-x-1"
+                              title="ลบพนักงานคนนี้ถาวร"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>ลบ</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
@@ -3031,20 +3062,36 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsEmployeePinModalOpen(false)}
-                  className="py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition"
-                >
-                  ยกเลิก
-                </button>
-                <button
-                  type="submit"
-                  className="py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition active:scale-95"
-                >
-                  บันทึกข้อมูลพนักงาน
-                </button>
+              <div className="flex items-center justify-between pt-3 border-t border-slate-800">
+                {editingEmployee.id ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const staff = staffMembers.find(s => s.id === editingEmployee.id);
+                      if (staff) handleDeleteEmployee(staff);
+                    }}
+                    className="px-3.5 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition flex items-center space-x-1.5"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>ลบพนักงานคนนี้</span>
+                  </button>
+                ) : <div />}
+
+                <div className="flex items-center space-x-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsEmployeePinModalOpen(false)}
+                    className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition active:scale-95"
+                  >
+                    บันทึกข้อมูลพนักงาน
+                  </button>
+                </div>
               </div>
             </form>
           </div>

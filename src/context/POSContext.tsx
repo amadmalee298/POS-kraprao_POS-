@@ -692,7 +692,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         role,
         pin: staff.pin || '1234',
         branchId: staff.branchId,
-        avatarColor: existingUser?.avatarColor || colors[idx % colors.length]
+        avatarColor: existingUser?.avatarColor || colors[idx % colors.length],
+        permissions: staff.permissions
       };
     });
 
@@ -1431,10 +1432,35 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const updateStaffMember = (staffData: StaffMember) => {
     setStaffMembers(prev => prev.map(s => s.id === staffData.id ? staffData : s));
+    if (currentUser?.id === staffData.id) {
+      setCurrentUser(prev => ({
+        ...prev,
+        name: staffData.name,
+        role: staffData.role as any,
+        pin: staffData.pin || prev.pin,
+        permissions: staffData.permissions
+      }));
+    }
   };
 
   const deleteStaffMember = (staffId: string) => {
-    setStaffMembers(prev => prev.filter(s => s.id !== staffId));
+    setStaffMembers(prev => {
+      const updated = prev.filter(s => s.id !== staffId);
+      if (currentUser?.id === staffId && updated.length > 0) {
+        const fallback = updated.find(s => s.status === 'active') || updated[0];
+        if (fallback) {
+          setCurrentUser({
+            id: fallback.id,
+            name: fallback.name,
+            role: fallback.role as any,
+            pin: fallback.pin || '1234',
+            avatarColor: 'from-amber-500 to-orange-600',
+            permissions: fallback.permissions
+          });
+        }
+      }
+      return updated;
+    });
     setShifts(prev => prev.filter(sh => sh.staffId !== staffId));
   };
 

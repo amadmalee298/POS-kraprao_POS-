@@ -306,6 +306,7 @@ export interface User {
   pin: string;
   branchId?: string; // empty means all branches
   avatarColor: string;
+  permissions?: StaffPermissions;
 }
 
 export interface MerchantConnectionSettings {
