@@ -597,10 +597,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setOrders(validOrders);
             loadedOrdersCount = validOrders.length;
           }
-          if (parsed.categories && Array.isArray(parsed.categories) && parsed.categories.length > 0) {
+          if (parsed.categories && Array.isArray(parsed.categories)) {
             setCategories(parsed.categories);
           }
-          if (parsed.ingredientCategories && Array.isArray(parsed.ingredientCategories) && parsed.ingredientCategories.length > 0) {
+          if (parsed.ingredientCategories && Array.isArray(parsed.ingredientCategories)) {
             setIngredientCategories(parsed.ingredientCategories);
           }
           if (parsed.menuItems && Array.isArray(parsed.menuItems)) {
@@ -756,11 +756,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     isStorageLoaded,
     cart,
     discount,
+    categories,
+    ingredientCategories,
     menuItems,
     addOns,
     ingredients,
     stockLots,
     wasteLogs,
+    stockAdjustmentLogs,
     staffMembers,
     shifts,
     shiftSwapRequests,

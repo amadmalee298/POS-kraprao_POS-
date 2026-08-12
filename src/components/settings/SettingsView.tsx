@@ -490,13 +490,13 @@ export const SettingsView: React.FC = () => {
 
   // QR Payment Methods State
   const [configuredPaymentMethods, setConfiguredPaymentMethods] = useState<QrPaymentOption[]>(
-    settings.qrPaymentMethods && settings.qrPaymentMethods.length > 0
+    Array.isArray(settings.qrPaymentMethods)
       ? settings.qrPaymentMethods
       : DEFAULT_QR_METHODS
   );
 
   useEffect(() => {
-    if (settings.qrPaymentMethods && settings.qrPaymentMethods.length > 0) {
+    if (Array.isArray(settings.qrPaymentMethods)) {
       setConfiguredPaymentMethods(settings.qrPaymentMethods);
       const promptPayItem = settings.qrPaymentMethods.find(m => m.type === 'promptpay');
       if (promptPayItem?.accountNumber) {

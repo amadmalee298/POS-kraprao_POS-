@@ -224,7 +224,7 @@ export const QrOrderingView: React.FC = () => {
     }
   ];
 
-  const configuredPaymentMethods: QrPaymentOption[] = settings.qrPaymentMethods && settings.qrPaymentMethods.length > 0
+  const configuredPaymentMethods: QrPaymentOption[] = Array.isArray(settings.qrPaymentMethods)
     ? settings.qrPaymentMethods
     : DEFAULT_QR_METHODS;
 
@@ -1905,12 +1905,12 @@ export const RecipeCostingView: React.FC = () => {
   // Selected Menu Item for Recipe view
   const currentRecipeMenuItem = menuItems.find(m => m.id === selectedRecipeMenuItemId) || menuItems[0];
 
-  // Sync editableRecipe when selected menu item changes or menu items change
+  // Sync editableRecipe when selected menu item changes
   useEffect(() => {
     if (currentRecipeMenuItem) {
       setEditableRecipe(currentRecipeMenuItem.recipe ? [...currentRecipeMenuItem.recipe] : []);
     }
-  }, [selectedRecipeMenuItemId, menuItems]);
+  }, [selectedRecipeMenuItemId]);
 
   // Handlers for Menu Item
   const handleOpenAddMenu = () => {
@@ -3202,53 +3202,67 @@ interface Quotation {
 export const QuotationView: React.FC = () => {
   const { menuItems } = usePOS();
   
-  const [quotations, setQuotations] = useState<Quotation[]>([
-    {
-      id: 'qt-001',
-      quotationNo: 'QT-202607-001',
-      customerName: 'คุณภัทรพล สุขสวัสดิ์',
-      companyName: 'บริษัท สยามนวัตกรรม จำกัด',
-      taxId: '0105562098123',
-      phone: '081-987-6543',
-      email: 'pattarapol@siaminno.co.th',
-      address: '123/45 อาคารสยามสแควร์ ชั้น 12 ถนนพระราม 1 ปทุมวัน กรุงเทพฯ 10330',
-      eventDate: '2026-08-05',
-      validUntil: '2026-08-01',
-      items: [
-        { id: '1', name: 'ข้าวผัดกะเพราเนื้อสไลส์พรีเมียม (กล่องจัดเลี้ยง)', qty: 50, price: 95 },
-        { id: '2', name: 'ไข่ดาวโบราณขอบกรอบ', qty: 50, price: 15 },
-        { id: '3', name: 'ต้มยำกุ้งน้ำข้นเซตพิเศษ', qty: 10, price: 220 },
-        { id: '4', name: 'ชาไทยเย็นตรามือ (ขวด 250ml)', qty: 50, price: 35 }
-      ],
-      discount: 300,
-      includeVat: true,
-      status: 'อนุมัติแล้ว',
-      createdAt: '2026-07-20',
-      notes: 'มัดจำ 50% ก่อนวันงาน 3 วัน ส่งมอบเวลา 11:30 น.'
-    },
-    {
-      id: 'qt-002',
-      quotationNo: 'QT-202607-002',
-      customerName: 'คุณวรรณิสา แก้วมณี',
-      companyName: 'โรงพยาบาลกรุงเทพ เซ็นเตอร์',
-      taxId: '0105558012341',
-      phone: '089-123-4567',
-      email: 'wannisa@bangkokhospital.com',
-      address: '2 ซอยศูนย์วิจัย ถนนเพชรบุรีตัดใหม่ บางกะปิ ห้วยขวาง กรุงเทพฯ 10310',
-      eventDate: '2026-08-12',
-      validUntil: '2026-08-08',
-      items: [
-        { id: '1', name: 'ข้าวผัดกะเพราหมูกรอบจัดเลี้ยงสัมมนา', qty: 80, price: 85 },
-        { id: '2', name: 'ไข่เยี่ยวม้าทองคำ', qty: 80, price: 20 },
-        { id: '3', name: 'เฉาก๊วยชากังราวถ้วย', qty: 80, price: 25 }
-      ],
-      discount: 500,
-      includeVat: true,
-      status: 'รออนุมัติ',
-      createdAt: '2026-07-22',
-      notes: 'ขออาหารแยกกล่องพร้อมช้อนส้อมกระดาษรักษ์โลก'
+  const [quotations, setQuotations] = useState<Quotation[]>(() => {
+    try {
+      const saved = localStorage.getItem('POS_QUOTATIONS');
+      return saved ? JSON.parse(saved) : [
+        {
+          id: 'qt-001',
+          quotationNo: 'QT-202607-001',
+          customerName: 'คุณภัทรพล สุขสวัสดิ์',
+          companyName: 'บริษัท สยามนวัตกรรม จำกัด',
+          taxId: '0105562098123',
+          phone: '081-987-6543',
+          email: 'pattarapol@siaminno.co.th',
+          address: '123/45 อาคารสยามสแควร์ ชั้น 12 ถนนพระราม 1 ปทุมวัน กรุงเทพฯ 10330',
+          eventDate: '2026-08-05',
+          validUntil: '2026-08-01',
+          items: [
+            { id: '1', name: 'ข้าวผัดกะเพราเนื้อสไลส์พรีเมียม (กล่องจัดเลี้ยง)', qty: 50, price: 95 },
+            { id: '2', name: 'ไข่ดาวโบราณขอบกรอบ', qty: 50, price: 15 },
+            { id: '3', name: 'ต้มยำกุ้งน้ำข้นเซตพิเศษ', qty: 10, price: 220 },
+            { id: '4', name: 'ชาไทยเย็นตรามือ (ขวด 250ml)', qty: 50, price: 35 }
+          ],
+          discount: 300,
+          includeVat: true,
+          status: 'อนุมัติแล้ว',
+          createdAt: '2026-07-20',
+          notes: 'มัดจำ 50% ก่อนวันงาน 3 วัน ส่งมอบเวลา 11:30 น.'
+        },
+        {
+          id: 'qt-002',
+          quotationNo: 'QT-202607-002',
+          customerName: 'คุณวรรณิสา แก้วมณี',
+          companyName: 'โรงพยาบาลกรุงเทพ เซ็นเตอร์',
+          taxId: '0105558012341',
+          phone: '089-123-4567',
+          email: 'wannisak@bhh.co.th',
+          address: '456 ถนนเพชรบุรีตัดใหม่ ห้วยขวาง กรุงเทพฯ 10310',
+          eventDate: '2026-08-10',
+          validUntil: '2026-08-03',
+          items: [
+            { id: '1', name: 'ข้าวผัดกะเพราไก่สับไข่ดาว (กล่องจัดเลี้ยง)', qty: 120, price: 65 },
+            { id: '2', name: 'เฉาก๊วยชากังราวใส่น้ำเชื่อม', qty: 120, price: 25 }
+          ],
+          discount: 500,
+          includeVat: false,
+          status: 'รอพิจารณา',
+          createdAt: '2026-07-22',
+          notes: 'ขอใบเสนอราคาด่วนเพื่อเสนอที่ประชุมคณะกรรมการ'
+        }
+      ];
+    } catch {
+      return [];
     }
-  ]);
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('POS_QUOTATIONS', JSON.stringify(quotations));
+    } catch (e) {
+      console.error('Failed to save quotations to localStorage', e);
+    }
+  }, [quotations]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -3983,18 +3997,48 @@ interface Coupon {
 export const CRMView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'members' | 'coupons'>('members');
 
-  const [members, setMembers] = useState<Member[]>([
-    { id: 'M-001', name: 'คุณสมชาย ใจดี', phone: '081-234-5678', points: 450, tier: 'Gold', registeredAt: '2026-01-10' },
-    { id: 'M-002', name: 'คุณนภา หวานเย็น', phone: '089-876-5432', points: 120, tier: 'Silver', registeredAt: '2026-03-15' },
-    { id: 'M-003', name: 'คุณวิชัย สายลุย', phone: '086-555-4321', points: 890, tier: 'Platinum', registeredAt: '2025-11-20' },
-    { id: 'M-004', name: 'คุณอนุรักษ์ มีมิตร', phone: '082-999-1122', points: 230, tier: 'Silver', registeredAt: '2026-05-01' }
-  ]);
+  const [members, setMembers] = useState<Member[]>(() => {
+    try {
+      const saved = localStorage.getItem('POS_MEMBERS');
+      return saved ? JSON.parse(saved) : [
+        { id: 'M-001', name: 'คุณสมชาย ใจดี', phone: '081-234-5678', points: 450, tier: 'Gold', registeredAt: '2026-01-10' },
+        { id: 'M-002', name: 'คุณนภา หวานเย็น', phone: '089-876-5432', points: 120, tier: 'Silver', registeredAt: '2026-03-15' },
+        { id: 'M-003', name: 'คุณวิชัย สายลุย', phone: '086-555-4321', points: 890, tier: 'Platinum', registeredAt: '2025-11-20' },
+        { id: 'M-004', name: 'คุณอนุรักษ์ มีมิตร', phone: '082-999-1122', points: 230, tier: 'Silver', registeredAt: '2026-05-01' }
+      ];
+    } catch {
+      return [];
+    }
+  });
 
-  const [coupons, setCoupons] = useState<Coupon[]>([
-    { id: 'cp-1', code: 'KAPRAO50', type: 'fixed', value: 50, minSpend: 300, expiryDate: '2026-08-31', isActive: true },
-    { id: 'cp-2', code: 'VIP10', type: 'percent', value: 10, minSpend: 500, expiryDate: '2026-12-31', isActive: true },
-    { id: 'cp-3', code: 'WELCOME30', type: 'fixed', value: 30, minSpend: 150, expiryDate: '2026-09-30', isActive: true }
-  ]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('POS_MEMBERS', JSON.stringify(members));
+    } catch (e) {
+      console.error('Failed to save members to localStorage', e);
+    }
+  }, [members]);
+
+  const [coupons, setCoupons] = useState<Coupon[]>(() => {
+    try {
+      const saved = localStorage.getItem('POS_COUPONS');
+      return saved ? JSON.parse(saved) : [
+        { id: 'cp-1', code: 'KAPRAO50', type: 'fixed', value: 50, minSpend: 300, expiryDate: '2026-08-31', isActive: true },
+        { id: 'cp-2', code: 'VIP10', type: 'percent', value: 10, minSpend: 500, expiryDate: '2026-12-31', isActive: true },
+        { id: 'cp-3', code: 'WELCOME30', type: 'fixed', value: 30, minSpend: 150, expiryDate: '2026-09-30', isActive: true }
+      ];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('POS_COUPONS', JSON.stringify(coupons));
+    } catch (e) {
+      console.error('Failed to save coupons to localStorage', e);
+    }
+  }, [coupons]);
 
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -4594,13 +4638,32 @@ const INITIAL_PO_LIST: POItem[] = [
 export const POManagementView: React.FC = () => {
   const { ingredients, updateIngredientStock } = usePOS();
   const [activeSubTab, setActiveSubTab] = useState<'po' | 'suppliers'>('po');
-  const [poList, setPoList] = useState<POItem[]>(INITIAL_PO_LIST);
+  const [poList, setPoList] = useState<POItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('POS_PO_LIST');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse poList from localStorage', e);
+    }
+    return INITIAL_PO_LIST;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('POS_PO_LIST', JSON.stringify(poList));
+    } catch (e) {
+      console.error('Failed to save poList to localStorage', e);
+    }
+  }, [poList]);
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
     try {
       const saved = localStorage.getItem('POS_SUPPLIERS');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch (e) {
       console.error('Failed to parse suppliers from localStorage', e);

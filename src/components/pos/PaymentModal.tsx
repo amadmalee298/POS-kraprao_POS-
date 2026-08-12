@@ -281,7 +281,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               ช่องทางการชำระเงิน (Payment Method - ใช้การตั้งค่าเดียวกันกับ QR Ordering)
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2.5">
-              {(settings.qrPaymentMethods && settings.qrPaymentMethods.length > 0
+              {(Array.isArray(settings.qrPaymentMethods)
                 ? settings.qrPaymentMethods
                 : DEFAULT_POS_PAYMENT_METHODS
               )

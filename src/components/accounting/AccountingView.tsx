@@ -190,135 +190,204 @@ export const AccountingView: React.FC = () => {
   const [isDayDetailModalOpen, setIsDayDetailModalOpen] = useState(false);
 
   // Balance Sheet State & Edit Form
-  const [balanceData, setBalanceData] = useState({
-    cashOnHand: 147947,
-    accountsReceivable: 22700,
-    inventoryAsset: 29809,
-    equipmentAssets: 85000,
-    accountsPayable: 8700,
-    shareCapital: 150000,
-    retainedEarnings: 126756,
+  const [balanceData, setBalanceData] = useState(() => {
+    try {
+      const saved = localStorage.getItem('POS_BALANCE_DATA');
+      return saved ? JSON.parse(saved) : {
+        cashOnHand: 147947,
+        accountsReceivable: 22700,
+        inventoryAsset: 29809,
+        equipmentAssets: 85000,
+        accountsPayable: 8700,
+        shareCapital: 150000,
+        retainedEarnings: 126756,
+      };
+    } catch {
+      return {
+        cashOnHand: 147947,
+        accountsReceivable: 22700,
+        inventoryAsset: 29809,
+        equipmentAssets: 85000,
+        accountsPayable: 8700,
+        shareCapital: 150000,
+        retainedEarnings: 126756,
+      };
+    }
   });
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('POS_BALANCE_DATA', JSON.stringify(balanceData));
+    } catch (e) {
+      console.error('Failed to save balanceData to localStorage', e);
+    }
+  }, [balanceData]);
+
   const [isEditBalanceModalOpen, setIsEditBalanceModalOpen] = useState(false);
   const [editBalanceForm, setEditBalanceForm] = useState({ ...balanceData });
 
   // Accounts Receivable (ลูกหนี้การค้า - AR) State
-  const [arList, setArList] = useState<AccountsReceivableItem[]>([
-    {
-      id: 'ar-001',
-      branchId: 'branch-main',
-      customerName: 'บริษัท กรุงเทพโซลูชันส์ จำกัด (สัญญาอาหารกลางวัน)',
-      taxIdOrPhone: '0105562098412',
-      invoiceNumber: 'INV-2026-001',
-      issueDate: '2026-07-10',
-      dueDate: '2026-07-25',
-      originalAmount: 12000,
-      paidAmount: 0,
-      remainingAmount: 12000,
-      status: 'overdue',
-      description: 'สัญญาจัดส่งชุดกะเพราถาดอาหารกลางวันพนักงาน 100 ชุด',
-      note: 'วางบิลเรียบร้อย อยู่ระหว่างรออนุมัติรอบจ่ายเช็ค',
-      payments: []
-    },
-    {
-      id: 'ar-002',
-      branchId: 'branch-main',
-      customerName: 'GrabFood Thailand (ยอดขายรอโอนเคลียร์)',
-      taxIdOrPhone: '0105558012399',
-      invoiceNumber: 'GRAB-2026-W29',
-      issueDate: '2026-07-20',
-      dueDate: '2026-07-27',
-      originalAmount: 8200,
-      paidAmount: 0,
-      remainingAmount: 8200,
-      status: 'unpaid',
-      description: 'ยอดขายเดลิเวอรีสัปดาห์ที่ 3 รอเคลียร์รอบโอนประจำสัปดาห์',
-      note: 'กำหนดโอนเข้าบัญชีหลักร้านวันจันทร์ที่ 27 ก.ค.',
-      payments: []
-    },
-    {
-      id: 'ar-003',
-      branchId: 'branch-main',
-      customerName: 'คุณภัทร & คุณพิมพ์ (งานจัดเลี้ยงกะเพรา VIP)',
-      taxIdOrPhone: '081-987-6543',
-      invoiceNumber: 'CAT-2026-004',
-      issueDate: '2026-07-15',
-      dueDate: '2026-07-30',
-      originalAmount: 15000,
-      paidAmount: 12500,
-      remainingAmount: 2500,
-      status: 'partial',
-      description: 'บริการจัดเลี้ยงข้าวกล่องกะเพราพรีเมียม 150 กล่อง',
-      note: 'รับชำระเงินมัดจำแล้ว 12,500 THB ยอดคงเหลือจ่ายวันงาน',
-      payments: [
-        { id: 'p-001', date: '2026-07-15', amount: 12500, paymentMethod: 'promptpay', note: 'มัดจำล่วงหน้า 80%' }
-      ]
+  const [arList, setArList] = useState<AccountsReceivableItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('POS_AR_LIST');
+      return saved ? JSON.parse(saved) : [
+        {
+          id: 'ar-001',
+          branchId: 'branch-main',
+          customerName: 'บริษัท กรุงเทพโซลูชันส์ จำกัด (สัญญาอาหารกลางวัน)',
+          taxIdOrPhone: '0105562098412',
+          invoiceNumber: 'INV-2026-001',
+          issueDate: '2026-07-10',
+          dueDate: '2026-07-25',
+          originalAmount: 12000,
+          paidAmount: 0,
+          remainingAmount: 12000,
+          status: 'overdue',
+          description: 'สัญญาจัดส่งชุดกะเพราถาดอาหารกลางวันพนักงาน 100 ชุด',
+          note: 'วางบิลเรียบร้อย อยู่ระหว่างรออนุมัติรอบจ่ายเช็ค',
+          payments: []
+        },
+        {
+          id: 'ar-002',
+          branchId: 'branch-main',
+          customerName: 'GrabFood Thailand (ยอดขายรอโอนเคลียร์)',
+          taxIdOrPhone: '0105558012399',
+          invoiceNumber: 'GRAB-2026-W29',
+          issueDate: '2026-07-20',
+          dueDate: '2026-07-27',
+          originalAmount: 8200,
+          paidAmount: 0,
+          remainingAmount: 8200,
+          status: 'unpaid',
+          description: 'ยอดขายเดลิเวอรีสัปดาห์ที่ 3 รอเคลียร์รอบโอนประจำสัปดาห์',
+          note: 'กำหนดโอนเข้าบัญชีหลักร้านวันจันทร์ที่ 27 ก.ค.',
+          payments: []
+        },
+        {
+          id: 'ar-003',
+          branchId: 'branch-main',
+          customerName: 'คุณภัทร & คุณพิมพ์ (งานจัดเลี้ยงกะเพรา VIP)',
+          taxIdOrPhone: '081-987-6543',
+          invoiceNumber: 'CAT-2026-004',
+          issueDate: '2026-07-15',
+          dueDate: '2026-07-30',
+          originalAmount: 15000,
+          paidAmount: 12500,
+          remainingAmount: 2500,
+          status: 'partial',
+          description: 'บริการจัดเลี้ยงข้าวกล่องกะเพราพรีเมียม 150 กล่อง',
+          note: 'รับชำระเงินมัดจำแล้ว 12,500 THB ยอดคงเหลือจ่ายวันงาน',
+          payments: [
+            { id: 'p-001', date: '2026-07-15', amount: 12500, paymentMethod: 'promptpay', note: 'มัดจำล่วงหน้า 80%' }
+          ]
+        }
+      ];
+    } catch {
+      return [];
     }
-  ]);
+  });
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('POS_AR_LIST', JSON.stringify(arList));
+    } catch (e) {
+      console.error('Failed to save arList to localStorage', e);
+    }
+  }, [arList]);
 
   // Accounts Payable (เจ้าหนี้การค้า - AP) State
-  const [apList, setApList] = useState<AccountsPayableItem[]>([
-    {
-      id: 'ap-001',
-      branchId: 'branch-main',
-      supplierName: 'บริษัท ซีพี เอฟเอส จำกัด (มหาชน)',
-      taxIdOrPhone: '0105531002341',
-      billNumber: 'BILL-CP-9921',
-      issueDate: '2026-07-18',
-      dueDate: '2026-07-28',
-      originalAmount: 5200,
-      paidAmount: 0,
-      remainingAmount: 5200,
-      status: 'unpaid',
-      category: 'เนื้อสัตว์สด',
-      description: 'หมูบดอนามัย CP และสันนอกสไลส์ 50 กิโลกรัม',
-      note: 'เครดิตเทอม 10 วัน',
-      payments: []
-    },
-    {
-      id: 'ap-002',
-      branchId: 'branch-main',
-      supplierName: 'ร้านเจ้เพ็ญพริกสด ตลาดไทย',
-      taxIdOrPhone: '089-123-4567',
-      billNumber: 'BILL-JP-0412',
-      issueDate: '2026-07-21',
-      dueDate: '2026-07-24',
-      originalAmount: 3500,
-      paidAmount: 0,
-      remainingAmount: 3500,
-      status: 'overdue',
-      category: 'ผักสวนสด',
-      description: 'พริกขี้หนูสวนสด 25 กก. และกระเทียมไทยแกะกลีบ',
-      note: 'เครดิตเทอม 3 วัน',
-      payments: []
+  const [apList, setApList] = useState<AccountsPayableItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('POS_AP_LIST');
+      return saved ? JSON.parse(saved) : [
+        {
+          id: 'ap-001',
+          branchId: 'branch-main',
+          supplierName: 'บริษัท ซีพี เอฟเอส จำกัด (มหาชน)',
+          taxIdOrPhone: '0105531002341',
+          billNumber: 'BILL-CP-9921',
+          issueDate: '2026-07-18',
+          dueDate: '2026-07-28',
+          originalAmount: 5200,
+          paidAmount: 0,
+          remainingAmount: 5200,
+          status: 'unpaid',
+          category: 'เนื้อสัตว์สด',
+          description: 'หมูบดอนามัย CP และสันนอกสไลส์ 50 กิโลกรัม',
+          note: 'เครดิตเทอม 10 วัน',
+          payments: []
+        },
+        {
+          id: 'ap-002',
+          branchId: 'branch-main',
+          supplierName: 'ร้านเจ้เพ็ญพริกสด ตลาดไทย',
+          taxIdOrPhone: '089-123-4567',
+          billNumber: 'BILL-JP-0412',
+          issueDate: '2026-07-21',
+          dueDate: '2026-07-24',
+          originalAmount: 3500,
+          paidAmount: 0,
+          remainingAmount: 3500,
+          status: 'overdue',
+          category: 'ผักสวนสด',
+          description: 'พริกขี้หนูสวนสด 25 กก. และกระเทียมไทยแกะกลีบ',
+          note: 'เครดิตเทอม 3 วัน',
+          payments: []
+        }
+      ];
+    } catch {
+      return [];
     }
-  ]);
+  });
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('POS_AP_LIST', JSON.stringify(apList));
+    } catch (e) {
+      console.error('Failed to save apList to localStorage', e);
+    }
+  }, [apList]);
 
   // Cash Flow Entries (Investing & Financing) State
-  const [cashFlowEntries, setCashFlowEntries] = useState<CashFlowEntry[]>([
-    {
-      id: 'cf-001',
-      branchId: 'branch-main',
-      date: '2026-07-05',
-      activityType: 'investing',
-      flowType: 'outflow',
-      title: 'ซื้อตู้แช่ทรงยืนสแตนเลส 4 ประตู',
-      amount: 32000,
-      category: 'อุปกรณ์เครื่องครัว',
-      note: 'เพิ่มความจุสต็อกเนื้อสัตว์และซอสปรุงสำเร็จ'
-    },
-    {
-      id: 'cf-002',
-      branchId: 'branch-main',
-      date: '2026-07-01',
-      activityType: 'financing',
-      flowType: 'inflow',
-      title: 'เงินสมทบเพิ่มทุนจากผู้ถือหุ้น',
-      amount: 50000,
-      category: 'เงินเพิ่มทุน',
-      note: 'ขยายกำลังผลิตครัวกลางและพัฒนาระบบ POS'
+  const [cashFlowEntries, setCashFlowEntries] = useState<CashFlowEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem('POS_CASH_FLOW_ENTRIES');
+      return saved ? JSON.parse(saved) : [
+        {
+          id: 'cf-001',
+          branchId: 'branch-main',
+          date: '2026-07-05',
+          activityType: 'investing',
+          flowType: 'outflow',
+          title: 'ซื้อตู้แช่ทรงยืนสแตนเลส 4 ประตู',
+          amount: 32000,
+          category: 'อุปกรณ์เครื่องครัว',
+          note: 'เพิ่มความจุสต็อกเนื้อสัตว์และซอสปรุงสำเร็จ'
+        },
+        {
+          id: 'cf-002',
+          branchId: 'branch-main',
+          date: '2026-07-01',
+          activityType: 'financing',
+          flowType: 'inflow',
+          title: 'เงินสมทบเพิ่มทุนจากผู้ถือหุ้น',
+          amount: 50000,
+          category: 'เงินเพิ่มทุน',
+          note: 'ขยายกำลังผลิตครัวกลางและพัฒนาระบบ POS'
+        }
+      ];
+    } catch {
+      return [];
     }
-  ]);
+  });
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('POS_CASH_FLOW_ENTRIES', JSON.stringify(cashFlowEntries));
+    } catch (e) {
+      console.error('Failed to save cashFlowEntries to localStorage', e);
+    }
+  }, [cashFlowEntries]);
 
   // AR / AP Filter and Modals
   const [arApSubTab, setArApSubTab] = useState<'ar' | 'ap' | 'aging'>('ar');
