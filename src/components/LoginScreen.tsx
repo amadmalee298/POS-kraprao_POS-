@@ -297,27 +297,34 @@ export const LoginScreen: React.FC = () => {
 
       <div className="relative w-full max-w-md bg-slate-900/95 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl flex flex-col items-center space-y-5 my-auto">
         
-        {/* Brand Logo */}
-        <div className="relative flex items-center justify-center w-24 h-24 rounded-full bg-slate-900 shadow-xl shadow-red-950/40 border-4 border-amber-500/60 p-1 ring-4 ring-red-500/20 overflow-hidden">
-          <img
-            src={SHOP_LOGO_URL}
-            alt="ครัวกะเพรา Logo"
-            className="w-full h-full object-cover rounded-full"
-            onError={(e) => {
-              if (e.currentTarget.src !== SHOP_LOGO_URL) {
-                e.currentTarget.src = SHOP_LOGO_URL;
-              }
-            }}
-          />
+        {/* Brand Logo Hero Banner */}
+        <div className="relative flex flex-col items-center justify-center p-3 rounded-2xl bg-gradient-to-b from-[#FFFBF5] to-[#F5E8D3] shadow-xl shadow-amber-950/30 border-2 border-amber-300/80 w-full max-w-[280px]">
+          <div className="relative w-28 h-28 overflow-hidden rounded-xl">
+            <img
+              src={SHOP_LOGO_URL}
+              alt="ครัวกะเพรา Logo"
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                if (e.currentTarget.src !== SHOP_LOGO_URL) {
+                  e.currentTarget.src = SHOP_LOGO_URL;
+                }
+              }}
+            />
+          </div>
+          <div className="text-center mt-1">
+            <p className="text-[13px] font-black text-amber-950 tracking-wide">
+              อร่อยจัดจ้าน ถึงเครื่อง ถึงใจ
+            </p>
+          </div>
         </div>
 
-        {/* Brand Title */}
+        {/* Subtitle */}
         <div className="text-center space-y-1">
-          <h1 className="text-2xl font-black text-slate-100 tracking-tight">
-            ครัวกะเพรา
-          </h1>
-          <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
-            ระบบลงเวลาและสลับสิทธิ์การใช้งานพนักงาน POS
+          <p className="text-xs text-amber-400 font-bold">
+            ครัวกะเพรา POS ENTERPRISE
+          </p>
+          <p className="text-[11px] text-slate-400 max-w-xs mx-auto leading-relaxed">
+            ระบบจัดการร้านอาหาร ลงเวลา และสลับสิทธิ์การใช้งานพนักงาน
           </p>
         </div>
 

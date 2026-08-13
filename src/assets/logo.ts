@@ -1,73 +1,98 @@
-// Official Brand Vector Logo for ครัวกะเพรา POS ENTERPRISE
+// Official Brand Vector Logo for ครัวกะเพรา POS ENTERPRISE (Matching Brand Logo with Wok, Chili & Slogan)
 const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="chiliGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ef4444" />
-      <stop offset="100%" stop-color="#b91c1c" />
+    <!-- Background Gradient -->
+    <linearGradient id="creamBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFBF5" />
+      <stop offset="100%" stop-color="#F5E8D3" />
     </linearGradient>
-    <linearGradient id="leafGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#22c55e" />
-      <stop offset="100%" stop-color="#15803d" />
+
+    <!-- Chili Gradient -->
+    <linearGradient id="chiliRed" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#EF4444" />
+      <stop offset="100%" stop-color="#991B1B" />
     </linearGradient>
-    <linearGradient id="flameGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ef4444" />
-      <stop offset="50%" stop-color="#ea580c" />
-      <stop offset="100%" stop-color="#f59e0b" />
+
+    <!-- Basil Leaf Gradient -->
+    <linearGradient id="basilGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22C55E" />
+      <stop offset="100%" stop-color="#14532D" />
     </linearGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-opacity="0.15" />
+
+    <!-- Text Green Gradient -->
+    <linearGradient id="krapaoTextGreen" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#15803D" />
+      <stop offset="100%" stop-color="#052E16" />
+    </linearGradient>
+
+    <!-- Soft Drop Shadows -->
+    <filter id="softShadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#451A03" flood-opacity="0.18" />
+    </filter>
+
+    <filter id="panShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="8" stdDeviation="5" flood-opacity="0.25" />
     </filter>
   </defs>
 
-  <rect width="512" height="512" rx="112" fill="#FFFFFF" />
-  <circle cx="256" cy="256" r="200" fill="none" stroke="#0f172a" stroke-width="16" />
+  <!-- Base Badge Card -->
+  <rect width="512" height="512" rx="96" fill="url(#creamBg)" stroke="#E6D3B8" stroke-width="8" />
 
-  <path d="M 180 385 C 230 425 310 430 380 390 C 425 360 445 315 445 315 C 415 330 385 325 365 305 C 405 285 425 245 425 245 C 385 265 345 265 315 245 C 335 275 325 305 295 325 C 265 345 215 350 180 385 Z" fill="url(#flameGrad)" />
-
-  <path d="M 110 240 C 110 330 160 380 256 380 C 352 380 402 330 402 240 C 370 260 142 260 110 240 Z" fill="#0f172a" />
-  <path d="M 125 245 C 150 290 195 330 256 330 C 317 330 362 290 387 245 C 370 255 142 255 125 245 Z" fill="#ffffff" opacity="0.9" />
-  <path d="M 130 248 C 155 285 198 322 256 322 C 314 322 357 285 382 248 C 368 253 144 253 130 248 Z" fill="#0f172a" />
-
-  <g transform="rotate(35, 330, 240)">
-    <rect x="320" y="110" width="18" height="150" rx="9" fill="#0f172a" />
-    <path d="M 310 240 L 348 240 L 355 280 C 355 290 303 290 303 280 Z" fill="#0f172a" />
-    <circle cx="329" cy="130" r="5" fill="#ffffff" />
+  <!-- Steam Motion Lines -->
+  <g stroke="#334155" stroke-width="4" stroke-linecap="round" opacity="0.7">
+    <path d="M 330 90 Q 338 75 330 60 Q 322 45 332 30" fill="none" />
+    <path d="M 350 95 Q 360 78 352 62 Q 344 46 354 32" fill="none" />
+    <path d="M 370 100 Q 378 85 372 70 Q 366 55 374 40" fill="none" />
   </g>
 
-  <g filter="url(#shadow)">
-    <path d="M 210 240 C 190 190 200 150 250 120 C 265 110 270 125 255 138 C 220 170 215 200 230 238 Z" fill="url(#chiliGrad)" />
-    <path d="M 218 220 C 208 190 215 160 245 130 C 238 140 220 170 224 210 Z" fill="#fca5a5" opacity="0.7" />
-    <path d="M 250 120 C 255 110 252 98 248 90 C 245 84 252 86 254 92 C 258 102 260 112 255 120 Z" fill="#15803d" />
-    <circle cx="251" cy="120" r="5" fill="#15803d" />
+  <!-- Black Sizzling Wok / Pan (Top Right) -->
+  <g filter="url(#panShadow)" transform="translate(10, 0)">
+    <!-- Pan Body (Angled Oval Wok) -->
+    <ellipse cx="370" cy="145" rx="80" ry="42" fill="#18181B" transform="rotate(-18, 370, 145)" />
+    <!-- Pan Inner Rim Highlight -->
+    <ellipse cx="368" cy="143" rx="72" ry="36" fill="none" stroke="#3F3F46" stroke-width="3" transform="rotate(-18, 368, 143)" />
+    <!-- Pan Handle (Extending Right-Up) -->
+    <path d="M 438 128 L 490 108 C 498 105 506 112 502 120 L 448 142 Z" fill="#18181B" />
+    <path d="M 445 130 L 485 114" stroke="#52525B" stroke-width="3" stroke-linecap="round" />
   </g>
 
-  <g filter="url(#shadow)">
-    <path d="M 270 160 C 250 110 290 80 320 100 C 340 120 320 170 270 160 Z" fill="url(#leafGrad)" />
-    <path d="M 270 160 Q 295 125 320 100" stroke="#dcfce7" stroke-width="3" fill="none" stroke-linecap="round" />
-    <path d="M 285 145 Q 295 138 302 142" stroke="#dcfce7" stroke-width="2" fill="none" />
-    <path d="M 295 130 Q 305 122 312 126" stroke="#dcfce7" stroke-width="2" fill="none" />
+  <!-- Main Brand Title Group -->
+  <g filter="url(#softShadow)">
+    <!-- "ครัว" (Black Stylized Thai Font) -->
+    <text x="110" y="225" font-family="'Sukhumvit Set', 'Kanit', 'Prompt', 'Thonburi', sans-serif" font-weight="900" font-size="112" fill="#18181B" letter-spacing="-2">ครัว</text>
+
+    <!-- Red Chili Pepper & Basil Leaves Accent (Nestled between ครัว and กะเพรา) -->
+    <g transform="translate(265, 175) rotate(-15)">
+      <!-- Chili Pepper -->
+      <path d="M 10 35 C 35 10 75 15 105 38 C 95 55 60 55 25 46 Z" fill="url(#chiliRed)" />
+      <!-- Chili Stem & Cap -->
+      <path d="M 8 32 C 2 28 -2 20 2 12 C 6 22 12 28 16 32 Z" fill="#15803D" />
+      <circle cx="12" cy="33" r="5" fill="#16A34A" />
+
+      <!-- Basil Leaves -->
+      <path d="M 75 15 C 95 -10 120 0 115 25 C 100 40 75 30 75 15 Z" fill="url(#basilGreen)" />
+      <path d="M 78 16 Q 95 8 112 22" stroke="#86EFAC" stroke-width="2.5" fill="none" />
+
+      <path d="M 85 30 C 105 15 125 25 120 45 C 105 55 85 45 85 30 Z" fill="url(#basilGreen)" />
+      <path d="M 88 31 Q 102 24 118 42" stroke="#86EFAC" stroke-width="2" fill="none" />
+    </g>
+
+    <!-- "กะเพรา" (Dark Emerald Green Stylized Thai Font) -->
+    <text x="60" y="345" font-family="'Sukhumvit Set', 'Kanit', 'Prompt', 'Thonburi', sans-serif" font-weight="900" font-size="120" fill="url(#krapaoTextGreen)" letter-spacing="-2">กะเพรา</text>
   </g>
 
-  <g filter="url(#shadow)">
-    <path d="M 180 180 C 130 160 140 120 170 130 C 200 140 200 180 180 180 Z" fill="url(#leafGrad)" />
-    <path d="M 180 180 Q 165 150 170 130" stroke="#dcfce7" stroke-width="2.5" fill="none" stroke-linecap="round" />
-  </g>
+  <!-- Decorative Separator Line -->
+  <path d="M 80 380 L 432 380" stroke="#78350F" stroke-width="3" stroke-dasharray="8 6" opacity="0.3" />
 
-  <g filter="url(#shadow)">
-    <path d="M 290 200 C 340 170 360 130 330 140 C 300 150 270 180 290 200 Z" fill="url(#leafGrad)" />
-    <path d="M 290 200 Q 320 165 330 140" stroke="#dcfce7" stroke-width="2.5" fill="none" stroke-linecap="round" />
+  <!-- Tagline / Slogan: "อร่อยจัดจ้าน ถึงเครื่อง ถึงใจ" -->
+  <g font-family="'Kanit', 'Prompt', 'Sukhumvit Set', sans-serif" text-anchor="middle">
+    <text x="256" y="425" font-weight="800" font-size="34" fill="#451A03" letter-spacing="1">
+      อร่อยจัดจ้าน ถึงเครื่อง ถึงใจ
+    </text>
+    <text x="256" y="465" font-weight="700" font-size="18" fill="#B45309" letter-spacing="4">
+      KAPRAO KITCHEN POS
+    </text>
   </g>
-
-  <g filter="url(#shadow)">
-    <path d="M 155 210 C 140 200 150 180 170 190 C 185 200 175 220 155 210 Z" fill="#ef4444" />
-    <ellipse cx="162" cy="200" rx="4" ry="6" fill="#fef08a" transform="rotate(-20 162 200)" />
-  </g>
-
-  <circle cx="230" cy="180" r="6" fill="#22c55e" />
-  <circle cx="280" cy="220" r="5" fill="#22c55e" />
-  <circle cx="200" cy="150" r="4" fill="#ef4444" />
-  <circle cx="340" cy="210" r="5" fill="#15803d" />
-  <circle cx="240" cy="100" r="4" fill="#ef4444" />
 </svg>`;
 
 export const SHOP_LOGO_URL = `data:image/svg+xml;utf8,${encodeURIComponent(svgContent)}`;
