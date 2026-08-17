@@ -13,7 +13,9 @@ import {
   Layers,
   ArrowUpRight,
   ShieldCheck,
-  Smartphone
+  Smartphone,
+  Flame,
+  Cloud
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 
@@ -34,10 +36,16 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
     menuItems,
     ingredients,
     tables,
-    expenses
+    expenses,
+    currentBranch,
+    branches,
+    firebaseSyncState,
+    centralBranchesLive,
+    pushAllBranchDataToCloud
   } = usePOS();
 
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isPushingCloud, setIsPushingCloud] = useState(false);
   const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -45,15 +53,34 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
   const effectiveOffline = isOffline || forceOfflineMode;
   const pendingOrders = orders.filter(o => o.isOfflineOrder && !o.isSynced);
 
-  const handleManualSync = () => {
+  const handleManualSync = async () => {
     setIsSyncing(true);
     setSyncSuccessMsg(null);
-    setTimeout(() => {
-      syncOfflineQueue();
-      setIsSyncing(false);
-      setSyncSuccessMsg('ซิงค์ข้อมูลรายการสั่งซื้อแบบออฟไลน์ลงระบบเรียบร้อยแล้ว!');
+    try {
+      await syncOfflineQueue();
+      setSyncSuccessMsg('ซิงค์ข้อมูลรายการสั่งซื้อและสต็อกขึ้น Firebase Firestore สำเร็จแล้ว!');
       setTimeout(() => setSyncSuccessMsg(null), 4000);
-    }, 1000);
+    } catch (err) {
+      setSyncSuccessMsg('เกิดข้อผิดพลาดในการเชื่อมต่อคลาวด์');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleManualPushCloud = async () => {
+    setIsPushingCloud(true);
+    setSyncSuccessMsg(null);
+    try {
+      const ok = await pushAllBranchDataToCloud();
+      if (ok) {
+        setSyncSuccessMsg(`ส่งข้อมูลทั้งหมดของสาขา ${currentBranch.name} ขึ้นฐานข้อมูลกลาง Firebase เรียบร้อย`);
+        setTimeout(() => setSyncSuccessMsg(null), 4000);
+      } else {
+        setSyncSuccessMsg('ไม่สามารถส่งข้อมูลขึ้นคลาวด์ได้ในขณะนี้');
+      }
+    } finally {
+      setIsPushingCloud(false);
+    }
   };
 
   return (
@@ -69,14 +96,14 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
                   : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
               }`}
             >
-              {effectiveOffline ? <WifiOff className="w-5 h-5 animate-pulse" /> : <Wifi className="w-5 h-5" />}
+              {effectiveOffline ? <WifiOff className="w-5 h-5 animate-pulse" /> : <Flame className="w-5 h-5 text-amber-400" />}
             </div>
             <div>
               <h3 className="font-bold text-slate-100 text-base flex items-center space-x-2">
-                <span>ระบบสำรองข้อมูลออฟไลน์ (Offline POS & LocalStorage)</span>
+                <span>Firebase Cloud & Multi-Branch Real-Time Sync</span>
               </h3>
               <p className="text-xs text-slate-400">
-                สถานะการเชื่อมต่อ และแคชข้อมูลการขายหน้าร้านสำหรับรองรับกรณีเน็ตหลุด
+                ระบบซิงค์คลาวด์สองทาง (Two-Way Synchronization) พร้อมรองรับโหมดออฟไลน์
               </p>
             </div>
           </div>
@@ -111,21 +138,85 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
                 <span className="font-bold text-sm block">
                   {effectiveOffline
                     ? '⚡ กำลังทำงานในโหมดออฟไลน์ (Offline Mode Active)'
-                    : '🟢 เชื่อมต่ออินเทอร์เน็ตปกติ (Online Sync Active)'}
+                    : '🟢 เชื่อมต่อ Firebase Firestore & Cloud Sync สำเร็จ'}
                 </span>
                 <span className="text-[11px] opacity-80 block mt-0.5">
                   {effectiveOffline
                     ? 'ระบบจะบันทึกออเดอร์ เมนู และสต็อกไว้ในเครื่อง (LocalStorage) โดยอัตโนมัติ ออกใบเสร็จได้ตามปกติ'
-                    : 'ข้อมูลถูกบันทึกและซิงค์แบบ Real-time ร่วมกับ Service Worker และ Local Storage ในเครื่อง'}
+                    : `สาขาปัจจุบัน: ${currentBranch.name} | ส่งยอดขาย สต็อก และสถานะโต๊ะขึ้นคลาวด์แบบเรียลไทม์`}
                 </span>
               </div>
             </div>
 
             <div className="text-right shrink-0 font-mono text-[11px] text-slate-300">
               <span className="block text-slate-400">ซิงค์ล่าสุด:</span>
-              <span className="font-bold">
+              <span className="font-bold text-emerald-400">
                 {lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString('th-TH') : 'ยังไม่ได้ซิงค์'}
               </span>
+            </div>
+          </div>
+
+          {/* Central Multi-Branch Live Grid */}
+          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Layers className="w-4 h-4 text-sky-400" />
+                <h4 className="font-bold text-slate-200 text-xs">
+                  สถานะสาขาทั้งหมดในเครือข่าย (Live Multi-Branch Status)
+                </h4>
+              </div>
+              <span className="text-[11px] text-sky-400 font-mono font-bold">
+                {branches.length} สาขา
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {branches.map(b => {
+                const isCurrent = b.id === currentBranch.id;
+                const live = centralBranchesLive[b.id];
+                const isOnline = isCurrent ? !effectiveOffline : (live?.isOnline ?? true);
+
+                return (
+                  <div
+                    key={b.id}
+                    className={`p-3 rounded-xl border flex items-center justify-between ${
+                      isCurrent
+                        ? 'bg-slate-900 border-sky-500/60 shadow-sm'
+                        : 'bg-slate-900/60 border-slate-800'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center space-x-1.5">
+                        <span className="font-bold text-slate-100 text-xs">{b.name}</span>
+                        {isCurrent && (
+                          <span className="px-1.5 py-0.2 bg-sky-500/20 text-sky-300 text-[9px] font-bold rounded">
+                            เครื่องนี้
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">
+                        {b.address || 'สาขาหลัก'}
+                      </span>
+                    </div>
+
+                    <div className="text-right font-mono">
+                      <div className="flex items-center justify-end space-x-1">
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            isOnline ? 'bg-emerald-400' : 'bg-amber-400'
+                          }`}
+                        />
+                        <span className="text-[10px] text-slate-300">
+                          {isOnline ? 'ออนไลน์' : 'ออฟไลน์'}
+                        </span>
+                      </div>
+                      <span className="text-xs font-bold text-emerald-400 block">
+                        {live?.totalSalesToday ? `฿${live.totalSalesToday.toLocaleString()}` : '฿0.00'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -135,7 +226,7 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
               <div className="flex items-center space-x-2">
                 <Zap className="w-4 h-4 text-amber-400" />
                 <h4 className="font-bold text-slate-200 text-xs">
-                  รายการขายค้างรอซิงค์ลงเซิร์ฟเวอร์ (Pending Offline Orders)
+                  รายการขายค้างรอซิงค์ลง Firebase (Pending Offline Orders)
                 </h4>
               </div>
               <span className="px-2.5 py-0.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-full font-mono font-bold">
@@ -162,7 +253,7 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
               </div>
             ) : (
               <p className="text-[11px] text-slate-500 italic">
-                ไม่มีรายการขายค้างรอซิงค์ ข้อมูลทั้งหมดตรงกันแล้ว
+                ไม่มีรายการขายค้างรอซิงค์ ข้อมูลทั้งหมดตรงกันและเชื่อมโยงกับคลาวด์แล้ว
               </p>
             )}
 
@@ -173,23 +264,36 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
               </div>
             )}
 
-            <button
-              onClick={handleManualSync}
-              disabled={isSyncing || (pendingOfflineCount === 0 && !effectiveOffline)}
-              className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black rounded-xl transition flex items-center justify-center space-x-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>
-                {isSyncing ? 'กำลังซิงค์ข้อมูล...' : 'ซิงค์ข้อมูลรอส่งออกทันที (Manual Sync)'}
-              </span>
-            </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                onClick={handleManualSync}
+                disabled={isSyncing || (pendingOfflineCount === 0 && !effectiveOffline)}
+                className="py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black rounded-xl transition flex items-center justify-center space-x-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>
+                  {isSyncing ? 'กำลังซิงค์คิว...' : 'ซิงค์คิวออฟไลน์ทันที'}
+                </span>
+              </button>
+
+              <button
+                onClick={handleManualPushCloud}
+                disabled={isPushingCloud || effectiveOffline}
+                className="py-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-black rounded-xl transition flex items-center justify-center space-x-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Cloud className={`w-4 h-4 ${isPushingCloud ? 'animate-spin' : ''}`} />
+                <span>
+                  {isPushingCloud ? 'กำลังอัปโหลด...' : 'อัปโหลดข้อมูลสาขานี้ขึ้น Cloud'}
+                </span>
+              </button>
+            </div>
           </div>
 
           {/* Cached Local Storage Statistics Grid */}
           <div className="space-y-2">
             <h4 className="font-bold text-slate-300 text-xs flex items-center space-x-1.5">
               <HardDrive className="w-4 h-4 text-sky-400" />
-              <span>ข้อมูลสำคัญที่แคชอยู่ในเครื่อง (LocalStorage Cached Stats)</span>
+              <span>ข้อมูลที่แคชอยู่ในเครื่อง (LocalStorage Cached Stats)</span>
             </h4>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">

@@ -500,4 +500,26 @@ export interface SecurityLogEntry {
   ipAddress?: string;
 }
 
+export interface CentralBranchLiveStats {
+  branchId: string;
+  branchName: string;
+  lastActiveAt: string;
+  totalSalesToday: number;
+  orderCountToday: number;
+  lowStockCount: number;
+  isOnline: boolean;
+  lastSyncedOrderNo?: string;
+  lastOrderAmount?: number;
+}
+
+export interface FirebaseSyncState {
+  status: 'connected' | 'syncing' | 'offline' | 'error';
+  lastSyncedAt: string | null;
+  pendingSyncCount: number;
+  totalSyncedOrders: number;
+  errorMessage?: string;
+  lastSyncedBranch?: string;
+}
+
+
 

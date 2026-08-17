@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Multi-branch POS central synchronization rules
+    match /branches/{branchId} {
+      allow read, write: if true;
+      
+      match /inventory/{ingredientId} {
+        allow read, write: if true;
+      }
+      
+      match /status/{statusDoc} {
+        allow read, write: if true;
+      }
+    }
+
+    match /orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    match /inventory/{inventoryDoc} {
+      allow read, write: if true;
+    }
+
+    match /stock_adjustments/{logId} {
+      allow read, write: if true;
+    }
+
+    match /waste_logs/{wasteId} {
+      allow read, write: if true;
+    }
+
+    match /branch_sync_logs/{syncId} {
+      allow read, write: if true;
+    }
+
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

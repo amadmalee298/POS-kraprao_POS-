@@ -298,8 +298,8 @@ export const LoginScreen: React.FC = () => {
       <div className="relative w-full max-w-md bg-slate-900/95 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl flex flex-col items-center space-y-5 my-auto">
         
         {/* Brand Logo Hero Banner */}
-        <div className="relative flex flex-col items-center justify-center p-3 rounded-2xl bg-gradient-to-b from-[#FFFBF5] to-[#F5E8D3] shadow-xl shadow-amber-950/30 border-2 border-amber-300/80 w-full max-w-[280px]">
-          <div className="relative w-28 h-28 overflow-hidden rounded-xl">
+        <div className="relative flex flex-col items-center justify-center p-3 rounded-2xl bg-white shadow-xl shadow-amber-950/30 border border-amber-500/30 w-full max-w-[280px]">
+          <div className="relative w-32 h-32 overflow-hidden rounded-xl">
             <img
               src={SHOP_LOGO_URL}
               alt="ครัวกะเพรา Logo"
@@ -311,9 +311,9 @@ export const LoginScreen: React.FC = () => {
               }}
             />
           </div>
-          <div className="text-center mt-1">
-            <p className="text-[13px] font-black text-amber-950 tracking-wide">
-              อร่อยจัดจ้าน ถึงเครื่อง ถึงใจ
+          <div className="text-center mt-1.5">
+            <p className="text-[13px] font-black text-slate-950 tracking-wide">
+              ครัวกะเพรา POS ENTERPRISE
             </p>
           </div>
         </div>

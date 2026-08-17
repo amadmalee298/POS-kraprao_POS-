@@ -134,6 +134,7 @@ export const SettingsView: React.FC = () => {
     deleteStaffMember,
     exportStateJSON,
     importStateJSON,
+    categories,
     menuItems,
     orders,
     ingredients,
@@ -1496,24 +1497,28 @@ export const SettingsView: React.FC = () => {
               </p>
 
               {/* LIVE BACKUP METRICS PREVIEW */}
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
-                <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 text-xs">
+                <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
+                  <span className="text-slate-400 text-[10px] block">หมวดหมู่ (Categories)</span>
+                  <span className="text-base font-extrabold font-mono text-cyan-400">{categories.length} หมวด</span>
+                </div>
+                <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
                   <span className="text-slate-400 text-[10px] block">รายการอาหาร (Menu)</span>
                   <span className="text-base font-extrabold font-mono text-amber-300">{menuItems.length} เมนู</span>
                 </div>
-                <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
+                <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
                   <span className="text-slate-400 text-[10px] block">ออเดอร์ขาย (Orders)</span>
                   <span className="text-base font-extrabold font-mono text-emerald-400">{orders.length} บิล</span>
                 </div>
-                <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
+                <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
                   <span className="text-slate-400 text-[10px] block">พนักงาน (Staff)</span>
                   <span className="text-base font-extrabold font-mono text-purple-400">{staffMembers.length} คน</span>
                 </div>
-                <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
+                <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
                   <span className="text-slate-400 text-[10px] block">วัตถุดิบ (Ingredients)</span>
                   <span className="text-base font-extrabold font-mono text-sky-400">{ingredients.length} รายการ</span>
                 </div>
-                <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1 col-span-2 sm:col-span-1">
+                <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
                   <span className="text-slate-400 text-[10px] block">รายจ่าย (Expenses)</span>
                   <span className="text-base font-extrabold font-mono text-rose-400">{expenses.length} รายการ</span>
                 </div>
@@ -1614,10 +1619,14 @@ export const SettingsView: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px]">
                     <div className="p-2 bg-slate-950/80 rounded-lg">
                       <span className="text-slate-400 block text-[10px]">สาขา:</span>
                       <span className="font-bold text-slate-200">{parsedBackupPreview.branch?.name || 'สาขาหลัก'}</span>
+                    </div>
+                    <div className="p-2 bg-slate-950/80 rounded-lg">
+                      <span className="text-slate-400 block text-[10px]">หมวดหมู่:</span>
+                      <span className="font-bold text-cyan-300 font-mono">{parsedBackupPreview.categories?.length || (parsedBackupPreview.menuItems ? 'Auto-Scan' : 0)} รายการ</span>
                     </div>
                     <div className="p-2 bg-slate-950/80 rounded-lg">
                       <span className="text-slate-400 block text-[10px]">เมนูอาหาร:</span>
@@ -2129,7 +2138,7 @@ export const SettingsView: React.FC = () => {
                       <img
                         src={shopLogoUrl || SHOP_LOGO_URL}
                         alt="Store Logo"
-                        className="w-10 h-10 object-cover rounded-full"
+                        className="w-10 h-10 object-contain"
                       />
                     </div>
                     <div className="flex-1 flex flex-wrap items-center gap-2">

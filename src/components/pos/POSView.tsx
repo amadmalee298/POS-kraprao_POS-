@@ -40,6 +40,7 @@ import {
 import { usePOS } from '../../context/POSContext';
 import { MenuCategory, MenuItem, CartItem, Order, PaymentMethod } from '../../types';
 import { calculateOrderTotals } from '../../utils/tax';
+import { isItemInCategory } from '../../utils/categoryUtils';
 import { CustomizationModal } from './CustomizationModal';
 import { QuickAddModal } from './QuickAddModal';
 import { PaymentModal } from './PaymentModal';
@@ -47,6 +48,7 @@ import { ReceiptModal } from './ReceiptModal';
 import { TouchNumpadModal } from './TouchNumpad';
 import { CancelOrderModal } from './CancelOrderModal';
 import { CashShiftManagementPanel } from '../settings/CashShiftManagementPanel';
+import { printReceiptViaWindow } from '../../utils/printReceipt';
 
 export const POSView: React.FC = () => {
   const {
@@ -65,7 +67,8 @@ export const POSView: React.FC = () => {
     orders,
     updateOrderStatus,
     settings,
-    currentOpenShift
+    currentOpenShift,
+    currentBranch
   } = usePOS();
 
   const [selectedCategory, setSelectedCategory] = useState<MenuCategory | 'all'>('all');
@@ -150,6 +153,20 @@ export const POSView: React.FC = () => {
   // Current order number prediction
   const nextOrderNum = (1650 + orders.length + 1).toString();
 
+  // Quick Print Receipt directly to Thermal Printer / PDF via window.print()
+  const handleQuickPrintReceipt = async (order: Order) => {
+    await printReceiptViaWindow(order, currentBranch, settings, {
+      cashierName: currentUser.name.split(' ')[0],
+      paperWidth: settings.receiptPaperWidth || '80mm',
+      fontSize: settings.receiptFontSize || 'md',
+      showLogo: settings.receiptShowLogo !== false,
+      showTaxId: settings.receiptShowTaxId !== false,
+      showItemDetails: settings.receiptShowItemDetails !== false,
+      useMonospace: !!settings.receiptUseMonospace,
+      footerNote: settings.receiptFooterNote || settings.receiptFooter
+    });
+  };
+
   const handleSelectPaymentAndOpenModal = (method: PaymentMethod) => {
     setSelectedPaymentMethod(method);
     if (cart.length > 0) {
@@ -196,7 +213,7 @@ export const POSView: React.FC = () => {
 
   // Filter menu items
   const filteredMenuItems = menuItems.filter(item => {
-    const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
+    const matchesCategory = isItemInCategory(item, selectedCategory, categories);
     const matchesSearch =
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.nameEn.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -337,7 +354,7 @@ export const POSView: React.FC = () => {
             </button>
 
             {categories.map(cat => {
-              const count = menuItems.filter(item => item.category === cat.id).length;
+              const count = menuItems.filter(item => isItemInCategory(item, cat.id, categories)).length;
               return (
                 <button
                   key={cat.id}
@@ -959,11 +976,19 @@ export const POSView: React.FC = () => {
                         <div className="flex items-center space-x-2">
                           <button
                             onClick={() => setOrderToCancel(order)}
-                            className="px-3 py-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 font-bold text-xs rounded-xl border border-rose-800/60 shadow flex items-center space-x-1 transition active:scale-95 shrink-0"
+                            className="px-2.5 py-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 font-bold text-xs rounded-xl border border-rose-800/60 shadow flex items-center space-x-1 transition active:scale-95 shrink-0"
                             title="ยกเลิกออเดอร์นี้"
                           >
                             <Ban className="w-3.5 h-3.5 text-rose-400" />
-                            <span>ยกเลิกออเดอร์</span>
+                            <span className="hidden sm:inline">ยกเลิก</span>
+                          </button>
+                          <button
+                            onClick={() => handleQuickPrintReceipt(order)}
+                            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow flex items-center space-x-1.5 transition active:scale-95 shrink-0"
+                            title="พิมพ์สลิปด่วนตรงไปยัง Thermal Printer หรือ Save as PDF"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                            <span>⚡ พิมพ์ด่วน (Thermal)</span>
                           </button>
                           <button
                             onClick={() => {
@@ -972,10 +997,11 @@ export const POSView: React.FC = () => {
                               setIsReceiptOpen(true);
                               setIsRecentReceiptsOpen(false);
                             }}
-                            className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow flex items-center space-x-1.5 transition active:scale-95 shrink-0"
+                            className="px-3 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow flex items-center space-x-1.5 transition active:scale-95 shrink-0"
+                            title="เปิดดูตัวอย่างและปรับแต่งขนาดฟอนต์/กระดาษก่อนพิมพ์"
                           >
-                            <Printer className="w-3.5 h-3.5" />
-                            <span>พิมพ์ใบเสร็จ</span>
+                            <Receipt className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">ดูตัวอย่าง/ปรับแต่ง</span>
                           </button>
                         </div>
                       )}

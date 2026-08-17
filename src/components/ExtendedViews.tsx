@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { calcRecipeItemCostAndDeduction, getAvailableRecipeUnits } from '../utils/recipeUtils';
+import { isItemInCategory } from '../utils/categoryUtils';
 import { SHOP_LOGO_URL } from '../assets/logo';
 import { compressImageFile } from '../utils/imageCompressor';
 import { generatePromptPayPayload } from '../utils/promptpay';
@@ -491,7 +492,7 @@ export const QrOrderingView: React.FC = () => {
 
   // Filter menu items for sim view
   const filteredMenuItems = menuItems.filter(item => {
-    const matchCategory = selectedCategory === 'all' || item.category === selectedCategory;
+    const matchCategory = isItemInCategory(item, selectedCategory, categories);
     const matchSearch = searchQuery.trim() === '' || 
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
       item.description.toLowerCase().includes(searchQuery.toLowerCase());
@@ -1852,6 +1853,7 @@ export const RecipeCostingView: React.FC = () => {
     updateCategory,
     deleteCategory,
     getCategoryName,
+    syncCategoriesFromMenu,
     addOns,
     ingredients,
     addMenuItem,
@@ -2158,7 +2160,7 @@ export const RecipeCostingView: React.FC = () => {
 
   const filteredMenuItems = selectedCategoryFilter === 'all'
     ? menuItems
-    : menuItems.filter(m => m.category === selectedCategoryFilter);
+    : menuItems.filter(m => isItemInCategory(m, selectedCategoryFilter, categories));
 
   // Calculated recipe cost
   const totalRecipeCalculatedCost = editableRecipe.reduce((sum, r) => {
@@ -2306,7 +2308,7 @@ export const RecipeCostingView: React.FC = () => {
                     : 'bg-slate-900 border border-slate-800 text-slate-400 hover:bg-slate-800'
                 }`}
               >
-                {cat.name} ({menuItems.filter(m => m.category === cat.id).length})
+                {cat.name} ({menuItems.filter(m => isItemInCategory(m, cat.id, categories)).length})
               </button>
             ))}
           </div>
@@ -2679,11 +2681,24 @@ export const RecipeCostingView: React.FC = () => {
 
               {/* List of categories */}
               <div className="space-y-2">
-                <h4 className="font-bold text-slate-400 text-xs mb-2">
-                  รายการหมวดหมู่ทั้งหมด ({categories.length} หมวดหมู่)
-                </h4>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-bold text-slate-400 text-xs">
+                    รายการหมวดหมู่ทั้งหมด ({categories.length} หมวดหมู่)
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      syncCategoriesFromMenu();
+                      alert('ซิงค์และกู้คืนหมวดหมู่จากรายการเมนูทั้งหมดสำเร็จเรียบร้อย!');
+                    }}
+                    className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center space-x-1 font-bold hover:underline"
+                    title="สแกนรายการอาหารทั้งหมดและกู้คืนหมวดหมู่ที่ขาดหาย"
+                  >
+                    <span>🔄 กู้คืนหมวดหมู่อัตโนมัติ (Auto-Sync)</span>
+                  </button>
+                </div>
                 {categories.map(cat => {
-                  const itemCount = menuItems.filter(m => m.category === cat.id).length;
+                  const itemCount = menuItems.filter(m => isItemInCategory(m, cat.id, categories)).length;
                   const isEditingThis = editingCatId === cat.id;
 
                   return (
@@ -3822,7 +3837,7 @@ export const QuotationView: React.FC = () => {
               <div className="flex justify-between items-start border-b border-slate-300 pb-4">
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2">
-                    <img src={SHOP_LOGO_URL} alt="Logo" className="w-8 h-8 object-cover rounded-full border border-slate-300 shrink-0" />
+                    <img src={SHOP_LOGO_URL} alt="Logo" className="w-8 h-8 object-contain shrink-0" />
                     <span className="font-black text-lg text-slate-900 tracking-wide">ครัวกะเพรา POS ENTERPRISE</span>
                   </div>
                   <p className="text-[11px] text-slate-600">123/88 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพฯ 10110</p>
@@ -5870,7 +5885,7 @@ export const POManagementView: React.FC = () => {
                 <div className="flex justify-between items-start border-b-2 border-slate-800 pb-4">
                   <div>
                     <div className="flex items-center space-x-2">
-                      <img src={SHOP_LOGO_URL} alt="Logo" className="w-8 h-8 object-cover rounded-full border border-slate-300 shrink-0" />
+                      <img src={SHOP_LOGO_URL} alt="Logo" className="w-8 h-8 object-contain shrink-0" />
                       <h2 className="font-extrabold text-lg text-slate-900">ครัวกะเพรา POS Enterprise</h2>
                     </div>
                     <p className="text-[11px] text-slate-600 mt-1">ใบสั่งซื้อวัตถุดิบ / Purchase Order (PO)</p>

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { calcRecipeItemCostAndDeduction } from '../utils/recipeUtils';
+import { syncAndHealCategories, syncAndHealIngredientCategories } from '../utils/categoryUtils';
 import {
   MenuItem,
   Ingredient,
@@ -29,8 +30,20 @@ import {
   SecurityLogEntry,
   StockAdjustmentLog,
   CategoryItem,
-  IngredientCategory
+  IngredientCategory,
+  CentralBranchLiveStats,
+  FirebaseSyncState
 } from '../types';
+import {
+  syncBranchToFirestore,
+  syncOrderToFirestore,
+  syncOrdersBatchToFirestore,
+  syncInventoryToFirestore,
+  syncStockAdjustmentToFirestore,
+  syncWasteLogToFirestore,
+  subscribeToCentralBranches,
+  isFirebaseAvailable
+} from '../services/firebaseService';
 import {
   INITIAL_BRANCHES,
   INITIAL_USERS,
@@ -52,6 +65,7 @@ import {
 } from '../data/initialData';
 import { calculateOrderTotals } from '../utils/tax';
 import { crc16 } from '../utils/promptpay';
+import { SHOP_LOGO_URL } from '../assets/logo';
 
 export function computeOrderChecksum(order: Order): string {
   const itemsCount = order.items ? order.items.length : 0;
@@ -104,6 +118,7 @@ interface POSContextType {
   updateCategory: (id: string, name: string, icon?: string) => void;
   deleteCategory: (id: string) => void;
   getCategoryName: (id: string) => string;
+  syncCategoriesFromMenu: () => void;
 
   // Ingredient Category CRUD
   ingredientCategories: IngredientCategory[];
@@ -248,6 +263,11 @@ interface POSContextType {
   lastSyncedAt: string | null;
   pendingOfflineCount: number;
   syncOfflineQueue: () => void;
+
+  // Firebase Cloud & Multi-Branch Real-Time Synchronization
+  firebaseSyncState: FirebaseSyncState;
+  centralBranchesLive: Record<string, CentralBranchLiveStats>;
+  pushAllBranchDataToCloud: () => Promise<boolean>;
 }
 
 const POSContext = createContext<POSContextType | undefined>(undefined);
@@ -346,13 +366,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const getCategoryName = (id: string): string => {
-    const found = categories.find(c => c.id === id);
+    const found = categories.find(c => c.id === id || c.name === id);
     if (found) return found.name;
     if (id === 'kaprao') return 'กะเพราโบราณ';
     if (id === 'fry_soup') return 'เมนูผัด/ต้ม';
     if (id === 'drinks_dessert') return 'เครื่องดื่ม & ขนม';
     if (id === 'special') return 'เมนูพิเศษ';
     return id || 'ทั่วไป';
+  };
+
+  const syncCategoriesFromMenu = () => {
+    setCategories(prev => syncAndHealCategories(prev, menuItems));
+    setIngredientCategories(prev => syncAndHealIngredientCategories(prev, ingredients));
   };
 
   const [menuItems, setMenuItems] = useState<MenuItem[]>(INITIAL_MENU_ITEMS);
@@ -461,6 +486,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const effectiveOffline = isOffline || forceOfflineMode;
   const pendingOfflineCount = orders.filter(o => o.isOfflineOrder && !o.isSynced).length;
 
+  // Firebase Cloud & Multi-Branch Synchronization State
+  const [firebaseSyncState, setFirebaseSyncState] = useState<FirebaseSyncState>({
+    status: navigator.onLine && isFirebaseAvailable() ? 'connected' : 'offline',
+    lastSyncedAt: new Date().toISOString(),
+    pendingSyncCount: 0,
+    totalSyncedOrders: 0,
+    lastSyncedBranch: INITIAL_BRANCHES[0].name
+  });
+  const [centralBranchesLive, setCentralBranchesLive] = useState<Record<string, CentralBranchLiveStats>>({});
+
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
@@ -469,6 +504,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     const handleOffline = () => {
       setIsOffline(true);
+      setFirebaseSyncState(prev => ({ ...prev, status: 'offline' }));
     };
 
     window.addEventListener('online', handleOnline);
@@ -480,19 +516,99 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, []);
 
-  const syncOfflineQueue = () => {
+  // Update branch live heartbeat in Firestore
+  useEffect(() => {
+    if (!isFirebaseAvailable() || effectiveOffline) {
+      setFirebaseSyncState(prev => ({
+        ...prev,
+        status: effectiveOffline ? 'offline' : 'connected',
+        pendingSyncCount: orders.filter(o => o.isOfflineOrder && !o.isSynced).length
+      }));
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayOrders = orders.filter(o => o.branchId === currentBranch.id && o.createdAt.startsWith(todayStr) && o.status !== 'cancelled');
+    const todaySales = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
+    const lowStock = ingredients.filter(i => i.currentStock <= i.minStockAlert).length;
+
+    syncBranchToFirestore(currentBranch, {
+      totalSalesToday: todaySales,
+      orderCountToday: todayOrders.length,
+      lowStockCount: lowStock,
+      isOnline: true
+    }).then(ok => {
+      if (ok) {
+        setFirebaseSyncState(prev => ({
+          ...prev,
+          status: 'connected',
+          lastSyncedAt: new Date().toISOString(),
+          lastSyncedBranch: currentBranch.name,
+          pendingSyncCount: orders.filter(o => o.isOfflineOrder && !o.isSynced).length
+        }));
+      }
+    });
+  }, [currentBranch.id, effectiveOffline, orders.length, ingredients.length]);
+
+  // Real-time listener for central multi-branch statuses
+  useEffect(() => {
+    if (!isFirebaseAvailable() || effectiveOffline) return;
+
+    const unsubscribe = subscribeToCentralBranches(
+      (branchesMap) => {
+        setCentralBranchesLive(branchesMap);
+      },
+      (err) => {
+        console.warn('[Firebase POS] Subscription error on central branches:', err);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [effectiveOffline]);
+
+  const syncOfflineQueue = async () => {
     const nowIso = new Date().toISOString();
+    const pendingOrders = orders.filter(o => o.isOfflineOrder && !o.isSynced);
+
+    if (pendingOrders.length === 0) {
+      console.log('[POS Sync Queue] ℹ️ No pending offline orders in queue.');
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        setFirebaseSyncState(prev => ({ ...prev, status: 'syncing' }));
+        await syncInventoryToFirestore(ingredients, currentBranch);
+        await syncBranchToFirestore(currentBranch);
+        setFirebaseSyncState(prev => ({
+          ...prev,
+          status: 'connected',
+          lastSyncedAt: nowIso,
+          lastSyncedBranch: currentBranch.name,
+          pendingSyncCount: 0
+        }));
+      }
+      setLastSyncedAt(nowIso);
+      return;
+    }
+
+    console.log(`[POS Sync Queue] 🔄 Initiating cloud synchronization for ${pendingOrders.length} offline order(s)...`);
+    setFirebaseSyncState(prev => ({
+      ...prev,
+      status: 'syncing',
+      pendingSyncCount: pendingOrders.length
+    }));
+
+    // If online, batch push to Firebase Firestore
+    if (isFirebaseAvailable() && !effectiveOffline) {
+      try {
+        const batchResult = await syncOrdersBatchToFirestore(pendingOrders, currentBranch);
+        await syncInventoryToFirestore(ingredients, currentBranch);
+        console.log(`[Firebase Service] ☁️ Synced ${batchResult.success} orders and inventory to Firestore.`);
+      } catch (err) {
+        console.error('[Firebase Service] ❌ Batch sync failed:', err);
+      }
+    }
 
     setOrders(prevOrders => {
-      const pendingOrders = prevOrders.filter(o => o.isOfflineOrder && !o.isSynced);
-
-      if (pendingOrders.length === 0) {
-        console.log('[POS Sync Queue] ℹ️ No pending offline orders in queue.');
-        return prevOrders;
-      }
-
-      console.log(`[POS Sync Queue] 🔄 Initiating cloud synchronization for ${pendingOrders.length} offline order(s)...`);
-
       const syncLogsTable: Array<{
         'Order ID': string;
         'Order #': string;
@@ -510,7 +626,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const updatedOrders = prevOrders.map(ord => {
         if (ord.isOfflineOrder && !ord.isSynced) {
           const computedChecksum = computeOrderChecksum(ord);
-          // Verify checksum if exists, or accept computed checksum
           const isChecksumValid = !ord.checksum || ord.checksum === computedChecksum;
 
           if (isChecksumValid) {
@@ -553,12 +668,49 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
 
       console.log(`[POS Sync Queue] 📊 Synchronization complete: ${syncedCount} synced successfully, ${corruptCount} corrupted/rejected.`);
-      console.table(syncLogsTable);
+      if (syncLogsTable.length > 0) {
+        console.table(syncLogsTable);
+      }
 
       return updatedOrders;
     });
 
     setLastSyncedAt(nowIso);
+    setFirebaseSyncState(prev => ({
+      ...prev,
+      status: 'connected',
+      lastSyncedAt: nowIso,
+      lastSyncedBranch: currentBranch.name,
+      pendingSyncCount: 0,
+      totalSyncedOrders: prev.totalSyncedOrders + pendingOrders.length
+    }));
+  };
+
+  const pushAllBranchDataToCloud = async (): Promise<boolean> => {
+    if (!isFirebaseAvailable() || effectiveOffline) {
+      return false;
+    }
+    setFirebaseSyncState(prev => ({ ...prev, status: 'syncing' }));
+    try {
+      await syncBranchToFirestore(currentBranch);
+      await syncInventoryToFirestore(ingredients, currentBranch);
+      const branchOrders = orders.filter(o => o.branchId === currentBranch.id);
+      await syncOrdersBatchToFirestore(branchOrders, currentBranch);
+      const nowIso = new Date().toISOString();
+      setLastSyncedAt(nowIso);
+      setFirebaseSyncState(prev => ({
+        ...prev,
+        status: 'connected',
+        lastSyncedAt: nowIso,
+        lastSyncedBranch: currentBranch.name,
+        pendingSyncCount: 0
+      }));
+      return true;
+    } catch (e) {
+      console.error('[Firebase Push] Error pushing full branch data:', e);
+      setFirebaseSyncState(prev => ({ ...prev, status: 'error', errorMessage: String(e) }));
+      return false;
+    }
   };
 
   // Periodic Background Auto Sync Effect based on settings
@@ -597,16 +749,27 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setOrders(validOrders);
             loadedOrdersCount = validOrders.length;
           }
+          let loadedCats = DEFAULT_CATEGORIES;
           if (parsed.categories && Array.isArray(parsed.categories)) {
-            setCategories(parsed.categories);
+            loadedCats = parsed.categories;
           }
-          if (parsed.ingredientCategories && Array.isArray(parsed.ingredientCategories)) {
-            setIngredientCategories(parsed.ingredientCategories);
-          }
+
+          let loadedItems = INITIAL_MENU_ITEMS;
           if (parsed.menuItems && Array.isArray(parsed.menuItems)) {
             const validItems = parsed.menuItems.filter((m: any) => m && typeof m === 'object' && m.id);
             setMenuItems(validItems);
+            loadedItems = validItems;
             loadedMenuItemsCount = validItems.length;
+          }
+
+          // Always heal categories so no custom or imported category is ever lost
+          const healedCategories = syncAndHealCategories(loadedCats, loadedItems);
+          setCategories(healedCategories);
+
+          if (parsed.ingredientCategories && Array.isArray(parsed.ingredientCategories)) {
+            setIngredientCategories(syncAndHealIngredientCategories(parsed.ingredientCategories, parsed.ingredients || []));
+          } else if (parsed.ingredients && Array.isArray(parsed.ingredients)) {
+            setIngredientCategories(prev => syncAndHealIngredientCategories(prev, parsed.ingredients));
           }
           if (parsed.addOns && Array.isArray(parsed.addOns)) setAddOns(parsed.addOns);
           if (parsed.ingredients && Array.isArray(parsed.ingredients)) setIngredients(parsed.ingredients);
@@ -621,7 +784,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             loadedShiftsCount = parsed.cashShifts.length;
           }
           if (parsed.expenses && Array.isArray(parsed.expenses)) setExpenses(parsed.expenses);
-          if (parsed.settings && typeof parsed.settings === 'object') setSettings(parsed.settings);
+          if (parsed.settings && typeof parsed.settings === 'object') {
+            const mergedSettings = { ...INITIAL_SETTINGS, ...parsed.settings };
+            // If previous shopLogoUrl was the older default SVG or empty, update to the new official brand logo
+            if (!parsed.settings.shopLogoUrl || parsed.settings.shopLogoUrl.startsWith('data:image/svg+xml')) {
+              mergedSettings.shopLogoUrl = SHOP_LOGO_URL;
+            }
+            setSettings(mergedSettings);
+          }
           if (parsed.securityLogs && Array.isArray(parsed.securityLogs)) setSecurityLogs(parsed.securityLogs);
           if (typeof parsed.autoApproveQR === 'boolean') setAutoApproveQR(parsed.autoApproveQR);
           if (parsed.tables && Array.isArray(parsed.tables)) setTables(parsed.tables);
@@ -711,6 +881,23 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setUsers(finalUsers);
     }
   }, [staffMembers, isStorageLoaded, users]);
+
+  // Keep categories in sync with all current menuItems so newly added/imported categories never disappear
+  useEffect(() => {
+    if (!isStorageLoaded) return;
+    if (!menuItems || menuItems.length === 0) return;
+
+    setCategories(prev => {
+      const healed = syncAndHealCategories(prev, menuItems);
+      if (
+        healed.length !== prev.length ||
+        healed.some((c, i) => !prev[i] || prev[i].id !== c.id || prev[i].name !== c.name)
+      ) {
+        return healed;
+      }
+      return prev;
+    });
+  }, [menuItems, isStorageLoaded]);
 
   // Save state to localStorage whenever state updates (strictly ONLY after initial load completes)
   useEffect(() => {
@@ -1120,6 +1307,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     clearCart();
     playKitchenChime();
 
+    // Real-time Push to Firebase Firestore
+    if (!effectiveOffline && isFirebaseAvailable()) {
+      syncOrderToFirestore(newOrder, currentBranch);
+      syncInventoryToFirestore(ingredients, currentBranch);
+    }
+
     return newOrder;
   };
 
@@ -1221,6 +1414,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setOrders(prev => [newOrder, ...prev]);
     playKitchenChime();
+
+    // Real-time Push to Firebase Firestore
+    if (!effectiveOffline && isFirebaseAvailable()) {
+      syncOrderToFirestore(newOrder, currentBranch);
+      syncInventoryToFirestore(ingredients, currentBranch);
+    }
+
     return newOrder;
   };
 
@@ -1606,11 +1806,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       branches,
       branch: currentBranch,
       branchId: currentBranch.id,
+      categories,
+      ingredientCategories,
       menuItems,
       addOns,
       ingredients,
       stockLots,
       wasteLogs,
+      stockAdjustmentLogs,
+      securityLogs,
       staffMembers,
       shifts,
       shiftSwapRequests,
@@ -1620,7 +1824,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       settings,
       users,
       autoApproveQR,
-      tables
+      tables,
+      discount,
+      cart
     };
     return JSON.stringify(data, null, 2);
   };
@@ -1630,11 +1836,37 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const parsed = JSON.parse(jsonString);
       if (parsed.branches && Array.isArray(parsed.branches)) setBranches(parsed.branches);
       if (parsed.branch && typeof parsed.branch === 'object') setCurrentBranch(parsed.branch);
-      if (parsed.menuItems && Array.isArray(parsed.menuItems)) setMenuItems(parsed.menuItems);
+      
+      let importedMenuItems = menuItems;
+      if (parsed.menuItems && Array.isArray(parsed.menuItems)) {
+        const validItems = parsed.menuItems.filter((m: any) => m && typeof m === 'object' && m.id);
+        setMenuItems(validItems);
+        importedMenuItems = validItems;
+      }
+
+      if (parsed.categories && Array.isArray(parsed.categories)) {
+        const healed = syncAndHealCategories(parsed.categories, importedMenuItems);
+        setCategories(healed);
+      } else if (parsed.menuItems && Array.isArray(parsed.menuItems)) {
+        const healed = syncAndHealCategories(categories, importedMenuItems);
+        setCategories(healed);
+      }
+
+      if (parsed.ingredients && Array.isArray(parsed.ingredients)) {
+        setIngredients(parsed.ingredients);
+        if (parsed.ingredientCategories && Array.isArray(parsed.ingredientCategories)) {
+          setIngredientCategories(syncAndHealIngredientCategories(parsed.ingredientCategories, parsed.ingredients));
+        } else {
+          setIngredientCategories(prev => syncAndHealIngredientCategories(prev, parsed.ingredients));
+        }
+      } else if (parsed.ingredientCategories && Array.isArray(parsed.ingredientCategories)) {
+        setIngredientCategories(parsed.ingredientCategories);
+      }
+
       if (parsed.addOns && Array.isArray(parsed.addOns)) setAddOns(parsed.addOns);
-      if (parsed.ingredients && Array.isArray(parsed.ingredients)) setIngredients(parsed.ingredients);
       if (parsed.stockLots && Array.isArray(parsed.stockLots)) setStockLots(parsed.stockLots);
       if (parsed.wasteLogs && Array.isArray(parsed.wasteLogs)) setWasteLogs(parsed.wasteLogs);
+      if (parsed.stockAdjustmentLogs && Array.isArray(parsed.stockAdjustmentLogs)) setStockAdjustmentLogs(parsed.stockAdjustmentLogs);
       if (parsed.staffMembers && Array.isArray(parsed.staffMembers)) setStaffMembers(parsed.staffMembers);
       if (parsed.shifts && Array.isArray(parsed.shifts)) setShifts(parsed.shifts);
       if (parsed.shiftSwapRequests && Array.isArray(parsed.shiftSwapRequests)) setShiftSwapRequests(parsed.shiftSwapRequests);
@@ -1642,8 +1874,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (parsed.orders && Array.isArray(parsed.orders)) setOrders(parsed.orders);
       if (parsed.expenses && Array.isArray(parsed.expenses)) setExpenses(parsed.expenses);
       if (parsed.settings && typeof parsed.settings === 'object') setSettings(parsed.settings);
+      if (parsed.securityLogs && Array.isArray(parsed.securityLogs)) setSecurityLogs(parsed.securityLogs);
       if (parsed.users && Array.isArray(parsed.users)) setUsers(parsed.users);
       if (parsed.tables && Array.isArray(parsed.tables)) setTables(parsed.tables);
+      if (parsed.cart && Array.isArray(parsed.cart)) setCart(parsed.cart);
+      if (parsed.discount && typeof parsed.discount === 'object') setDiscount(parsed.discount);
       if (typeof parsed.autoApproveQR === 'boolean') setAutoApproveQR(parsed.autoApproveQR);
       return true;
     } catch (err) {
@@ -1747,6 +1982,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const resetToDefaultData = () => {
     setCategories(DEFAULT_CATEGORIES);
+    setMenuItems(INITIAL_MENU_ITEMS);
+    setAddOns(STANDARD_ADD_ONS);
     setIngredients(INITIAL_INGREDIENTS);
     setStockLots(INITIAL_STOCK_LOTS);
     setWasteLogs(INITIAL_WASTE_LOGS);
@@ -1823,6 +2060,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateCategory,
         deleteCategory,
         getCategoryName,
+        syncCategoriesFromMenu,
         ingredientCategories,
         addIngredientCategory,
         updateIngredientCategory,
@@ -1891,7 +2129,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setForceOfflineMode,
         lastSyncedAt,
         pendingOfflineCount,
-        syncOfflineQueue
+        syncOfflineQueue,
+        firebaseSyncState,
+        centralBranchesLive,
+        pushAllBranchDataToCloud
       }}
     >
       {children}

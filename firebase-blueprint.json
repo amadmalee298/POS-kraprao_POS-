@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "branches": {
+      "title": "Branches",
+      "description": "Store branches in the multi-branch network",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "nameEn": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "taxId": { "type": "string" },
+        "promptpayMobileOrTaxId": { "type": "string" },
+        "isMainBranch": { "type": "boolean" },
+        "lastActiveAt": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "orders": {
+      "title": "Sales Orders",
+      "description": "Real-time sales orders synced across branches",
+      "properties": {
+        "id": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "branchId": { "type": "string" },
+        "orderType": { "type": "string" },
+        "tableNumber": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "vatAmount": { "type": "number" },
+        "grandTotal": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "syncedAt": { "type": "string" },
+        "isSynced": { "type": "boolean" }
+      },
+      "required": ["id", "orderNumber", "branchId", "grandTotal", "paymentMethod", "status", "createdAt"]
+    },
+    "inventory": {
+      "title": "Branch Inventory Items",
+      "description": "Central inventory stock levels synchronized per branch",
+      "properties": {
+        "id": { "type": "string" },
+        "branchId": { "type": "string" },
+        "ingredientId": { "type": "string" },
+        "name": { "type": "string" },
+        "currentStock": { "type": "number" },
+        "minStockAlert": { "type": "number" },
+        "unit": { "type": "string" },
+        "unitCost": { "type": "number" },
+        "category": { "type": "string" },
+        "lastUpdated": { "type": "string" }
+      },
+      "required": ["id", "ingredientId", "name", "currentStock", "unit"]
+    },
+    "stock_adjustments": {
+      "title": "Stock Adjustment Logs",
+      "description": "Audit trails for stock deduction, restock, and waste logs",
+      "properties": {
+        "id": { "type": "string" },
+        "branchId": { "type": "string" },
+        "ingredientId": { "type": "string" },
+        "ingredientName": { "type": "string" },
+        "previousStock": { "type": "number" },
+        "newStock": { "type": "number" },
+        "changeQty": { "type": "number" },
+        "unit": { "type": "string" },
+        "reason": { "type": "string" },
+        "userName": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "ingredientId", "changeQty", "reason", "timestamp"]
+    }
+  }
+}

@@ -107,7 +107,23 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
   };
 
   const handlePrint = () => {
+    const originalTitle = document.title;
+    const docTitle = isPreBill
+      ? `PreBill-${order.orderNumber}`
+      : isFullTax
+      ? `TaxInvoice-${order.orderNumber}`
+      : `Receipt-${order.orderNumber}`;
+    document.title = docTitle;
+
     window.print();
+
+    const cleanup = () => {
+      document.title = originalTitle;
+      window.removeEventListener('afterprint', cleanup);
+    };
+
+    window.addEventListener('afterprint', cleanup, { once: true });
+    setTimeout(cleanup, 2500);
     onClose();
   };
 
@@ -373,7 +389,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
             <div className="receipt-header text-center space-y-1 pb-2.5 border-b border-slate-300">
               {showLogo && (
                 <div className="receipt-logo flex items-center justify-center space-x-2 font-bold text-base text-slate-900">
-                  <img src={settings.shopLogoUrl || SHOP_LOGO_URL} alt="Logo" className="w-7 h-7 object-cover rounded-full border border-slate-300 shrink-0" />
+                  <img src={settings.shopLogoUrl || SHOP_LOGO_URL} alt="Logo" className="w-8 h-8 object-contain shrink-0" />
                   <span>{settings.shopName}</span>
                 </div>
               )}
