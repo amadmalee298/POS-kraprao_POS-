@@ -103,7 +103,7 @@ ${
 `;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.7-flash',
         contents: prompt,
         config: {
           systemInstruction: 'ตอบกลับเป็นรูปแบบ JSON ตามโครงสร้าง Schema ที่กำหนดเท่านั้น ตอบด้วยภาษาไทยที่กระชับและเป็นมืออาชีพ',
@@ -165,7 +165,7 @@ ${
         : 32.5;
 
       return res.json({
-        source: 'gemini-3.6-flash',
+        source: 'gemini-3.7-flash',
         overallSummary: {
           healthScore: parsedData.healthScore || 85,
           averageFoodCostPercent: avgFoodCost,
@@ -207,30 +207,12 @@ ${
 
       const ai = getAiClient();
 
-      if (!ai || !image) {
-        // High quality fallback simulated receipt OCR parsing if no API key or image supplied
-        const fallbackData = {
-          title: 'ซื้อวัตถุดิบเนื้อสัตว์และผักสด - ตลาดไทสด',
-          vendorName: 'ร้านเจ๊วรรณ ตลาดสดเมืองทอง',
-          date: new Date().toISOString().split('T')[0],
-          category: 'raw_material',
-          amount: 1850.00,
-          includeVat: true,
-          vatAmount: 121.03,
-          netAmount: 1728.97,
-          refNumber: 'RC-20260724-102',
-          note: 'สแกนอัตโนมัติ: หมูสับ 10 กก., หมูกรอบ 3 กก., กะเพรา 15 กำ, พริกขี้หนูสด 2 กก.',
-          confidenceScore: 95,
-          lineItems: [
-            { name: 'หมูเนื้อแดงสับ 10 กิโลกรัม', amount: 1200.00 },
-            { name: 'หมูกรอบสำเร็จรูป 3 กิโลกรัม', amount: 450.00 },
-            { name: 'ใบกะเพราสด & พริกจินดาแดง', amount: 200.00 }
-          ]
-        };
-        return res.json({
-          source: 'smart-ocr-fallback',
-          receiptData: fallbackData
-        });
+      if (!ai) {
+        return res.status(500).json({ error: 'ไม่พบการตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์' });
+      }
+
+      if (!image) {
+        return res.status(400).json({ error: 'กรุณาแนบไฟล์รูปภาพใบเสร็จ' });
       }
 
       let cleanBase64 = image || '';
@@ -246,22 +228,26 @@ ${
       }
 
       const promptText = `
-โปรดสแกนวิเคราะห์ภาพใบเสร็จรับเงิน/ใบกำกับภาษีค่าใช้จ่ายร้านอาหารนี้ และสกัดข้อมูลสำคัญลงในโครงสร้าง JSON:
-1. title: หัวข้อสรุปค่าใช้จ่ายสั้นๆ กระชับ (เช่น "ซื้อวัตถุดิบสด - ตลาดไท")
-2. vendorName: ชื่อผู้จัดจำหน่าย/บริษัท/ร้านค้า
-3. date: วันที่ในใบเสร็จ รูปแบบ YYYY-MM-DD
-4. category: เลือกระหว่าง 'raw_material', 'rent', 'salary', 'utilities', 'marketing', 'other'
-5. amount: ยอดเงินรวมสุทธิทั้งหมด (ตัวเลข)
-6. includeVat: true หากมี VAT 7%
-7. vatAmount: จำนวนเงินภาษี VAT 7%
-8. refNumber: เลขที่ใบเสร็จ/ใบกำกับภาษี
-9. note: หมายเหตุสรุปรายการสินค้าในใบเสร็จ
-10. confidenceScore: คะแนนความชัดเจน 0-100
-11. lineItems: รายการสินค้าย่อย
+คุณเป็นผู้เชี่ยวชาญการอ่านเอกสารบัญชีและการสกัดข้อมูลจากภาพใบเสร็จรับเงิน/ใบกำกับภาษี/บิลค่าใช้จ่ายของร้านค้าในประเทศไทยและสากล (High-Precision Multimodal OCR)
+กรุณาตรวจจับข้อความและตัวเลขจากภาพใบเสร็จนี้อย่างละเอียดและตรงตามความเป็นจริง 100%:
+
+1. vendorName: ชื่อผู้จัดจำหน่าย/บริษัท/ร้านค้า ที่ปรากฏเด่นชัดที่สุดบนหัวหรือส่วนบนของใบเสร็จ (เช่น "สยามแม็คโคร (Siam Makro)", "บิ๊กซี ซูเปอร์เซ็นเตอร์", "โลตัส", "ซีพี ออลล์ (7-Eleven)", "ไทวัสดุ", "การไฟฟ้านครหลวง", "ตลาดสด", หรือชื่อร้านค้าตามที่ปรากฏ)
+2. title: หัวข้อสรุปค่าใช้จ่ายที่กระชับ เช่น "ซื้อวัตถุดิบ - สยามแม็คโคร" หรือ "ซื้อของสด - ตลาดไท" หรือ "บิลค่าไฟฟ้า MEA"
+3. date: วันที่ที่ระบุในใบเสร็จ ในรูปแบบ YYYY-MM-DD (หากระบุเป็น พ.ศ. เช่น 2567, 2568, 2569 ให้แปลงเป็น ค.ศ. 2024, 2025, 2026 เสมอ)
+4. category: เลือกหมวดหมู่ที่ตรงที่สุดจาก ['raw_material', 'rent', 'salary', 'utilities', 'marketing', 'other'] (เช่น ของสด/เนื้อสัตว์/ผัก/เครื่องปรุง ให้เลือก 'raw_material', ค่าน้ำ/ค่าไฟ ให้เลือก 'utilities')
+5. amount: ยอดเงินรวมสุทธิทั้งหมดที่ต้องชำระ (Total / Grand Total / Net Total / ยอดรวมทั้งสิ้น / ยอดชำระ) เป็นตัวเลขทศนิยม (ห้ามใส่จุลภาค)
+6. includeVat: true หากมีระบุภาษีมูลค่าเพิ่ม VAT หรือระบุว่าราคารวม VAT แล้ว
+7. vatAmount: จำนวนเงินภาษีมูลค่าเพิ่ม VAT 7% (หากระบุไว้ หรือคำนวณตามสัดส่วน)
+8. refNumber: เลขที่ใบเสร็จ / เลขที่ใบกำกับภาษี / เลขที่เอกสาร (Tax Invoice No., Receipt No., Doc No., POS No.)
+9. note: หมายเหตุสรุปรายการสินค้าเด่นๆ ที่ซื้อ หรือรายละเอียดที่น่าสนใจ
+10. confidenceScore: ประเมินความมั่นใจของข้อมูลที่อ่านได้ (0-100)
+11. lineItems: รายการสินค้าแต่ละแถวที่อ่านได้ในใบเสร็จ พร้อมชื่อสินค้า (name) และราคา (amount)
+
+**คำเตือน**: ต้องอ่านข้อมูลจริงที่ปรากฏในรูปภาพ ห้ามใช้ข้อมูลจำลองหรือสุ่มมั่ว หากจุดใดอ่านไม่ออกให้เว้นว่างหรือสรุปตามข้อความที่เห็นจริง
 `;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.7-flash',
         contents: [
           {
             inlineData: {
@@ -272,7 +258,7 @@ ${
           promptText
         ],
         config: {
-          systemInstruction: 'คุณเป็นผู้เชี่ยวชาญการอ่านเอกสารบัญชี OCR อ่านใบเสร็จภาษาไทย/อังกฤษอย่างแม่นยำ',
+          systemInstruction: 'คุณเป็นระบบ OCR สกัดข้อมูลใบเสร็จรับเงินภาษาไทยและสากลที่มีความแม่นยำสูงสุด 100% สกัดข้อมูลจริงจากภาพลงในโครงสร้าง JSON ตามที่กำหนด ห้ามแต่งข้อมูลขึ้นมาเอง',
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
@@ -310,7 +296,7 @@ ${
       if (!validCategories.includes(cat)) cat = 'other';
 
       return res.json({
-        source: 'gemini-3.6-flash',
+        source: 'gemini-3.7-flash',
         receiptData: {
           title: parsedData.title || 'ค่าใช้จ่ายจากการสแกนใบเสร็จ',
           vendorName: parsedData.vendorName || 'ไม่ระบุชื่อร้านค้า',
@@ -326,26 +312,11 @@ ${
           lineItems: parsedData.lineItems || []
         }
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error scanning receipt with Gemini:', err);
-      return res.json({
-        source: 'scan-fallback',
-        receiptData: {
-          title: 'สแกนค่าใช้จ่ายใบเสร็จรับเงิน',
-          vendorName: 'ซัพพลายเออร์วัตถุดิบสด',
-          date: new Date().toISOString().split('T')[0],
-          category: 'raw_material',
-          amount: 1550.00,
-          includeVat: true,
-          vatAmount: 101.40,
-          netAmount: 1448.60,
-          refNumber: 'REC-' + Math.floor(100000 + Math.random() * 900000),
-          note: 'สแกนด้วยระบบสำรอง: วัตถุดิบประกอบอาหารประจำวัน',
-          confidenceScore: 88,
-          lineItems: [
-            { name: 'วัตถุดิบและของสดประกอบอาหาร', amount: 1550.00 }
-          ]
-        }
+      return res.status(500).json({
+        error: err.message || 'เกิดข้อผิดพลาดในการประมวลผล OCR ด้วย Gemini AI',
+        details: String(err)
       });
     }
   });
@@ -396,7 +367,7 @@ ${JSON.stringify(menuItems, null, 2)}
 `;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.7-flash',
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
@@ -446,7 +417,7 @@ ${JSON.stringify(menuItems, null, 2)}
       const forecastResults = parsed.insights || generateFallbackInventoryForecast(ingredients, orders || [], menuItems || [], forecastDays);
 
       return res.json({
-        source: 'gemini-3.6-flash',
+        source: 'gemini-3.7-flash',
         forecastDays,
         overallAlertCount: forecastResults.filter((r: any) => r.riskLevel === 'CRITICAL' || r.riskLevel === 'WARNING').length,
         criticalCount: forecastResults.filter((r: any) => r.riskLevel === 'CRITICAL').length,
@@ -505,7 +476,7 @@ ${JSON.stringify(ingredients, null, 2)}
 `;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.7-flash',
         contents: prompt,
         config: {
           systemInstruction: 'ตอบกลับเป็น JSON ตามโครงสร้าง Schema ที่กำหนด ตอบเป็นภาษาไทยเชิงวิชาชีพ ปฏิบัติได้จริงในร้านอาหาร',
@@ -577,7 +548,7 @@ ${JSON.stringify(ingredients, null, 2)}
       const parsedData = JSON.parse(response.text || '{}');
 
       return res.json({
-        source: 'gemini-3.6-flash',
+        source: 'gemini-3.7-flash',
         analysis: {
           totalLossAmount: parsedData.totalLossAmount || wasteLogs.reduce((a: number, b: any) => a + (b.totalCostLoss || 0), 0),
           totalWasteEntries: wasteLogs.length,
@@ -629,7 +600,7 @@ ${JSON.stringify(menuItems || [], null, 2)}
       `;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.7-flash',
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
@@ -668,7 +639,7 @@ ${JSON.stringify(menuItems || [], null, 2)}
 
       const parsedData = JSON.parse(response.text || '{}');
       return res.json({
-        source: 'gemini-3.6-flash',
+        source: 'gemini-3.7-flash',
         result: {
           bundleTitle: parsedData.bundleTitle || '💡 บทพูดอัปเซลลูกค้า: "รับไข่ดาวเป็ดลาวาเยิ้มๆ หรือชามะนาวเย็นสดชื่นทานคู่กะเพราเพิ่มด้วยไหมครับ/คะ?"',
           scriptForCashier: parsedData.scriptForCashier || 'เสนอเมนูคู่กินเพื่อเพิ่มยอดขายเฉลี่ยต่อบิล (Ticket Size)',

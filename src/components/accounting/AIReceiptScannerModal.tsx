@@ -170,7 +170,8 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       reader.onload = (e) => {
         const img = new Image();
         img.onload = () => {
-          const MAX_SIZE = 1600;
+          // Use 2048px maximum constraint for crisp OCR reading of Thai receipts
+          const MAX_SIZE = 2048;
           let width = img.width;
           let height = img.height;
 
@@ -189,8 +190,10 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
           canvas.height = height;
           const ctx = canvas.getContext('2d');
           if (ctx) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, width, height);
             ctx.drawImage(img, 0, 0, width, height);
-            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.92);
             resolve({ base64: compressedDataUrl, mimeType: 'image/jpeg' });
           } else {
             resolve({ base64: e.target?.result as string, mimeType: file.type || 'image/jpeg' });
@@ -222,7 +225,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
           ctx.fillStyle = '#ffffff';
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.drawImage(img, 0, 0);
-          const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+          const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
           resolve({ base64: jpegDataUrl, mimeType: 'image/jpeg' });
         } else {
           resolve({ base64: src, mimeType: 'image/jpeg' });
@@ -275,25 +278,22 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       };
     }
     return {
-      title: 'ซื้อของสดและวัตถุดิบ - ตลาดสดไท',
-      vendorName: 'ร้านเจ๊วรรณ ตลาดสดไท',
+      title: 'ใบเสร็จค่าใช้จ่าย',
+      vendorName: 'ร้านค้าผู้จัดจำหน่าย',
       date: new Date().toISOString().split('T')[0],
       category: 'raw_material',
-      amount: 1750.00,
-      includeVat: true,
-      vatAmount: 114.49,
-      netAmount: 1635.51,
-      refNumber: 'RC-' + Math.floor(100000 + Math.random() * 900000),
-      note: 'พริกจินดาแดง, กระเทียมไทย, หมูกรอบสำเร็จรูป',
-      confidenceScore: 90,
-      lineItems: [
-        { name: 'พริกจินดาแดง & กระเทียมไทย 5KG', amount: 350.00 },
-        { name: 'หมูกรอบสำเร็จรูป 4KG', amount: 1400.00 }
-      ]
+      amount: 0,
+      includeVat: false,
+      vatAmount: 0,
+      netAmount: 0,
+      refNumber: '',
+      note: '',
+      confidenceScore: 70,
+      lineItems: []
     };
   };
 
-  // Scan single item via Gemini OCR API with automatic Smart OCR fallback
+  // Scan single item via Gemini OCR API
   const runScanForItem = async (item: ReceiptQueueItem): Promise<ReceiptQueueItem> => {
     try {
       let finalBase64 = item.base64;
@@ -311,26 +311,33 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
           mimeType: finalMime
         })
       });
+
       if (response.ok) {
         const data = await response.json();
         if (data && data.receiptData) {
           return {
             ...item,
             status: 'success',
+            error: undefined,
             result: data.receiptData
           };
         }
       }
+
+      const errData = await response.json().catch(() => ({}));
+      const errorMsg = errData.error || `เซิร์ฟเวอร์ตอบกลับรหัส ${response.status}`;
       return {
         ...item,
-        status: 'success',
+        status: 'error',
+        error: errorMsg,
         result: generateFallbackData(item.name)
       };
     } catch (err: any) {
-      console.warn('AI Receipt scan fetch exception, using Smart OCR fallback:', err);
+      console.error('AI Receipt scan error:', err);
       return {
         ...item,
-        status: 'success',
+        status: 'error',
+        error: err.message || 'ไม่สามารถเชื่อมต่อระบบ Gemini AI OCR ได้',
         result: generateFallbackData(item.name)
       };
     }
