@@ -40,6 +40,28 @@ async function startServer() {
     });
   };
 
+  /**
+   * Helper: Generate content with automatic model fallback for 503 / 429 high demand spikes
+   */
+  const generateWithFallback = async (ai: GoogleGenAI, params: any, preferredModels = ['gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']) => {
+    let lastErr: any = null;
+    for (const model of preferredModels) {
+      try {
+        const res = await ai.models.generateContent({
+          ...params,
+          model
+        });
+        return { response: res, modelUsed: model };
+      } catch (err: any) {
+        console.warn(`[AI SDK] Model ${model} encountered error:`, err?.message || err);
+        lastErr = err;
+        // Wait 250ms before trying the next fallback model
+        await new Promise(r => setTimeout(r, 250));
+      }
+    }
+    throw lastErr;
+  };
+
   // API Route: AI Menu Engineering & Price Recommendation Engine
   app.post('/api/ai/menu-engineering', async (req, res) => {
     try {
@@ -102,8 +124,7 @@ ${
 4. เสนอกลยุทธ์ปฏิบัติการ (actionStrategy) สำหรับเมนูนี้ เช่น การเพิ่มโปรโมชั่น, การปรับขนาดจาน, หรือการจัด Set
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
+      const { response, modelUsed } = await generateWithFallback(ai, {
         contents: prompt,
         config: {
           systemInstruction: 'ตอบกลับเป็นรูปแบบ JSON ตามโครงสร้าง Schema ที่กำหนดเท่านั้น ตอบด้วยภาษาไทยที่กระชับและเป็นมืออาชีพ',
@@ -246,8 +267,7 @@ ${
 **คำเตือน**: ต้องอ่านข้อมูลจริงที่ปรากฏในรูปภาพ ห้ามใช้ข้อมูลจำลองหรือสุ่มมั่ว หากจุดใดอ่านไม่ออกให้เว้นว่างหรือสรุปตามข้อความที่เห็นจริง
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
+      const { response, modelUsed } = await generateWithFallback(ai, {
         contents: [
           {
             inlineData: {
@@ -296,7 +316,7 @@ ${
       if (!validCategories.includes(cat)) cat = 'other';
 
       return res.json({
-        source: 'gemini-3.7-flash',
+        source: modelUsed,
         receiptData: {
           title: parsedData.title || 'ค่าใช้จ่ายจากการสแกนใบเสร็จ',
           vendorName: parsedData.vendorName || 'ไม่ระบุชื่อร้านค้า',
@@ -314,9 +334,15 @@ ${
       });
     } catch (err: any) {
       console.error('Error scanning receipt with Gemini:', err);
+      let errMsg = err?.message || String(err || '');
+      // If error message is serialized JSON or contains 503/429
+      if (errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE')) {
+        errMsg = 'ระบบ AI มีผู้ใช้งานหนาแน่นชั่วคราว (503 High Demand) กรุณากดปุ่มลองใหม่อีกครั้ง';
+      } else if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+        errMsg = 'ระบบ AI มีการเรียกใช้งานเกินโควตาชั่วคราว กรุณารอสักครู่แล้วลองใหม่';
+      }
       return res.status(500).json({
-        error: err.message || 'เกิดข้อผิดพลาดในการประมวลผล OCR ด้วย Gemini AI',
-        details: String(err)
+        error: errMsg
       });
     }
   });
@@ -366,8 +392,7 @@ ${JSON.stringify(menuItems, null, 2)}
 5. ให้เหตุผล AI Insight และคำแนะนำสำหรับซัพพลายเออร์
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
+      const { response, modelUsed } = await generateWithFallback(ai, {
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
@@ -475,8 +500,7 @@ ${JSON.stringify(ingredients, null, 2)}
 4. ประเมินมูลค่าเงินที่จะประหยัดได้ต่อเดือน (estimatedMonthlySavings) หากทำตามคำแนะนำ
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
+      const { response, modelUsed } = await generateWithFallback(ai, {
         contents: prompt,
         config: {
           systemInstruction: 'ตอบกลับเป็น JSON ตามโครงสร้าง Schema ที่กำหนด ตอบเป็นภาษาไทยเชิงวิชาชีพ ปฏิบัติได้จริงในร้านอาหาร',
@@ -599,8 +623,7 @@ ${JSON.stringify(menuItems || [], null, 2)}
 3. สร้างข้อความพูดแนะนำสั้นๆ โดนใจสำหรับให้แคชเชียร์เอ่ยถามลูกค้า (bundleTitle และ scriptForCashier)
       `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
+      const { response, modelUsed } = await generateWithFallback(ai, {
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
