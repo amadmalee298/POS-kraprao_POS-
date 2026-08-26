@@ -27,7 +27,8 @@ import {
   Download,
   Printer,
   Tag,
-  Edit2
+  Edit2,
+  Scale
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot } from '../../types';
@@ -42,6 +43,7 @@ export const InventoryView: React.FC = () => {
     ingredients,
     stockLots,
     addIngredient,
+    updateIngredient,
     deleteIngredients,
     bulkUpdateIngredients,
     updateIngredientStock,
@@ -53,7 +55,12 @@ export const InventoryView: React.FC = () => {
     ingredientCategories,
     addIngredientCategory,
     updateIngredientCategory,
-    deleteIngredientCategory
+    deleteIngredientCategory,
+    ingredientUnits,
+    addIngredientUnit,
+    updateIngredientUnit,
+    deleteIngredientUnit,
+    resetIngredientUnits
   } = usePOS();
 
   // Ingredient Categories Modal State
@@ -62,6 +69,26 @@ export const InventoryView: React.FC = () => {
   const [newCatIconInput, setNewCatIconInput] = useState('🏷️');
   const [editingIngCatId, setEditingIngCatId] = useState<string | null>(null);
   const [editingIngCatName, setEditingIngCatName] = useState('');
+
+  // Units Management Modal State
+  const [isManageUnitsOpen, setIsManageUnitsOpen] = useState(false);
+  const [newUnitNameInput, setNewUnitNameInput] = useState('');
+  const [newUnitSymbolInput, setNewUnitSymbolInput] = useState('');
+  const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
+  const [editingUnitName, setEditingUnitName] = useState('');
+  const [editingUnitSymbol, setEditingUnitSymbol] = useState('');
+
+  // Edit Single Ingredient Modal State
+  const [isEditIngOpen, setIsEditIngOpen] = useState(false);
+  const [editingIng, setEditingIng] = useState<Ingredient | null>(null);
+  const [editIngName, setEditIngName] = useState('');
+  const [editIngUnit, setEditIngUnit] = useState('kg');
+  const [editIngCustomUnit, setEditIngCustomUnit] = useState('');
+  const [editIngStock, setEditIngStock] = useState<number>(0);
+  const [editIngMinAlert, setEditIngMinAlert] = useState<number>(0);
+  const [editIngUnitCost, setEditIngUnitCost] = useState<number>(0);
+  const [editIngCat, setEditIngCat] = useState<string>('meat');
+  const [editIngBarcode, setEditIngBarcode] = useState('');
 
   // Tab State
   const [activeTab, setActiveTab] = useState<'smart_audit' | 'forecast' | 'waste' | 'current' | 'usage' | 'stockcard'>('smart_audit');
@@ -210,11 +237,12 @@ export const InventoryView: React.FC = () => {
 
   // New Ingredient Form
   const [ingName, setIngName] = useState('');
-  const [ingUnit, setIngUnit] = useState<'g' | 'kg' | 'ml' | 'l' | 'pcs' | 'pack'>('kg');
+  const [ingUnit, setIngUnit] = useState<string>('kg');
+  const [ingCustomUnit, setIngCustomUnit] = useState('');
   const [ingStock, setIngStock] = useState<number>(10);
   const [ingMinAlert, setIngMinAlert] = useState<number>(5);
   const [ingUnitCost, setIngUnitCost] = useState<number>(150);
-  const [ingCat, setIngCat] = useState<'meat' | 'vegetable' | 'sauce' | 'egg' | 'dry_good' | 'beverage'>('meat');
+  const [ingCat, setIngCat] = useState<string>('meat');
 
   // New Lot Form
   const [lotIngId, setLotIngId] = useState<string>(ingredients[0]?.id || '');
@@ -451,16 +479,91 @@ export const InventoryView: React.FC = () => {
   const handleCreateIngredient = (e: React.FormEvent) => {
     e.preventDefault();
     if (!ingName.trim()) return;
+    const finalUnit = ingUnit === 'custom' ? (ingCustomUnit.trim() || 'ชิ้น') : ingUnit;
     addIngredient({
       name: ingName.trim(),
-      unit: ingUnit,
+      unit: finalUnit,
       currentStock: ingStock,
       minStockAlert: ingMinAlert,
       unitCost: ingUnitCost,
       category: ingCat
     });
+    if (ingUnit === 'custom' && ingCustomUnit.trim()) {
+      addIngredientUnit({
+        name: ingCustomUnit.trim(),
+        symbol: ingCustomUnit.trim(),
+        label: ingCustomUnit.trim()
+      });
+    }
     setIsAddIngOpen(false);
     setIngName('');
+    setIngCustomUnit('');
+  };
+
+  const handleOpenEditIngredient = (ing: Ingredient) => {
+    setEditingIng(ing);
+    setEditIngName(ing.name);
+    const hasUnit = ingredientUnits.some(
+      u => u.id === ing.unit || u.symbol === ing.unit || u.name === ing.unit
+    );
+    if (hasUnit) {
+      const match = ingredientUnits.find(
+        u => u.id === ing.unit || u.symbol === ing.unit || u.name === ing.unit
+      );
+      setEditIngUnit(match?.id || ing.unit);
+      setEditIngCustomUnit('');
+    } else {
+      setEditIngUnit('custom');
+      setEditIngCustomUnit(ing.unit);
+    }
+    setEditIngStock(ing.currentStock);
+    setEditIngMinAlert(ing.minStockAlert);
+    setEditIngUnitCost(ing.unitCost);
+    setEditIngCat(ing.category);
+    setEditIngBarcode(ing.barcode || '');
+    setIsEditIngOpen(true);
+  };
+
+  const handleSaveEditIngredient = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingIng || !editIngName.trim()) return;
+    const finalUnit = editIngUnit === 'custom' ? (editIngCustomUnit.trim() || 'ชิ้น') : editIngUnit;
+
+    if (editIngStock !== editingIng.currentStock) {
+      const diff = editIngStock - editingIng.currentStock;
+      recordStockAdjustment(
+        editingIng.id,
+        editIngStock,
+        diff > 0 ? 'restock' : 'manual_adjustment',
+        'แก้ไขยอดสต็อกจากหน้าต่างแก้ไขข้อมูลวัตถุดิบ',
+        currentUser?.name || 'ผู้จัดการ',
+        currentUser?.role || 'manager'
+      );
+    }
+
+    updateIngredient({
+      ...editingIng,
+      name: editIngName.trim(),
+      unit: finalUnit,
+      currentStock: editIngStock,
+      minStockAlert: editIngMinAlert,
+      unitCost: editIngUnitCost,
+      category: editIngCat,
+      barcode: editIngBarcode.trim() || undefined
+    });
+
+    if (editIngUnit === 'custom' && editIngCustomUnit.trim()) {
+      addIngredientUnit({
+        name: editIngCustomUnit.trim(),
+        symbol: editIngCustomUnit.trim(),
+        label: editIngCustomUnit.trim()
+      });
+    }
+
+    setSavedIngId(editingIng.id);
+    setTimeout(() => setSavedIngId(null), 2500);
+    setIsEditIngOpen(false);
+    setEditingIng(null);
   };
 
   const handleCreateLot = (e: React.FormEvent) => {
@@ -735,6 +838,16 @@ export const InventoryView: React.FC = () => {
                 >
                   <Tag className="w-3.5 h-3.5 text-orange-400" />
                   <span>จัดการหมวดหมู่ ({ingredientCategories.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsManageUnitsOpen(true)}
+                  className="px-3 py-2 bg-sky-950/40 border border-sky-500/30 hover:border-sky-500 text-sky-400 font-bold text-xs rounded-xl transition flex items-center space-x-1.5 active:scale-95 cursor-pointer"
+                  title="เพิ่ม แก้ไข หรือลบหน่วยนับวัตถุดิบ (Units)"
+                >
+                  <Scale className="w-3.5 h-3.5 text-sky-400" />
+                  <span>จัดการหน่วยนับ ({ingredientUnits.length})</span>
                 </button>
 
                 <button
@@ -1033,6 +1146,16 @@ export const InventoryView: React.FC = () => {
                                 ) : (
                                   <span>บันทึก</span>
                                 )}
+                              </button>
+
+                              {/* Edit Ingredient Details (Unit, Name, Category, Price, etc.) */}
+                              <button
+                                type="button"
+                                title="แก้ไขข้อมูลวัตถุดิบ (ชื่อ, หน่วยนับ, หมวดหมู่, ต้นทุน ฯลฯ)"
+                                onClick={() => handleOpenEditIngredient(ing)}
+                                className="p-1.5 bg-slate-900 hover:bg-sky-600/30 border border-slate-700 hover:border-sky-500 text-slate-400 hover:text-sky-400 font-bold rounded-lg text-xs transition active:scale-95"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
                               </button>
 
                               {/* Single Delete Button */}
@@ -1361,16 +1484,27 @@ export const InventoryView: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 mb-1">หน่วยนับ</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-slate-400">หน่วยนับ</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsManageUnitsOpen(true)}
+                      className="text-[11px] text-sky-400 hover:text-sky-300 font-bold underline cursor-pointer"
+                    >
+                      + จัดการหน่วยนับ
+                    </button>
+                  </div>
                   <select
                     value={ingUnit}
-                    onChange={e => setIngUnit(e.target.value as any)}
+                    onChange={e => setIngUnit(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200"
                   >
-                    <option value="kg">กิโลกรัม (kg)</option>
-                    <option value="g">กรัม (g)</option>
-                    <option value="ml">มิลลิลิตร (ml)</option>
-                    <option value="pcs">ฟอง/ชิ้น (pcs)</option>
+                    {ingredientUnits.map(unit => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.name} ({unit.symbol})
+                      </option>
+                    ))}
+                    <option value="custom">✏️ กำหนดหน่วยนับเอง...</option>
                   </select>
                 </div>
 
@@ -1387,7 +1521,7 @@ export const InventoryView: React.FC = () => {
                   </div>
                   <select
                     value={ingCat}
-                    onChange={e => setIngCat(e.target.value as any)}
+                    onChange={e => setIngCat(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200"
                   >
                     {ingredientCategories.map(cat => (
@@ -1399,23 +1533,49 @@ export const InventoryView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {ingUnit === 'custom' && (
+                <div className="bg-sky-950/30 border border-sky-500/30 p-2.5 rounded-xl animate-fadeIn">
+                  <label className="block text-sky-300 font-bold mb-1">ระบุชื่อหน่วยนับที่ต้องการ</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="เช่น ถุง, ลิตร, ขวด, แพ็ค, กล่อง, แผง..."
+                    value={ingCustomUnit}
+                    onChange={e => setIngCustomUnit(e.target.value)}
+                    className="w-full bg-slate-950 border border-sky-500/50 rounded-lg px-3 py-2 text-slate-100 font-bold"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-slate-400 mb-1">จำนวนตั้งต้น</label>
                   <input
                     type="number"
+                    step="any"
                     value={ingStock}
                     onChange={e => setIngStock(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono"
                   />
                 </div>
                 <div>
                   <label className="block text-slate-400 mb-1">เกณฑ์เตือนขั้นต่ำ</label>
                   <input
                     type="number"
+                    step="any"
                     value={ingMinAlert}
                     onChange={e => setIngMinAlert(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">ทุน/หน่วย (บาท)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={ingUnitCost}
+                    onChange={e => setIngUnitCost(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono"
                   />
                 </div>
               </div>
@@ -1606,12 +1766,11 @@ export const InventoryView: React.FC = () => {
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-amber-500"
                 >
                   <option value="no_change">-- ไม่เปลี่ยนแปลง --</option>
-                  <option value="kg">กิโลกรัม (kg)</option>
-                  <option value="g">กรัม (g)</option>
-                  <option value="ml">มิลลิลิตร (ml)</option>
-                  <option value="l">ลิตร (l)</option>
-                  <option value="pcs">ชิ้น/ฟอง (pcs)</option>
-                  <option value="pack">แพ็ค/กล่อง (pack)</option>
+                  {ingredientUnits.map(unit => (
+                    <option key={unit.id} value={unit.id}>
+                      {unit.name} ({unit.symbol})
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -2079,6 +2238,379 @@ export const InventoryView: React.FC = () => {
                 ปิดหน้าต่าง
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 8: MANAGE INGREDIENT UNITS MODAL */}
+      {isManageUnitsOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl space-y-0">
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-9 h-9 rounded-xl bg-sky-950/80 border border-sky-500/30 text-sky-400 flex items-center justify-center font-bold">
+                  <Scale className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-100 text-base">จัดการหน่วยนับวัตถุดิบ (Units)</h3>
+                  <p className="text-xs text-slate-400">เพิ่ม แก้ไข หรือลบหน่วยนับที่ใช้ในการสต็อกและตัดสูตร</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsManageUnitsOpen(false)}
+                className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5 max-h-[75vh] overflow-y-auto">
+              {/* Add New Unit Form */}
+              <div className="bg-slate-950/80 border border-slate-800/80 p-4 rounded-xl space-y-3">
+                <div className="text-xs font-bold text-sky-400 flex items-center space-x-1.5">
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มหน่วยนับใหม่</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+                  <input
+                    type="text"
+                    value={newUnitNameInput}
+                    onChange={e => setNewUnitNameInput(e.target.value)}
+                    placeholder="ชื่อหน่วย เช่น ขวด, ถุง, แกลลอน..."
+                    className="sm:col-span-3 px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-100 focus:outline-none focus:border-sky-500 font-medium"
+                  />
+                  <input
+                    type="text"
+                    value={newUnitSymbolInput}
+                    onChange={e => setNewUnitSymbolInput(e.target.value)}
+                    placeholder="ตัวย่อ เช่น bottle, bag..."
+                    className="sm:col-span-2 px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-100 focus:outline-none focus:border-sky-500 font-mono"
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (newUnitNameInput.trim()) {
+                        addIngredientUnit({
+                          name: newUnitNameInput.trim(),
+                          symbol: newUnitSymbolInput.trim() || newUnitNameInput.trim(),
+                          label: `${newUnitNameInput.trim()} (${newUnitSymbolInput.trim() || newUnitNameInput.trim()})`
+                        });
+                        setNewUnitNameInput('');
+                        setNewUnitSymbolInput('');
+                      }
+                    }}
+                    className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-xl shadow transition active:scale-95 whitespace-nowrap cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>เพิ่มหน่วยนับ</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* List of Existing Units */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    รายการหน่วยนับทั้งหมด ({ingredientUnits.length})
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm('คุณต้องการคืนค่าหน่วยนับมาตรฐานเริ่มต้นใช่หรือไม่?')) {
+                        resetIngredientUnits();
+                      }
+                    }}
+                    className="text-[11px] text-slate-400 hover:text-sky-400 underline font-medium cursor-pointer"
+                  >
+                    คืนค่าหน่วยนับเริ่มต้น
+                  </button>
+                </div>
+
+                <div className="divide-y divide-slate-800/80 border border-slate-800 rounded-xl overflow-hidden bg-slate-950/40">
+                  {ingredientUnits.map(unit => {
+                    const itemCount = ingredients.filter(
+                      i => i.unit === unit.id || i.unit === unit.symbol || i.unit === unit.name
+                    ).length;
+                    const isEditing = editingUnitId === unit.id;
+
+                    return (
+                      <div key={unit.id} className="p-3 flex items-center justify-between hover:bg-slate-900/60 transition">
+                        {isEditing ? (
+                          <div className="flex flex-wrap items-center gap-2 flex-1 mr-2">
+                            <input
+                              type="text"
+                              value={editingUnitName}
+                              onChange={e => setEditingUnitName(e.target.value)}
+                              placeholder="ชื่อหน่วย"
+                              className="px-2.5 py-1.5 bg-slate-900 border border-sky-500 rounded-lg text-xs text-slate-100 font-bold flex-1"
+                            />
+                            <input
+                              type="text"
+                              value={editingUnitSymbol}
+                              onChange={e => setEditingUnitSymbol(e.target.value)}
+                              placeholder="สัญลักษณ์/ตัวย่อ"
+                              className="px-2.5 py-1.5 bg-slate-900 border border-sky-500 rounded-lg text-xs text-slate-100 font-mono w-24"
+                            />
+                            <button
+                              onClick={() => {
+                                if (editingUnitName.trim()) {
+                                  updateIngredientUnit(unit.id, {
+                                    name: editingUnitName.trim(),
+                                    symbol: editingUnitSymbol.trim() || editingUnitName.trim(),
+                                    label: `${editingUnitName.trim()} (${editingUnitSymbol.trim() || editingUnitName.trim()})`
+                                  });
+                                }
+                                setEditingUnitId(null);
+                              }}
+                              className="px-3 py-1.5 bg-emerald-600 text-white font-bold text-xs rounded-lg"
+                            >
+                              บันทึก
+                            </button>
+                            <button
+                              onClick={() => setEditingUnitId(null)}
+                              className="px-3 py-1.5 bg-slate-800 text-slate-400 font-bold text-xs rounded-lg"
+                            >
+                              ยกเลิก
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 rounded-lg bg-sky-950/60 border border-sky-500/20 text-sky-400 font-mono font-bold text-xs flex items-center justify-center">
+                              {unit.symbol || unit.name.slice(0, 2)}
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-100 text-xs flex items-center space-x-2">
+                                <span>{unit.name}</span>
+                                <span className="text-[10px] text-sky-400 font-mono px-1.5 py-0.5 bg-sky-950/60 rounded border border-sky-500/20">
+                                  {unit.symbol}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                วัตถุดิบที่ใช้หน่วยนี้: <strong className="text-amber-400">{itemCount}</strong> รายการ
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {!isEditing && (
+                          <div className="flex items-center space-x-1.5">
+                            <button
+                              onClick={() => {
+                                setEditingUnitId(unit.id);
+                                setEditingUnitName(unit.name);
+                                setEditingUnitSymbol(unit.symbol || unit.name);
+                              }}
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition"
+                              title="แก้ไขชื่อหน่วยนับ"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบหน่วยนับ "${unit.name}"?`)) {
+                                  deleteIngredientUnit(unit.id);
+                                }
+                              }}
+                              className="p-1.5 bg-rose-950/40 hover:bg-rose-900/80 text-rose-400 hover:text-rose-200 rounded-lg transition"
+                              title="ลบหน่วยนับนี้"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-950/80 border-t border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsManageUnitsOpen(false)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                ปิดหน้าต่าง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 9: EDIT INGREDIENT DETAILS MODAL */}
+      {isEditIngOpen && editingIng && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-lg bg-sky-950/80 border border-sky-500/30 text-sky-400 flex items-center justify-center">
+                  <Edit2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-100 text-base">แก้ไขข้อมูลวัตถุดิบ</h3>
+                  <p className="text-[11px] text-slate-400">แก้ไขหน่วยนับ ชื่อ หมวดหมู่ ราคาทุน และสต็อก</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsEditIngOpen(false);
+                  setEditingIng(null);
+                }}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditIngredient} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">ชื่อวัตถุดิบ *</label>
+                <input
+                  type="text"
+                  required
+                  value={editIngName}
+                  onChange={e => setEditIngName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-slate-100 font-bold focus:outline-none focus:border-sky-500 text-sm"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-slate-300 font-bold">หน่วยนับ (Unit)</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsManageUnitsOpen(true)}
+                      className="text-[11px] text-sky-400 hover:text-sky-300 font-bold underline cursor-pointer"
+                    >
+                      + จัดการหน่วยนับ
+                    </button>
+                  </div>
+                  <select
+                    value={editIngUnit}
+                    onChange={e => setEditIngUnit(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 font-medium focus:outline-none focus:border-sky-500"
+                  >
+                    {ingredientUnits.map(unit => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.name} ({unit.symbol})
+                      </option>
+                    ))}
+                    <option value="custom">✏️ กำหนดหน่วยนับเอง...</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-slate-300 font-bold">หมวดหมู่วัตถุดิบ</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsManageIngCatsOpen(true)}
+                      className="text-[11px] text-orange-400 hover:text-orange-300 font-bold underline cursor-pointer"
+                    >
+                      + จัดการหมวดหมู่
+                    </button>
+                  </div>
+                  <select
+                    value={editIngCat}
+                    onChange={e => setEditIngCat(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 font-medium focus:outline-none focus:border-sky-500"
+                  >
+                    {ingredientCategories.map(cat => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.icon || '🏷️'} {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {editIngUnit === 'custom' && (
+                <div className="bg-sky-950/30 border border-sky-500/40 p-3 rounded-xl animate-fadeIn space-y-1">
+                  <label className="block text-sky-300 font-bold">พิมพ์ระบุหน่วยนับที่ต้องการ</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="เช่น ถุง, ขวด, ลิตร, แกลลอน, ห่อ..."
+                    value={editIngCustomUnit}
+                    onChange={e => setEditIngCustomUnit(e.target.value)}
+                    className="w-full bg-slate-950 border border-sky-500/60 rounded-lg px-3 py-2 text-slate-100 font-bold focus:outline-none"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">สต็อกคงเหลือปัจจุบัน</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={editIngStock}
+                    onChange={e => setEditIngStock(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-100 font-mono font-bold focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">เกณฑ์เตือนสต็อกต่ำ</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={editIngMinAlert}
+                    onChange={e => setEditIngMinAlert(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-100 font-mono font-bold focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">ราคาทุน/หน่วย (บาท)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={editIngUnitCost}
+                    onChange={e => setEditIngUnitCost(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-100 font-mono font-bold focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1">รหัสบาร์โค้ด (ถ้ามี)</label>
+                <input
+                  type="text"
+                  placeholder="เช่น 8851234567890"
+                  value={editIngBarcode}
+                  onChange={e => setEditIngBarcode(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditIngOpen(false);
+                    setEditingIng(null);
+                  }}
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl transition shadow-lg shadow-sky-950/50 flex items-center space-x-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>บันทึกการแก้ไข</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

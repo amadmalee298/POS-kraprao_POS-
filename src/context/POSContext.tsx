@@ -31,6 +31,7 @@ import {
   StockAdjustmentLog,
   CategoryItem,
   IngredientCategory,
+  IngredientUnitItem,
   CentralBranchLiveStats,
   FirebaseSyncState
 } from '../types';
@@ -126,6 +127,13 @@ interface POSContextType {
   updateIngredientCategory: (id: string, name: string, icon?: string) => void;
   deleteIngredientCategory: (id: string) => void;
 
+  // Ingredient Unit CRUD
+  ingredientUnits: IngredientUnitItem[];
+  addIngredientUnit: (unit: { id?: string; name: string; symbol: string; label?: string }) => void;
+  updateIngredientUnit: (id: string, nameOrData: string | { name?: string; symbol?: string; label?: string }, symbol?: string) => void;
+  deleteIngredientUnit: (id: string) => void;
+  resetIngredientUnits: () => void;
+
   // Menu item CRUD
   addMenuItem: (itemData: Omit<MenuItem, 'id'>) => void;
   updateMenuItem: (item: MenuItem) => void;
@@ -184,6 +192,7 @@ interface POSContextType {
 
   // Inventory operations
   addIngredient: (ingredient: Omit<Ingredient, 'id'>) => void;
+  updateIngredient: (ingredient: Ingredient) => void;
   deleteIngredients: (ingredientIds: string[]) => void;
   bulkUpdateIngredients: (ingredientIds: string[], updates: Partial<Omit<Ingredient, 'id'>>) => void;
   updateIngredientStock: (ingredientId: string, newStock: number) => void;
@@ -292,6 +301,87 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
   
   const [categories, setCategories] = useState<CategoryItem[]>(DEFAULT_CATEGORIES);
+
+  const DEFAULT_INGREDIENT_UNITS: IngredientUnitItem[] = [
+    { id: 'kg', name: 'กิโลกรัม', symbol: 'kg', label: 'กิโลกรัม (kg)', isDefault: true },
+    { id: 'g', name: 'กรัม', symbol: 'g', label: 'กรัม (g)', isDefault: true },
+    { id: 'l', name: 'ลิตร', symbol: 'l', label: 'ลิตร (l)', isDefault: true },
+    { id: 'ml', name: 'มิลลิลิตร', symbol: 'ml', label: 'มิลลิลิตร (ml)', isDefault: true },
+    { id: 'pcs', name: 'ฟอง / ชิ้น', symbol: 'pcs', label: 'ฟอง/ชิ้น (pcs)', isDefault: true },
+    { id: 'pack', name: 'แพ็ค / ห่อ', symbol: 'pack', label: 'แพ็ค/ห่อ (pack)', isDefault: true },
+    { id: 'bottle', name: 'ขวด', symbol: 'ขวด', label: 'ขวด (bottle)', isDefault: true },
+    { id: 'can', name: 'กระป๋อง', symbol: 'กระป๋อง', label: 'กระป๋อง (can)', isDefault: true },
+    { id: 'bag', name: 'ถุง / กระสอบ', symbol: 'ถุง', label: 'ถุง (bag)', isDefault: true },
+    { id: 'bunch', name: 'มัด / กำ', symbol: 'กำ', label: 'มัด/กำ (bunch)', isDefault: true },
+    { id: 'tray', name: 'แผง', symbol: 'แผง', label: 'แผง (tray)', isDefault: true },
+    { id: 'box', name: 'ลัง / กล่อง', symbol: 'ลัง', label: 'ลัง/กล่อง (box)', isDefault: true },
+    { id: 'cup', name: 'ถ้วย / แก้ว', symbol: 'ถ้วย', label: 'ถ้วย/แก้ว (cup)', isDefault: true },
+    { id: 'portion', name: 'จาน / ที่', symbol: 'ที่', label: 'จาน/ที่ (portion)', isDefault: true },
+    { id: 'roll', name: 'ม้วน', symbol: 'ม้วน', label: 'ม้วน (roll)', isDefault: true },
+  ];
+
+  const [ingredientUnits, setIngredientUnits] = useState<IngredientUnitItem[]>(DEFAULT_INGREDIENT_UNITS);
+
+  const addIngredientUnit = (unitData: { id?: string; name: string; symbol: string; label?: string }) => {
+    const nameTrimmed = unitData.name.trim();
+    const symbolTrimmed = (unitData.symbol || unitData.name).trim();
+    if (!nameTrimmed) return;
+    const newId = unitData.id || `unit-${Date.now()}`;
+    const newLabel = unitData.label || `${nameTrimmed} (${symbolTrimmed})`;
+    setIngredientUnits(prev => {
+      if (prev.some(u => u.id === newId || u.symbol.toLowerCase() === symbolTrimmed.toLowerCase() || u.name === nameTrimmed)) {
+        return prev;
+      }
+      return [...prev, { id: newId, name: nameTrimmed, symbol: symbolTrimmed, label: newLabel, isDefault: false }];
+    });
+  };
+
+  const updateIngredientUnit = (
+    id: string,
+    nameOrData: string | { name?: string; symbol?: string; label?: string },
+    symbol?: string
+  ) => {
+    let nameTrimmed = '';
+    let symbolTrimmed = '';
+    let customLabel = '';
+
+    if (typeof nameOrData === 'string') {
+      nameTrimmed = nameOrData.trim();
+      symbolTrimmed = (symbol || nameOrData).trim();
+    } else if (nameOrData) {
+      nameTrimmed = (nameOrData.name || '').trim();
+      symbolTrimmed = (nameOrData.symbol || nameTrimmed).trim();
+      customLabel = nameOrData.label || '';
+    }
+
+    if (!nameTrimmed) return;
+    const finalLabel = customLabel || `${nameTrimmed} (${symbolTrimmed})`;
+
+    setIngredientUnits(prev =>
+      prev.map(u =>
+        u.id === id
+          ? {
+              ...u,
+              name: nameTrimmed,
+              symbol: symbolTrimmed,
+              label: finalLabel
+            }
+          : u
+      )
+    );
+  };
+
+  const deleteIngredientUnit = (id: string) => {
+    if (ingredientUnits.length <= 1) {
+      alert('ต้องมีหน่วยนับในระบบอย่างน้อย 1 หน่วย');
+      return;
+    }
+    setIngredientUnits(prev => prev.filter(u => u.id !== id));
+  };
+
+  const resetIngredientUnits = () => {
+    setIngredientUnits(DEFAULT_INGREDIENT_UNITS);
+  };
 
   // Ingredient Categories state & CRUD
   const [ingredientCategories, setIngredientCategories] = useState<IngredientCategory[]>([
@@ -771,6 +861,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           } else if (parsed.ingredients && Array.isArray(parsed.ingredients)) {
             setIngredientCategories(prev => syncAndHealIngredientCategories(prev, parsed.ingredients));
           }
+          if (parsed.ingredientUnits && Array.isArray(parsed.ingredientUnits) && parsed.ingredientUnits.length > 0) {
+            setIngredientUnits(parsed.ingredientUnits);
+          }
           if (parsed.addOns && Array.isArray(parsed.addOns)) setAddOns(parsed.addOns);
           if (parsed.ingredients && Array.isArray(parsed.ingredients)) setIngredients(parsed.ingredients);
           if (parsed.stockLots && Array.isArray(parsed.stockLots)) setStockLots(parsed.stockLots);
@@ -912,6 +1005,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         discount,
         categories,
         ingredientCategories,
+        ingredientUnits,
         menuItems,
         addOns,
         ingredients,
@@ -946,6 +1040,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     discount,
     categories,
     ingredientCategories,
+    ingredientUnits,
     menuItems,
     addOns,
     ingredients,
@@ -1512,6 +1607,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIngredients(prev => [...prev, newIng]);
   };
 
+  const updateIngredient = (updatedIng: Ingredient) => {
+    setIngredients(prev =>
+      prev.map(ing => (ing.id === updatedIng.id ? updatedIng : ing))
+    );
+  };
+
   const deleteIngredients = (ingredientIds: string[]) => {
     const idSet = new Set(ingredientIds);
     setIngredients(prev => prev.filter(ing => !idSet.has(ing.id)));
@@ -2065,6 +2166,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addIngredientCategory,
         updateIngredientCategory,
         deleteIngredientCategory,
+        ingredientUnits,
+        addIngredientUnit,
+        updateIngredientUnit,
+        deleteIngredientUnit,
+        resetIngredientUnits,
         cart,
         addToCart,
         updateCartQuantity,
@@ -2080,6 +2186,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateOrderTaxInfo,
         addTaxInvoiceOrder,
         addIngredient,
+        updateIngredient,
         deleteIngredients,
         bulkUpdateIngredients,
         updateIngredientStock,

@@ -119,10 +119,18 @@ export interface IngredientCategory {
   icon?: string;
 }
 
+export interface IngredientUnitItem {
+  id: string;
+  name: string; // เช่น 'กิโลกรัม', 'กรัม', 'ขวด'
+  symbol: string; // เช่น 'kg', 'g', 'bottle'
+  label: string; // เช่น 'กิโลกรัม (kg)'
+  isDefault?: boolean;
+}
+
 export interface Ingredient {
   id: string;
   name: string;
-  unit: 'g' | 'kg' | 'ml' | 'l' | 'pcs' | 'pack';
+  unit: 'g' | 'kg' | 'ml' | 'l' | 'pcs' | 'pack' | string;
   currentStock: number;
   minStockAlert: number;
   unitCost: number; // cost per unit
