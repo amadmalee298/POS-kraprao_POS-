@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   X,
   LayoutGrid,
@@ -21,6 +21,7 @@ import {
 import { usePOS } from '../context/POSContext';
 import { ActiveTab } from '../types';
 import { SHOP_LOGO_URL } from '../assets/logo';
+import { GoogleSheetsModal } from './common/GoogleSheetsModal';
 
 export const SidebarDrawer: React.FC = () => {
   const {
@@ -33,6 +34,8 @@ export const SidebarDrawer: React.FC = () => {
     currentBranch,
     settings
   } = usePOS();
+
+  const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
 
   if (!isDrawerOpen) return null;
 
@@ -109,8 +112,33 @@ export const SidebarDrawer: React.FC = () => {
         </div>
 
         {/* Section Label */}
-        <div className="px-5 py-3 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-          คุมบริหารสาขา
+        <div className="px-5 py-2.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+          <span>คุมบริหารสาขา</span>
+          <span className="text-[10px] text-slate-500 font-mono">14 ฟังก์ชัน</span>
+        </div>
+
+        {/* Google Sheets Quick Sync Card */}
+        <div className="px-3 mb-2">
+          <button
+            onClick={() => {
+              setIsDrawerOpen(false);
+              setIsSheetsModalOpen(true);
+            }}
+            className="w-full p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/80 to-teal-950/60 border border-emerald-500/40 hover:border-emerald-400/80 text-slate-100 flex items-center justify-between transition group shadow-md"
+          >
+            <div className="flex items-center space-x-2.5">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                <FileSpreadsheet className="w-4 h-4" />
+              </div>
+              <div className="text-left">
+                <div className="font-bold text-xs text-emerald-300">Google Sheets Sync</div>
+                <div className="text-[10px] text-slate-400">ส่งออกยอดขาย & สต็อก</div>
+              </div>
+            </div>
+            <span className="text-[10px] bg-emerald-950 px-2 py-0.5 rounded-full border border-emerald-500/30 text-emerald-400 font-bold">
+              ซิงค์ข้อมูล ↗
+            </span>
+          </button>
         </div>
 
         {/* Menu Items Scrollable List */}
@@ -175,6 +203,12 @@ export const SidebarDrawer: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Google Sheets Sync Modal */}
+      <GoogleSheetsModal
+        isOpen={isSheetsModalOpen}
+        onClose={() => setIsSheetsModalOpen(false)}
+      />
     </div>
   );
 };

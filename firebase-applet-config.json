@@ -1,7 +1,11 @@
 {
-  "projectId": "kaprao-pos-enterprise",
-  "appId": "1:1234567890:web:abcdef",
-  "apiKey": "AIzaSyDummyKeyForOfflineFirstDevMode12345",
-  "authDomain": "kaprao-pos-enterprise.firebaseapp.com",
-  "firestoreDatabaseId": "(default)"
+  "projectId": "triple-bounty-3gtt6",
+  "appId": "1:742837910539:web:4695cc8ae9b3d5136f1b0e",
+  "apiKey": "AIzaSyAqyD_0BeXI4iIpTtTac9cNgVU-_yWa4WA",
+  "authDomain": "triple-bounty-3gtt6.firebaseapp.com",
+  "storageBucket": "triple-bounty-3gtt6.firebasestorage.app",
+  "messagingSenderId": "742837910539",
+  "measurementId": "",
+  "oAuthClientId": "742837910539-bn90mbuar1s38bt24p88e4421nfevam4.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
 }

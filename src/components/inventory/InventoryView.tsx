@@ -37,6 +37,7 @@ import { AIWasteAnalysisPanel } from './AIWasteAnalysisPanel';
 import { SmartAuditPanel } from './SmartAuditPanel';
 import { AdjustmentLogModal } from './AdjustmentLogModal';
 import { InventoryReportModal } from './InventoryReportModal';
+import { GoogleSheetsModal } from '../common/GoogleSheetsModal';
 
 export const InventoryView: React.FC = () => {
   const {
@@ -62,6 +63,9 @@ export const InventoryView: React.FC = () => {
     deleteIngredientUnit,
     resetIngredientUnits
   } = usePOS();
+
+  // Google Sheets Export State
+  const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
 
   // Ingredient Categories Modal State
   const [isManageIngCatsOpen, setIsManageIngCatsOpen] = useState(false);
@@ -658,6 +662,15 @@ export const InventoryView: React.FC = () => {
 
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setIsSheetsModalOpen(true)}
+            className="px-3.5 py-2.5 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
+            title="ส่งออกสต็อกและประวัติการเคลื่อนไหวไปยัง Google Sheets"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+            <span>Google Sheets</span>
+          </button>
+
           <button
             onClick={() => setIsReportModalOpen(true)}
             className="px-3.5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
@@ -2614,6 +2627,12 @@ export const InventoryView: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Google Sheets Modal */}
+      <GoogleSheetsModal
+        isOpen={isSheetsModalOpen}
+        onClose={() => setIsSheetsModalOpen(false)}
+        defaultDataset="inventory"
+      />
     </div>
   );
 };

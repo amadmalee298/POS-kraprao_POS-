@@ -14,13 +14,15 @@ import {
   WifiOff,
   CloudOff,
   HardDrive,
-  LogOut
+  LogOut,
+  FileSpreadsheet
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { PinModal } from './PinModal';
 import { OfflineSyncModal } from './OfflineSyncModal';
 import { SyncHealthMonitor } from './SyncHealthMonitor';
 import { MerchantConnectionModal } from './common/MerchantConnectionModal';
+import { GoogleSheetsModal } from './common/GoogleSheetsModal';
 import { SHOP_LOGO_URL } from '../assets/logo';
 
 export const HeaderNavbar: React.FC = () => {
@@ -45,6 +47,7 @@ export const HeaderNavbar: React.FC = () => {
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isOfflineModalOpen, setIsOfflineModalOpen] = useState(false);
   const [isMerchantModalOpen, setIsMerchantModalOpen] = useState(false);
+  const [isGoogleSheetsModalOpen, setIsGoogleSheetsModalOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
 
   useEffect(() => {
@@ -193,6 +196,16 @@ export const HeaderNavbar: React.FC = () => {
 
             {/* Right: Sync Health Monitor, Merchant Pro, Clock, User Badge & Logout */}
             <div className="flex items-center space-x-2.5">
+              {/* Google Sheets Sync Pill */}
+              <button
+                onClick={() => setIsGoogleSheetsModalOpen(true)}
+                className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 transition active:scale-95 shadow-sm"
+                title="Google Sheets Auto-Sync & Export"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Google Sheets</span>
+              </button>
+
               {/* Merchant Pro Connection Status Pill */}
               <button
                 onClick={() => setIsMerchantModalOpen(true)}
@@ -310,6 +323,12 @@ export const HeaderNavbar: React.FC = () => {
       <MerchantConnectionModal
         isOpen={isMerchantModalOpen}
         onClose={() => setIsMerchantModalOpen(false)}
+      />
+
+      {/* Google Sheets Sync Modal */}
+      <GoogleSheetsModal
+        isOpen={isGoogleSheetsModalOpen}
+        onClose={() => setIsGoogleSheetsModalOpen(false)}
       />
     </>
   );

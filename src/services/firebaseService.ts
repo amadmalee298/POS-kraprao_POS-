@@ -47,14 +47,15 @@ let isInitialized = false;
 
 try {
   const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+  const cfg = firebaseConfig as any;
   // If named firestoreDatabaseId is provided in config, use it; otherwise fallback to default
-  if (firebaseConfig.firestoreDatabaseId) {
-    dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  if (cfg.firestoreDatabaseId) {
+    dbInstance = getFirestore(app, cfg.firestoreDatabaseId);
   } else {
     dbInstance = getFirestore(app);
   }
   isInitialized = true;
-  console.log(`[Firebase Service] 🔥 Connected to Firebase Project: ${firebaseConfig.projectId} (DB: ${firebaseConfig.firestoreDatabaseId || 'default'})`);
+  console.log(`[Firebase Service] 🔥 Connected to Firebase Project: ${firebaseConfig.projectId} (DB: ${cfg.firestoreDatabaseId || 'default'})`);
 } catch (err) {
   console.warn('[Firebase Service] ⚠️ Firebase initialization warning:', err);
 }
