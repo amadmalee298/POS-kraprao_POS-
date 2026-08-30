@@ -15,7 +15,12 @@ import {
   ArrowRight,
   ShieldCheck,
   LogOut,
-  FolderOpen
+  FolderOpen,
+  Copy,
+  Download,
+  KeyRound,
+  HelpCircle,
+  Check
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import {
@@ -24,6 +29,8 @@ import {
   googleSignOut,
   getGoogleAccessToken,
   getGoogleUser,
+  setManualAccessToken,
+  getCurrentDomain,
   listUserSpreadsheets,
   createGoogleSpreadsheet,
   syncAllDatasetsToSpreadsheet,
@@ -31,9 +38,11 @@ import {
   syncInventoryToGoogleSheets,
   syncRecipeCostingToGoogleSheets,
   syncMovementsToGoogleSheets,
+  downloadSalesCsv,
+  downloadInventoryCsv,
   GoogleDriveFile
 } from '../../services/googleSheetsService';
-import { User } from 'firebase/auth';
+import firebaseConfig from '../../../firebase-applet-config.json';
 
 interface GoogleSheetsModalProps {
   isOpen: boolean;
@@ -55,10 +64,17 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     currentBranch
   } = usePOS();
 
-  const [googleUser, setGoogleUser] = useState<User | null>(getGoogleUser());
+  const [googleUser, setGoogleUser] = useState<any | null>(getGoogleUser());
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isUnauthorizedDomain, setIsUnauthorizedDomain] = useState(false);
+  const [copiedDomain, setCopiedDomain] = useState(false);
+
+  // Manual Token / Alternative input
+  const [showManualTokenInput, setShowManualTokenInput] = useState(false);
+  const [manualToken, setManualToken] = useState('');
+  const [manualEmail, setManualEmail] = useState('');
 
   // Spreadsheets list & target selection
   const [spreadsheets, setSpreadsheets] = useState<GoogleDriveFile[]>([]);
@@ -86,6 +102,8 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
   // Confirmation dialog for overwriting data (Workspace guideline compliance)
   const [showConfirmOverwrite, setShowConfirmOverwrite] = useState(false);
+
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
 
   useEffect(() => {
     if (!isOpen) return;
@@ -132,11 +150,13 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     }
   };
 
-  const handleSignIn = async () => {
+  const handleSignIn = async (forceGis = false) => {
     setIsAuthenticating(true);
     setAuthError(null);
+    setIsUnauthorizedDomain(false);
+
     try {
-      const res = await googleSignIn();
+      const res = await googleSignIn(forceGis);
       if (res) {
         setGoogleUser(res.user);
         setAccessToken(res.accessToken);
@@ -144,10 +164,43 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
       }
     } catch (err: any) {
       console.error('Sign-in error:', err);
-      setAuthError(err.message || 'การเชื่อมต่อ Google ผิดพลาด กรุณาลองใหม่อีกครั้ง');
+      const errMsg = err?.message || String(err);
+      if (
+        err?.code === 'auth/unauthorized-domain' ||
+        errMsg.includes('unauthorized-domain')
+      ) {
+        setIsUnauthorizedDomain(true);
+        setAuthError(
+          `โดเมน "${currentHost}" ยังไม่ได้รับอนุญาตใน Firebase Authentication (auth/unauthorized-domain)`
+        );
+      } else {
+        setAuthError(errMsg || 'การเชื่อมต่อ Google ผิดพลาด กรุณาลองใหม่อีกครั้ง');
+      }
     } finally {
       setIsAuthenticating(false);
     }
+  };
+
+  const handleCopyDomain = () => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(currentHost);
+      setCopiedDomain(true);
+      setTimeout(() => setCopiedDomain(false), 2500);
+    }
+  };
+
+  const handleApplyManualToken = async () => {
+    if (!manualToken.trim()) {
+      setAuthError('กรุณากรอก Access Token');
+      return;
+    }
+    setManualAccessToken(manualToken, manualEmail);
+    const u = getGoogleUser();
+    setGoogleUser(u);
+    setAccessToken(manualToken.trim());
+    setShowManualTokenInput(false);
+    setAuthError(null);
+    await fetchSpreadsheets(manualToken.trim());
   };
 
   const handleSignOut = async () => {
@@ -235,8 +288,8 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in">
-      <div className="bg-[#0e1626] border border-slate-800 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+    <div id="google-sheets-modal-container" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in">
+      <div className="bg-[#0e1626] border border-slate-800 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[94vh]">
         
         {/* Modal Header */}
         <div className="p-5 border-b border-slate-800/80 bg-slate-900/60 flex items-center justify-between">
@@ -257,8 +310,9 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             </div>
           </div>
           <button
+            id="close-google-sheets-modal-btn"
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition"
+            className="p-2 rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -268,11 +322,11 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
         <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
           
           {/* Section 1: Google Account Connection Status */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                  สถานะการเชื่อมต่อบัญชี Google
+                  สถานะการเชื่อมต่อบัญชี GOOGLE
                 </span>
                 {googleUser ? (
                   <div className="flex items-center space-x-3">
@@ -280,11 +334,11 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                       <img
                         src={googleUser.photoURL}
                         alt={googleUser.displayName || 'Google Account'}
-                        className="w-8 h-8 rounded-full border border-emerald-500/40"
+                        className="w-9 h-9 rounded-full border border-emerald-500/40"
                       />
                     ) : (
-                      <div className="w-8 h-8 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-xs">
-                        {googleUser.email?.charAt(0).toUpperCase()}
+                      <div className="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-xs shadow">
+                        {googleUser.email?.charAt(0).toUpperCase() || 'G'}
                       </div>
                     )}
                     <div>
@@ -292,7 +346,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                         <span>{googleUser.displayName || 'Google User'}</span>
                         <ShieldCheck className="w-4 h-4 text-emerald-400" />
                       </div>
-                      <div className="text-[11px] text-slate-400 font-mono">{googleUser.email}</div>
+                      <div className="text-[11px] text-slate-400 font-mono">{googleUser.email || 'เชื่อมต่อพร้อมใช้งาน'}</div>
                     </div>
                   </div>
                 ) : (
@@ -302,21 +356,23 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                 )}
               </div>
 
-              <div>
+              <div className="flex items-center space-x-2">
                 {googleUser ? (
                   <button
+                    id="google-signout-btn"
                     onClick={handleSignOut}
-                    className="px-3 py-1.5 bg-slate-800 hover:bg-rose-950/60 hover:text-rose-400 text-slate-300 rounded-xl transition flex items-center space-x-1 font-semibold text-xs border border-slate-700"
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-rose-950/60 hover:text-rose-400 text-slate-300 rounded-xl transition flex items-center space-x-1 font-semibold text-xs border border-slate-700 cursor-pointer"
                   >
                     <LogOut className="w-3.5 h-3.5" />
                     <span>ออกจากระบบ</span>
                   </button>
                 ) : (
-                  /* Official Google Sign-in Styled Button */
+                  /* Official Google Sign-in Styled Button with Auto-Fallback */
                   <button
-                    onClick={handleSignIn}
+                    id="google-signin-btn"
+                    onClick={() => handleSignIn(false)}
                     disabled={isAuthenticating}
-                    className="inline-flex items-center justify-center space-x-2.5 px-4 py-2 bg-white hover:bg-slate-100 text-slate-900 font-bold rounded-xl shadow-md transition active:scale-95 disabled:opacity-50 cursor-pointer"
+                    className="inline-flex items-center justify-center space-x-2.5 px-4 py-2.5 bg-white hover:bg-slate-100 text-slate-900 font-bold rounded-xl shadow-md transition active:scale-95 disabled:opacity-50 cursor-pointer"
                   >
                     <svg className="w-4 h-4" viewBox="0 0 48 48">
                       <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
@@ -330,12 +386,126 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
               </div>
             </div>
 
+            {/* Error Message & Interactive Fix Solution */}
             {authError && (
-              <div className="mt-3 p-3 rounded-xl bg-rose-950/40 border border-rose-500/40 text-rose-300 flex items-center space-x-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
-                <span>{authError}</span>
+              <div className="p-3.5 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-rose-200 space-y-2.5">
+                <div className="flex items-start space-x-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                  <span className="font-semibold">{authError}</span>
+                </div>
+
+                {/* Unauthorized Domain Quick Solution Card */}
+                {(isUnauthorizedDomain || authError.includes('unauthorized-domain')) && (
+                  <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2 text-[11px] text-slate-300">
+                    <div className="font-bold text-amber-300 flex items-center space-x-1.5">
+                      <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+                      <span>วิธีแก้ไขข้อผิดพลาด Domain บน Firebase:</span>
+                    </div>
+
+                    <div className="space-y-1 text-slate-300">
+                      <div>
+                        1. คุณกำลังเปิดใช้งานบนโดเมน: <code className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 text-emerald-400 font-mono rounded">{currentHost}</code>
+                      </div>
+                      <div className="flex items-center space-x-2 pt-1">
+                        <button
+                          onClick={handleCopyDomain}
+                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold rounded-lg transition flex items-center space-x-1 border border-slate-700 cursor-pointer"
+                        >
+                          {copiedDomain ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+                          <span>{copiedDomain ? 'คัดลอกโดเมนแล้ว!' : 'คัดลอกชื่อโดเมน'}</span>
+                        </button>
+                        <span className="text-[10px] text-slate-400">
+                          (นำไปเพิ่มใน Firebase Console → Auth → Settings → Authorized domains)
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-slate-800 pt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => handleSignIn(true)}
+                        disabled={isAuthenticating}
+                        className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-lg transition flex items-center space-x-1 cursor-pointer text-xs"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>ลองเชื่อมต่อผ่าน Direct Google Identity (GIS)</span>
+                      </button>
+
+                      <button
+                        onClick={() => setShowManualTokenInput(!showManualTokenInput)}
+                        className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-lg transition flex items-center space-x-1 text-xs cursor-pointer"
+                      >
+                        <KeyRound className="w-3 h-3 text-slate-400" />
+                        <span>กรอก Token ด้วยตนเอง</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
+
+            {/* Manual Token Input Accordion */}
+            {showManualTokenInput && !googleUser && (
+              <div className="p-3.5 bg-slate-950/90 border border-slate-800 rounded-xl space-y-2.5">
+                <span className="font-bold text-slate-200 text-xs block">
+                  🔑 กรอก Google OAuth Access Token โดยตรง
+                </span>
+                <input
+                  type="text"
+                  placeholder="วาง Access Token (ya29.a0...)"
+                  value={manualToken}
+                  onChange={e => setManualToken(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 font-mono text-[11px]"
+                />
+                <input
+                  type="email"
+                  placeholder="อีเมล Google ของคุณ (ระบุเพื่อแสดงผล)"
+                  value={manualEmail}
+                  onChange={e => setManualEmail(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 text-[11px]"
+                />
+                <div className="flex justify-end space-x-2">
+                  <button
+                    onClick={() => setShowManualTokenInput(false)}
+                    className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    onClick={handleApplyManualToken}
+                    className="px-4 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs"
+                  >
+                    ใช้ Token นี้
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Offline/Instant CSV Export Feature Card */}
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center space-x-2.5">
+              <Download className="w-4 h-4 text-sky-400 shrink-0" />
+              <div>
+                <div className="font-bold text-slate-200 text-xs">ดาวน์โหลดไฟล์ตารางสำรอง (Offline CSV / Excel)</div>
+                <div className="text-[10px] text-slate-400">ส่งออกข้อมูลเป็นไฟล์ตารางเปิดใน Excel หรือลากใส่ Google Sheets ได้ทันทีโดยไม่ต้องต่อเน็ต</div>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => downloadSalesCsv(orders, currentBranch)}
+                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-bold text-[11px] transition flex items-center space-x-1 cursor-pointer border border-slate-700"
+                title="ดาวน์โหลดบิลยอดขายเป็นไฟล์ CSV"
+              >
+                <span>บิลยอดขาย ({orders.length})</span>
+              </button>
+              <button
+                onClick={() => downloadInventoryCsv(ingredients, currentBranch)}
+                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-bold text-[11px] transition flex items-center space-x-1 cursor-pointer border border-slate-700"
+                title="ดาวน์โหลดสต็อกและมูลค่าเป็นไฟล์ CSV"
+              >
+                <span>สต็อก ({ingredients.length})</span>
+              </button>
+            </div>
           </div>
 
           {/* Section 2: Target Spreadsheet Setup */}
@@ -346,7 +516,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                 <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
                   <button
                     onClick={() => setTargetMode('new')}
-                    className={`px-3 py-1 rounded-lg font-bold transition ${
+                    className={`px-3 py-1 rounded-lg font-bold transition cursor-pointer ${
                       targetMode === 'new'
                         ? 'bg-emerald-600 text-white shadow-sm'
                         : 'text-slate-400 hover:text-slate-200'
@@ -356,7 +526,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                   </button>
                   <button
                     onClick={() => setTargetMode('existing')}
-                    className={`px-3 py-1 rounded-lg font-bold transition ${
+                    className={`px-3 py-1 rounded-lg font-bold transition cursor-pointer ${
                       targetMode === 'existing'
                         ? 'bg-emerald-600 text-white shadow-sm'
                         : 'text-slate-400 hover:text-slate-200'
@@ -387,7 +557,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                     <label className="block text-slate-300 font-bold">เลือกไฟล์ Google Sheets ใน Drive ของคุณ</label>
                     <button
                       onClick={() => accessToken && fetchSpreadsheets(accessToken)}
-                      className="text-emerald-400 hover:text-emerald-300 underline text-[11px] font-semibold flex items-center space-x-1"
+                      className="text-emerald-400 hover:text-emerald-300 underline text-[11px] font-semibold flex items-center space-x-1 cursor-pointer"
                     >
                       <RefreshCw className={`w-3 h-3 ${isLoadingFiles ? 'animate-spin' : ''}`} />
                       <span>รีเฟรชรายการ</span>
@@ -525,7 +695,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                         href={syncResult.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition flex items-center space-x-1.5 shadow-lg shadow-emerald-950/60"
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition flex items-center space-x-1.5 shadow-lg shadow-emerald-950/60 cursor-pointer"
                       >
                         <span>เปิดดูใน Google Sheets</span>
                         <ExternalLink className="w-3.5 h-3.5" />
@@ -558,6 +728,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
             {googleUser && (
               <button
+                id="execute-google-sheets-sync-btn"
                 onClick={startSyncProcess}
                 disabled={isSyncing || (!syncSales && !syncInventory && !syncRecipes && !syncMovements)}
                 className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-950/50 transition active:scale-95 disabled:opacity-50 flex items-center space-x-2 cursor-pointer"
@@ -584,13 +755,13 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             <div className="flex items-center justify-end space-x-2 pt-2">
               <button
                 onClick={() => setShowConfirmOverwrite(false)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
               >
                 ยกเลิก
               </button>
               <button
                 onClick={executeSync}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg"
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg cursor-pointer"
               >
                 ยืนยันการเขียนข้อมูล
               </button>

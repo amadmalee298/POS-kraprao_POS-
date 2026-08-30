@@ -29,10 +29,110 @@ SCOPES.forEach(scope => provider.addScope(scope));
 // In-memory token & user caching (Crucial: NEVER store in localStorage/sessionStorage)
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
-let cachedGoogleUser: User | null = null;
+let cachedGoogleUser: any | null = null;
+
+export const getCurrentDomain = (): string => {
+  if (typeof window !== 'undefined') {
+    return window.location.hostname;
+  }
+  return '';
+};
+
+export const loadGisScript = (): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') return resolve();
+    if ((window as any).google?.accounts?.oauth2) {
+      resolve();
+      return;
+    }
+    const existing = document.getElementById('google-gsi-script');
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject(new Error('Failed to load Google Identity Services')));
+      return;
+    }
+    const script = document.createElement('script');
+    script.id = 'google-gsi-script';
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load Google Identity Services'));
+    document.head.appendChild(script);
+  });
+};
+
+/**
+ * Request Access Token directly using Google Identity Services (GIS Token Client)
+ * Bypasses Firebase Auth domain authorization restriction on custom domains (e.g. github.io)
+ */
+export const requestAccessTokenViaGis = async (): Promise<{ user: any; accessToken: string }> => {
+  await loadGisScript();
+
+  return new Promise((resolve, reject) => {
+    try {
+      const google = (window as any).google;
+      if (!google?.accounts?.oauth2) {
+        throw new Error('Google Identity Services library is not available');
+      }
+
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: firebaseConfig.oAuthClientId,
+        scope: [
+          ...SCOPES,
+          'https://www.googleapis.com/auth/userinfo.email',
+          'https://www.googleapis.com/auth/userinfo.profile'
+        ].join(' '),
+        callback: async (tokenResponse: any) => {
+          if (tokenResponse.error) {
+            console.error('[GIS OAuth] Error:', tokenResponse);
+            reject(new Error(tokenResponse.error_description || tokenResponse.error || 'Google Sign-in failed'));
+            return;
+          }
+
+          const token = tokenResponse.access_token;
+          cachedAccessToken = token;
+
+          // Fetch user info from Google OAuth2 Userinfo endpoint
+          let userInfo: any = { name: 'Google User', email: '' };
+          try {
+            const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            if (uRes.ok) {
+              userInfo = await uRes.json();
+            }
+          } catch (e) {
+            console.warn('[GIS OAuth] Could not fetch userinfo:', e);
+          }
+
+          const userObj = {
+            uid: userInfo.sub || 'gis-user',
+            displayName: userInfo.name || userInfo.email?.split('@')[0] || 'Google User',
+            email: userInfo.email || '',
+            photoURL: userInfo.picture || '',
+            providerId: 'google.com'
+          };
+
+          cachedGoogleUser = userObj;
+          resolve({ user: userObj, accessToken: token });
+        },
+        error_callback: (err: any) => {
+          console.error('[GIS OAuth] error_callback:', err);
+          reject(new Error(err.message || 'Google OAuth authorization was cancelled or failed'));
+        }
+      });
+
+      client.requestAccessToken({ prompt: 'consent' });
+    } catch (err) {
+      console.error('[GIS OAuth] initTokenClient failed:', err);
+      reject(err);
+    }
+  });
+};
 
 export const initGoogleAuth = (
-  onAuthSuccess?: (user: User, token: string) => void,
+  onAuthSuccess?: (user: any, token: string) => void,
   onAuthFailure?: () => void
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
@@ -43,26 +143,47 @@ export const initGoogleAuth = (
       } else if (!isSigningIn) {
         if (onAuthFailure) onAuthFailure();
       }
-    } else {
-      cachedAccessToken = null;
+    } else if (!cachedAccessToken) {
       cachedGoogleUser = null;
       if (onAuthFailure) onAuthFailure();
     }
   });
 };
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+export const googleSignIn = async (forceGis = false): Promise<{ user: any; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('ไม่สามารถรับ Access Token จาก Google OAuth ได้');
+
+    // If direct GIS requested, skip Firebase popup
+    if (forceGis) {
+      console.log('[Google OAuth] Direct GIS sign-in initiated...');
+      return await requestAccessTokenViaGis();
     }
 
-    cachedAccessToken = credential.accessToken;
-    cachedGoogleUser = result.user;
-    return { user: result.user, accessToken: cachedAccessToken };
+    try {
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (!credential?.accessToken) {
+        throw new Error('ไม่สามารถรับ Access Token จาก Google OAuth ได้');
+      }
+
+      cachedAccessToken = credential.accessToken;
+      cachedGoogleUser = result.user;
+      return { user: result.user, accessToken: cachedAccessToken };
+    } catch (firebaseErr: any) {
+      console.warn('[Google OAuth] Firebase popup error:', firebaseErr?.code, firebaseErr?.message);
+
+      // If domain is unauthorized on Firebase console or blocked, transparently attempt GIS
+      if (
+        firebaseErr?.code === 'auth/unauthorized-domain' ||
+        firebaseErr?.message?.includes('unauthorized-domain')
+      ) {
+        console.log('[Google OAuth] Unauthorized domain detected on Firebase. Falling back to Google Identity Services (GIS)...');
+        return await requestAccessTokenViaGis();
+      }
+
+      throw firebaseErr;
+    }
   } catch (error: any) {
     console.error('[Google OAuth] Error during Sign-In:', error);
     throw error;
@@ -71,16 +192,30 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   }
 };
 
+export const setManualAccessToken = (token: string, email?: string) => {
+  cachedAccessToken = token.trim();
+  cachedGoogleUser = {
+    uid: 'manual-token-user',
+    displayName: email ? email.split('@')[0] : 'Authorized Google User',
+    email: email || 'user@gmail.com',
+    photoURL: ''
+  };
+};
+
 export const getGoogleAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken;
 };
 
-export const getGoogleUser = (): User | null => {
+export const getGoogleUser = (): any | null => {
   return cachedGoogleUser;
 };
 
 export const googleSignOut = async () => {
-  await signOut(auth);
+  try {
+    await signOut(auth);
+  } catch (e) {
+    // Ignore if not signed into Firebase
+  }
   cachedAccessToken = null;
   cachedGoogleUser = null;
 };
@@ -622,3 +757,118 @@ export async function syncAllDatasetsToSpreadsheet(
     url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`
   };
 }
+
+/**
+ * Utility to convert 2D array to CSV formatted string with UTF-8 BOM for Excel support
+ */
+function convertToCSVString(rows: any[][]): string {
+  const processRow = (row: any[]) => {
+    return row
+      .map(val => {
+        if (val === null || val === undefined) return '""';
+        const str = String(val).replace(/"/g, '""');
+        return `"${str}"`;
+      })
+      .join(',');
+  };
+  return '\uFEFF' + rows.map(processRow).join('\r\n');
+}
+
+function triggerFileDownload(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+export function downloadSalesCsv(orders: Order[], branch: Branch) {
+  const headers = [
+    'เลขที่บิล (Order No)',
+    'วัน-เวลาทำรายการ (Date & Time)',
+    'สาขา (Branch)',
+    'ประเภทออเดอร์ (Type)',
+    'โต๊ะ / แชนแนล (Table)',
+    'รายการอาหาร (Items Detail)',
+    'จำนวนรวม (Qty)',
+    'ยอดรวมก่อนลด (Subtotal THB)',
+    'ส่วนลด (Discount THB)',
+    'ภาษีมูลค่าเพิ่ม (VAT 7% THB)',
+    'ยอดสุทธิ (Grand Total THB)',
+    'วิธีชำระเงิน (Payment)',
+    'สถานะออเดอร์ (Status)',
+    'หมายเหตุ / ใบกำกับภาษี (Notes)'
+  ];
+
+  const rows = orders.map(ord => {
+    const itemsSummary = (ord.items || [])
+      .map(item => `${item.menuItem?.name || 'อาหาร'} x${item.quantity}`)
+      .join('; ');
+    const totalQty = (ord.items || []).reduce((sum, item) => sum + (item.quantity || 1), 0);
+
+    return [
+      ord.orderNumber,
+      new Date(ord.createdAt).toLocaleString('th-TH'),
+      branch.name,
+      ord.orderType,
+      ord.tableNumber || '-',
+      itemsSummary,
+      totalQty,
+      ord.subtotal,
+      ord.discountAmount || 0,
+      ord.vatAmount || 0,
+      ord.grandTotal,
+      ord.paymentMethod,
+      ord.status,
+      ord.discountNote || ''
+    ];
+  });
+
+  const csv = convertToCSVString([headers, ...rows]);
+  triggerFileDownload(csv, `sales_${branch.id}_${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+export function downloadInventoryCsv(ingredients: Ingredient[], branch: Branch) {
+  const headers = [
+    'รหัสวัตถุดิบ (ID)',
+    'ชื่อวัตถุดิบ (Ingredient Name)',
+    'หมวดหมู่วัตถุดิบ (Category)',
+    'สต็อกคงเหลือ (Current Stock)',
+    'หน่วยนับ (Unit)',
+    'เกณฑ์เตือนสต็อกต่ำ (Min Alert)',
+    'ราคาทุน/หน่วย (Unit Cost THB)',
+    'มูลค่าสต็อกรวม (Total Valuation THB)',
+    'สถานะสต็อก (Stock Status)',
+    'บาร์โค้ด (Barcode)',
+    'สาขา (Branch)'
+  ];
+
+  const rows = ingredients.map(ing => {
+    const isLow = ing.currentStock <= ing.minStockAlert;
+    const isOut = ing.currentStock <= 0;
+    const totalVal = Math.round(ing.currentStock * ing.unitCost * 100) / 100;
+    const statusText = isOut ? 'สต็อกหมด' : isLow ? 'สต็อกต่ำกว่าเกณฑ์' : 'สต็อกปกติ';
+
+    return [
+      ing.id,
+      ing.name,
+      ing.category,
+      ing.currentStock,
+      ing.unit,
+      ing.minStockAlert,
+      ing.unitCost,
+      totalVal,
+      statusText,
+      ing.barcode || '-',
+      branch.name
+    ];
+  });
+
+  const csv = convertToCSVString([headers, ...rows]);
+  triggerFileDownload(csv, `inventory_${branch.id}_${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
