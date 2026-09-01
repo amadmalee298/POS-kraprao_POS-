@@ -3,8 +3,6 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
-  BarChart,
-  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -16,14 +14,10 @@ import {
 } from 'recharts';
 import {
   TrendingUp,
-  TrendingDown,
   DollarSign,
   ShoppingBag,
-  Users,
-  Percent,
   Award,
   Target,
-  Scale,
   AlertTriangle,
   CheckCircle2,
   Sparkles,
@@ -33,50 +27,40 @@ import {
   Download,
   FileText,
   RefreshCw,
-  Eye,
   X,
-  ChevronRight,
-  Bot,
-  Zap,
   BarChart3,
   Activity,
   Wallet,
   Landmark,
   Utensils,
   ShieldAlert,
-  Share2,
-  Clock,
   ArrowUpRight,
   ArrowDownRight,
   Sliders,
-  Check,
   Flame,
-  UserCheck,
   Tag,
   Gift,
   Trash2,
-  PieChart as PieChartIcon,
-  HelpCircle,
-  ArrowRight,
-  CheckCircle
+  Users,
+  PieChart as PieChartIcon
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
+import { MenuItem } from '../../types';
 import { exportToPDF } from '../../utils/exportDocument';
 
 interface EnterpriseExecutiveDashboardProps {
   onNavigateToTab?: (tab: string) => void;
 }
 
-export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboardProps> = ({ onNavigateToTab }) => {
+export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboardProps> = () => {
   const {
     orders,
     expenses,
     ingredients,
-    wasteLogs,
-    staffMembers,
     branches,
     menuItems,
-    currentBranch
+    currentBranch,
+    updateMenuItem
   } = usePOS();
 
   // Date Presets & Filter States
@@ -99,19 +83,11 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     orders: false
   });
 
-  // Slow Moving Actions State
-  const [slowMovingItems, setSlowMovingItems] = useState<Array<{ id: string; name: string; qty: number; price: number; category: string; image?: string }>>([
-    { id: 'sm_1', name: 'ก๋วยเตี๋ยวหลอดกุ้งสด', qty: 2, price: 95, category: 'ทานเล่น', image: '🥟' },
-    { id: 'sm_2', name: 'ซุปกระดูกหมูต้มแซ่บ', qty: 3, price: 120, category: 'ต้ม/แกง', image: '🍲' },
-    { id: 'sm_3', name: 'ผัดหมี่กระเฉดกุ้ง', qty: 4, price: 110, category: 'จานเดียว', image: '🍝' },
-    { id: 'sm_4', name: 'เฉาก๊วยนมสดภูเขาไฟ', qty: 1, price: 45, category: 'ของหวาน', image: '🍧' }
-  ]);
   const [actionNotification, setActionNotification] = useState<string | null>(null);
-  const [discountModalItem, setDiscountModalItem] = useState<any | null>(null);
+  const [discountModalItem, setDiscountModalItem] = useState<MenuItem | null>(null);
   const [discountAmount, setDiscountAmount] = useState<number>(10);
 
   // Enterprise Feature States
-  const [drillDownType, setDrillDownType] = useState<'sales' | 'profit' | 'food_cost' | 'labor' | 'waste' | 'orders' | null>(null);
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState<boolean>(false);
   const [telegramSending, setTelegramSending] = useState<boolean>(false);
   const [telegramSentSuccess, setTelegramSentSuccess] = useState<boolean>(false);
@@ -156,21 +132,31 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   };
 
   // -------------------------------------------------------------
-  // Dynamic Computation based on Selected Date Filter & Branch
+  // Dynamic Real Orders & Expenses Filtering
   // -------------------------------------------------------------
   const filteredOrders = useMemo(() => {
     return orders.filter(o => {
-      const oDate = o.createdAt ? o.createdAt.split('T')[0] : todayStr;
-      if (startDate && oDate < startDate) return false;
-      if (endDate && oDate > endDate) return false;
+      const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+      if (startDate && oDate && oDate < startDate) return false;
+      if (endDate && oDate && oDate > endDate) return false;
       if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
       return o.status !== 'cancelled';
     });
-  }, [orders, startDate, endDate, selectedBranchId, todayStr]);
+  }, [orders, startDate, endDate, selectedBranchId]);
+
+  const filteredExpenses = useMemo(() => {
+    return expenses.filter(e => {
+      const eDate = e.date ? e.date.split('T')[0] : '';
+      if (startDate && eDate && eDate < startDate) return false;
+      if (endDate && eDate && eDate > endDate) return false;
+      if (selectedBranchId !== 'all' && e.branchId && e.branchId !== selectedBranchId) return false;
+      return true;
+    });
+  }, [expenses, startDate, endDate, selectedBranchId]);
 
   const todayOrders = useMemo(() => {
     return orders.filter(o => {
-      const oDate = o.createdAt ? o.createdAt.split('T')[0] : todayStr;
+      const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
       if (oDate !== todayStr) return false;
       if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
       return o.status !== 'cancelled';
@@ -185,172 +171,618 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
   const yesterdayOrders = useMemo(() => {
     return orders.filter(o => {
-      const oDate = o.createdAt ? o.createdAt.split('T')[0] : todayStr;
+      const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
       if (oDate !== yesterdayStr) return false;
       if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
       return o.status !== 'cancelled';
     });
-  }, [orders, selectedBranchId, yesterdayStr, todayStr]);
+  }, [orders, selectedBranchId, yesterdayStr]);
 
-  // Financial Core Totals
+  const todayExpensesList = useMemo(() => {
+    return expenses.filter(e => {
+      const eDate = e.date ? e.date.split('T')[0] : '';
+      if (eDate !== todayStr) return false;
+      if (selectedBranchId !== 'all' && e.branchId && e.branchId !== selectedBranchId) return false;
+      return true;
+    });
+  }, [expenses, selectedBranchId, todayStr]);
+
+  // -------------------------------------------------------------
+  // Real Financial Calculations
+  // -------------------------------------------------------------
+  const calculateOrdersFoodCost = (orderList: typeof orders) => {
+    return orderList.reduce((sum, o) => {
+      const orderCost = (o.items || []).reduce((iSum, item) => {
+        const mi = menuItems.find(m => m.id === item.menuItem.id) || item.menuItem;
+        const unitCost = mi?.costPrice !== undefined && mi.costPrice > 0 ? mi.costPrice : (item.totalPrice * 0.35 / Math.max(1, item.quantity));
+        return iSum + (unitCost * item.quantity);
+      }, 0);
+      return sum + orderCost;
+    }, 0);
+  };
+
+  // Section 1 Core KPIs (Today Real Data)
   const todaySales = useMemo(() => {
-    const actual = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
-    return actual > 0 ? actual : 12450;
+    return todayOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
   }, [todayOrders]);
 
   const yesterdaySales = useMemo(() => {
-    const actual = yesterdayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
-    return actual > 0 ? actual : 10550;
+    return yesterdayOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
   }, [yesterdayOrders]);
 
   const salesGrowthTodayPct = useMemo(() => {
-    if (yesterdaySales === 0) return 18.0;
+    if (yesterdaySales === 0 && todaySales > 0) return 100;
+    if (yesterdaySales === 0) return 0;
     return Math.round(((todaySales - yesterdaySales) / yesterdaySales) * 100);
   }, [todaySales, yesterdaySales]);
 
+  const todayFoodCost = useMemo(() => {
+    return calculateOrdersFoodCost(todayOrders);
+  }, [todayOrders, menuItems]);
+
+  const todayExpensesTotal = useMemo(() => {
+    return todayExpensesList.reduce((sum, e) => sum + (e.amount || 0), 0);
+  }, [todayExpensesList]);
+
   const todayProfit = useMemo(() => {
-    return Math.round(todaySales * 0.344); // ~34.4% net profit margin
+    return todaySales - todayFoodCost - todayExpensesTotal;
+  }, [todaySales, todayFoodCost, todayExpensesTotal]);
+
+  const todayFoodCostPct = useMemo(() => {
+    if (todaySales === 0) return 0;
+    return Math.round((todayFoodCost / todaySales) * 1000) / 10;
+  }, [todaySales, todayFoodCost]);
+
+  const todayBillCount = todayOrders.length;
+  const todayAvgBill = todayBillCount > 0 ? Math.round((todaySales / todayBillCount) * 100) / 100 : 0;
+  const todayBreakEvenPct = useMemo(() => {
+    const dailyTarget = 5000;
+    if (todaySales === 0) return 0;
+    return Math.min(100, Math.round((todaySales / dailyTarget) * 100));
   }, [todaySales]);
 
-  const todayFoodCostPct = 31.2;
-  const todayBillCount = todayOrders.length > 0 ? todayOrders.length : 142;
-  const todayAvgBill = Math.round((todaySales / todayBillCount) * 100) / 100;
-  const todayBreakEvenPct = 76; // 76% of BEP target achieved
-
+  // Selected Filter Period Real Financials
   const periodTotalSales = useMemo(() => {
-    const actual = filteredOrders.reduce((sum, o) => sum + o.grandTotal, 0);
-    return actual > 0 ? actual : 150000;
+    return filteredOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
   }, [filteredOrders]);
 
+  const periodFoodCost = useMemo(() => {
+    return calculateOrdersFoodCost(filteredOrders);
+  }, [filteredOrders, menuItems]);
+
+  const periodExpenses = useMemo(() => {
+    return filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+  }, [filteredExpenses]);
+
+  const periodGrossProfit = periodTotalSales - periodFoodCost;
+  const periodNetProfit = periodGrossProfit - periodExpenses;
+
   // -------------------------------------------------------------
-  // 2. Sales Overview Chart Data (Daily / Weekly / Monthly / Yearly)
+  // 2. Sales Overview Chart Data (Real Aggregation)
   // -------------------------------------------------------------
   const salesOverviewChartData = useMemo(() => {
     if (salesOverviewPeriod === 'daily') {
-      return [
-        { name: 'จันทร์', sales: 18400, profit: 6200, cost: 5800, orders: 120 },
-        { name: 'อังคาร', sales: 21500, profit: 7400, cost: 6700, orders: 135 },
-        { name: 'พุธ', sales: 19800, profit: 6800, cost: 6100, orders: 128 },
-        { name: 'พฤหัสบดี', sales: 24100, profit: 8300, cost: 7400, orders: 152 },
-        { name: 'ศุกร์', sales: 31200, profit: 11200, cost: 9600, orders: 198 },
-        { name: 'เสาร์', sales: 38500, profit: 13900, cost: 11800, orders: 245 },
-        { name: 'อาทิตย์', sales: 35000, profit: 12500, cost: 10800, orders: 220 }
-      ];
+      const days = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dStr = d.toISOString().split('T')[0];
+        const dayName = d.toLocaleDateString('th-TH', { weekday: 'short' });
+        const dayOrders = orders.filter(o => {
+          const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+          if (oDate !== dStr) return false;
+          if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
+          return o.status !== 'cancelled';
+        });
+        const sales = dayOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
+        const cost = calculateOrdersFoodCost(dayOrders);
+        const profit = sales - cost;
+        days.push({
+          name: `${dayName} (${d.getDate()}/${d.getMonth() + 1})`,
+          sales,
+          profit,
+          cost,
+          orders: dayOrders.length
+        });
+      }
+      return days;
     } else if (salesOverviewPeriod === 'weekly') {
-      return [
-        { name: 'สัปดาห์ที่ 1', sales: 124000, profit: 42000, cost: 38500, orders: 810 },
-        { name: 'สัปดาห์ที่ 2', sales: 138000, profit: 47200, cost: 42800, orders: 890 },
-        { name: 'สัปดาห์ที่ 3', sales: 145000, profit: 49800, cost: 44900, orders: 940 },
-        { name: 'สัปดาห์ที่ 4', sales: 158000, profit: 54500, cost: 48900, orders: 1020 }
-      ];
+      const weeks = [];
+      for (let w = 3; w >= 0; w--) {
+        const endW = new Date();
+        endW.setDate(endW.getDate() - (w * 7));
+        const startW = new Date(endW);
+        startW.setDate(startW.getDate() - 6);
+        const sStr = startW.toISOString().split('T')[0];
+        const eStr = endW.toISOString().split('T')[0];
+
+        const wOrders = orders.filter(o => {
+          const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+          if (oDate < sStr || oDate > eStr) return false;
+          if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
+          return o.status !== 'cancelled';
+        });
+        const sales = wOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
+        const cost = calculateOrdersFoodCost(wOrders);
+        const profit = sales - cost;
+        weeks.push({
+          name: `สัปดาห์ ${4 - w} (${startW.getDate()}/${startW.getMonth() + 1} - ${endW.getDate()}/${endW.getMonth() + 1})`,
+          sales,
+          profit,
+          cost,
+          orders: wOrders.length
+        });
+      }
+      return weeks;
     } else if (salesOverviewPeriod === 'monthly') {
-      return [
-        { name: 'ม.ค.', sales: 480000, profit: 162000, cost: 148000, orders: 3100 },
-        { name: 'ก.พ.', sales: 510000, profit: 174000, cost: 158000, orders: 3350 },
-        { name: 'มี.ค.', sales: 540000, profit: 186000, cost: 167000, orders: 3520 },
-        { name: 'เม.ย.', sales: 620000, profit: 215000, cost: 192000, orders: 4050 },
-        { name: 'พ.ค.', sales: 580000, profit: 198000, cost: 180000, orders: 3800 },
-        { name: 'มิ.ย.', sales: 605000, profit: 208000, cost: 187000, orders: 3950 }
-      ];
+      const currentYear = new Date().getFullYear();
+      const monthNames = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+      return monthNames.map((name, mIdx) => {
+        const mStr = String(mIdx + 1).padStart(2, '0');
+        const prefix = `${currentYear}-${mStr}`;
+        const mOrders = orders.filter(o => {
+          const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+          if (!oDate.startsWith(prefix)) return false;
+          if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
+          return o.status !== 'cancelled';
+        });
+        const sales = mOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
+        const cost = calculateOrdersFoodCost(mOrders);
+        const profit = sales - cost;
+        return {
+          name,
+          sales,
+          profit,
+          cost,
+          orders: mOrders.length
+        };
+      });
     } else {
-      return [
-        { name: 'ปี 2024', sales: 5800000, profit: 1980000, cost: 1800000, orders: 38000 },
-        { name: 'ปี 2025', sales: 6700000, profit: 2310000, cost: 2070000, orders: 43500 },
-        { name: 'ปี 2026 (YTD)', sales: 3935000, profit: 1343000, cost: 1220000, orders: 25770 }
-      ];
+      const currentYear = new Date().getFullYear();
+      const years = [currentYear - 2, currentYear - 1, currentYear];
+      return years.map(yr => {
+        const yrStr = String(yr);
+        const yrOrders = orders.filter(o => {
+          const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+          if (!oDate.startsWith(yrStr)) return false;
+          if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
+          return o.status !== 'cancelled';
+        });
+        const sales = yrOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
+        const cost = calculateOrdersFoodCost(yrOrders);
+        const profit = sales - cost;
+        return {
+          name: `ปี ${yr + 543}`,
+          sales,
+          profit,
+          cost,
+          orders: yrOrders.length
+        };
+      });
     }
-  }, [salesOverviewPeriod]);
+  }, [salesOverviewPeriod, orders, selectedBranchId, menuItems]);
 
   // -------------------------------------------------------------
-  // 3 & 4. Best Sellers & Top Profit Dishes Data
+  // 3 & 4. Best Sellers & Top Profit Dishes Data (Real Aggregation)
   // -------------------------------------------------------------
+  const menuSalesAggregation = useMemo(() => {
+    const map = new Map<string, {
+      id: string;
+      name: string;
+      category: string;
+      qty: number;
+      revenue: number;
+      cost: number;
+      profit: number;
+      foodCostPct: number;
+      marginPct: number;
+      image?: string;
+    }>();
+
+    filteredOrders.forEach(o => {
+      (o.items || []).forEach(item => {
+        const mItem = menuItems.find(m => m.id === item.menuItem.id) || item.menuItem;
+        const name = item.menuItem.name || mItem.name || 'เมนูทั่วไป';
+        const category = mItem.category || 'อาหาร';
+        const key = item.menuItem.id || name;
+        const unitCost = mItem.costPrice !== undefined && mItem.costPrice > 0 ? mItem.costPrice : (item.totalPrice * 0.35 / Math.max(1, item.quantity));
+        const totalItemRev = item.totalPrice || (item.unitPrice * item.quantity);
+        const totalItemCost = unitCost * item.quantity;
+
+        const current = map.get(key) || {
+          id: key,
+          name,
+          category,
+          qty: 0,
+          revenue: 0,
+          cost: 0,
+          profit: 0,
+          foodCostPct: 0,
+          marginPct: 0,
+          image: mItem.image
+        };
+
+        current.qty += item.quantity;
+        current.revenue += totalItemRev;
+        current.cost += totalItemCost;
+        current.profit = current.revenue - current.cost;
+        current.foodCostPct = current.revenue > 0 ? Math.round((current.cost / current.revenue) * 100) : 0;
+        current.marginPct = current.revenue > 0 ? Math.round((current.profit / current.revenue) * 100) : 0;
+
+        map.set(key, current);
+      });
+    });
+
+    return Array.from(map.values());
+  }, [filteredOrders, menuItems]);
+
   const topBestSellers = useMemo(() => {
-    return [
-      { id: '1', rank: 1, name: 'กะเพราเนื้อสับไข่ดาว', icon: '🥩', qty: 52, revenue: 3120, profit: 1480, foodCostPct: 52, marginPct: 47, category: 'จานด่วน' },
-      { id: '2', rank: 2, name: 'ต้มยำกุ้งน้ำข้นมะพร้าวอ่อน', icon: '🦐', qty: 42, revenue: 3780, profit: 2190, foodCostPct: 42, marginPct: 58, category: 'ต้ม/แกง' },
-      { id: '3', rank: 3, name: 'ข้าวผัดปูก้อนกุ้งสด', icon: '🦀', qty: 38, revenue: 3420, profit: 1780, foodCostPct: 48, marginPct: 52, category: 'จานด่วน' },
-      { id: '4', rank: 4, name: 'ไก่ผัดเม็ดมะม่วงหิมพานต์', icon: '🍗', qty: 31, revenue: 2480, profit: 1510, foodCostPct: 39, marginPct: 61, category: 'ผัด' },
-      { id: '5', rank: 5, name: 'ปลากะพงทอดน้ำปลายำมะม่วง', icon: '🐟', qty: 25, revenue: 3250, profit: 2110, foodCostPct: 35, marginPct: 65, category: 'ทอด/ยำ' }
-    ];
-  }, []);
+    return [...menuSalesAggregation]
+      .sort((a, b) => b.qty - a.qty || b.revenue - a.revenue)
+      .slice(0, 10)
+      .map((item, idx) => ({
+        ...item,
+        rank: idx + 1
+      }));
+  }, [menuSalesAggregation]);
 
   const topProfitDishes = useMemo(() => {
-    return [
-      { rank: '🥇', name: 'กะเพราเนื้อสับไข่ดาว', profit: 2950, marginPct: 47, revenue: 3120, icon: '🥩' },
-      { rank: '🥈', name: 'ต้มยำกุ้งน้ำข้นมะพร้าวอ่อน', profit: 2400, marginPct: 58, revenue: 3780, icon: '🦐' },
-      { rank: '🥉', name: 'ปลากะพงทอดน้ำปลายำมะม่วง', profit: 2110, marginPct: 65, revenue: 3250, icon: '🐟' },
-      { rank: '4', name: 'ข้าวผัดปูก้อนกุ้งสด', profit: 1780, marginPct: 52, revenue: 3420, icon: '🦀' },
-      { rank: '5', name: 'ไก่ผัดเม็ดมะม่วงหิมพานต์', profit: 1510, marginPct: 61, revenue: 2480, icon: '🍗' }
-    ];
-  }, []);
+    return [...menuSalesAggregation]
+      .sort((a, b) => b.profit - a.profit)
+      .slice(0, 5)
+      .map((item, idx) => ({
+        ...item,
+        rank: idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`
+      }));
+  }, [menuSalesAggregation]);
+
+  // -------------------------------------------------------------
+  // 5. Slow Moving Dishes (Real: Menu items with low sales)
+  // -------------------------------------------------------------
+  const slowMovingItems = useMemo(() => {
+    const soldMap = new Map<string, number>();
+    filteredOrders.forEach(o => {
+      (o.items || []).forEach(i => {
+        const key = i.menuItem.id || i.menuItem.name;
+        soldMap.set(key, (soldMap.get(key) || 0) + i.quantity);
+      });
+    });
+
+    return menuItems
+      .map(m => {
+        const qty = soldMap.get(m.id) || soldMap.get(m.name) || 0;
+        return {
+          menuItem: m,
+          id: m.id,
+          name: m.name,
+          price: m.price,
+          category: m.category,
+          image: m.image,
+          qty
+        };
+      })
+      .filter(m => m.qty < 5)
+      .sort((a, b) => a.qty - b.qty)
+      .slice(0, 8);
+  }, [menuItems, filteredOrders]);
 
   // Slow Moving Item Action Handlers
   const handlePromoteItem = (item: any) => {
-    setActionNotification(`🚀 สร้างแคมเปญโปรโมทเมนู "${item.name}" สำเร็จ! ระบบตั้งค่าป้ายเมนูแนะนำหน้า POS & QR ordering`);
+    setActionNotification(`🚀 ติดป้ายโปรโมทเมนู "${item.name}" สำเร็จ!`);
     setTimeout(() => setActionNotification(null), 4000);
   };
 
   const handleApplyDiscount = () => {
     if (!discountModalItem) return;
     const newPrice = Math.max(10, discountModalItem.price - discountAmount);
-    setSlowMovingItems(prev => prev.map(i => i.id === discountModalItem.id ? { ...i, price: newPrice } : i));
+    updateMenuItem({
+      ...discountModalItem,
+      price: newPrice
+    });
     setActionNotification(`🏷️ ปรับลดราคาเมนู "${discountModalItem.name}" เป็น ฿${newPrice} สำเร็จ!`);
     setDiscountModalItem(null);
     setTimeout(() => setActionNotification(null), 4000);
   };
 
-  const handleRemoveItem = (item: any) => {
-    if (window.confirm(`คุณแน่ใจหรือไม่ที่จะถอดเมนู "${item.name}" ออกจากรายการขายชั่วคราว?`)) {
-      setSlowMovingItems(prev => prev.filter(i => i.id !== item.id));
-      setActionNotification(`🗑️ ถอดเมนู "${item.name}" ออกจากรายการเรียบร้อยแล้ว`);
-      setTimeout(() => setActionNotification(null), 4000);
+  // -------------------------------------------------------------
+  // 6. Food Cost Breakdown Data (Real from Inventory / Expenses)
+  // -------------------------------------------------------------
+  const foodCostPieData = useMemo(() => {
+    const categoryTotals = new Map<string, number>();
+    let totalStockValue = 0;
+
+    ingredients.forEach(ing => {
+      const val = (ing.currentStock || 0) * (ing.unitCost || 0);
+      const cat = ing.category || 'วัตถุดิบทั่วไป';
+      categoryTotals.set(cat, (categoryTotals.get(cat) || 0) + val);
+      totalStockValue += val;
+    });
+
+    if (totalStockValue === 0) {
+      return [
+        { name: 'ไม่มีข้อมูลสต็อก', value: 100, amount: 0, color: '#64748b' }
+      ];
     }
-  };
+
+    const colors = ['#f59e0b', '#06b6d4', '#10b981', '#eab308', '#a855f7', '#f43f5e', '#ec4899'];
+    return Array.from(categoryTotals.entries()).map(([name, amount], idx) => {
+      const percent = Math.round((amount / totalStockValue) * 100);
+      return {
+        name,
+        value: percent,
+        amount: Math.round(amount),
+        color: colors[idx % colors.length]
+      };
+    });
+  }, [ingredients]);
 
   // -------------------------------------------------------------
-  // 6. Food Cost Breakdown Data
+  // 7. Expense Analysis Data (Real from filteredExpenses)
   // -------------------------------------------------------------
-  const foodCostPieData = [
-    { name: 'เนื้อ (Beef)', value: 35, amount: 4350, color: '#f59e0b' },
-    { name: 'กุ้ง (Shrimp)', value: 38, amount: 4730, color: '#06b6d4' },
-    { name: 'ไก่ (Chicken)', value: 27, amount: 3360, color: '#10b981' },
-    { name: 'ไข่ (Egg)', value: 14, amount: 1740, color: '#eab308' },
-    { name: 'ผัก & เครื่องปรุง', value: 12, amount: 1490, color: '#a855f7' }
-  ];
+  const expenseCategories = useMemo(() => {
+    const catMap = new Map<string, number>();
+    let totalExp = 0;
+
+    filteredExpenses.forEach(exp => {
+      const cat = exp.category || 'ค่าใช้จ่ายทั่วไป';
+      catMap.set(cat, (catMap.get(cat) || 0) + (exp.amount || 0));
+      totalExp += exp.amount || 0;
+    });
+
+    if (totalExp === 0) {
+      return [];
+    }
+
+    const colors = [
+      { color: 'bg-indigo-500', barColor: '#6366f1' },
+      { color: 'bg-amber-500', barColor: '#f59e0b' },
+      { color: 'bg-yellow-500', barColor: '#eab308' },
+      { color: 'bg-orange-500', barColor: '#f97316' },
+      { color: 'bg-cyan-500', barColor: '#06b6d4' },
+      { color: 'bg-emerald-500', barColor: '#10b981' },
+      { color: 'bg-purple-500', barColor: '#a855f7' }
+    ];
+
+    return Array.from(catMap.entries()).map(([name, amount], idx) => {
+      const percent = Math.round((amount / totalExp) * 1000) / 10;
+      return {
+        name,
+        amount,
+        percent,
+        color: colors[idx % colors.length].color,
+        barColor: colors[idx % colors.length].barColor
+      };
+    });
+  }, [filteredExpenses]);
 
   // -------------------------------------------------------------
-  // 7. Expense Analysis Data
+  // 9. Payment Methods & Cash Flow (Real Data)
   // -------------------------------------------------------------
-  const expenseCategories = [
-    { name: 'ค่าแรงพนักงาน', amount: 18500, percent: 37.0, color: 'bg-indigo-500', barColor: '#6366f1' },
-    { name: 'ค่าเช่าร้าน', amount: 15000, percent: 30.0, color: 'bg-amber-500', barColor: '#f59e0b' },
-    { name: 'ค่าไฟฟ้า & น้ำประปา', amount: 6200, percent: 12.4, color: 'bg-yellow-500', barColor: '#eab308' },
-    { name: 'แก๊สหุงต้ม', amount: 3400, percent: 6.8, color: 'bg-orange-500', barColor: '#f97316' },
-    { name: 'การตลาด & โฆษณา', amount: 2800, percent: 5.6, color: 'bg-cyan-500', barColor: '#06b6d4' },
-    { name: 'ค่าแพ็กเกจ/บรรจุภัณฑ์', amount: 2300, percent: 4.6, color: 'bg-emerald-500', barColor: '#10b981' },
-    { name: 'ภาษี & ค่าธรรมเนียม', amount: 1800, percent: 3.6, color: 'bg-purple-500', barColor: '#a855f7' }
-  ];
+  const paymentMethodBreakdown = useMemo(() => {
+    const map = new Map<string, number>();
+    let totalPaid = 0;
+
+    filteredOrders.forEach(o => {
+      const pm = o.paymentMethod || 'cash';
+      map.set(pm, (map.get(pm) || 0) + (o.grandTotal || 0));
+      totalPaid += o.grandTotal || 0;
+    });
+
+    const labels: Record<string, { label: string; color: string }> = {
+      promptpay: { label: 'PromptPay / QR', color: 'bg-cyan-500' },
+      cash: { label: 'เงินสด (Cash)', color: 'bg-emerald-500' },
+      transfer: { label: 'โอนเงินธนาคาร', color: 'bg-amber-500' },
+      credit: { label: 'บัตรเครดิต', color: 'bg-purple-500' }
+    };
+
+    if (totalPaid === 0) {
+      return [];
+    }
+
+    return Array.from(map.entries()).map(([key, amount]) => {
+      const conf = labels[key] || { label: key, color: 'bg-slate-500' };
+      const pct = Math.round((amount / totalPaid) * 1000) / 10;
+      return {
+        label: conf.label,
+        amount: `฿${amount.toLocaleString(undefined, { minimumFractionDigits: 0 })}`,
+        percent: `${pct}%`,
+        color: conf.color
+      };
+    });
+  }, [filteredOrders]);
 
   // -------------------------------------------------------------
-  // 11. Peak Hours Heatmap Data (08:00 - 22:00)
+  // 10. Customer Order Types (Real Data)
   // -------------------------------------------------------------
-  const peakHoursData = [
-    { hour: '08:00', orders: 4, heat: '🔥', level: 1 },
-    { hour: '09:00', orders: 8, heat: '🔥', level: 1 },
-    { hour: '10:00', orders: 12, heat: '🔥🔥', level: 2 },
-    { hour: '11:00', orders: 24, heat: '🔥🔥█', level: 3 },
-    { hour: '12:00', orders: 42, heat: '🔥🔥🔥 Peak Lunch', level: 4, isPeak: true },
-    { hour: '13:00', orders: 48, heat: '🔥🔥🔥🔥 Heavy Lunch', level: 5, isPeak: true },
-    { hour: '14:00', orders: 21, heat: '🔥🔥', level: 2 },
-    { hour: '15:00', orders: 10, heat: '🔥', level: 1 },
-    { hour: '16:00', orders: 14, heat: '🔥', level: 1 },
-    { hour: '17:00', orders: 28, heat: '🔥🔥█', level: 3 },
-    { hour: '18:00', orders: 55, heat: '🔥🔥🔥🔥🔥 Peak Dinner', level: 5, isPeak: true },
-    { hour: '19:00', orders: 52, heat: '🔥🔥🔥🔥🔥 Heavy Dinner', level: 5, isPeak: true },
-    { hour: '20:00', orders: 32, heat: '🔥🔥🔥', level: 4 },
-    { hour: '21:00', orders: 15, heat: '🔥', level: 1 },
-    { hour: '22:00', orders: 6, heat: '🔥', level: 1 }
-  ];
+  const orderTypeBreakdown = useMemo(() => {
+    const total = filteredOrders.length;
+    if (total === 0) return [];
+
+    let dineInCount = 0;
+    let takeawayCount = 0;
+    let deliveryCount = 0;
+
+    let dineInSales = 0;
+    let takeawaySales = 0;
+    let deliverySales = 0;
+
+    filteredOrders.forEach(o => {
+      const type = o.orderType || (o.tableNumber ? 'dine-in' : 'takeaway');
+      if (type === 'dine-in') {
+        dineInCount++;
+        dineInSales += o.grandTotal || 0;
+      } else if (type === 'delivery') {
+        deliveryCount++;
+        deliverySales += o.grandTotal || 0;
+      } else {
+        takeawayCount++;
+        takeawaySales += o.grandTotal || 0;
+      }
+    });
+
+    return [
+      {
+        type: 'ทานที่ร้าน (Dine-in)',
+        count: dineInCount,
+        percent: Math.round((dineInCount / total) * 100),
+        avgSpend: dineInCount > 0 ? `฿${Math.round(dineInSales / dineInCount)}/บิล` : '฿0/บิล',
+        color: 'bg-emerald-500'
+      },
+      {
+        type: 'สั่งกลับบ้าน (Takeaway)',
+        count: takeawayCount,
+        percent: Math.round((takeawayCount / total) * 100),
+        avgSpend: takeawayCount > 0 ? `฿${Math.round(takeawaySales / takeawayCount)}/บิล` : '฿0/บิล',
+        color: 'bg-amber-500'
+      },
+      {
+        type: 'เดลิเวอรี (Delivery)',
+        count: deliveryCount,
+        percent: Math.round((deliveryCount / total) * 100),
+        avgSpend: deliveryCount > 0 ? `฿${Math.round(deliverySales / deliveryCount)}/บิล` : '฿0/บิล',
+        color: 'bg-purple-500'
+      }
+    ];
+  }, [filteredOrders]);
+
+  // -------------------------------------------------------------
+  // 11. Peak Hours Heatmap (Real from Order Timestamps)
+  // -------------------------------------------------------------
+  const peakHoursData = useMemo(() => {
+    const hourCounts: Record<number, number> = {};
+    for (let h = 8; h <= 22; h++) {
+      hourCounts[h] = 0;
+    }
+
+    filteredOrders.forEach(o => {
+      if (o.createdAt) {
+        const h = new Date(o.createdAt).getHours();
+        if (h >= 8 && h <= 22) {
+          hourCounts[h] = (hourCounts[h] || 0) + 1;
+        }
+      }
+    });
+
+    const maxCount = Math.max(1, ...Object.values(hourCounts));
+
+    return Object.entries(hourCounts).map(([hStr, count]) => {
+      const h = Number(hStr);
+      const ratio = count / maxCount;
+      let heat = '🔥';
+      let level = 1;
+      let isPeak = false;
+
+      if (ratio > 0.75 && count > 0) {
+        heat = '🔥🔥🔥🔥 Peak';
+        level = 5;
+        isPeak = true;
+      } else if (ratio > 0.5) {
+        heat = '🔥🔥🔥 High';
+        level = 4;
+        isPeak = true;
+      } else if (ratio > 0.25) {
+        heat = '🔥🔥 Med';
+        level = 3;
+      } else if (count > 0) {
+        heat = '🔥 Low';
+        level = 2;
+      } else {
+        heat = '💤 ว่าง';
+        level = 1;
+      }
+
+      return {
+        hour: `${String(h).padStart(2, '0')}:00`,
+        orders: count,
+        heat,
+        level,
+        isPeak
+      };
+    });
+  }, [filteredOrders]);
+
+  // -------------------------------------------------------------
+  // 12. Real Dynamic AI Insights
+  // -------------------------------------------------------------
+  const lowStockIngredients = useMemo(() => {
+    return ingredients.filter(i => (i.currentStock || 0) <= (i.minStockAlert || 0));
+  }, [ingredients]);
+
+  const realAiInsights = useMemo(() => {
+    const insights: string[] = [];
+
+    // 1. Sales Growth Insight
+    if (yesterdaySales > 0) {
+      if (todaySales >= yesterdaySales) {
+        insights.push(`ยอดขายวันนี้เพิ่มขึ้น +${salesGrowthTodayPct}% เมื่อเทียบกับเมื่อวาน (฿${todaySales.toLocaleString()} vs ฿${yesterdaySales.toLocaleString()})`);
+      } else {
+        insights.push(`ยอดขายวันนี้ชะลอตัวลง ${Math.abs(salesGrowthTodayPct)}% เทียบกับเมื่อวาน`);
+      }
+    } else if (todaySales > 0) {
+      insights.push(`ยอดขายวันนี้ทำได้ ฿${todaySales.toLocaleString()} จากคำสั่งซื้อทั้งหมด ${todayBillCount} บิล`);
+    } else {
+      insights.push(`ยังไม่มีรายการขายในระบบสำหรับวันนี้ สามารถเริ่มบันทึกออเดอร์หน้าร้านได้ทันที`);
+    }
+
+    // 2. Food Cost Insight
+    if (todayFoodCostPct > 0) {
+      if (todayFoodCostPct <= 35) {
+        insights.push(`สัดส่วน Food Cost วันนี้อยู่ที่ ${todayFoodCostPct}% (อยู่ในเกณฑ์มาตรฐานดีเยี่ยม < 35%)`);
+      } else {
+        insights.push(`Food Cost วันนี้ค่อนข้างสูง (${todayFoodCostPct}%) ควรตรวจสอบการสูญเสียวัตถุดิบหรือปรับสัดส่วนเมนู`);
+      }
+    }
+
+    // 3. Best Seller Insight
+    if (topBestSellers.length > 0) {
+      const top1 = topBestSellers[0];
+      insights.push(`เมนูยอดนิยมอันดับ 1 ในช่วงเวลานี้คือ "${top1.name}" มียอดขาย ${top1.qty} จาน (รายได้รวม ฿${top1.revenue.toLocaleString()})`);
+    }
+
+    // 4. Low Stock Alerts
+    if (lowStockIngredients.length > 0) {
+      const names = lowStockIngredients.slice(0, 3).map(i => `${i.name} (เหลือ ${i.currentStock} ${i.unit})`).join(', ');
+      insights.push(`⚠️ วัตถุดิบใกล้หมดสต็อก ${lowStockIngredients.length} รายการ: ${names} ควรเปิดใบสั่งซื้อเติมสต็อก`);
+    } else {
+      insights.push(`ระดับสต็อกวัตถุดิบทั้งหมดอยู่ในเกณฑ์ปลอดภัย ไม่พบวัตถุดิบขาดแคลน`);
+    }
+
+    // 5. Actionable Advice
+    if (slowMovingItems.length > 0) {
+      insights.push(`มีเมนูขายช้า ${slowMovingItems.length} รายการ แนะนำจัดโปรโมชั่นลดราคา หรือจัดเซตคู่กับเมนูยอดนิยมเพื่อเพิ่มยอดขาย`);
+    }
+
+    return insights;
+  }, [todaySales, yesterdaySales, salesGrowthTodayPct, todayBillCount, todayFoodCostPct, topBestSellers, lowStockIngredients, slowMovingItems]);
+
+  // -------------------------------------------------------------
+  // 13. Dynamic Business Health Score Calculation
+  // -------------------------------------------------------------
+  const businessHealthScore = useMemo(() => {
+    let score = 70; // Baseline
+
+    // Check Profit Margin
+    if (periodTotalSales > 0) {
+      const margin = (periodNetProfit / periodTotalSales) * 100;
+      if (margin >= 25) score += 15;
+      else if (margin >= 15) score += 10;
+      else if (margin > 0) score += 5;
+      else score -= 10;
+    }
+
+    // Check Food Cost
+    if (todayFoodCostPct > 0) {
+      if (todayFoodCostPct <= 32) score += 10;
+      else if (todayFoodCostPct <= 38) score += 5;
+      else score -= 10;
+    }
+
+    // Check Stock Health
+    if (lowStockIngredients.length === 0) score += 5;
+    else score -= Math.min(10, lowStockIngredients.length * 2);
+
+    return Math.max(0, Math.min(100, score));
+  }, [periodTotalSales, periodNetProfit, todayFoodCostPct, lowStockIngredients]);
 
   // -------------------------------------------------------------
   // EXPORT & TELEGRAM HANDLERS
@@ -383,15 +815,14 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     csv += `Food Cost %,${todayFoodCostPct},%\n`;
     csv += `จำนวนบิลวันนี้,${todayBillCount},บิล\n`;
     csv += `ยอดขายเฉลี่ยต่อบิล,${todayAvgBill},บาท\n`;
-    csv += `จุดคุ้มทุน (BEP Achieved),${todayBreakEvenPct},%\n`;
-    csv += `Business Health Score,95,/100\n\n`;
+    csv += `Business Health Score,${businessHealthScore},/100\n\n`;
 
-    csv += `=== งบกำไรขาดทุน (P&L Statement) ===\n`;
-    csv += `ยอดขายรวม (Gross Sales),150000,บาท\n`;
-    csv += `ต้นทุนวัตถุดิบ (COGS),48000,บาท\n`;
-    csv += `กำไรขั้นต้น (Gross Profit),102000,บาท\n`;
-    csv += `ค่าใช้จ่ายดำเนินงาน (OPEX & Labor),34000,บาท\n`;
-    csv += `กำไรสุทธิ (Net Profit),68000,บาท\n`;
+    csv += `=== งบกำไรขาดทุนตามช่วงเวลา (P&L Statement) ===\n`;
+    csv += `ยอดขายรวม (Gross Sales),${periodTotalSales},บาท\n`;
+    csv += `ต้นทุนวัตถุดิบ (COGS),${periodFoodCost},บาท\n`;
+    csv += `กำไรขั้นต้น (Gross Profit),${periodGrossProfit},บาท\n`;
+    csv += `ค่าใช้จ่ายดำเนินงาน (OPEX),${periodExpenses},บาท\n`;
+    csv += `กำไรสุทธิ (Net Profit),${periodNetProfit},บาท\n`;
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -430,7 +861,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
                 </span>
               </h1>
               <p className="text-xs text-slate-400">
-                รายงานยอดขาย กำไร ต้นทุนวัตถุดิบ P&L และคำแนะนำ AI ประจำร้าน
+                รายงานยอดขาย กำไร ต้นทุนวัตถุดิบ P&L และคำแนะนำ AI ประจำร้าน (ประมวลผลจากข้อมูลจริง 100%)
               </p>
             </div>
           </div>
@@ -562,11 +993,20 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
             </div>
             <div className="text-xl font-black text-amber-400 font-mono">
-              ฿{todaySales.toLocaleString('th-TH')}
+              ฿{todaySales.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
             </div>
             <div className="text-[10px] text-emerald-400 font-bold flex items-center space-x-1 font-mono">
-              <ArrowUpRight className="w-3 h-3" />
-              <span>▲ +{salesGrowthTodayPct}% vs เมื่อวาน</span>
+              {salesGrowthTodayPct >= 0 ? (
+                <>
+                  <ArrowUpRight className="w-3 h-3" />
+                  <span>▲ +{salesGrowthTodayPct}% vs เมื่อวาน</span>
+                </>
+              ) : (
+                <span className="text-rose-400 flex items-center space-x-1">
+                  <ArrowDownRight className="w-3 h-3" />
+                  <span>▼ {salesGrowthTodayPct}% vs เมื่อวาน</span>
+                </span>
+              )}
             </div>
           </div>
 
@@ -576,12 +1016,11 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               <span>กำไรสุทธิ</span>
               <Wallet className="w-3.5 h-3.5 text-emerald-400" />
             </div>
-            <div className="text-xl font-black text-emerald-400 font-mono">
-              ฿{todayProfit.toLocaleString('th-TH')}
+            <div className={`text-xl font-black font-mono ${todayProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              ฿{todayProfit.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[10px] text-emerald-400 font-bold flex items-center space-x-1 font-mono">
-              <ArrowUpRight className="w-3 h-3" />
-              <span>▲ +9% Net Margin</span>
+            <div className="text-[10px] text-slate-400 font-bold flex items-center space-x-1 font-mono">
+              <span>{todaySales > 0 ? `${Math.round((todayProfit / todaySales) * 100)}% Net Margin` : 'ไม่มีรายการ'}</span>
             </div>
           </div>
 
@@ -594,9 +1033,18 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             <div className="text-xl font-black text-orange-400 font-mono">
               {todayFoodCostPct}%
             </div>
-            <div className="text-[10px] text-emerald-400 font-bold flex items-center space-x-1">
-              <CheckCircle2 className="w-3 h-3" />
-              <span>✓ อยู่ในเกณฑ์</span>
+            <div className="text-[10px] font-bold flex items-center space-x-1">
+              {todayFoodCostPct <= 35 ? (
+                <span className="text-emerald-400 flex items-center space-x-1">
+                  <CheckCircle2 className="w-3 h-3" />
+                  <span>✓ อยู่ในเกณฑ์</span>
+                </span>
+              ) : (
+                <span className="text-rose-400 flex items-center space-x-1">
+                  <AlertTriangle className="w-3 h-3" />
+                  <span>เกินเกณฑ์เป้าหมาย</span>
+                </span>
+              )}
             </div>
           </div>
 
@@ -638,7 +1086,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               {todayBreakEvenPct}%
             </div>
             <div className="text-[10px] text-amber-400 font-mono">
-              ถึงจุดคุ้มทุนแล้ว
+              {todayBreakEvenPct >= 100 ? '✓ ถึงจุดคุ้มทุนแล้ว' : `เป้าหมาย ${todayBreakEvenPct}%`}
             </div>
           </div>
         </div>
@@ -652,16 +1100,16 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div>
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <TrendingUp className="w-4 h-4 text-amber-400" />
-              <span>2. Sales Overview (กราฟวิเคราะห์ยอดขาย)</span>
+              <span>2. Sales Overview (กราฟวิเคราะห์ยอดขายจากข้อมูลจริง)</span>
             </h3>
-            <p className="text-xs text-slate-400">เปรียบเทียบยอดขาย กำไร ต้นทุน และจำนวนบิลตามช่วงเวลา</p>
+            <p className="text-xs text-slate-400">เปรียบเทียบยอดขาย กำไร ต้นทุน และจำนวนบิลตามช่วงเวลาที่เกิดขึ้นจริง</p>
           </div>
 
           {/* Period Tabs: รายวัน / รายสัปดาห์ / รายเดือน / รายปี */}
           <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded-2xl border border-slate-800 text-xs">
             {[
-              { id: 'daily', label: 'ยอดขายรายวัน' },
-              { id: 'weekly', label: 'รายสัปดาห์' },
+              { id: 'daily', label: 'ยอดขาย 7 วัน' },
+              { id: 'weekly', label: '4 สัปดาห์' },
               { id: 'monthly', label: 'รายเดือน' },
               { id: 'yearly', label: 'รายปี' }
             ].map(tab => (
@@ -744,71 +1192,82 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div>
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <Award className="w-4 h-4 text-amber-400" />
-              <span>3. Top Best Sellers (อันดับเมนูขายดีที่สุด)</span>
+              <span>3. Top Best Sellers (อันดับเมนูขายดีที่สุดจริง)</span>
             </h3>
-            <p className="text-xs text-slate-400">สรุปยอดขาย จำนวนจาน กำไรสุทธิ และ Food Cost แยกตามรายการเมนู</p>
+            <p className="text-xs text-slate-400">สรุปยอดขาย จำนวนจาน กำไรสุทธิ และ Food Cost แยกตามรายการเมนูที่บันทึกขายจริง</p>
           </div>
 
-          {/* KPI Card Summary Above Top Best Sellers */}
-          <div className="flex items-center space-x-3 text-xs bg-slate-950 p-2 rounded-2xl border border-slate-800">
-            <div>
-              <span className="text-slate-400">ยอดรวม Top 5:</span>
-              <strong className="text-amber-400 font-mono ml-1">฿16,080</strong>
+          {/* Summary */}
+          {topBestSellers.length > 0 && (
+            <div className="flex items-center space-x-3 text-xs bg-slate-950 p-2 rounded-2xl border border-slate-800">
+              <div>
+                <span className="text-slate-400">ยอดรวม Top {topBestSellers.length}:</span>
+                <strong className="text-amber-400 font-mono ml-1">
+                  ฿{topBestSellers.reduce((s, i) => s + i.revenue, 0).toLocaleString()}
+                </strong>
+              </div>
+              <div className="h-4 w-[1px] bg-slate-800" />
+              <div>
+                <span className="text-slate-400">จำนวนขายรวม:</span>
+                <strong className="text-emerald-400 font-mono ml-1">
+                  {topBestSellers.reduce((s, i) => s + i.qty, 0)} จาน
+                </strong>
+              </div>
             </div>
-            <div className="h-4 w-[1px] bg-slate-800" />
-            <div>
-              <span className="text-slate-400">Margin เฉลี่ย:</span>
-              <strong className="text-emerald-400 font-mono ml-1">56.8%</strong>
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Detailed Table for Best Sellers */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-300">
-            <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-semibold border-b border-slate-800">
-              <tr>
-                <th className="p-3 text-center">อันดับ</th>
-                <th className="p-3">เมนูอาหาร</th>
-                <th className="p-3 text-center">จำนวนขาย</th>
-                <th className="p-3 text-right">ยอดขาย</th>
-                <th className="p-3 text-right">กำไรสุทธิ</th>
-                <th className="p-3 text-center">Food Cost</th>
-                <th className="p-3 text-center">Margin %</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/80 font-mono">
-              {topBestSellers.map(item => (
-                <tr key={item.id} className="hover:bg-slate-800/40 transition">
-                  <td className="p-3 text-center font-bold">
-                    <span className={`w-6 h-6 rounded-full inline-flex items-center justify-center text-xs ${
-                      item.rank === 1 ? 'bg-amber-500 text-slate-950 font-black' :
-                      item.rank === 2 ? 'bg-slate-300 text-slate-950 font-black' :
-                      item.rank === 3 ? 'bg-amber-700 text-white font-black' : 'bg-slate-800 text-slate-300'
-                    }`}>
-                      {item.rank}
-                    </span>
-                  </td>
-                  <td className="p-3 font-sans font-bold text-slate-200 flex items-center space-x-2">
-                    <span className="text-base">{item.icon}</span>
-                    <div>
-                      <div>{item.name}</div>
-                      <div className="text-[10px] text-slate-400 font-normal">{item.category}</div>
-                    </div>
-                  </td>
-                  <td className="p-3 text-center font-bold text-slate-100">{item.qty} จาน</td>
-                  <td className="p-3 text-right font-black text-amber-400">฿{item.revenue.toLocaleString()}</td>
-                  <td className="p-3 text-right font-black text-emerald-400">฿{item.profit.toLocaleString()}</td>
-                  <td className="p-3 text-center font-bold text-orange-400">{item.foodCostPct}%</td>
-                  <td className="p-3 text-center font-bold">
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-950 text-emerald-400 border border-emerald-500/30 text-[11px]">
-                      {item.marginPct}%
-                    </span>
-                  </td>
+          {topBestSellers.length === 0 ? (
+            <div className="p-8 text-center text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+              ยังไม่มีรายการสั่งซื้อในช่วงเวลาที่เลือก สามารถเริ่มรับออเดอร์หน้าร้านได้ทันที
+            </div>
+          ) : (
+            <table className="w-full text-left text-xs text-slate-300">
+              <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-semibold border-b border-slate-800">
+                <tr>
+                  <th className="p-3 text-center">อันดับ</th>
+                  <th className="p-3">เมนูอาหาร</th>
+                  <th className="p-3 text-center">จำนวนขาย</th>
+                  <th className="p-3 text-right">ยอดขาย</th>
+                  <th className="p-3 text-right">กำไรสุทธิ</th>
+                  <th className="p-3 text-center">Food Cost</th>
+                  <th className="p-3 text-center">Margin %</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80 font-mono">
+                {topBestSellers.map(item => (
+                  <tr key={item.id} className="hover:bg-slate-800/40 transition">
+                    <td className="p-3 text-center font-bold">
+                      <span className={`w-6 h-6 rounded-full inline-flex items-center justify-center text-xs ${
+                        item.rank === 1 ? 'bg-amber-500 text-slate-950 font-black' :
+                        item.rank === 2 ? 'bg-slate-300 text-slate-950 font-black' :
+                        item.rank === 3 ? 'bg-amber-700 text-white font-black' : 'bg-slate-800 text-slate-300'
+                      }`}>
+                        {item.rank}
+                      </span>
+                    </td>
+                    <td className="p-3 font-sans font-bold text-slate-200">
+                      <div>
+                        <div>{item.name}</div>
+                        <div className="text-[10px] text-slate-400 font-normal">{item.category}</div>
+                      </div>
+                    </td>
+                    <td className="p-3 text-center font-bold text-slate-100">{item.qty} จาน</td>
+                    <td className="p-3 text-right font-black text-amber-400">฿{item.revenue.toLocaleString()}</td>
+                    <td className="p-3 text-right font-black text-emerald-400">฿{item.profit.toLocaleString()}</td>
+                    <td className="p-3 text-center font-bold text-orange-400">{item.foodCostPct}%</td>
+                    <td className="p-3 text-center font-bold">
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-950 text-emerald-400 border border-emerald-500/30 text-[11px]">
+                        {item.marginPct}%
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
@@ -817,61 +1276,65 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
       {/* ------------------------------------------------------------- */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
-        {/* 4. Top Profit Dishes (เมนูทำกำไรสูงสุด - ไม่ใช่ขายดีที่สุด) */}
+        {/* 4. Top Profit Dishes */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-xl">
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <DollarSign className="w-4 h-4 text-emerald-400" />
               <span>4. เมนูทำกำไรสูงสุด (Top Profit Dishes)</span>
             </h3>
-            <p className="text-xs text-slate-400">เน้นสร้างผลกำไรสุทธิสูงสุดแก่ร้าน (ไม่เน้นยอดขายเชิงปริมาณจานอย่างเดียว)</p>
+            <p className="text-xs text-slate-400">เน้นสร้างผลกำไรสุทธิสูงสุดแก่ร้าน (คำนวณจากยอดขายจริง)</p>
           </div>
 
           <div className="space-y-2.5">
-            {topProfitDishes.map((item, idx) => (
-              <div key={idx} className="p-3 bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <span className="text-lg font-bold w-6 text-center">{item.rank}</span>
-                  <span className="text-lg">{item.icon}</span>
-                  <div>
-                    <h4 className="font-bold text-xs text-slate-100">{item.name}</h4>
-                    <p className="text-[10px] text-slate-400 font-mono">ยอดขายรวม ฿{item.revenue.toLocaleString()}</p>
-                  </div>
-                </div>
-
-                <div className="text-right">
-                  <div className="text-sm font-black text-emerald-400 font-mono">
-                    กำไร ฿{item.profit.toLocaleString()}
-                  </div>
-                  <div className="text-[10px] text-emerald-500 font-bold font-mono">
-                    Margin {item.marginPct}%
-                  </div>
-                </div>
+            {topProfitDishes.length === 0 ? (
+              <div className="p-6 text-center text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+                ยังไม่มีข้อมูลการขายสำหรับวิเคราะห์กำไร
               </div>
-            ))}
+            ) : (
+              topProfitDishes.map((item, idx) => (
+                <div key={idx} className="p-3 bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <span className="text-lg font-bold w-6 text-center">{item.rank}</span>
+                    <div>
+                      <h4 className="font-bold text-xs text-slate-100">{item.name}</h4>
+                      <p className="text-[10px] text-slate-400 font-mono">ยอดขายรวม ฿{item.revenue.toLocaleString()} ({item.qty} จาน)</p>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-sm font-black text-emerald-400 font-mono">
+                      กำไร ฿{item.profit.toLocaleString()}
+                    </div>
+                    <div className="text-[10px] text-emerald-500 font-bold font-mono">
+                      Margin {item.marginPct}%
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
-        {/* 5. Slow Moving Dishes (เมนูขายช้า < 5 จาน ใน 7 วัน) */}
+        {/* 5. Slow Moving Dishes */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-xl">
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <ShieldAlert className="w-4 h-4 text-rose-400" />
               <span>5. เมนูขายช้า (Slow Moving Menu)</span>
             </h3>
-            <p className="text-xs text-slate-400">เมนูที่ขายน้อยกว่า 5 จาน ใน 7 วันหลังสุด พร้อมปุ่มแอ็กชันปรับปรุง</p>
+            <p className="text-xs text-slate-400">เมนูที่มียอดขายน้อยกว่า 5 จาน พร้อมปุ่มแอ็กชันปรับปรุงเข้าเมนูจริง</p>
           </div>
 
           <div className="space-y-3">
             {slowMovingItems.length === 0 ? (
-              <div className="p-6 text-center text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
-                🎉 ไม่มีเมนูขายช้าในระบบขณะนี้
+              <div className="p-6 text-center text-emerald-400 text-xs bg-slate-950 rounded-2xl border border-slate-800 font-bold">
+                🎉 ยอดเยี่ยม! เมนูทุกรายการมียอดขายคล่องตัว
               </div>
             ) : (
               slowMovingItems.map((item) => (
                 <div key={item.id} className="p-3 bg-slate-950 rounded-2xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center space-x-2.5">
-                    <span className="text-xl">{item.image}</span>
                     <div>
                       <h4 className="font-bold text-xs text-slate-200">{item.name}</h4>
                       <div className="flex items-center space-x-2 text-[10px] text-slate-400 font-mono">
@@ -882,12 +1345,12 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
                     </div>
                   </div>
 
-                  {/* Actions: โปรโมท / ลดราคา / ถอดเมนู */}
+                  {/* Actions: โปรโมท / ลดราคา */}
                   <div className="flex items-center space-x-1.5 shrink-0">
                     <button
                       onClick={() => handlePromoteItem(item)}
                       className="px-2.5 py-1 bg-amber-950 hover:bg-amber-900 border border-amber-600/40 text-amber-300 rounded-xl text-[10px] font-bold transition flex items-center space-x-1"
-                      title="ติดป้ายโปรโมทหน้า POS และ QR"
+                      title="ติดป้ายโปรโมท"
                     >
                       <Gift className="w-3 h-3" />
                       <span>โปรโมท</span>
@@ -895,7 +1358,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
                     <button
                       onClick={() => {
-                        setDiscountModalItem(item);
+                        setDiscountModalItem(item.menuItem);
                         setDiscountAmount(10);
                       }}
                       className="px-2.5 py-1 bg-sky-950 hover:bg-sky-900 border border-sky-600/40 text-sky-300 rounded-xl text-[10px] font-bold transition flex items-center space-x-1"
@@ -903,15 +1366,6 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
                     >
                       <Tag className="w-3 h-3" />
                       <span>ลดราคา</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleRemoveItem(item)}
-                      className="px-2.5 py-1 bg-rose-950 hover:bg-rose-900 border border-rose-600/40 text-rose-300 rounded-xl text-[10px] font-bold transition flex items-center space-x-1"
-                      title="ถอดเมนูออกจากรายการ"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      <span>ถอดเมนู</span>
                     </button>
                   </div>
                 </div>
@@ -930,14 +1384,14 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div>
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <PieChartIcon className="w-4 h-4 text-orange-400" />
-              <span>6. Food Cost Dashboard (สัดส่วนต้นทุนวัตถุดิบ)</span>
+              <span>6. Food Cost & Stock Dashboard (สัดส่วนมูลค่าสต็อกวัตถุดิบจริง)</span>
             </h3>
-            <p className="text-xs text-slate-400">สัดส่วนต้นทุนแยกตามประเภทเนื้อสัตว์และวัตถุดิบหลัก</p>
+            <p className="text-xs text-slate-400">สัดส่วนมูลค่าวัตถุดิบที่มีอยู่ในคลังแยกตามประเภท</p>
           </div>
 
           <div className="bg-slate-950 px-3 py-1.5 rounded-2xl border border-slate-800 text-xs font-mono">
             <span className="text-slate-400">Food Cost วันนี้: </span>
-            <strong className="text-orange-400 font-bold text-sm">30.8%</strong>
+            <strong className="text-orange-400 font-bold text-sm">{todayFoodCostPct}%</strong>
           </div>
         </div>
 
@@ -979,7 +1433,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
                   <span className="font-mono font-bold text-amber-400">{fc.value}% (฿{fc.amount.toLocaleString()})</span>
                 </div>
                 <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                  <div className="h-full rounded-full transition-all duration-500" style={{ width: `${fc.value}%`, backgroundColor: fc.color }} />
+                  <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, fc.value)}%`, backgroundColor: fc.color }} />
                 </div>
               </div>
             ))}
@@ -994,38 +1448,44 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         <div className="border-b border-slate-800 pb-3">
           <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
             <Sliders className="w-4 h-4 text-purple-400" />
-            <span>7. วิเคราะห์ค่าใช้จ่าย (Expense Analysis)</span>
+            <span>7. วิเคราะห์ค่าใช้จ่ายจริง (Expense Analysis)</span>
           </h3>
-          <p className="text-xs text-slate-400">แบ่งสัดส่วนค่าใช้จ่ายดำเนินงานทั้งหมด (OPEX & Labor) พร้อมสัดส่วน %</p>
+          <p className="text-xs text-slate-400">แบ่งสัดส่วนค่าใช้จ่ายดำเนินงานทั้งหมดจากบันทึกรายจ่ายจริง</p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="space-y-3">
-            {expenseCategories.map(exp => (
-              <div key={exp.name} className="space-y-1">
-                <div className="flex justify-between text-xs text-slate-300">
-                  <span className="font-semibold">{exp.name}</span>
-                  <span className="font-mono font-bold text-slate-100">฿{exp.amount.toLocaleString()} ({exp.percent}%)</span>
-                </div>
-                <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden">
-                  <div className={`h-full ${exp.color} transition-all duration-500`} style={{ width: `${exp.percent}%` }} />
-                </div>
-              </div>
-            ))}
+        {expenseCategories.length === 0 ? (
+          <div className="p-6 text-center text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+            ยังไม่มีการบันทึกค่าใช้จ่ายในช่วงเวลาที่เลือก สามารถเพิ่มได้ที่แท็บบันทึกค่าใช้จ่าย
           </div>
-
-          <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3 flex flex-col justify-center">
-            <div className="flex justify-between items-center text-xs text-slate-400">
-              <span>รวมค่าใช้จ่ายดำเนินงานทั้งหมด:</span>
-              <strong className="text-rose-400 font-mono text-base font-black">
-                ฿{expenseCategories.reduce((s, e) => s + e.amount, 0).toLocaleString()}
-              </strong>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-3">
+              {expenseCategories.map(exp => (
+                <div key={exp.name} className="space-y-1">
+                  <div className="flex justify-between text-xs text-slate-300">
+                    <span className="font-semibold">{exp.name}</span>
+                    <span className="font-mono font-bold text-slate-100">฿{exp.amount.toLocaleString()} ({exp.percent}%)</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden">
+                    <div className={`h-full ${exp.color} transition-all duration-500`} style={{ width: `${Math.min(100, exp.percent)}%` }} />
+                  </div>
+                </div>
+              ))}
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              💡 ค่าแรงพนักงาน และค่าเช่าร้าน รวมกันคิดเป็น 67.0% ของค่าใช้จ่ายทั้งหมด แนะนำวางแผนตารางกะพนักงานให้สอดคล้องกับช่วงเวลาพีกเพื่อลด Labor Cost ส่วนเกิน
-            </p>
+
+            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3 flex flex-col justify-center">
+              <div className="flex justify-between items-center text-xs text-slate-400">
+                <span>รวมค่าใช้จ่ายจริงทั้งหมด:</span>
+                <strong className="text-rose-400 font-mono text-base font-black">
+                  ฿{periodExpenses.toLocaleString()}
+                </strong>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                💡 ติดตามและตรวจสอบรายการค่าใช้จ่ายเพื่อควบคุมต้นทุนดำเนินงานให้อยู่ในงบประมาณที่กำหนด
+              </p>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* ------------------------------------------------------------- */}
@@ -1038,35 +1498,35 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <FileText className="w-4 h-4 text-emerald-400" />
-              <span>8. กำไรขาดทุน (P&L Statement)</span>
+              <span>8. กำไรขาดทุนจริง (P&L Statement)</span>
             </h3>
-            <p className="text-xs text-slate-400">สรุปงบกำไรขาดทุนเบื้องต้นประจำงวด</p>
+            <p className="text-xs text-slate-400">สรุปงบกำไรขาดทุนจริงตามช่วงเวลาที่เลือก</p>
           </div>
 
           <div className="space-y-2 text-xs font-mono">
             <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center">
               <span className="text-slate-300 font-bold">ยอดขายรวม (Gross Revenue)</span>
-              <span className="text-amber-400 font-black text-sm">฿150,000</span>
+              <span className="text-amber-400 font-black text-sm">฿{periodTotalSales.toLocaleString()}</span>
             </div>
 
             <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex justify-between items-center text-rose-400">
-              <span>(-) ต้นทุนวัตถุดิบ (COGS)</span>
-              <span>-฿48,000</span>
+              <span>(-) ต้นทุนวัตถุดิบอาหาร (COGS)</span>
+              <span>-฿{periodFoodCost.toLocaleString()}</span>
             </div>
 
             <div className="p-3 bg-amber-950/30 rounded-xl border border-amber-800/50 flex justify-between items-center font-bold text-amber-300">
               <span>(=) กำไรขั้นต้น (Gross Profit)</span>
-              <span className="text-sm">฿102,000</span>
+              <span className="text-sm">฿{periodGrossProfit.toLocaleString()}</span>
             </div>
 
             <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex justify-between items-center text-rose-400">
-              <span>(-) ค่าใช้จ่ายดำเนินงาน & ค่าแรง</span>
-              <span>-฿34,000</span>
+              <span>(-) ค่าใช้จ่ายดำเนินงาน (OPEX)</span>
+              <span>-฿{periodExpenses.toLocaleString()}</span>
             </div>
 
             <div className="p-3 bg-emerald-950/60 rounded-xl border border-emerald-500/40 flex justify-between items-center font-black text-emerald-400 text-sm">
               <span>(=) กำไรสุทธิ (Net Profit)</span>
-              <span className="text-base">฿68,000</span>
+              <span className="text-base">฿{periodNetProfit.toLocaleString()}</span>
             </div>
           </div>
         </div>
@@ -1076,47 +1536,48 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <Landmark className="w-4 h-4 text-cyan-400" />
-              <span>9. Cash Flow (กระแสเงินสด)</span>
+              <span>9. Cash Flow (กระแสเงินสดจริง)</span>
             </h3>
-            <p className="text-xs text-slate-400">เงินเข้า เงินออก และสัดส่วนช่องทางชำระเงิน</p>
+            <p className="text-xs text-slate-400">เงินเข้า เงินออก และสัดส่วนช่องทางชำระเงินจริง</p>
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-xs font-mono">
             <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
               <span className="text-slate-400 text-[10px]">เงินเข้า (Inflow)</span>
-              <p className="font-bold text-emerald-400 text-sm">฿150,000</p>
+              <p className="font-bold text-emerald-400 text-sm">฿{periodTotalSales.toLocaleString()}</p>
             </div>
             <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
               <span className="text-slate-400 text-[10px]">เงินออก (Outflow)</span>
-              <p className="font-bold text-rose-400 text-sm">฿82,000</p>
+              <p className="font-bold text-rose-400 text-sm">฿{periodExpenses.toLocaleString()}</p>
             </div>
             <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
-              <span className="text-slate-400 text-[10px]">กำไรกระแสเงินสด</span>
-              <p className="font-bold text-cyan-400 text-sm">฿68,000</p>
+              <span className="text-slate-400 text-[10px]">กระแสเงินสดสุทธิ</span>
+              <p className={`font-bold text-sm ${periodNetProfit >= 0 ? 'text-cyan-400' : 'text-rose-400'}`}>
+                ฿{periodNetProfit.toLocaleString()}
+              </p>
             </div>
             <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
-              <span className="text-slate-400 text-[10px]">เงินสดคงเหลือ</span>
-              <p className="font-bold text-amber-400 text-sm">฿124,500</p>
+              <span className="text-slate-400 text-[10px]">จำนวนบิลที่ชำระ</span>
+              <p className="font-bold text-amber-400 text-sm">{filteredOrders.length} บิล</p>
             </div>
           </div>
 
           {/* Payment Method Breakdown */}
           <div className="space-y-1.5 pt-2 border-t border-slate-800 text-xs">
-            <span className="text-slate-400 font-semibold block">สัดส่วนช่องทางชำระเงิน:</span>
-            {[
-              { label: 'PromptPay / QR', percent: '56.1%', amount: '฿84,200', color: 'bg-cyan-500' },
-              { label: 'เงินสด (Cash)', percent: '25.7%', amount: '฿38,500', color: 'bg-emerald-500' },
-              { label: 'โอนเงินธนาคาร', percent: '14.2%', amount: '฿21,300', color: 'bg-amber-500' },
-              { label: 'บัตรเครดิต', percent: '4.0%', amount: '฿6,000', color: 'bg-purple-500' }
-            ].map(pm => (
-              <div key={pm.label} className="flex justify-between items-center text-[11px] font-mono text-slate-300">
-                <span className="flex items-center space-x-1.5">
-                  <span className={`w-2 h-2 rounded-full ${pm.color}`} />
-                  <span>{pm.label}</span>
-                </span>
-                <span className="font-bold">{pm.amount} ({pm.percent})</span>
-              </div>
-            ))}
+            <span className="text-slate-400 font-semibold block">สัดส่วนช่องทางชำระเงินจริง:</span>
+            {paymentMethodBreakdown.length === 0 ? (
+              <p className="text-slate-500 text-[11px]">ยังไม่มีข้อมูลการชำระเงิน</p>
+            ) : (
+              paymentMethodBreakdown.map(pm => (
+                <div key={pm.label} className="flex justify-between items-center text-[11px] font-mono text-slate-300">
+                  <span className="flex items-center space-x-1.5">
+                    <span className={`w-2 h-2 rounded-full ${pm.color}`} />
+                    <span>{pm.label}</span>
+                  </span>
+                  <span className="font-bold">{pm.amount} ({pm.percent})</span>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -1127,43 +1588,45 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
       {/* ------------------------------------------------------------- */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
-        {/* 10. Customer Analytics (วิเคราะห์ลูกค้า) */}
+        {/* 10. Customer Analytics */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-xl">
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <Users className="w-4 h-4 text-sky-400" />
-              <span>10. วิเคราะห์ลูกค้า (Customer Analytics)</span>
+              <span>10. ประเภทคำสั่งซื้อ (Order Types Analytics)</span>
             </h3>
-            <p className="text-xs text-slate-400">สัดส่วนประเภทลูกค้าและยอดใช้จ่ายเฉลี่ย</p>
+            <p className="text-xs text-slate-400">สัดส่วนการสั่งซื้อ ทานที่ร้าน สั่งกลับบ้าน และเดลิเวอรี</p>
           </div>
 
           <div className="space-y-3 text-xs">
-            {[
-              { type: 'ลูกค้าประจำ (Returning)', count: 64, percent: 45, avgSpend: '฿115/บิล', color: 'bg-emerald-500' },
-              { type: 'ลูกค้าใหม่ (New)', count: 54, percent: 38, avgSpend: '฿92/บิล', color: 'bg-amber-500' },
-              { type: 'สมาชิก (VIP Members)', count: 24, percent: 17, avgSpend: '฿148/บิล', color: 'bg-purple-500' }
-            ].map(c => (
-              <div key={c.type} className="p-3 bg-slate-950 rounded-2xl border border-slate-800 space-y-1.5">
-                <div className="flex justify-between font-bold">
-                  <span className="text-slate-200">{c.type} ({c.count} คน)</span>
-                  <span className="text-emerald-400 font-mono">ยอดใช้เฉลี่ย {c.avgSpend}</span>
-                </div>
-                <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden">
-                  <div className={`h-full ${c.color}`} style={{ width: `${c.percent}%` }} />
-                </div>
+            {orderTypeBreakdown.length === 0 ? (
+              <div className="p-6 text-center text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+                ยังไม่มีข้อมูลคำสั่งซื้อ
               </div>
-            ))}
+            ) : (
+              orderTypeBreakdown.map(c => (
+                <div key={c.type} className="p-3 bg-slate-950 rounded-2xl border border-slate-800 space-y-1.5">
+                  <div className="flex justify-between font-bold">
+                    <span className="text-slate-200">{c.type} ({c.count} บิล)</span>
+                    <span className="text-emerald-400 font-mono">ยอดเฉลี่ย {c.avgSpend}</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden">
+                    <div className={`h-full ${c.color}`} style={{ width: `${c.percent}%` }} />
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
-        {/* 11. Peak Hours Heatmap (วิเคราะห์ช่วงเวลาขายดี) */}
+        {/* 11. Peak Hours Heatmap */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-xl">
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <Flame className="w-4 h-4 text-orange-400" />
-              <span>11. วิเคราะห์เวลา (Peak Hours Heatmap)</span>
+              <span>11. วิเคราะห์เวลาขายดีจริง (Peak Hours Heatmap)</span>
             </h3>
-            <p className="text-xs text-slate-400">ช่วงเวลาที่มีออเดอร์หนาแน่น เพื่อจัดสรรกะพนักงานให้เหมาะสม</p>
+            <p className="text-xs text-slate-400">ช่วงเวลาที่มีออเดอร์หนาแน่น คำนวณจากเวลาสั่งซื้อจริง</p>
           </div>
 
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 text-center text-xs">
@@ -1195,17 +1658,17 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             <Sparkles className="w-6 h-6 animate-pulse stroke-[2.5]" />
           </span>
           <div>
-            <h3 className="text-base font-black text-emerald-300">12. AI Insight (กล่องคำแนะนำอัจฉริยะ)</h3>
-            <p className="text-xs text-emerald-200/80">การวิเคราะห์และข้อแนะนำอัตโนมัติประมวลผลด้วย Gemini AI Model</p>
+            <h3 className="text-base font-black text-emerald-300">12. AI Insight (การวิเคราะห์คำแนะนำอัจฉริยะ)</h3>
+            <p className="text-xs text-emerald-200/80">ประมวลผลจากข้อมูลการขายและสต็อกจริงในระบบ</p>
           </div>
         </div>
 
         <ul className="space-y-2 text-xs text-emerald-100 font-medium list-disc list-inside leading-relaxed bg-slate-950/60 p-4 rounded-2xl border border-emerald-500/20">
-          <li><strong>ยอดขายเพิ่มขึ้น 12%</strong> เมื่อเทียบกับสัปดาห์ที่แล้ว</li>
-          <li><strong>Food Cost สูงกว่าปกติ 3%</strong> (เนื่องจากราคาวัตถุดิบกุ้งปรับตัวขึ้น)</li>
-          <li><strong>เมนูเนื้อขายดีขึ้นอย่างมีนัยสำคัญ</strong> โดยเฉพาะกะเพราเนื้อสับ</li>
-          <li><strong>กุ้งใกล้หมดสต็อก</strong> (เหลือประมาณ 2.4 kg) ควรสั่งซื้อวัตถุดิบเติมภายใน 2 วัน</li>
-          <li><strong>กลยุทธ์ราคาแนะนำ:</strong> หากปรับเพิ่มราคากะเพราเนื้อขึ้นอีก ฿5/จาน คาดว่าจะเพิ่มกำไรสุทธิรวมประมาณ 8% โดยไม่กระทบปริมาณคำสั่งซื้อ</li>
+          {realAiInsights.map((insight, idx) => (
+            <li key={idx}>
+              <span>{insight}</span>
+            </li>
+          ))}
         </ul>
       </div>
 
@@ -1216,22 +1679,30 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
           <div className="flex items-center space-x-4">
             <div className="w-16 h-16 rounded-2xl bg-emerald-950 border-2 border-emerald-500/60 flex flex-col items-center justify-center font-mono text-emerald-400">
-              <span className="text-xl font-black">95</span>
+              <span className="text-xl font-black">{businessHealthScore}</span>
               <span className="text-[9px] font-bold text-emerald-300">/100</span>
             </div>
 
             <div>
               <div className="flex items-center space-x-2">
                 <h3 className="text-base font-black text-slate-100">13. KPI สุขภาพธุรกิจ (Business Health Score)</h3>
-                <span className="text-amber-400 text-xs">★★★★★</span>
+                <span className="text-amber-400 text-xs">
+                  {businessHealthScore >= 90 ? '★★★★★' : businessHealthScore >= 70 ? '★★★★☆' : '★★★☆☆'}
+                </span>
               </div>
-              <p className="text-xs text-slate-400">ประเมินความสมบูรณ์ทางการเงินและประสิทธิภาพการดำเนินงานรวม</p>
+              <p className="text-xs text-slate-400">ประเมินความสมบูรณ์ทางการเงินจากอัตรากำไร ต้นทุน และสถานะสต็อกจริง</p>
             </div>
           </div>
 
           <div className="px-4 py-2 rounded-2xl bg-emerald-950 border border-emerald-500/40 text-emerald-300 font-bold text-xs flex items-center space-x-2">
             <span className="w-3 h-3 rounded-full bg-emerald-400 animate-ping" />
-            <span>🟢 95 / 100 = ดีมาก (Excellent)</span>
+            <span>
+              {businessHealthScore >= 90
+                ? `🟢 ${businessHealthScore} / 100 = ดีเยี่ยม (Excellent)`
+                : businessHealthScore >= 70
+                ? `🟡 ${businessHealthScore} / 100 = ปกติ (Good)`
+                : `🔴 ${businessHealthScore} / 100 = ควรปรับปรุง`}
+            </span>
           </div>
         </div>
 
@@ -1241,7 +1712,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             <span className="w-3 h-3 rounded-full bg-emerald-500 shrink-0" />
             <div>
               <div className="font-bold text-emerald-400">🟢 90 – 100 = ดีมาก</div>
-              <p className="text-[10px] text-slate-400">สุขภาพการเงินยอดเยี่ยม กำไรตามเป้าหมาย</p>
+              <p className="text-[10px] text-slate-400">สุขภาพการเงินยอดเยี่ยม อัตรากำไรสุทธิสูงและสต็อกสมบูรณ์</p>
             </div>
           </div>
 
@@ -1249,7 +1720,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             <span className="w-3 h-3 rounded-full bg-amber-500 shrink-0" />
             <div>
               <div className="font-bold text-amber-400">🟡 70 – 89 = ปกติ</div>
-              <p className="text-[10px] text-slate-400">ดำเนินกิจการได้ดี ควรควบคุม Food Cost</p>
+              <p className="text-[10px] text-slate-400">ดำเนินกิจการได้ตามเกณฑ์มาตรฐาน</p>
             </div>
           </div>
 
@@ -1257,7 +1728,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             <span className="w-3 h-3 rounded-full bg-rose-500 shrink-0" />
             <div>
               <div className="font-bold text-rose-400">🔴 ต่ำกว่า 70 = ควรปรับปรุง</div>
-              <p className="text-[10px] text-slate-400">ต้องเร่งปรับปรุงโครงสร้างราคาและค่าใช้จ่าย</p>
+              <p className="text-[10px] text-slate-400">ควรควบคุมต้นทุนค่าใช้จ่ายและตรวจสอบวัตถุดิบใกล้หมด</p>
             </div>
           </div>
         </div>
@@ -1297,7 +1768,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               onClick={handleApplyDiscount}
               className="w-full py-2.5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold rounded-xl text-xs transition"
             >
-              ยืนยันการลดราคา
+              ยืนยันการลดราคา (อัปเดตเมนูจริง)
             </button>
           </div>
         </div>
@@ -1331,7 +1802,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               <p>💵 กำไรสุทธิ: ฿{todayProfit.toLocaleString()}</p>
               <p>📦 Food Cost: {todayFoodCostPct}%</p>
               <p>🧾 จำนวนบิล: {todayBillCount} บิล (เฉลี่ย ฿{todayAvgBill}/บิล)</p>
-              <p>⭐ Business Health Score: 95/100 (ดีมาก)</p>
+              <p>⭐ Business Health Score: {businessHealthScore}/100</p>
             </div>
 
             {telegramSentSuccess ? (

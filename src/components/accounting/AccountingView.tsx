@@ -688,39 +688,19 @@ export const AccountingView: React.FC = () => {
         }
       });
 
-      // Realistic Baseline Fallback for empty historical months so charts show clear financial trends
+      // Pure Real data calculation
       let deliverySales = 0;
       let cateringSales = 0;
       let otherIncome = 0;
 
-      if (posSales === 0) {
-        // Mock realistic historical month metrics
-        const baseFactor = 0.85 + ((monthIdx * 7) % 25) / 100;
-        posSales = Math.round(52000 * baseFactor);
-        deliverySales = Math.round(12450 * baseFactor);
-        cateringSales = Math.round(18500 * (monthIdx % 2 === 0 ? 1 : 0.5));
-        otherIncome = 4500;
-
-        cogs = Math.round(posSales * 0.36);
-        rent = 35000;
-        salary = 48000;
-        utilities = 8450;
-        marketing = 5000;
-        otherExpense = 1500;
-      } else {
-        // Proportional ancillary income streams based on real POS sales
-        deliverySales = Math.round(posSales * 0.23);
-        cateringSales = Math.round(posSales * 0.15);
-        otherIncome = 4500;
-
-        if (mExpenses.length === 0) {
-          rent = 35000;
-          salary = 48000;
-          utilities = 8450;
-          marketing = 5000;
-          otherExpense = 1500;
+      // Extract delivery orders if any
+      mOrders.forEach(o => {
+        if ((o as any).type === 'delivery') {
+          deliverySales += o.grandTotal || 0;
+        } else if ((o as any).type === 'catering') {
+          cateringSales += o.grandTotal || 0;
         }
-      }
+      });
 
       const totalRevenue = posSales + deliverySales + cateringSales + otherIncome;
       const grossProfit = totalRevenue - cogs;
