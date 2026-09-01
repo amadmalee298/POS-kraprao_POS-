@@ -121,6 +121,61 @@ const EXPENSE_COLORS: Record<string, string> = {
   'ค่าใช้จ่ายอื่นๆ': '#64748b'  // Slate
 };
 
+export const EXPENSE_TITLE_PRESETS: Record<ExpenseCategory, string[]> = {
+  raw_material: [
+    'ซื้อวัตถุดิบสด CP / เบทาโกร',
+    'ซื้อเนื้อหมู / สันคอ / หมูสับ',
+    'ซื้อเนื้อไก่ / สันในไก่ / ปีกไก่',
+    'ซื้อเนื้อวัว / เนื้อสไลซ์',
+    'ซื้อกุ้งสด / ปลาหมึกสด / อาหารทะเล',
+    'ซื้อใบกะเพรา / พริกขี้หนู / กระเทียมสด',
+    'ซื้อผักสดตลาดเช้า',
+    'ซื้อเครื่องปรุงรส / ซอสปรุงรส / น้ำมันพืช',
+    'ซื้อข้าวสารหอมมะลิ / ไข่ไก่สด',
+    'ซื้อบรรจุภัณฑ์ (กล่องอาหาร / ช้อนส้อม / ถุงหิ้ว)',
+    'ซื้อน้ำแข็งหลอด / เครื่องดื่มสต็อก',
+    'ซื้อวัตถุดิบจากแม็คโคร / โลตัส'
+  ],
+  rent: [
+    'ค่าเช่าพื้นที่ร้าน / ล็อคประจำ',
+    'ค่าเช่าล็อคตลาดนัด / รายวัน',
+    'ค่าเช่าพื้นที่ออกบูธ / อีเวนต์ชั่วคราว',
+    'ค่าส่วนกลาง / ค่าบำรุงตลาด / ค่ารปภ.',
+    'ค่าเช่าที่จอดรถหน้าร้าน'
+  ],
+  salary: [
+    'ค่าจ้างรายวันพนักงาน',
+    'เงินเดือนพนักงานประจำ',
+    'ค่าแรงพนักงานพาร์ทไทม์ (Part-time)',
+    'ค่าล่วงเวลา (OT) / เบี้ยขยัน',
+    'ค่าแรงเชฟ / พ่อครัว / ผู้ช่วยในครัว',
+    'เบี้ยเลี้ยง / ค่าเดินทางพนักงาน'
+  ],
+  utilities: [
+    'ค่าไฟฟ้า (กฟน. / กฟภ.)',
+    'ค่าน้ำประปา',
+    'ค่าแก๊สหุงต้ม (ถังแก๊ส LPG)',
+    'ค่าอินเทอร์เน็ต / ค่าโทรศัพท์ร้าน',
+    'ค่าเติมเงินเน็ตเครื่อง POS'
+  ],
+  marketing: [
+    'ค่าโฆษณา Facebook Ads / TikTok Ads',
+    'ค่าป้ายร้าน / ป้ายไวนิล / เมนูตั้งโต๊ะ',
+    'ค่าพิมพ์สติ๊กเกอร์ / นามบัตร / โบรชัวร์',
+    'ค่าจ้างรีวิวอาหาร / อินฟลูเอนเซอร์ / ถ่ายภาพ',
+    'ค่าโปรโมชั่น / คูปองส่วนลดแคมเปญ'
+  ],
+  other: [
+    'ค่าอุปกรณ์ทำความสะอาด / น้ำยาล้างจาน / ถุงขยะ',
+    'ค่าเก็บขยะ / ค่าธรรมเนียมเทศบาล',
+    'ค่าซ่อมแซมและบำรุงรักษาอุปกรณ์เครื่องครัว',
+    'ค่ากระดาษใบเสร็จ POS / อุปกรณ์สำนักงาน',
+    'ค่าธรรมเนียมธนาคาร / รูดบัตร / QR Code',
+    'ค่าขนส่ง / ค่าเดินทางซื้อของ',
+    'ค่าใช้จ่ายเบ็ดเตล็ดทั่วไป'
+  ]
+};
+
 const REVENUE_COLORS: Record<string, string> = {
   'ยอดขายหน้าร้าน POS': '#10b981', // Emerald
   'แอปเดลิเวอรี (GP)': '#06b6d4', // Cyan
@@ -152,6 +207,7 @@ export const AccountingView: React.FC = () => {
 
   // Expense Form State
   const [expTitle, setExpTitle] = useState('');
+  const [expTitleSelect, setExpTitleSelect] = useState('');
   const [expAmount, setExpAmount] = useState<number>(0);
   const [expCategory, setExpCategory] = useState<ExpenseCategory>('raw_material');
   const [expIncludeVat, setExpIncludeVat] = useState(true);
@@ -159,6 +215,37 @@ export const AccountingView: React.FC = () => {
   const [expNote, setExpNote] = useState('');
   const [expAutoUpdateStock, setExpAutoUpdateStock] = useState(false);
   const [expStockEntries, setExpStockEntries] = useState<Array<{ id: string; ingredientId: string; quantity: number }>>([]);
+
+  const openAddExpenseModal = () => {
+    const defaultCat: ExpenseCategory = 'raw_material';
+    const defaultPreset = EXPENSE_TITLE_PRESETS[defaultCat]?.[0] || '';
+    setExpCategory(defaultCat);
+    setExpTitleSelect(defaultPreset);
+    setExpTitle(defaultPreset);
+    setExpAmount(0);
+    setExpRefNumber('');
+    setExpNote('');
+    setExpAutoUpdateStock(false);
+    setExpStockEntries([]);
+    setIsAddExpenseOpen(true);
+  };
+
+  const handleExpCategoryChange = (newCat: ExpenseCategory) => {
+    setExpCategory(newCat);
+    const presets = EXPENSE_TITLE_PRESETS[newCat] || [];
+    const defaultPreset = presets[0] || '';
+    setExpTitleSelect(defaultPreset);
+    setExpTitle(defaultPreset);
+  };
+
+  const handleExpTitleSelectChange = (val: string) => {
+    setExpTitleSelect(val);
+    if (val === '__custom__') {
+      setExpTitle('');
+    } else {
+      setExpTitle(val);
+    }
+  };
 
   const handleAddExpStockEntry = () => {
     if (ingredients.length === 0) return;
@@ -1301,7 +1388,7 @@ export const AccountingView: React.FC = () => {
 
           {/* Add Expense */}
           <button
-            onClick={() => setIsAddExpenseOpen(true)}
+            onClick={openAddExpenseModal}
             className="px-2.5 sm:px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl shadow transition flex items-center space-x-1 shrink-0 active:scale-95 whitespace-nowrap"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -1356,7 +1443,7 @@ export const AccountingView: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setIsAddExpenseOpen(true)}
+            onClick={openAddExpenseModal}
             className="flex items-center justify-center space-x-1 py-2.5 px-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition active:scale-95 shadow-lg"
           >
             <Plus className="w-4 h-4 shrink-0" />
@@ -3586,11 +3673,11 @@ export const AccountingView: React.FC = () => {
 
             <form onSubmit={handleCreateExpense} className="space-y-3 text-xs">
               <div>
-                <label className="block text-slate-400 mb-1">หมวดหมู่ค่าใช้จ่าย *</label>
+                <label className="block text-slate-400 mb-1 font-medium">หมวดหมู่ค่าใช้จ่าย *</label>
                 <select
                   value={expCategory}
-                  onChange={e => setExpCategory(e.target.value as ExpenseCategory)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm"
+                  onChange={e => handleExpCategoryChange(e.target.value as ExpenseCategory)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm focus:outline-none focus:border-rose-500"
                 >
                   <option value="raw_material">ซื้อวัตถุดิบ (Raw Material)</option>
                   <option value="rent">ค่าเช่าสถานที่ (Rent)</option>
@@ -3602,15 +3689,47 @@ export const AccountingView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1">รายการ/หัวข้อค่าใช้จ่าย *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="เช่น ซื้อวัตถุดิบ CP, ค่าไฟฟ้านครหลวง..."
-                  value={expTitle}
-                  onChange={e => setExpTitle(e.target.value)}
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-slate-400 font-medium">รายการ/หัวข้อค่าใช้จ่าย *</label>
+                  {expTitleSelect !== '__custom__' && (
+                    <button
+                      type="button"
+                      onClick={() => handleExpTitleSelectChange('__custom__')}
+                      className="text-[10px] text-rose-400 hover:text-rose-300 font-medium underline"
+                    >
+                      พิมพ์ระบุเอง
+                    </button>
+                  )}
+                </div>
+                <select
+                  value={expTitleSelect || (EXPENSE_TITLE_PRESETS[expCategory]?.includes(expTitle) ? expTitle : (expTitle ? '__custom__' : EXPENSE_TITLE_PRESETS[expCategory]?.[0] || ''))}
+                  onChange={e => handleExpTitleSelectChange(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm focus:outline-none focus:border-rose-500"
-                />
+                >
+                  {EXPENSE_TITLE_PRESETS[expCategory]?.map((presetTitle, idx) => (
+                    <option key={idx} value={presetTitle}>
+                      {presetTitle}
+                    </option>
+                  ))}
+                  <option value="__custom__">✏️ พิมพ์ระบุเอง (กำหนดเอง)...</option>
+                </select>
+
+                {(expTitleSelect === '__custom__' || (!EXPENSE_TITLE_PRESETS[expCategory]?.includes(expTitle) && expTitleSelect !== '')) && (
+                  <div className="mt-2 space-y-1">
+                    <input
+                      type="text"
+                      required
+                      autoFocus
+                      placeholder="พิมพ์รายการ/หัวข้อค่าใช้จ่าย เช่น ซื้อวัตถุดิบ CP, ค่าไฟฟ้านครหลวง..."
+                      value={expTitle}
+                      onChange={e => setExpTitle(e.target.value)}
+                      className="w-full bg-slate-950 border border-rose-500/60 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:border-rose-500 placeholder-slate-500"
+                    />
+                    <p className="text-[10px] text-slate-400">
+                      * สามารถพิมพ์ระบุชื่อร้าน/รายการเฉพาะเจาะจงได้ตามต้องการ
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
