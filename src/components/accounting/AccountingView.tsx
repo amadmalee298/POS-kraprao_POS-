@@ -349,24 +349,25 @@ export const AccountingView: React.FC = () => {
   const [balanceData, setBalanceData] = useState(() => {
     try {
       const saved = localStorage.getItem('POS_BALANCE_DATA');
-      return saved ? JSON.parse(saved) : {
-        cashOnHand: 147947,
-        accountsReceivable: 22700,
-        inventoryAsset: 29809,
-        equipmentAssets: 85000,
-        accountsPayable: 8700,
-        shareCapital: 150000,
-        retainedEarnings: 126756,
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Clear mock data if it matches old sample
+        if (parsed.cashOnHand === 147947 || parsed.shareCapital === 150000) {
+          return {
+            shareCapital: 0,
+            equipmentAssets: 0,
+          };
+        }
+        return parsed;
+      }
+      return {
+        shareCapital: 0,
+        equipmentAssets: 0,
       };
     } catch {
       return {
-        cashOnHand: 147947,
-        accountsReceivable: 22700,
-        inventoryAsset: 29809,
-        equipmentAssets: 85000,
-        accountsPayable: 8700,
-        shareCapital: 150000,
-        retainedEarnings: 126756,
+        shareCapital: 0,
+        equipmentAssets: 0,
       };
     }
   });
@@ -386,58 +387,15 @@ export const AccountingView: React.FC = () => {
   const [arList, setArList] = useState<AccountsReceivableItem[]>(() => {
     try {
       const saved = localStorage.getItem('POS_AR_LIST');
-      return saved ? JSON.parse(saved) : [
-        {
-          id: 'ar-001',
-          branchId: 'branch-main',
-          customerName: 'บริษัท กรุงเทพโซลูชันส์ จำกัด (สัญญาอาหารกลางวัน)',
-          taxIdOrPhone: '0105562098412',
-          invoiceNumber: 'INV-2026-001',
-          issueDate: '2026-07-10',
-          dueDate: '2026-07-25',
-          originalAmount: 12000,
-          paidAmount: 0,
-          remainingAmount: 12000,
-          status: 'overdue',
-          description: 'สัญญาจัดส่งชุดกะเพราถาดอาหารกลางวันพนักงาน 100 ชุด',
-          note: 'วางบิลเรียบร้อย อยู่ระหว่างรออนุมัติรอบจ่ายเช็ค',
-          payments: []
-        },
-        {
-          id: 'ar-002',
-          branchId: 'branch-main',
-          customerName: 'GrabFood Thailand (ยอดขายรอโอนเคลียร์)',
-          taxIdOrPhone: '0105558012399',
-          invoiceNumber: 'GRAB-2026-W29',
-          issueDate: '2026-07-20',
-          dueDate: '2026-07-27',
-          originalAmount: 8200,
-          paidAmount: 0,
-          remainingAmount: 8200,
-          status: 'unpaid',
-          description: 'ยอดขายเดลิเวอรีสัปดาห์ที่ 3 รอเคลียร์รอบโอนประจำสัปดาห์',
-          note: 'กำหนดโอนเข้าบัญชีหลักร้านวันจันทร์ที่ 27 ก.ค.',
-          payments: []
-        },
-        {
-          id: 'ar-003',
-          branchId: 'branch-main',
-          customerName: 'คุณภัทร & คุณพิมพ์ (งานจัดเลี้ยงกะเพรา VIP)',
-          taxIdOrPhone: '081-987-6543',
-          invoiceNumber: 'CAT-2026-004',
-          issueDate: '2026-07-15',
-          dueDate: '2026-07-30',
-          originalAmount: 15000,
-          paidAmount: 12500,
-          remainingAmount: 2500,
-          status: 'partial',
-          description: 'บริการจัดเลี้ยงข้าวกล่องกะเพราพรีเมียม 150 กล่อง',
-          note: 'รับชำระเงินมัดจำแล้ว 12,500 THB ยอดคงเหลือจ่ายวันงาน',
-          payments: [
-            { id: 'p-001', date: '2026-07-15', amount: 12500, paymentMethod: 'promptpay', note: 'มัดจำล่วงหน้า 80%' }
-          ]
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Clean out legacy mock fixtures if any
+        if (Array.isArray(parsed) && parsed.some((p: any) => p.id === 'ar-001' && p.customerName.includes('กรุงเทพโซลูชันส์'))) {
+          return [];
         }
-      ];
+        return parsed;
+      }
+      return [];
     } catch {
       return [];
     }
@@ -455,42 +413,15 @@ export const AccountingView: React.FC = () => {
   const [apList, setApList] = useState<AccountsPayableItem[]>(() => {
     try {
       const saved = localStorage.getItem('POS_AP_LIST');
-      return saved ? JSON.parse(saved) : [
-        {
-          id: 'ap-001',
-          branchId: 'branch-main',
-          supplierName: 'บริษัท ซีพี เอฟเอส จำกัด (มหาชน)',
-          taxIdOrPhone: '0105531002341',
-          billNumber: 'BILL-CP-9921',
-          issueDate: '2026-07-18',
-          dueDate: '2026-07-28',
-          originalAmount: 5200,
-          paidAmount: 0,
-          remainingAmount: 5200,
-          status: 'unpaid',
-          category: 'เนื้อสัตว์สด',
-          description: 'หมูบดอนามัย CP และสันนอกสไลส์ 50 กิโลกรัม',
-          note: 'เครดิตเทอม 10 วัน',
-          payments: []
-        },
-        {
-          id: 'ap-002',
-          branchId: 'branch-main',
-          supplierName: 'ร้านเจ้เพ็ญพริกสด ตลาดไทย',
-          taxIdOrPhone: '089-123-4567',
-          billNumber: 'BILL-JP-0412',
-          issueDate: '2026-07-21',
-          dueDate: '2026-07-24',
-          originalAmount: 3500,
-          paidAmount: 0,
-          remainingAmount: 3500,
-          status: 'overdue',
-          category: 'ผักสวนสด',
-          description: 'พริกขี้หนูสวนสด 25 กก. และกระเทียมไทยแกะกลีบ',
-          note: 'เครดิตเทอม 3 วัน',
-          payments: []
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Clean out legacy mock fixtures if any
+        if (Array.isArray(parsed) && parsed.some((p: any) => p.id === 'ap-001' && p.supplierName.includes('ซีพี เอฟเอส'))) {
+          return [];
         }
-      ];
+        return parsed;
+      }
+      return [];
     } catch {
       return [];
     }
@@ -508,30 +439,15 @@ export const AccountingView: React.FC = () => {
   const [cashFlowEntries, setCashFlowEntries] = useState<CashFlowEntry[]>(() => {
     try {
       const saved = localStorage.getItem('POS_CASH_FLOW_ENTRIES');
-      return saved ? JSON.parse(saved) : [
-        {
-          id: 'cf-001',
-          branchId: 'branch-main',
-          date: '2026-07-05',
-          activityType: 'investing',
-          flowType: 'outflow',
-          title: 'ซื้อตู้แช่ทรงยืนสแตนเลส 4 ประตู',
-          amount: 32000,
-          category: 'อุปกรณ์เครื่องครัว',
-          note: 'เพิ่มความจุสต็อกเนื้อสัตว์และซอสปรุงสำเร็จ'
-        },
-        {
-          id: 'cf-002',
-          branchId: 'branch-main',
-          date: '2026-07-01',
-          activityType: 'financing',
-          flowType: 'inflow',
-          title: 'เงินสมทบเพิ่มทุนจากผู้ถือหุ้น',
-          amount: 50000,
-          category: 'เงินเพิ่มทุน',
-          note: 'ขยายกำลังผลิตครัวกลางและพัฒนาระบบ POS'
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Clean out legacy mock fixtures if any
+        if (Array.isArray(parsed) && parsed.some((p: any) => p.id === 'cf-001' && p.title.includes('ซื้อตู้แช่ทรงยืน'))) {
+          return [];
         }
-      ];
+        return parsed;
+      }
+      return [];
     } catch {
       return [];
     }
@@ -607,13 +523,52 @@ export const AccountingView: React.FC = () => {
     return apList.reduce((sum, item) => sum + item.remainingAmount, 0);
   }, [apList]);
 
+  // Dynamic Real-data Balance Sheet Computations
+  const liveInventoryAsset = useMemo(() => {
+    return ingredients.reduce((sum, ing) => sum + ((ing.currentStock || 0) * (ing.unitCost || 0)), 0);
+  }, [ingredients]);
+
+  const liveAccountsReceivable = totalUnpaidAR;
+  const liveAccountsPayable = totalUnpaidAP;
+
+  const liveRetainedEarnings = useMemo(() => {
+    const branchOrders = orders.filter(o => o.branchId === currentBranch.id && o.status === 'served');
+    const totalRev = branchOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+    const totalCogs = branchOrders.reduce((sum, o) => {
+      return sum + o.items.reduce((iSum, it) => iSum + (it.menuItem.costPrice || (it.menuItem.price * 0.4)) * it.quantity, 0);
+    }, 0);
+    const totalExp = expenses.filter(e => e.branchId === currentBranch.id).reduce((sum, e) => sum + (e.amount || 0), 0);
+    return totalRev - totalCogs - totalExp;
+  }, [orders, expenses, currentBranch.id]);
+
+  const liveCashOnHand = useMemo(() => {
+    const branchOrders = orders.filter(o => o.branchId === currentBranch.id && o.status === 'served');
+    const orderCash = branchOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+    const expenseCash = expenses.filter(e => e.branchId === currentBranch.id).reduce((sum, e) => sum + (e.amount || 0), 0);
+    const arCollected = arList.filter(a => !a.branchId || a.branchId === currentBranch.id).reduce((sum, item) => sum + (item.paidAmount || 0), 0);
+    const apDisbursed = apList.filter(a => !a.branchId || a.branchId === currentBranch.id).reduce((sum, item) => sum + (item.paidAmount || 0), 0);
+    const cfNet = cashFlowEntries.filter(c => !c.branchId || c.branchId === currentBranch.id).reduce((sum, e) => sum + (e.flowType === 'inflow' ? e.amount : -e.amount), 0);
+    const shareCap = balanceData.shareCapital || 0;
+    const equip = balanceData.equipmentAssets || 0;
+    const net = orderCash - expenseCash + arCollected - apDisbursed + cfNet + shareCap - equip;
+    return Math.max(0, net);
+  }, [orders, expenses, arList, apList, cashFlowEntries, currentBranch.id, balanceData.shareCapital, balanceData.equipmentAssets]);
+
+  const activeCashOnHand = balanceData.overrideCashOnHand !== undefined ? balanceData.overrideCashOnHand : liveCashOnHand;
+  const activeInventoryAsset = balanceData.overrideInventoryAsset !== undefined ? balanceData.overrideInventoryAsset : liveInventoryAsset;
+  const activeAccountsReceivable = balanceData.overrideAccountsReceivable !== undefined ? balanceData.overrideAccountsReceivable : liveAccountsReceivable;
+  const activeAccountsPayable = balanceData.overrideAccountsPayable !== undefined ? balanceData.overrideAccountsPayable : liveAccountsPayable;
+  const activeRetainedEarnings = balanceData.overrideRetainedEarnings !== undefined ? balanceData.overrideRetainedEarnings : liveRetainedEarnings;
+  const activeEquipmentAssets = balanceData.equipmentAssets || 0;
+  const activeShareCapital = balanceData.shareCapital || 0;
+
   const totalAssets = useMemo(() => {
-    return balanceData.cashOnHand + balanceData.accountsReceivable + balanceData.inventoryAsset + balanceData.equipmentAssets;
-  }, [balanceData]);
+    return activeCashOnHand + activeAccountsReceivable + activeInventoryAsset + activeEquipmentAssets;
+  }, [activeCashOnHand, activeAccountsReceivable, activeInventoryAsset, activeEquipmentAssets]);
 
   const totalLiabilitiesAndEquity = useMemo(() => {
-    return balanceData.accountsPayable + balanceData.shareCapital + balanceData.retainedEarnings;
-  }, [balanceData]);
+    return activeAccountsPayable + activeShareCapital + activeRetainedEarnings;
+  }, [activeAccountsPayable, activeShareCapital, activeRetainedEarnings]);
 
   // 1. Generate List of Months according to Time Horizon
   const monthsList = useMemo(() => {
@@ -1998,7 +1953,7 @@ export const AccountingView: React.FC = () => {
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
                       <span className="text-amber-400">รายได้ค่าเช่าพื้นที่/ป้ายโฆษณา</span>
-                      <span className="font-mono text-amber-400">+4,500 ฿</span>
+                      <span className="font-mono text-amber-400">+{rangeTotals.otherIncome.toLocaleString()} ฿</span>
                     </div>
                   </div>
                 </div>
@@ -2140,7 +2095,7 @@ export const AccountingView: React.FC = () => {
                         : 'สมการบัญชีไม่สมดุล (กรุณาตรวจสอบการปรับปรุงรายการ)'}
                     </div>
                     <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                      สินทรัพย์รวม (฿{totalAssets.toLocaleString()}) = หหนี้สินรวม (฿{balanceData.accountsPayable.toLocaleString()}) + ทุนรวม (฿{(balanceData.shareCapital + balanceData.retainedEarnings).toLocaleString()})
+                      สินทรัพย์รวม (฿{totalAssets.toLocaleString()}) = หนี้สินรวม (฿{activeAccountsPayable.toLocaleString()}) + ทุนรวม (฿{(activeShareCapital + activeRetainedEarnings).toLocaleString()})
                     </div>
                   </div>
                 </div>
@@ -2167,7 +2122,7 @@ export const AccountingView: React.FC = () => {
                         <div className="text-[10px] text-slate-400 mt-0.5">เงินสดพร้อมใช้ในตู้เซฟและบัญชีธนาคารหลัก</div>
                       </div>
                       <div className="font-mono font-extrabold text-sm text-slate-100">
-                        {balanceData.cashOnHand.toLocaleString()}฿
+                        {activeCashOnHand.toLocaleString()}฿
                       </div>
                     </div>
 
@@ -2177,7 +2132,7 @@ export const AccountingView: React.FC = () => {
                         <div className="text-[10px] text-slate-400 mt-0.5">ยอดรอโอนจากแพลตฟอร์มเดลิเวอรี (Grab / Lineman / Shopee)</div>
                       </div>
                       <div className="font-mono font-extrabold text-sm text-emerald-400">
-                        +{balanceData.accountsReceivable.toLocaleString()}฿
+                        +{activeAccountsReceivable.toLocaleString()}฿
                       </div>
                     </div>
 
@@ -2187,7 +2142,7 @@ export const AccountingView: React.FC = () => {
                         <div className="text-[10px] text-slate-400 mt-0.5">มูลค่าสต็อกวัตถุดิบและบรรจุภัณฑ์คงคลัง ณ ปัจจุบัน</div>
                       </div>
                       <div className="font-mono font-extrabold text-sm text-slate-100">
-                        {balanceData.inventoryAsset.toLocaleString()}฿
+                        {activeInventoryAsset.toLocaleString()}฿
                       </div>
                     </div>
 
@@ -2197,7 +2152,7 @@ export const AccountingView: React.FC = () => {
                         <div className="text-[10px] text-slate-400 mt-0.5">เครื่องครัว ตู้เย็น เตาอบ อุปกรณ์ POS และสินทรัพย์ถาวร</div>
                       </div>
                       <div className="font-mono font-extrabold text-sm text-slate-100">
-                        {balanceData.equipmentAssets.toLocaleString()}฿
+                        {activeEquipmentAssets.toLocaleString()}฿
                       </div>
                     </div>
                   </div>
@@ -2227,7 +2182,7 @@ export const AccountingView: React.FC = () => {
                         <div className="text-[10px] text-slate-400 mt-0.5">ยอดค้างชำระค่าวัตถุดิบคู่ค้า รอเคลียร์รอบบิล</div>
                       </div>
                       <div className="font-mono font-extrabold text-sm text-rose-400">
-                        +{balanceData.accountsPayable.toLocaleString()}฿
+                        +{activeAccountsPayable.toLocaleString()}฿
                       </div>
                     </div>
 
@@ -2237,7 +2192,7 @@ export const AccountingView: React.FC = () => {
                         <div className="text-[10px] text-slate-400 mt-0.5">เงินทุนจดทะเบียนเริ่มต้นประกอบกิจการ</div>
                       </div>
                       <div className="font-mono font-extrabold text-sm text-slate-100">
-                        {balanceData.shareCapital.toLocaleString()}฿
+                        {activeShareCapital.toLocaleString()}฿
                       </div>
                     </div>
 
@@ -2247,7 +2202,7 @@ export const AccountingView: React.FC = () => {
                         <div className="text-[10px] text-slate-400 mt-0.5">กำไรสุทธิสะสมยกมาจากการดำเนินงานในอดีต</div>
                       </div>
                       <div className="font-mono font-extrabold text-sm text-slate-100">
-                        {balanceData.retainedEarnings.toLocaleString()}฿
+                        {activeRetainedEarnings.toLocaleString()}฿
                       </div>
                     </div>
                   </div>
@@ -2267,7 +2222,7 @@ export const AccountingView: React.FC = () => {
                 <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-1">
                   <span className="text-slate-400 text-[11px] block">อัตราส่วนสภาพคล่อง (Current Ratio)</span>
                   <span className="font-mono font-extrabold text-sky-400 text-base block">
-                    {((balanceData.cashOnHand + balanceData.accountsReceivable + balanceData.inventoryAsset) / (balanceData.accountsPayable || 1)).toFixed(2)}x
+                    {((activeCashOnHand + activeAccountsReceivable + activeInventoryAsset) / (activeAccountsPayable || 1)).toFixed(2)}x
                   </span>
                   <span className="text-[10px] text-slate-500 block">เกณฑ์มาตรฐานร้านอาหาร: &gt; 1.5x (สภาพคล่องแข็งแกร่ง)</span>
                 </div>
@@ -2275,7 +2230,7 @@ export const AccountingView: React.FC = () => {
                 <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-1">
                   <span className="text-slate-400 text-[11px] block">อัตราส่วนหนี้สินต่อทุน (D/E Ratio)</span>
                   <span className="font-mono font-extrabold text-emerald-400 text-base block">
-                    {(balanceData.accountsPayable / ((balanceData.shareCapital + balanceData.retainedEarnings) || 1)).toFixed(2)}x
+                    {(activeAccountsPayable / ((activeShareCapital + activeRetainedEarnings) || 1)).toFixed(2)}x
                   </span>
                   <span className="text-[10px] text-slate-500 block">ภาระหนี้สินต่ำมากเมื่อเทียบกับทุน (&lt; 0.5x)</span>
                 </div>
@@ -2283,7 +2238,7 @@ export const AccountingView: React.FC = () => {
                 <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-1">
                   <span className="text-slate-400 text-[11px] block">เงินทุนหมุนเวียนสุทธิ (Net Working Capital)</span>
                   <span className="font-mono font-extrabold text-indigo-400 text-base block">
-                    ฿{(balanceData.cashOnHand + balanceData.accountsReceivable + balanceData.inventoryAsset - balanceData.accountsPayable).toLocaleString()}
+                    ฿{(activeCashOnHand + activeAccountsReceivable + activeInventoryAsset - activeAccountsPayable).toLocaleString()}
                   </span>
                   <span className="text-[10px] text-slate-500 block">สินทรัพย์หมุนเวียนหักหนี้สินระยะสั้น</span>
                 </div>
@@ -2403,7 +2358,7 @@ export const AccountingView: React.FC = () => {
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
                   <span className="text-slate-400 text-[11px] block truncate">เงินสดปลายงวด</span>
                   <span className="font-mono font-bold text-sky-300 text-sm block">
-                    ฿{balanceData.cashOnHand.toLocaleString()}
+                    ฿{activeCashOnHand.toLocaleString()}
                   </span>
                   <span className="text-[10px] text-slate-500 block truncate">Cash Balance</span>
                 </div>
