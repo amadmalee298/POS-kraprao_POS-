@@ -365,72 +365,119 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     };
   };
 
+  // Empty draft for manual entry without hallucinated data
+  const createEmptyReceiptDraft = (name?: string): ScannedReceiptData => {
+    const cleanName = name ? name.replace(/\.[^/.]+$/, '') : '';
+    return {
+      title: cleanName ? `ค่าใช้จ่าย - ${cleanName}` : 'ค่าใช้จ่ายใหม่',
+      vendorName: '',
+      date: new Date().toISOString().split('T')[0],
+      category: 'raw_material',
+      amount: 0,
+      includeVat: false,
+      vatAmount: 0,
+      netAmount: 0,
+      refNumber: '',
+      note: '',
+      confidenceScore: 0,
+      lineItems: []
+    };
+  };
+
   // Helper to call Gemini Vision directly from browser on static hosting (GitHub Pages)
   const callDirectBrowserGemini = async (base64WithMime: string, mimeType: string, apiKey: string): Promise<ScannedReceiptData | null> => {
     try {
       const pureBase64 = base64WithMime.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
-      const prompt = `คุณคือระบบ AI OCR สแกนใบเสร็จรับเงินสำหรับร้านอาหารในประเทศไทย 
-จงอ่านข้อความจากภาพใบเสร็จนี้อย่างละเอียด และแปลงเป็น JSON ตามโครงสร้างนี้:
+      const prompt = `คุณคือระบบ AI OCR อัจฉริยะ (Vision Document AI) ผู้เชี่ยวชาญการอ่านและวิเคราะห์ภาพถ่ายใบเสร็จรับเงิน ใบกำกับภาษี สลิปชำระเงิน หรือบิลร้านค้าในประเทศไทย
+ภารกิจ: สกัดข้อมูลจริงจากภาพใบเสร็จนี้อย่างแม่นยำ 100% ตามข้อความและตัวเลขที่ปรากฏจริงในภาพเท่านั้น (ห้ามเดาหรือสุ่มข้อมูลขึ้นมาเองเด็ดขาด)
+
+โครงสร้าง JSON ที่ต้องการ:
 {
-  "title": "สรุปสั้นๆ เช่น ซื้อวัตถุดิบ CP, ค่าไฟฟ้า MEA, สยามแม็คโคร",
-  "vendorName": "ชื่อร้านค้า/ซัพพลายเออร์ เช่น สยามแม็คโคร (Siam Makro), บิ๊กซี, ตลาดสด",
-  "date": "YYYY-MM-DD",
+  "title": "สรุปชื่อบิลสั้นๆ เช่น ซื้อของ Makro, บิล 7-Eleven, ซื้อหมูสดตลาดไท, บิลค่าน้ำประปา, ค่าเช่าร้าน",
+  "vendorName": "ชื่อร้านค้า/ผู้ขาย/ซัพพลายเออร์/บริษัท/หัวบิล ที่ปรากฏในภาพจริง เช่น โลตัส, ซีพี ออลล์ (7-Eleven), สยามแม็คโคร, การไฟฟ้า, ตลาดสด หรือชื่อร้านค้าตามที่พิมพ์",
+  "date": "YYYY-MM-DD (แปลงปี พ.ศ. เป็น ค.ศ. เช่น 2567 -> 2024, 2568 -> 2025)",
   "category": "raw_material",
-  "amount": 1850.00,
+  "amount": 0.00,
   "includeVat": true,
-  "vatAmount": 121.03,
-  "netAmount": 1728.97,
-  "refNumber": "MAKRO-123456",
-  "note": "รายการสินค้าคร่าวๆ",
-  "confidenceScore": 96,
+  "vatAmount": 0.00,
+  "netAmount": 0.00,
+  "refNumber": "เลขที่ใบเสร็จ/เลขที่ใบกำกับภาษี/TAX ID/POS No./INV No. ตามที่ปรากฏจริง",
+  "note": "สรุปสินค้าหรือบริการที่ซื้อจริงจากภาพ",
+  "confidenceScore": 95,
   "lineItems": [
-    { "name": "ชื่อสินค้า", "amount": 1450.00 }
+    { "name": "ชื่อสินค้าแถวที่ 1 พร้อมจำนวน", "amount": 0.00 }
   ]
 }
-หมวดหมู่ category ต้องเป็นหนึ่งใน: 'raw_material', 'utilities', 'salary', 'rent', 'equipment', 'other'
-ให้ตอบเฉพาะ JSON เท่านั้น ไม่มี markdown syntax`;
+หมวดหมู่ category ต้องเป็นหนึ่งใน: 'raw_material', 'utilities', 'salary', 'rent', 'equipment', 'marketing', 'other'
+- วัตถุดิบ/อาหาร/เนื้อสัตว์/ผัก/เครื่องปรุง/ของสด = raw_material
+- ค่าน้ำ/ค่าไฟ/แก๊สหุงต้ม = utilities
+- อุปกรณ์/เครื่องครัว/ของใช้ในร้าน = equipment
+- ค่าแรง/เงินเดือน = salary
+- ค่าเช่า = rent
+ให้ตอบเฉพาะ JSON ที่ถูกต้องตามหลักไวยากรณ์เท่านั้น`;
 
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey.trim()}`;
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: prompt },
+      const candidateModels = ['gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'];
+      for (const modelName of candidateModels) {
+        try {
+          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey.trim()}`;
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [
                 {
-                  inline_data: {
-                    mime_type: mimeType && mimeType.startsWith('image/') ? mimeType : 'image/jpeg',
-                    data: pureBase64
-                  }
+                  parts: [
+                    { text: prompt },
+                    {
+                      inlineData: {
+                        mimeType: mimeType && mimeType.startsWith('image/') ? mimeType : 'image/jpeg',
+                        data: pureBase64
+                      }
+                    }
+                  ]
                 }
-              ]
-            }
-          ]
-        })
-      });
+              ],
+              generationConfig: {
+                responseMimeType: 'application/json'
+              }
+            })
+          });
 
-      if (res.ok) {
-        const json = await res.json();
-        const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawText) {
-          const clean = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-          const parsed = JSON.parse(clean);
-          return {
-            title: parsed.title || 'ใบเสร็จรับเงินวัตถุดิบ',
-            vendorName: parsed.vendorName || 'สยามแม็คโคร (Siam Makro)',
-            date: parsed.date || new Date().toISOString().split('T')[0],
-            category: parsed.category || 'raw_material',
-            amount: typeof parsed.amount === 'number' ? parsed.amount : (Number(parsed.amount) || 1850),
-            includeVat: Boolean(parsed.includeVat ?? true),
-            vatAmount: Number(parsed.vatAmount) || 0,
-            netAmount: Number(parsed.netAmount) || Number(parsed.amount) || 1850,
-            refNumber: parsed.refNumber || 'TAX-' + Math.floor(100000 + Math.random() * 900000),
-            note: parsed.note || '',
-            confidenceScore: Number(parsed.confidenceScore) || 96,
-            lineItems: Array.isArray(parsed.lineItems) ? parsed.lineItems : []
-          };
+          if (res.ok) {
+            const json = await res.json();
+            const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (rawText) {
+              const clean = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+              const parsed = JSON.parse(clean);
+              const validCategories = ['raw_material', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'];
+              let cat = parsed.category || 'raw_material';
+              if (!validCategories.includes(cat)) cat = 'raw_material';
+
+              const amt = typeof parsed.amount === 'number' ? parsed.amount : (parseFloat(parsed.amount) || 0);
+              const vat = typeof parsed.vatAmount === 'number' ? parsed.vatAmount : (parseFloat(parsed.vatAmount) || 0);
+              const net = typeof parsed.netAmount === 'number' ? parsed.netAmount : (amt > 0 ? (amt - vat) : 0);
+
+              return {
+                title: parsed.title || (parsed.vendorName ? `บิล ${parsed.vendorName}` : 'ค่าใช้จ่ายจากการสแกนใบเสร็จ'),
+                vendorName: parsed.vendorName || 'ร้านค้า/ผู้จำหน่าย',
+                date: parsed.date || new Date().toISOString().split('T')[0],
+                category: cat,
+                amount: amt,
+                includeVat: Boolean(parsed.includeVat),
+                vatAmount: vat,
+                netAmount: net,
+                refNumber: parsed.refNumber || '',
+                note: parsed.note || '',
+                confidenceScore: typeof parsed.confidenceScore === 'number' ? parsed.confidenceScore : 92,
+                lineItems: Array.isArray(parsed.lineItems) ? parsed.lineItems.map((li: any) => ({
+                  name: li.name || 'รายการสินค้า',
+                  amount: typeof li.amount === 'number' ? li.amount : (parseFloat(li.amount) || 0)
+                })) : []
+              };
+            }
+          }
+        } catch (modelErr) {
+          console.warn(`Browser Gemini error with model ${modelName}:`, modelErr);
         }
       }
     } catch (e) {
@@ -456,46 +503,18 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
         localStorage.getItem('gemini_api_key') ||
         (import.meta as any).env?.VITE_GEMINI_API_KEY ||
         ''
-      ) : '';
+      ).trim() : '';
 
-      if (clientApiKey && clientApiKey.length > 10) {
-        const directResult = await callDirectBrowserGemini(finalBase64, finalMime, clientApiKey);
-        if (directResult) {
-          return {
-            ...item,
-            status: 'success',
-            error: undefined,
-            result: directResult
-          };
-        }
-      }
-
-      // Check if running on static host like GitHub Pages (where /api/ does not exist or gives 405)
-      const isStaticHost = typeof window !== 'undefined' && (
-        window.location.hostname.includes('github.io') ||
-        window.location.hostname.includes('pages.dev') ||
-        window.location.protocol === 'file:'
-      );
-
-      if (isStaticHost) {
-        // Fast instant local smart parser for GitHub Pages static deployments
-        const fallback = generateFallbackData(item.name);
-        return {
-          ...item,
-          status: 'success',
-          error: undefined,
-          result: fallback
-        };
-      }
-
-      // Try calling Express backend
+      // 1. Try calling Express backend first
       try {
         const response = await fetch('/api/ai/scan-receipt', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             image: finalBase64,
-            mimeType: finalMime
+            mimeType: finalMime,
+            apiKey: clientApiKey,
+            clientApiKey: clientApiKey
           })
         });
 
@@ -509,27 +528,54 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
               result: data.receiptData
             };
           }
+        } else {
+          const errData = await response.json().catch(() => null);
+          console.warn('Backend OCR response:', errData);
         }
       } catch (backendFetchErr) {
-        console.warn('Backend fetch failed, using smart local parser:', backendFetchErr);
+        console.warn('Backend fetch failed, attempting browser direct OCR:', backendFetchErr);
       }
 
-      // Seamlessly fallback to smart local parser without showing 405 error
-      const fallback = generateFallbackData(item.name);
+      // 2. If client has API key, call Gemini Vision directly from browser
+      if (clientApiKey && clientApiKey.length > 10) {
+        const directResult = await callDirectBrowserGemini(finalBase64, finalMime, clientApiKey);
+        if (directResult) {
+          return {
+            ...item,
+            status: 'success',
+            error: undefined,
+            result: directResult
+          };
+        }
+      }
+
+      // 3. If item is a demo preset
+      if (item.id.startsWith('demo-') || item.name.includes('บิ๊กซี') || item.name.includes('ตลาดสด') || item.name.includes('บิลไฟฟ้า')) {
+        const fallback = generateFallbackData(item.name);
+        return {
+          ...item,
+          status: 'success',
+          error: undefined,
+          result: fallback
+        };
+      }
+
+      // 4. For uploaded receipt photos without AI connection or on error:
       return {
         ...item,
-        status: 'success',
-        error: undefined,
-        result: fallback
+        status: 'error',
+        error: clientApiKey
+          ? 'AI ไม่สามารถอ่านข้อมูลจากภาพนี้ได้ชัดเจน หรือเกินโควตา กรุณากด "ลองใหม่" หรือ "กรอกข้อมูลเอง"'
+          : 'กรุณาระบุ Gemini API Key ในปุ่ม "ตั้งค่า Gemini API Key" ด้านบน เพื่อให้ AI อ่านภาพบิลจริง',
+        result: undefined
       };
     } catch (err: any) {
-      console.warn('AI Receipt scan fallback activated:', err);
-      const fallback = generateFallbackData(item.name);
+      console.warn('AI Receipt scan error:', err);
       return {
         ...item,
-        status: 'success',
-        error: undefined,
-        result: fallback
+        status: 'error',
+        error: err?.message || 'เกิดข้อผิดพลาดในการประมวลผลรูปภาพ',
+        result: undefined
       };
     }
   };
@@ -543,7 +589,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     setQueue(prev => prev.map(q => q.id === itemId ? updated : q));
   };
 
-  // Manually accept/use fallback data so user can proceed
+  // Manually accept/use empty draft so user can proceed
   const handleUseFallbackItem = (itemId: string) => {
     setQueue(prev => prev.map(q => {
       if (q.id === itemId) {
@@ -551,7 +597,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
           ...q,
           status: 'success',
           error: undefined,
-          result: q.result || generateFallbackData(q.name)
+          result: q.result || createEmptyReceiptDraft(q.name)
         };
       }
       return q;
@@ -921,21 +967,38 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
 
         {/* API KEY SETTINGS DRAWER (For GitHub Pages or Direct Browser Vision OCR) */}
         {showApiKeySettings && (
-          <div className="p-3.5 bg-slate-950/90 border-b border-sky-900/40 px-5 space-y-2.5 animate-in slide-in-from-top-2 duration-150">
-            <div className="flex items-start justify-between">
+          <div className="p-4 bg-slate-950/95 border-b border-sky-900/40 px-5 space-y-3 animate-in slide-in-from-top-2 duration-150">
+            <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="flex items-center space-x-2 text-xs font-bold text-sky-300">
-                <ShieldCheck className="w-4 h-4 text-sky-400" />
-                <span>Google Gemini API Key (สำหรับใช้งานบน GitHub Pages / Static Hosting)</span>
+                <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0" />
+                <span>Google Gemini API Key (สำหรับใช้งาน Vision OCR บน GitHub Pages)</span>
               </div>
-              <span className="text-[10px] text-slate-400">เก็บไว้ใน Browser เครื่องของคุณอย่างปลอดภัย</span>
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-amber-300 hover:text-amber-200 underline font-bold flex items-center space-x-1"
+              >
+                <span>🔑 รับ Gemini API Key ฟรีจาก Google AI Studio ↗</span>
+              </a>
             </div>
+
+            <div className="p-2.5 bg-sky-950/40 border border-sky-800/40 rounded-xl text-[11px] text-slate-300 space-y-1">
+              <p className="font-semibold text-sky-200">
+                💡 <span className="underline">ทดลองใช้งานได้ทันทีโดยไม่ต้องใส่ Key:</span> คุณสามารถแตะเลือกรูปภาพใบเสร็จ หรือกดปุ่ม <strong>Demo Presets (บิ๊กซี / ตลาดสด / บิลไฟฟ้า)</strong> ด้านล่างเพื่อทดสอบระบบสแกนและบันทึกบัญชีได้ทันที!
+              </p>
+              <p className="text-slate-400 text-[10px]">
+                หากต้องการสแกนใบเสร็จจริงด้วยโมเดล Gemini 3.7 Flash สามารถวาง API Key ด้านล่างนี้ (ระบบจะบันทึกใน Browser เครื่องของคุณเท่านั้น ปลอดภัย 100%)
+              </p>
+            </div>
+
             <div className="flex flex-col sm:flex-row items-center gap-2">
               <input
                 type="password"
                 placeholder="วาง Gemini API Key ของคุณที่นี่ (AIzaSy...)"
                 value={apiKeyInput}
                 onChange={(e) => setApiKeyInput(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500"
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500"
               />
               <div className="flex items-center space-x-2 shrink-0 w-full sm:w-auto">
                 <button
@@ -945,7 +1008,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                     setKeySaveSuccess(true);
                     setTimeout(() => setKeySaveSuccess(false), 2500);
                   }}
-                  className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1 w-full sm:w-auto"
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1 w-full sm:w-auto shadow-md"
                 >
                   <Check className="w-3.5 h-3.5" />
                   <span>บันทึก Key</span>
@@ -957,7 +1020,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                       setApiKeyInput('');
                       localStorage.removeItem('user_gemini_api_key');
                     }}
-                    className="px-2.5 py-1.5 bg-rose-950/40 border border-rose-800/40 hover:bg-rose-900/60 text-rose-300 rounded-xl text-xs font-semibold transition"
+                    className="px-3 py-2 bg-rose-950/40 border border-rose-800/40 hover:bg-rose-900/60 text-rose-300 rounded-xl text-xs font-semibold transition"
                   >
                     ลบ
                   </button>

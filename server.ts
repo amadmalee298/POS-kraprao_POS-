@@ -25,8 +25,10 @@ async function startServer() {
   });
 
   // Initialize Gemini AI Client
-  const getAiClient = () => {
-    const apiKey = process.env.GEMINI_API_KEY;
+  const getAiClient = (customApiKey?: string) => {
+    const apiKey = (customApiKey && typeof customApiKey === 'string' && customApiKey.trim().length > 5)
+      ? customApiKey.trim()
+      : process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return null;
     }
@@ -224,12 +226,15 @@ ${
   // API Route: AI Expense Receipt Scanner (Gemini Multimodal Vision OCR)
   app.post('/api/ai/scan-receipt', async (req, res) => {
     try {
-      const { image, mimeType } = req.body || {};
+      const { image, mimeType, apiKey, clientApiKey } = req.body || {};
 
-      const ai = getAiClient();
+      const ai = getAiClient(apiKey || clientApiKey);
 
       if (!ai) {
-        return res.status(500).json({ error: 'ไม่พบการตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์' });
+        return res.status(400).json({
+          error: 'MISSING_API_KEY',
+          message: 'ไม่พบการตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์ หรือ API Key จากผู้ใช้งาน กรุณาระบุ Gemini API Key ในช่องตั้งค่า'
+        });
       }
 
       if (!image) {
@@ -249,22 +254,22 @@ ${
       }
 
       const promptText = `
-คุณเป็นผู้เชี่ยวชาญการอ่านเอกสารบัญชีและการสกัดข้อมูลจากภาพใบเสร็จรับเงิน/ใบกำกับภาษี/บิลค่าใช้จ่ายของร้านค้าในประเทศไทยและสากล (High-Precision Multimodal OCR)
-กรุณาตรวจจับข้อความและตัวเลขจากภาพใบเสร็จนี้อย่างละเอียดและตรงตามความเป็นจริง 100%:
+คุณเป็นผู้เชี่ยวชาญการอ่านเอกสารบัญชีและการสกัดข้อมูลจากภาพถ่ายใบเสร็จรับเงิน ใบกำกับภาษี สลิปชำระเงิน หรือบิลร้านค้าในประเทศไทย (Multimodal Vision OCR Document AI)
+โปรดอ่านข้อความและตัวเลขทั้งหมดจากภาพใบเสร็จนี้อย่างละเอียดและตรงตามความเป็นจริง 100% (ห้ามแต่งหรือสุ่มข้อมูลขึ้นมาเองเด็ดขาด):
 
-1. vendorName: ชื่อผู้จัดจำหน่าย/บริษัท/ร้านค้า ที่ปรากฏเด่นชัดที่สุดบนหัวหรือส่วนบนของใบเสร็จ (เช่น "สยามแม็คโคร (Siam Makro)", "บิ๊กซี ซูเปอร์เซ็นเตอร์", "โลตัส", "ซีพี ออลล์ (7-Eleven)", "ไทวัสดุ", "การไฟฟ้านครหลวง", "ตลาดสด", หรือชื่อร้านค้าตามที่ปรากฏ)
-2. title: หัวข้อสรุปค่าใช้จ่ายที่กระชับ เช่น "ซื้อวัตถุดิบ - สยามแม็คโคร" หรือ "ซื้อของสด - ตลาดไท" หรือ "บิลค่าไฟฟ้า MEA"
-3. date: วันที่ที่ระบุในใบเสร็จ ในรูปแบบ YYYY-MM-DD (หากระบุเป็น พ.ศ. เช่น 2567, 2568, 2569 ให้แปลงเป็น ค.ศ. 2024, 2025, 2026 เสมอ)
-4. category: เลือกหมวดหมู่ที่ตรงที่สุดจาก ['raw_material', 'rent', 'salary', 'utilities', 'marketing', 'other'] (เช่น ของสด/เนื้อสัตว์/ผัก/เครื่องปรุง ให้เลือก 'raw_material', ค่าน้ำ/ค่าไฟ ให้เลือก 'utilities')
-5. amount: ยอดเงินรวมสุทธิทั้งหมดที่ต้องชำระ (Total / Grand Total / Net Total / ยอดรวมทั้งสิ้น / ยอดชำระ) เป็นตัวเลขทศนิยม (ห้ามใส่จุลภาค)
-6. includeVat: true หากมีระบุภาษีมูลค่าเพิ่ม VAT หรือระบุว่าราคารวม VAT แล้ว
-7. vatAmount: จำนวนเงินภาษีมูลค่าเพิ่ม VAT 7% (หากระบุไว้ หรือคำนวณตามสัดส่วน)
-8. refNumber: เลขที่ใบเสร็จ / เลขที่ใบกำกับภาษี / เลขที่เอกสาร (Tax Invoice No., Receipt No., Doc No., POS No.)
-9. note: หมายเหตุสรุปรายการสินค้าเด่นๆ ที่ซื้อ หรือรายละเอียดที่น่าสนใจ
-10. confidenceScore: ประเมินความมั่นใจของข้อมูลที่อ่านได้ (0-100)
-11. lineItems: รายการสินค้าแต่ละแถวที่อ่านได้ในใบเสร็จ พร้อมชื่อสินค้า (name) และราคา (amount)
+1. vendorName: อ่านชื่อร้านค้า/ซัพพลายเออร์/บริษัท/หน่วยงาน ที่พิมพ์อยู่บนหัวบิลหรือตราประทับจริง (เช่น 7-Eleven, Makro, Lotus, Big C, การไฟฟ้านครหลวง, การประปา, หรือชื่อร้านค้าตามที่ปรากฏ)
+2. title: หัวข้อสรุปค่าใช้จ่ายสั้นๆ เช่น "ซื้อวัตถุดิบ CP - แม็คโคร" หรือ "บิลค่าน้ำประปา" หรือ "ซื้อของสด - ตลาด"
+3. date: วันที่ที่ระบุในเอกสาร แปลงเป็นรูปแบบ YYYY-MM-DD (หากระบุปีเป็น พ.ศ. เช่น 2567, 2568, 2569 ให้แปลงเป็น ค.ศ. 2024, 2025, 2026 เสมอ หากไม่ระบุให้ใช้วันที่ปัจจุบัน)
+4. category: เลือกหมวดหมู่ที่ตรงที่สุดจาก ['raw_material', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'] (อาหาร/เนื้อสัตว์/ผัก/เครื่องปรุง/ของสด = raw_material, ค่าน้ำ/ค่าไฟ/แก๊ส = utilities, อุปกรณ์เครื่องครัว/ภาชนะ = equipment, ค่าแรง = salary, ค่าเช่า = rent)
+5. amount: ยอดเงินรวมสุทธิ/ยอดรวมทั้งสิ้น/ยอดชำระจริง (Grand Total / Total / Net Paid / ยอดสุทธิ) เป็นตัวเลขทศนิยมแท้จริงจากภาพ
+6. includeVat: true หากระบุภาษีมูลค่าเพิ่ม VAT 7% หรือระบุว่าราคารวม VAT
+7. vatAmount: จำนวนเงินภาษีมูลค่าเพิ่ม VAT 7% (ถ้ามีระบุในบิล)
+8. refNumber: เลขที่ใบเสร็จ / Tax Invoice No. / Receipt No. / Doc No. / เลขที่เอกสารที่ปรากฏในภาพ
+9. note: หมายเหตุสรุปสินค้า/บริการที่ซื้อจริงจากภาพ
+10. confidenceScore: ประเมินความชัดเจนของภาพและความมั่นใจในการอ่าน (0-100)
+11. lineItems: รายการสินค้าแต่ละแถวที่อ่านได้ พร้อมชื่อสินค้า (name) และราคา (amount)
 
-**คำเตือน**: ต้องอ่านข้อมูลจริงที่ปรากฏในรูปภาพ ห้ามใช้ข้อมูลจำลองหรือสุ่มมั่ว หากจุดใดอ่านไม่ออกให้เว้นว่างหรือสรุปตามข้อความที่เห็นจริง
+ตอบเฉพาะ JSON ตาม schema ที่กำหนดเท่านั้น
 `;
 
       const { response, modelUsed } = await generateWithFallback(ai, {
@@ -311,25 +316,32 @@ ${
       });
 
       const parsedData = JSON.parse(response.text || '{}');
-      const validCategories = ['raw_material', 'rent', 'salary', 'utilities', 'marketing', 'other'];
+      const validCategories = ['raw_material', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'];
       let cat = parsedData.category || 'raw_material';
-      if (!validCategories.includes(cat)) cat = 'other';
+      if (!validCategories.includes(cat)) cat = 'raw_material';
+
+      const amt = typeof parsedData.amount === 'number' ? parsedData.amount : (parseFloat(parsedData.amount) || 0);
+      const vat = typeof parsedData.vatAmount === 'number' ? parsedData.vatAmount : (parseFloat(parsedData.vatAmount) || 0);
+      const net = amt > 0 ? (amt - vat) : 0;
 
       return res.json({
         source: modelUsed,
         receiptData: {
-          title: parsedData.title || 'ค่าใช้จ่ายจากการสแกนใบเสร็จ',
+          title: parsedData.title || (parsedData.vendorName ? `บิล ${parsedData.vendorName}` : 'ค่าใช้จ่ายจากการสแกนใบเสร็จ'),
           vendorName: parsedData.vendorName || 'ไม่ระบุชื่อร้านค้า',
           date: parsedData.date || new Date().toISOString().split('T')[0],
           category: cat,
-          amount: Number(parsedData.amount) || 0,
+          amount: amt,
           includeVat: Boolean(parsedData.includeVat),
-          vatAmount: Number(parsedData.vatAmount) || 0,
-          netAmount: (Number(parsedData.amount) || 0) - (Number(parsedData.vatAmount) || 0),
+          vatAmount: vat,
+          netAmount: net,
           refNumber: parsedData.refNumber || '',
           note: parsedData.note || '',
-          confidenceScore: Number(parsedData.confidenceScore) || 90,
-          lineItems: parsedData.lineItems || []
+          confidenceScore: typeof parsedData.confidenceScore === 'number' ? parsedData.confidenceScore : 92,
+          lineItems: Array.isArray(parsedData.lineItems) ? parsedData.lineItems.map((li: any) => ({
+            name: li.name || 'รายการสินค้า',
+            amount: typeof li.amount === 'number' ? li.amount : (parseFloat(li.amount) || 0)
+          })) : []
         }
       });
     } catch (err: any) {
