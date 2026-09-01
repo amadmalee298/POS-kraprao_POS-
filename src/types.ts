@@ -221,6 +221,8 @@ export interface Expense {
   netAmount: number;
   refNumber?: string;
   note?: string;
+  receiptImage?: string; // Base64 data URL or URL of receipt / slip / transfer proof
+  receiptImageName?: string;
 }
 
 export interface PaymentRecord {

@@ -75,6 +75,8 @@ interface AIReceiptScannerModalProps {
     refNumber: string;
     note: string;
     date: string;
+    receiptImage?: string;
+    receiptImageName?: string;
   }) => void;
 }
 
@@ -827,7 +829,9 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       netAmount: res.netAmount,
       refNumber: res.refNumber,
       note: res.note,
-      date: res.date
+      date: res.date,
+      receiptImage: item.base64,
+      receiptImageName: item.name
     });
   };
 

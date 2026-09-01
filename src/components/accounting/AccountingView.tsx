@@ -48,7 +48,12 @@ import {
   History,
   CheckCircle,
   Coins,
-  Package
+  Package,
+  Paperclip,
+  Upload,
+  Camera,
+  Download,
+  Image as ImageIcon
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -213,6 +218,18 @@ export const AccountingView: React.FC = () => {
   const [expIncludeVat, setExpIncludeVat] = useState(true);
   const [expRefNumber, setExpRefNumber] = useState('');
   const [expNote, setExpNote] = useState('');
+  const [expReceiptImage, setExpReceiptImage] = useState<string | null>(null);
+  const [expReceiptName, setExpReceiptName] = useState<string | null>(null);
+  const [isCompressingReceipt, setIsCompressingReceipt] = useState(false);
+  const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<{
+    url: string;
+    title: string;
+    date?: string;
+    amount?: number;
+    refNumber?: string;
+    category?: ExpenseCategory;
+    note?: string;
+  } | null>(null);
   const [expAutoUpdateStock, setExpAutoUpdateStock] = useState(false);
   const [expStockEntries, setExpStockEntries] = useState<Array<{ id: string; ingredientId: string; quantity: number }>>([]);
 
@@ -225,9 +242,61 @@ export const AccountingView: React.FC = () => {
     setExpAmount(0);
     setExpRefNumber('');
     setExpNote('');
+    setExpReceiptImage(null);
+    setExpReceiptName(null);
     setExpAutoUpdateStock(false);
     setExpStockEntries([]);
     setIsAddExpenseOpen(true);
+  };
+
+  const handleExpenseReceiptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsCompressingReceipt(true);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_SIZE = 1600;
+        let width = img.width;
+        let height = img.height;
+        if (width > MAX_SIZE || height > MAX_SIZE) {
+          if (width > height) {
+            height = Math.round((height * MAX_SIZE) / width);
+            width = MAX_SIZE;
+          } else {
+            width = Math.round((width * MAX_SIZE) / height);
+            height = MAX_SIZE;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', 0.88);
+          setExpReceiptImage(compressed);
+          setExpReceiptName(file.name || 'slip-receipt.jpg');
+        } else {
+          setExpReceiptImage(event.target?.result as string);
+          setExpReceiptName(file.name || 'slip-receipt.jpg');
+        }
+        setIsCompressingReceipt(false);
+      };
+      img.onerror = () => {
+        setExpReceiptImage(event.target?.result as string);
+        setExpReceiptName(file.name || 'slip-receipt.jpg');
+        setIsCompressingReceipt(false);
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = () => setIsCompressingReceipt(false);
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handleExpCategoryChange = (newCat: ExpenseCategory) => {
@@ -888,7 +957,9 @@ export const AccountingView: React.FC = () => {
       vatAmount,
       netAmount,
       refNumber: expRefNumber.trim(),
-      note: expNote.trim()
+      note: expNote.trim(),
+      receiptImage: expReceiptImage || undefined,
+      receiptImageName: expReceiptName || undefined
     });
 
     if (expAutoUpdateStock && expStockEntries.length > 0) {
@@ -919,6 +990,8 @@ export const AccountingView: React.FC = () => {
     setExpAmount(0);
     setExpRefNumber('');
     setExpNote('');
+    setExpReceiptImage(null);
+    setExpReceiptName(null);
     setExpAutoUpdateStock(false);
     setExpStockEntries([]);
   };
@@ -3112,6 +3185,49 @@ export const AccountingView: React.FC = () => {
                         </div>
                       </div>
 
+                      {/* Attached receipt thumbnail / preview button if available */}
+                      {exp.receiptImage && (
+                        <div className="flex items-center justify-between bg-slate-900/90 border border-slate-800 p-2 rounded-lg">
+                          <div
+                            onClick={() => setSelectedReceiptPreview({
+                              url: exp.receiptImage!,
+                              title: exp.title,
+                              date: exp.date,
+                              amount: exp.amount,
+                              refNumber: exp.refNumber,
+                              category: exp.category,
+                              note: exp.note
+                            })}
+                            className="flex items-center space-x-2 cursor-pointer group"
+                          >
+                            <img
+                              src={exp.receiptImage}
+                              alt="Slip"
+                              className="w-8 h-8 object-cover rounded border border-slate-700 group-hover:scale-105 transition shrink-0"
+                            />
+                            <div className="text-[11px] text-slate-300 flex items-center space-x-1 group-hover:text-rose-300">
+                              <Paperclip className="w-3 h-3 text-rose-400" />
+                              <span className="font-medium underline">ดูสลิป / หลักฐานการโอน</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedReceiptPreview({
+                              url: exp.receiptImage!,
+                              title: exp.title,
+                              date: exp.date,
+                              amount: exp.amount,
+                              refNumber: exp.refNumber,
+                              category: exp.category,
+                              note: exp.note
+                            })}
+                            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+
                       <div className="flex items-center justify-between pt-1.5 border-t border-slate-800/60 text-xs">
                         <span className="text-[10px] text-slate-500 truncate max-w-[200px]">
                           {exp.note || 'ไม่มีหมายเหตุ'}
@@ -3138,6 +3254,7 @@ export const AccountingView: React.FC = () => {
                       <th className="py-3 px-3.5">หมวดหมู่</th>
                       <th className="py-3 px-3.5">รายการ / ผู้ขาย (Title)</th>
                       <th className="py-3 px-3.5">เลขที่อ้างอิง/บิล</th>
+                      <th className="py-3 px-3.5 text-center">หลักฐาน/สลิป</th>
                       <th className="py-3 px-3.5 text-right">ราคาก่อนภาษี</th>
                       <th className="py-3 px-3.5 text-right">ภาษี VAT 7%</th>
                       <th className="py-3 px-3.5 text-right">ยอดเงินรวมสุทธิ</th>
@@ -3147,7 +3264,7 @@ export const AccountingView: React.FC = () => {
                   <tbody className="divide-y divide-slate-800/60">
                     {filteredExpenses.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="text-center py-10 text-slate-500">
+                        <td colSpan={9} className="text-center py-10 text-slate-500">
                           ไม่พบรายการค่าใช้จ่ายตรงตามเงื่อนไขที่เลือก
                         </td>
                       </tr>
@@ -3166,6 +3283,32 @@ export const AccountingView: React.FC = () => {
                           </td>
                           <td className="py-3 px-3.5 font-mono text-slate-400 whitespace-nowrap">
                             {exp.refNumber || '-'}
+                          </td>
+                          <td className="py-3 px-3.5 text-center whitespace-nowrap">
+                            {exp.receiptImage ? (
+                              <button
+                                onClick={() => setSelectedReceiptPreview({
+                                  url: exp.receiptImage!,
+                                  title: exp.title,
+                                  date: exp.date,
+                                  amount: exp.amount,
+                                  refNumber: exp.refNumber,
+                                  category: exp.category,
+                                  note: exp.note
+                                })}
+                                className="inline-flex items-center space-x-1.5 py-1 px-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-rose-500/50 rounded-lg text-[11px] text-rose-300 hover:text-rose-200 transition font-medium active:scale-95 group shadow-sm"
+                                title="คลิกเพื่อดูสลิป/หลักฐานการโอน"
+                              >
+                                <img
+                                  src={exp.receiptImage}
+                                  alt="Receipt"
+                                  className="w-5 h-5 object-cover rounded border border-slate-700 group-hover:border-rose-400 shrink-0"
+                                />
+                                <span className="text-[11px]">ดูสลิป</span>
+                              </button>
+                            ) : (
+                              <span className="text-slate-600 text-[11px]">-</span>
+                            )}
                           </td>
                           <td className="py-3 px-3.5 font-mono text-slate-300 text-right whitespace-nowrap">
                             {exp.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} ฿
@@ -3193,7 +3336,7 @@ export const AccountingView: React.FC = () => {
                   {filteredExpenses.length > 0 && (
                     <tfoot className="bg-slate-950 border-t border-slate-800 font-bold text-slate-200">
                       <tr>
-                        <td colSpan={4} className="py-3 px-3.5 text-right uppercase tracking-wider text-slate-400">
+                        <td colSpan={5} className="py-3 px-3.5 text-right uppercase tracking-wider text-slate-400">
                           รวมยอดตามเงื่อนไขกรอง:
                         </td>
                         <td className="py-3 px-3.5 text-right font-mono text-slate-300">
@@ -3883,6 +4026,135 @@ export const AccountingView: React.FC = () => {
                 )}
               </div>
 
+              {/* ATTACH PAYMENT SLIP / RECEIPT */}
+              <div className="space-y-1.5 pt-1">
+                <input
+                  id="expense-receipt-upload-input"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleExpenseReceiptUpload}
+                  className="hidden"
+                />
+                <input
+                  id="expense-receipt-camera-input"
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleExpenseReceiptUpload}
+                  className="hidden"
+                />
+
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-400 font-medium text-xs flex items-center space-x-1.5">
+                    <Paperclip className="w-3.5 h-3.5 text-rose-400" />
+                    <span>แนบหลักฐานการโอน / ใบเสร็จรับเงิน (Slip / Receipt)</span>
+                  </label>
+                  {expReceiptImage && (
+                    <span className="text-[10px] text-emerald-400 font-bold flex items-center space-x-1">
+                      <Check className="w-3 h-3" />
+                      <span>แนบเรียบร้อย</span>
+                    </span>
+                  )}
+                </div>
+
+                {!expReceiptImage ? (
+                  <div className="border border-dashed border-slate-700 hover:border-slate-500 rounded-xl p-3 bg-slate-950/60 transition space-y-2">
+                    <div className="flex items-center justify-center space-x-1.5 text-slate-400 text-[11px]">
+                      <ImageIcon className="w-3.5 h-3.5 text-slate-500" />
+                      <span>รองรับรูปสลิปโอนเงิน ธนาคาร ใบกำกับภาษี หรือถ่ายรูปบิล</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <label
+                        htmlFor="expense-receipt-upload-input"
+                        className="py-2 px-3 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-lg cursor-pointer text-center transition flex items-center justify-center space-x-1.5 text-xs font-medium border border-slate-700 active:scale-98"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-rose-400" />
+                        <span>เลือกรูปภาพ/สลิป</span>
+                      </label>
+
+                      <label
+                        htmlFor="expense-receipt-camera-input"
+                        className="py-2 px-3 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-lg cursor-pointer text-center transition flex items-center justify-center space-x-1.5 text-xs font-medium border border-slate-700 active:scale-98"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-rose-400" />
+                        <span>ถ่ายภาพบิล</span>
+                      </label>
+                    </div>
+
+                    {isCompressingReceipt && (
+                      <div className="flex items-center justify-center space-x-1.5 text-xs text-rose-400 pt-1">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>กำลังประมวลผลรูปภาพ...</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 flex items-center justify-between">
+                    <div className="flex items-center space-x-2.5 overflow-hidden">
+                      <div
+                        onClick={() => setSelectedReceiptPreview({
+                          url: expReceiptImage,
+                          title: expTitle || 'หลักฐานค่าใช้จ่าย',
+                          amount: expAmount,
+                          refNumber: expRefNumber,
+                          category: expCategory
+                        })}
+                        className="w-12 h-12 rounded-lg bg-slate-900 border border-slate-700 overflow-hidden shrink-0 cursor-pointer relative group"
+                        title="คลิกเพื่อดูรูปภาพขยาย"
+                      >
+                        <img src={expReceiptImage} alt="Receipt preview" className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white">
+                          <Eye className="w-4 h-4" />
+                        </div>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-200 truncate">{expReceiptName || 'สลิป/ใบเสร็จรับเงิน'}</div>
+                        <div className="text-[10px] text-emerald-400 flex items-center space-x-1 mt-0.5">
+                          <Check className="w-3 h-3" />
+                          <span>พร้อมบันทึกแนบกับรายการนี้</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedReceiptPreview({
+                          url: expReceiptImage,
+                          title: expTitle || 'หลักฐานค่าใช้จ่าย',
+                          amount: expAmount,
+                          refNumber: expRefNumber,
+                          category: expCategory
+                        })}
+                        className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition"
+                        title="ดูรูปภาพขนาดเต็ม"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      <label
+                        htmlFor="expense-receipt-upload-input"
+                        className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition cursor-pointer"
+                        title="เปลี่ยนรูปภาพใหม่"
+                      >
+                        <Upload className="w-4 h-4" />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpReceiptImage(null);
+                          setExpReceiptName(null);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition"
+                        title="ลบหลักฐานที่แนบ"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <button
                 type="submit"
                 className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl transition shadow-lg shadow-rose-950/60 active:scale-95 text-sm"
@@ -4124,10 +4396,94 @@ export const AccountingView: React.FC = () => {
             netAmount: data.netAmount,
             refNumber: data.refNumber,
             note: data.note,
-            date: data.date
+            date: data.date,
+            receiptImage: data.receiptImage,
+            receiptImageName: data.receiptImageName
           });
         }}
       />
+
+      {/* MODAL: RECEIPT / SLIP LIGHTBOX PREVIEW */}
+      {selectedReceiptPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-5 animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+            <div className="flex items-center justify-between p-3.5 sm:p-4 border-b border-slate-800 bg-slate-950/70">
+              <div className="flex items-center space-x-2 min-w-0 pr-2">
+                <Paperclip className="w-4 h-4 text-rose-400 shrink-0" />
+                <h3 className="font-bold text-slate-100 text-sm truncate">
+                  หลักฐานค่าใช้จ่าย: {selectedReceiptPreview.title}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSelectedReceiptPreview(null)}
+                className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-slate-950/50 border-b border-slate-800 flex items-center justify-between text-xs">
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                  {selectedReceiptPreview.category && (
+                    <span className="px-2 py-0.5 bg-slate-800 border border-slate-700 rounded text-[10px] font-medium text-slate-300">
+                      {categoryLabels[selectedReceiptPreview.category] || selectedReceiptPreview.category}
+                    </span>
+                  )}
+                  {selectedReceiptPreview.date && (
+                    <span className="text-slate-400 font-mono text-[11px]">วันที่: {selectedReceiptPreview.date}</span>
+                  )}
+                </div>
+                {selectedReceiptPreview.refNumber && (
+                  <div className="text-slate-400 font-mono text-[10px]">
+                    เลขที่อ้างอิง: <span className="text-slate-200">{selectedReceiptPreview.refNumber}</span>
+                  </div>
+                )}
+                {selectedReceiptPreview.note && (
+                  <div className="text-slate-500 text-[10px] italic truncate max-w-[260px]">
+                    {selectedReceiptPreview.note}
+                  </div>
+                )}
+              </div>
+              {selectedReceiptPreview.amount !== undefined && (
+                <div className="text-right font-mono shrink-0 pl-2">
+                  <span className="text-[10px] text-slate-400 block">ยอดเงิน</span>
+                  <span className="text-rose-300 font-bold text-base">
+                    ฿{selectedReceiptPreview.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-950/90 min-h-[220px]">
+              <img
+                src={selectedReceiptPreview.url}
+                alt="Receipt Slip"
+                className="max-h-[55vh] max-w-full object-contain rounded-xl border border-slate-800 shadow-2xl"
+              />
+            </div>
+
+            <div className="p-3 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs">
+              <a
+                href={selectedReceiptPreview.url}
+                download={`receipt-slip-${selectedReceiptPreview.refNumber || Date.now()}.jpg`}
+                className="py-2 px-3 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl transition flex items-center space-x-1.5 font-medium border border-slate-700 active:scale-95"
+              >
+                <Download className="w-3.5 h-3.5 text-sky-400" />
+                <span>บันทึกรูปภาพ</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => setSelectedReceiptPreview(null)}
+                className="py-2 px-4 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl transition active:scale-95 shadow-md shadow-rose-950/50"
+              >
+                ปิดหน้าต่าง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: ADD AR (Accounts Receivable) */}
       {isAddARModalOpen && (
