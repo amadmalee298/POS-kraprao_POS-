@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import {
   BarChart3,
@@ -188,11 +188,37 @@ const REVENUE_COLORS: Record<string, string> = {
   'รายได้อื่นๆ / ค่าโฆษณา': '#f59e0b'  // Amber
 };
 
+const getCurrentMonthKey = () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+};
+
 export const AccountingView: React.FC = () => {
   const { orders, expenses, addExpense, deleteExpense, currentBranch, ingredients, addStockLot } = usePOS();
 
-  const [selectedMonth, setSelectedMonth] = useState('2026-07');
-  const [timeHorizon, setTimeHorizon] = useState<TimeHorizon>('6months');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('POS_SELECTED_MONTH');
+      if (saved && saved !== '2026-07') {
+        return saved;
+      }
+      return getCurrentMonthKey();
+    } catch {
+      return getCurrentMonthKey();
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('POS_SELECTED_MONTH', selectedMonth);
+    } catch (e) {
+      console.error('Failed to save POS_SELECTED_MONTH to localStorage', e);
+    }
+  }, [selectedMonth]);
+
+  const [timeHorizon, setTimeHorizon] = useState<TimeHorizon>('selected');
   const [activeTab, setActiveTab] = useState<ViewTab>('overview');
 
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
@@ -574,8 +600,8 @@ export const AccountingView: React.FC = () => {
   const monthsList = useMemo(() => {
     const list: string[] = [];
     const [yearStr, monthStr] = selectedMonth.split('-');
-    const year = parseInt(yearStr, 10) || 2026;
-    const month = parseInt(monthStr, 10) || 7;
+    const year = parseInt(yearStr, 10) || new Date().getFullYear();
+    const month = parseInt(monthStr, 10) || (new Date().getMonth() + 1);
 
     if (timeHorizon === 'selected') {
       list.push(selectedMonth);
@@ -587,7 +613,7 @@ export const AccountingView: React.FC = () => {
         list.push(`${y}-${m}`);
       }
     } else {
-      // Year 2026 full 12 months
+      // Full 12 months of selected year
       for (let m = 1; m <= 12; m++) {
         const mStr = String(m).padStart(2, '0');
         list.push(`${year}-${mStr}`);
@@ -595,6 +621,14 @@ export const AccountingView: React.FC = () => {
     }
     return list;
   }, [selectedMonth, timeHorizon]);
+
+  const endOfMonthDate = useMemo(() => {
+    const [yStr, mStr] = selectedMonth.split('-');
+    const y = parseInt(yStr, 10) || new Date().getFullYear();
+    const m = parseInt(mStr, 10) || (new Date().getMonth() + 1);
+    const lastDay = new Date(y, m, 0).getDate();
+    return `${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
+  }, [selectedMonth]);
 
   // 2. Compute Monthly Financials for each month in monthsList
   const monthlyData: MonthlyFinancialData[] = useMemo(() => {
@@ -1222,7 +1256,7 @@ export const AccountingView: React.FC = () => {
 
     // Operating Inflows (POS / Delivery / Catering / Income)
     rows.push([
-      selectedMonth + '-31',
+      endOfMonthDate,
       'กิจกรรมดำเนินงาน (Operating)',
       'รับชำระเงินสดหน้าร้าน/เดลิเวอรี/จัดเลี้ยง',
       'ยอดขายอาหารและบริการรวมประจำเดือน',
@@ -1234,7 +1268,7 @@ export const AccountingView: React.FC = () => {
     // Operating Outflows (COGS & OPEX)
     const totalOpOutflow = rangeTotals.cogs + rangeTotals.totalOpex;
     rows.push([
-      selectedMonth + '-31',
+      endOfMonthDate,
       'กิจกรรมดำเนินงาน (Operating)',
       'จ่ายชำระค่าวัตถุดิบและค่าใช้จ่ายดำเนินงาน',
       'ต้นทุนวัตถุดิบ COGS + OPEX',
@@ -1349,7 +1383,11 @@ export const AccountingView: React.FC = () => {
           {/* Time Horizon Selector */}
           <div className="flex bg-slate-950 border border-slate-800 p-0.5 sm:p-1 rounded-xl text-xs shrink-0">
             <button
-              onClick={() => setTimeHorizon('selected')}
+              onClick={() => {
+                const cur = getCurrentMonthKey();
+                setSelectedMonth(cur);
+                setTimeHorizon('selected');
+              }}
               className={`px-2 sm:px-2.5 py-1 rounded-lg font-medium transition text-[11px] sm:text-xs whitespace-nowrap ${
                 timeHorizon === 'selected' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -1370,7 +1408,7 @@ export const AccountingView: React.FC = () => {
                 timeHorizon === 'year' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              ปี 2026
+              ปี {selectedMonth.split('-')[0] || new Date().getFullYear()}
             </button>
           </div>
 
@@ -2509,7 +2547,7 @@ export const AccountingView: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
                       <tr className="hover:bg-slate-800/40 transition">
-                        <td className="py-2.5 px-3 font-mono">{selectedMonth}-31</td>
+                        <td className="py-2.5 px-3 font-mono">{endOfMonthDate}</td>
                         <td className="py-2.5 px-3">
                           <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded text-[10px] font-bold">
                             Operating
@@ -2529,7 +2567,7 @@ export const AccountingView: React.FC = () => {
                       </tr>
 
                       <tr className="hover:bg-slate-800/40 transition">
-                        <td className="py-2.5 px-3 font-mono">{selectedMonth}-31</td>
+                        <td className="py-2.5 px-3 font-mono">{endOfMonthDate}</td>
                         <td className="py-2.5 px-3">
                           <span className="px-2 py-0.5 bg-rose-500/20 text-rose-300 rounded text-[10px] font-bold">
                             Operating
