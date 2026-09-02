@@ -209,6 +209,24 @@ export interface WasteLog {
 
 export type ExpenseCategory = 'rent' | 'salary' | 'utilities' | 'raw_material' | 'marketing' | 'other';
 
+export type IncomeCategory = 'catering' | 'ad_sponsor' | 'recycling' | 'interest' | 'rental' | 'asset_sale' | 'subsidy' | 'delivery_subsidy' | 'other';
+
+export interface OtherIncome {
+  id: string;
+  branchId: string;
+  date: string; // ISO Date YYYY-MM-DD
+  category: IncomeCategory;
+  title: string;
+  amount: number;
+  paymentMethod?: 'cash' | 'bank_transfer' | 'promptpay' | 'credit_card' | 'other';
+  refNumber?: string;
+  payerName?: string;
+  note?: string;
+  slipImage?: string;
+  slipImageName?: string;
+  createdAt?: string;
+}
+
 export interface Expense {
   id: string;
   branchId: string;

@@ -5,6 +5,7 @@ import {
   Branch,
   User,
   Expense,
+  OtherIncome,
   Order,
   AddOnOption,
   SystemSettings,
@@ -314,6 +315,8 @@ export const INITIAL_MENU_ITEMS: MenuItem[] = [
 ];
 
 export const INITIAL_EXPENSES: Expense[] = [];
+
+export const INITIAL_INCOMES: OtherIncome[] = [];
 
 export const INITIAL_ORDERS: Order[] = [];
 

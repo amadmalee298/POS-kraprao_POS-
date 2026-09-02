@@ -7,6 +7,7 @@ import {
   StockLot,
   Order,
   Expense,
+  OtherIncome,
   Branch,
   User,
   UserRole,
@@ -53,6 +54,7 @@ import {
   INITIAL_MENU_ITEMS,
   STANDARD_ADD_ONS,
   INITIAL_EXPENSES,
+  INITIAL_INCOMES,
   INITIAL_ORDERS,
   INITIAL_SETTINGS,
   INITIAL_WASTE_LOGS,
@@ -103,6 +105,7 @@ interface POSContextType {
   stockLots: StockLot[];
   orders: Order[];
   expenses: Expense[];
+  incomes: OtherIncome[];
   settings: SystemSettings;
   updateSettings: (newSettings: Partial<SystemSettings>) => void;
   autoApproveQR: boolean;
@@ -248,6 +251,9 @@ interface POSContextType {
   // Accounting operations
   addExpense: (expense: Omit<Expense, 'id'>) => void;
   deleteExpense: (expenseId: string) => void;
+  addIncome: (income: Omit<OtherIncome, 'id'>) => void;
+  updateIncome: (income: OtherIncome) => void;
+  deleteIncome: (incomeId: string) => void;
 
   // System Backup / Import / Export
   exportStateJSON: () => string;
@@ -537,6 +543,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [cashShifts, setCashShifts] = useState<CashShift[]>(INITIAL_CASH_SHIFTS);
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
   const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES);
+  const [incomes, setIncomes] = useState<OtherIncome[]>(INITIAL_INCOMES);
   const [settings, setSettings] = useState<SystemSettings>(INITIAL_SETTINGS);
   const [securityLogs, setSecurityLogs] = useState<SecurityLogEntry[]>(INITIAL_SECURITY_LOGS);
 
@@ -877,6 +884,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             loadedShiftsCount = parsed.cashShifts.length;
           }
           if (parsed.expenses && Array.isArray(parsed.expenses)) setExpenses(parsed.expenses);
+          if (parsed.incomes && Array.isArray(parsed.incomes)) setIncomes(parsed.incomes);
           if (parsed.settings && typeof parsed.settings === 'object') {
             const mergedSettings = { ...INITIAL_SETTINGS, ...parsed.settings };
             // If previous shopLogoUrl was the older default SVG or empty, update to the new official brand logo
@@ -1018,6 +1026,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cashShifts,
         orders,
         expenses,
+        incomes,
         settings,
         securityLogs,
         autoApproveQR,
@@ -1053,6 +1062,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     cashShifts,
     orders,
     expenses,
+    incomes,
     settings,
     autoApproveQR,
     tables,
@@ -1722,6 +1732,23 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setExpenses(prev => prev.filter(e => e.id !== expenseId));
   };
 
+  const addIncome = (incData: Omit<OtherIncome, 'id'>) => {
+    const newInc: OtherIncome = {
+      ...incData,
+      id: `inc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: new Date().toISOString()
+    };
+    setIncomes(prev => [newInc, ...prev]);
+  };
+
+  const updateIncome = (incData: OtherIncome) => {
+    setIncomes(prev => prev.map(inc => inc.id === incData.id ? incData : inc));
+  };
+
+  const deleteIncome = (incomeId: string) => {
+    setIncomes(prev => prev.filter(inc => inc.id !== incomeId));
+  };
+
   // Staff Scheduling & Payroll operations
   const addStaffMember = (staffData: Omit<StaffMember, 'id'>) => {
     const newStaff: StaffMember = {
@@ -1922,6 +1949,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       cashShifts,
       orders,
       expenses,
+      incomes,
       settings,
       users,
       autoApproveQR,
@@ -1974,6 +2002,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (parsed.cashShifts && Array.isArray(parsed.cashShifts)) setCashShifts(parsed.cashShifts);
       if (parsed.orders && Array.isArray(parsed.orders)) setOrders(parsed.orders);
       if (parsed.expenses && Array.isArray(parsed.expenses)) setExpenses(parsed.expenses);
+      if (parsed.incomes && Array.isArray(parsed.incomes)) setIncomes(parsed.incomes);
       if (parsed.settings && typeof parsed.settings === 'object') setSettings(parsed.settings);
       if (parsed.securityLogs && Array.isArray(parsed.securityLogs)) setSecurityLogs(parsed.securityLogs);
       if (parsed.users && Array.isArray(parsed.users)) setUsers(parsed.users);
@@ -2095,6 +2124,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCashShifts(INITIAL_CASH_SHIFTS);
     setOrders(INITIAL_ORDERS);
     setExpenses(INITIAL_EXPENSES);
+    setIncomes(INITIAL_INCOMES);
     setSettings(INITIAL_SETTINGS);
     setCart([]);
     localStorage.removeItem(LOCAL_STORAGE_KEY);
@@ -2103,6 +2133,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const cleanSlateForProduction = () => {
     setOrders([]);
     setExpenses([]);
+    setIncomes([]);
     setCashShifts([]);
     setShifts([]);
     setShiftSwapRequests([]);
@@ -2147,6 +2178,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         stockLots,
         orders,
         expenses,
+        incomes,
         settings,
         updateSettings,
         autoApproveQR,
@@ -2221,6 +2253,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteCashShift,
         addExpense,
         deleteExpense,
+        addIncome,
+        updateIncome,
+        deleteIncome,
         exportStateJSON,
         importStateJSON,
         resetToDefaultData,
