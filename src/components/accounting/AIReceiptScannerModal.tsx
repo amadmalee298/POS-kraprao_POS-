@@ -23,7 +23,11 @@ import {
   Combine,
   CheckSquare,
   Key,
-  ShieldCheck
+  ShieldCheck,
+  PackagePlus,
+  PlusCircle,
+  Wand2,
+  Boxes
 } from 'lucide-react';
 import { ExpenseCategory } from '../../types';
 import { usePOS } from '../../context/POSContext';
@@ -85,7 +89,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   onClose,
   onSaveExpense
 }) => {
-  const { ingredients, addStockLot } = usePOS();
+  const { ingredients, addStockLot, addIngredient, ingredientCategories, ingredientUnits } = usePOS();
 
   // Multi-image Queue State
   const [queue, setQueue] = useState<ReceiptQueueItem[]>([]);
@@ -104,6 +108,27 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     return typeof window !== 'undefined' ? (localStorage.getItem('user_gemini_api_key') || '') : '';
   });
   const [keySaveSuccess, setKeySaveSuccess] = useState<boolean>(false);
+
+  // Quick Add New Ingredient State (สำหรับสร้างรายการสต็อกใหม่จากหน้าจอนี้ได้ทันที)
+  const [isQuickCreateIngOpen, setIsQuickCreateIngOpen] = useState<boolean>(false);
+  const [quickIngForm, setQuickIngForm] = useState<{
+    name: string;
+    unit: string;
+    category: string;
+    unitCost: number;
+    minStockAlert: number;
+    initialStock: number;
+    receiveQty: number;
+  }>({
+    name: '',
+    unit: 'pcs',
+    category: 'supplies',
+    unitCost: 0,
+    minStockAlert: 5,
+    initialStock: 0,
+    receiveQty: 1
+  });
+  const [quickIngSuccess, setQuickIngSuccess] = useState<string | null>(null);
 
   // Active Item Helper
   const activeItem = queue.find(q => q.id === activeId) || (queue.length > 0 ? queue[0] : null);
@@ -767,9 +792,178 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     } : q));
   };
 
+  // Smart Auto-inference of unit and category from product name
+  const inferUnitAndCategoryFromName = (name: string, price: number = 0) => {
+    const lower = name.toLowerCase();
+    let unit = 'pcs';
+    let category = 'supplies';
+    let quantity = 1;
+
+    // Detect quantity pattern: e.g. "X4", "x 4", "10 ชิ้น", "2 แผง"
+    const xMatch = lower.match(/(?:x|จำนวน)\s*(\d+)/i) || lower.match(/(\d+)\s*(?:x|แผง|กำ|ขวด|กระป๋อง|ชิ้น|กล่อง|แพ็ค)/i);
+    if (xMatch && Number(xMatch[1]) > 0) {
+      quantity = Number(xMatch[1]);
+    }
+
+    // Unit detection
+    if (lower.includes('มล') || lower.includes('ml')) {
+      unit = 'ml';
+    } else if (lower.includes('กรัม') || lower.includes(' g') || lower.includes('ก.')) {
+      unit = 'g';
+    } else if (lower.includes('กก') || lower.includes('kg') || lower.includes('กิโล')) {
+      unit = 'kg';
+    } else if (lower.includes('ลิตร') || lower.includes(' l') || lower.includes('2ลิตร') || lower.includes('5ลิตร')) {
+      unit = 'l';
+    } else if (lower.includes('แพ็ค') || lower.includes('pack') || lower.includes('x4') || lower.includes('x6') || lower.includes('x12') || lower.includes('x 4')) {
+      unit = 'pack';
+    } else if (lower.includes('ขวด') || lower.includes('bottle')) {
+      unit = 'bottle';
+    } else if (lower.includes('กระป๋อง') || lower.includes('can')) {
+      unit = 'can';
+    } else if (lower.includes('กล่อง') || lower.includes('box')) {
+      unit = 'box';
+    } else if (lower.includes('ถุง') || lower.includes('bag')) {
+      unit = 'bag';
+    } else if (lower.includes('แผง')) {
+      unit = 'pack';
+    }
+
+    // Category detection
+    if (/หมู|ไก่|เนื้อ|กุ้ง|ปลา|เป็ด|เบคอน|ไส้กรอก|ลูกชิ้น|ซีพี|cp|ทะเล/i.test(lower)) {
+      category = 'meat';
+      if (unit === 'pcs') unit = 'kg';
+    } else if (/กะเพรา|พริก|กระเทียม|หอม|มะนาว|ผัก|แตงกวา|กะหล่ำ|ต้นหอม|ผักชี|ขิง|ข่า|ตะไคร้/i.test(lower)) {
+      category = 'vegetable';
+      if (unit === 'pcs') unit = 'kg';
+    } else if (/ไข่/i.test(lower)) {
+      category = 'egg';
+      if (unit === 'pcs') unit = 'pcs';
+    } else if (/ซอส|น้ำมัน|ซีอิ๊ว|น้ำปลา|รสดี|ชูรส|น้ำตาล|เกลือ|พริกไทย|น้ำส้มสายชู|กะปิ|เต้าเจี้ยว|เนย|ผงปรุง/i.test(lower)) {
+      category = 'sauce';
+      if (unit === 'pcs') unit = 'bottle';
+    } else if (/ข้าว|แป้ง|เส้น|วุ้นเส้น|แห้ง|งา/i.test(lower)) {
+      category = 'dry_good';
+      if (unit === 'pcs') unit = 'kg';
+    } else if (/กล่อง|ถุง|แก้ว|ฝา|ช้อน|ส้อม|หลอด|ฟอยล์|กระดาษห่อ|ยางรัด/i.test(lower)) {
+      category = 'packaging';
+      if (unit === 'pcs') unit = 'pack';
+    } else if (/ซันไลต์|เปา|น้ำยาล้าง|ผงซักฟอก|ไฮเตอร์|ทิชชู่|สบู่|คลิป|ถุงขยะ|สก๊อตไบรต์|ฝอยขัด|ถุงมือ|ล้างจาน|ทำความสะอาด/i.test(lower)) {
+      category = 'supplies';
+    } else if (/บีกเกอร์|คีบ|ขวดโหล|มีด|กระทะ|หม้อ|ตะหลิว|กระบวย|เขียง|เครื่องชั่ง|เครื่องตวง|ที่คีบ/i.test(lower)) {
+      category = 'equipment';
+    }
+
+    const unitCost = quantity > 0 ? Number((price / quantity).toFixed(2)) : price;
+
+    return { unit, category, quantity, unitCost };
+  };
+
+  const handleOpenQuickCreateModal = (name: string, price: number = 0) => {
+    const inferred = inferUnitAndCategoryFromName(name, price);
+    setQuickIngForm({
+      name: name.trim(),
+      unit: inferred.unit,
+      category: inferred.category,
+      unitCost: inferred.unitCost,
+      minStockAlert: 5,
+      initialStock: 0,
+      receiveQty: inferred.quantity
+    });
+    setIsQuickCreateIngOpen(true);
+  };
+
+  const handleQuickCreateIngredientSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickIngForm.name.trim()) return;
+
+    const newIng = addIngredient({
+      name: quickIngForm.name.trim(),
+      unit: quickIngForm.unit,
+      category: quickIngForm.category,
+      unitCost: quickIngForm.unitCost,
+      minStockAlert: quickIngForm.minStockAlert || 5,
+      currentStock: quickIngForm.initialStock || 0
+    });
+
+    const targetId = newIng?.id || `ing-${Date.now()}`;
+    const qtyToReceive = quickIngForm.receiveQty > 0 ? quickIngForm.receiveQty : 1;
+
+    const newEntry: StockEntryItem = {
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      ingredientId: targetId,
+      quantity: qtyToReceive
+    };
+
+    const nextEntries = [...stockEntries.filter(e => e.ingredientId !== targetId), newEntry];
+    setStockEntries(nextEntries);
+    setAutoUpdateStock(true);
+
+    if (activeItem) {
+      setQueue(prev => prev.map(q => q.id === activeItem.id ? { ...q, stockEntries: nextEntries, autoUpdateStock: true } : q));
+    }
+
+    setQuickIngSuccess(`✨ สร้างวัตถุดิบใหม่ "${quickIngForm.name.trim()}" และเชื่อมโยงเข้าสต็อกเรียบร้อยแล้ว!`);
+    setTimeout(() => setQuickIngSuccess(null), 4000);
+    setIsQuickCreateIngOpen(false);
+  };
+
+  const handleBatchCreateAllUnmatchedIngredients = () => {
+    if (!scannedResult?.lineItems || scannedResult.lineItems.length === 0) return;
+
+    const currentEntries: StockEntryItem[] = [...stockEntries];
+    let createdCount = 0;
+
+    scannedResult.lineItems.forEach((item, idx) => {
+      const existing = ingredients.find(ing =>
+        item.name.toLowerCase().includes(ing.name.toLowerCase()) ||
+        ing.name.toLowerCase().includes(item.name.toLowerCase())
+      );
+
+      let targetId: string;
+      let qty = 1;
+
+      if (existing) {
+        targetId = existing.id;
+      } else {
+        const inferred = inferUnitAndCategoryFromName(item.name, item.amount);
+        const created = addIngredient({
+          name: item.name.trim(),
+          unit: inferred.unit,
+          category: inferred.category,
+          unitCost: inferred.unitCost,
+          minStockAlert: 5,
+          currentStock: 0
+        });
+        targetId = created?.id || `ing-${Date.now()}-${idx}`;
+        qty = inferred.quantity;
+        createdCount++;
+      }
+
+      if (!currentEntries.some(e => e.ingredientId === targetId)) {
+        currentEntries.push({
+          id: `${Date.now()}-${idx}`,
+          ingredientId: targetId,
+          quantity: qty
+        });
+      }
+    });
+
+    setStockEntries(currentEntries);
+    setAutoUpdateStock(true);
+    if (activeItem) {
+      setQueue(prev => prev.map(q => q.id === activeItem.id ? { ...q, stockEntries: currentEntries, autoUpdateStock: true } : q));
+    }
+
+    setQuickIngSuccess(`✨ สร้างและเชื่อมโยงสต็อกสำเร็จ ${createdCount} รายการใหม่เรียบร้อยแล้ว!`);
+    setTimeout(() => setQuickIngSuccess(null), 4000);
+  };
+
   // Stock Entries management for active item
   const handleAddStockEntry = () => {
-    if (ingredients.length === 0) return;
+    if (ingredients.length === 0) {
+      handleOpenQuickCreateModal('');
+      return;
+    }
     const newEntry: StockEntryItem = {
       id: Date.now().toString() + '-' + Math.random().toString(36).substring(2, 6),
       ingredientId: ingredients[0].id,
@@ -783,6 +977,10 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   };
 
   const handleUpdateStockEntry = (id: string, field: 'ingredientId' | 'quantity', value: string | number) => {
+    if (field === 'ingredientId' && value === '__CREATE_NEW__') {
+      handleOpenQuickCreateModal('');
+      return;
+    }
     const next = stockEntries.map(entry => entry.id === id ? { ...entry, [field]: value } : entry);
     setStockEntries(next);
     if (next[0]) {
@@ -802,22 +1000,40 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     }
   };
 
-  const handleAddLineItemToStock = (lineName: string) => {
-    if (ingredients.length === 0) return;
+  const handleAddLineItemToStock = (lineItem: { name: string; amount: number }) => {
     const matched = ingredients.find(ing =>
-      lineName.toLowerCase().includes(ing.name.toLowerCase()) ||
-      ing.name.toLowerCase().includes(lineName.toLowerCase())
-    ) || ingredients[0];
+      lineItem.name.toLowerCase().includes(ing.name.toLowerCase()) ||
+      ing.name.toLowerCase().includes(lineItem.name.toLowerCase())
+    );
 
-    const newEntry: StockEntryItem = {
-      id: Date.now().toString() + '-' + Math.random().toString(36).substring(2, 6),
-      ingredientId: matched.id,
-      quantity: 1
-    };
-    const next = [...stockEntries, newEntry];
-    setStockEntries(next);
-    if (activeItem) {
-      setQueue(prev => prev.map(q => q.id === activeItem.id ? { ...q, stockEntries: next } : q));
+    if (matched) {
+      const existingEntryIndex = stockEntries.findIndex(e => e.ingredientId === matched.id);
+      if (existingEntryIndex >= 0) {
+        const next = [...stockEntries];
+        next[existingEntryIndex] = {
+          ...next[existingEntryIndex],
+          quantity: next[existingEntryIndex].quantity + 1
+        };
+        setStockEntries(next);
+        if (activeItem) {
+          setQueue(prev => prev.map(q => q.id === activeItem.id ? { ...q, stockEntries: next } : q));
+        }
+      } else {
+        const newEntry: StockEntryItem = {
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          ingredientId: matched.id,
+          quantity: 1
+        };
+        const next = [...stockEntries, newEntry];
+        setStockEntries(next);
+        if (activeItem) {
+          setQueue(prev => prev.map(q => q.id === activeItem.id ? { ...q, stockEntries: next } : q));
+        }
+      }
+      setAutoUpdateStock(true);
+    } else {
+      // Open Quick Create Modal pre-filled!
+      handleOpenQuickCreateModal(lineItem.name, lineItem.amount);
     }
   };
 
@@ -1492,18 +1708,28 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
 
                     {autoUpdateStock && (
                       <div className="space-y-2 pt-2 border-t border-emerald-900/60">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
                           <span className="text-[10px] font-bold text-slate-400">
                             รายการวัตถุดิบที่ต้องการรับเข้าคลัง (เพิ่มได้หลายรายการ):
                           </span>
-                          <button
-                            type="button"
-                            onClick={handleAddStockEntry}
-                            className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>+ เพิ่มรายการวัตถุดิบ</span>
-                          </button>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenQuickCreateModal('')}
+                              className="text-[11px] font-bold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30 flex items-center space-x-1 transition"
+                            >
+                              <PackagePlus className="w-3.5 h-3.5" />
+                              <span>+ สร้างวัตถุดิบใหม่</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleAddStockEntry}
+                              className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>+ เพิ่มรายการวัตถุดิบ</span>
+                            </button>
+                          </div>
                         </div>
 
                         <div className="space-y-2">
@@ -1523,8 +1749,11 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                                     onChange={e => handleUpdateStockEntry(entry.id, 'ingredientId', e.target.value)}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-100 text-xs font-bold"
                                   >
+                                    <option value="__CREATE_NEW__" className="text-amber-300 font-bold bg-slate-900">
+                                      ✨ + สร้างรายการวัตถุดิบใหม่เข้าระบบ...
+                                    </option>
                                     {ingredients.length === 0 ? (
-                                      <option value="">ไม่มีวัตถุดิบในคลัง</option>
+                                      <option value="">ไม่มีวัตถุดิบในคลัง (แตะเพื่อสร้างใหม่)</option>
                                     ) : (
                                       ingredients.map(ing => (
                                         <option key={ing.id} value={ing.id}>
@@ -1574,38 +1803,132 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                     )}
                   </div>
 
+                  {/* Quick Ingredient Success Message */}
+                  {quickIngSuccess && (
+                    <div className="p-2.5 bg-emerald-500/20 border border-emerald-500/50 rounded-xl text-emerald-300 font-bold text-xs flex items-center justify-between animate-in fade-in">
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>{quickIngSuccess}</span>
+                      </div>
+                      <button onClick={() => setQuickIngSuccess(null)} className="text-emerald-400 hover:text-white">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
                   {/* Line Items extracted */}
                   {scannedResult.lineItems && scannedResult.lineItems.length > 0 && (
-                    <div className="space-y-1.5 pt-1">
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider">
-                        รายการสินค้าย่อยในใบเสร็จ (Extracted Items - แตะเพื่อเพิ่มเข้าสต็อก):
-                      </span>
-                      <div className="bg-slate-900 p-2 rounded-xl border border-slate-800 space-y-1">
-                        {scannedResult.lineItems.map((item, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-center justify-between text-[11px] text-slate-300 py-1 border-b border-slate-800/60 last:border-none"
-                          >
-                            <div className="flex items-center space-x-2">
-                              <span>• {item.name}</span>
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider">
+                          รายการสินค้าย่อยในใบเสร็จ (Extracted Items - แตะเพื่อเพิ่มเข้าสต็อก):
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-mono font-bold">
+                          {scannedResult.lineItems.length} รายการ
+                        </span>
+                      </div>
+
+                      {/* Batch create all button if there are unmatched items */}
+                      {(() => {
+                        const unmatchedItems = scannedResult.lineItems.filter(item =>
+                          !ingredients.some(ing =>
+                            item.name.toLowerCase().includes(ing.name.toLowerCase()) ||
+                            ing.name.toLowerCase().includes(item.name.toLowerCase())
+                          )
+                        );
+                        if (unmatchedItems.length > 0) {
+                          return (
+                            <button
+                              type="button"
+                              onClick={handleBatchCreateAllUnmatchedIngredients}
+                              className="w-full py-2 px-3 bg-gradient-to-r from-emerald-600/30 via-teal-600/30 to-sky-600/30 hover:from-emerald-600/45 hover:to-sky-600/45 border border-emerald-500/50 rounded-xl text-emerald-300 hover:text-white text-xs font-bold flex items-center justify-center space-x-2 transition shadow-sm"
+                            >
+                              <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
+                              <span>✨ สร้างวัตถุดิบใหม่ทุกรายการในบิลนี้ & รับเข้าสต็อกทันที ({unmatchedItems.length} รายการใหม่)</span>
+                            </button>
+                          );
+                        }
+                        return null;
+                      })()}
+
+                      <div className="bg-slate-900 p-2 rounded-xl border border-slate-800 space-y-1.5 max-h-72 overflow-y-auto">
+                        {scannedResult.lineItems.map((item, idx) => {
+                          const matched = ingredients.find(ing =>
+                            item.name.toLowerCase().includes(ing.name.toLowerCase()) ||
+                            ing.name.toLowerCase().includes(item.name.toLowerCase())
+                          );
+                          const isLinked = matched && stockEntries.some(e => e.ingredientId === matched.id);
+
+                          return (
+                            <div
+                              key={idx}
+                              className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-slate-300 p-2 rounded-lg bg-slate-950/60 border border-slate-800/80 gap-2"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                                  <span className="font-bold text-slate-200 truncate">{item.name}</span>
+                                  {matched ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-medium">
+                                      ✓ ตรงกับ: {matched.name} (คงเหลือ {matched.currentStock} {matched.unit})
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold flex items-center space-x-1">
+                                      <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                                      <span>รายการใหม่ (ยังไม่มีในสต็อก)</span>
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between sm:justify-end space-x-2 shrink-0">
+                                <span className="font-mono font-bold text-rose-300 text-xs">
+                                  ฿{item.amount.toFixed(2)}
+                                </span>
+
+                                {autoUpdateStock && (
+                                  <div className="flex items-center space-x-1">
+                                    {matched ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleAddLineItemToStock(item)}
+                                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center space-x-1 transition ${
+                                            isLinked
+                                              ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-500/50 hover:bg-emerald-500/40'
+                                              : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
+                                          }`}
+                                          title={isLinked ? 'เพิ่มจำนวนในสต็อก' : 'รับเข้าสต็อก'}
+                                        >
+                                          <Plus className="w-3 h-3" />
+                                          <span>{isLinked ? 'เพิ่มจำนวน' : 'รับเข้าสต็อก'}</span>
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenQuickCreateModal(item.name, item.amount)}
+                                          className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold flex items-center space-x-1 border border-slate-700 transition"
+                                          title="สร้างเป็นรายการวัตถุดิบใหม่แยกต่างหาก"
+                                        >
+                                          <PlusCircle className="w-3 h-3 text-sky-400" />
+                                          <span>สร้างใหม่</span>
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenQuickCreateModal(item.name, item.amount)}
+                                        className="px-2.5 py-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-lg text-[10px] flex items-center space-x-1.5 shadow-sm shadow-emerald-950/60 transition active:scale-95"
+                                      >
+                                        <PackagePlus className="w-3.5 h-3.5 stroke-[2.5]" />
+                                        <span>+ สร้างสต็อกใหม่ & รับเข้า</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <div className="flex items-center space-x-2">
-                              <span className="font-mono font-bold text-slate-200">
-                                ฿{item.amount.toFixed(2)}
-                              </span>
-                              {autoUpdateStock && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleAddLineItemToStock(item.name)}
-                                  className="px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded text-[10px] font-bold flex items-center space-x-1"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                  <span>รับเข้าสต็อก</span>
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -1658,6 +1981,184 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Quick Create Ingredient Modal Dialog (สร้างวัตถุดิบ/สินค้าใหม่เข้าระบบได้ทันที) */}
+      {isQuickCreateIngOpen && (
+        <div className="fixed inset-0 z-[120] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-2xl border border-emerald-500/30">
+                  <PackagePlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-100 text-base">
+                    เพิ่มรายการวัตถุดิบ/สินค้าใหม่เข้าสต็อก
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    สร้างรายการใหม่เข้าระบบคลัง และเชื่อมโยงรับเข้าสต็อกทันที
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsQuickCreateIngOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleQuickCreateIngredientSubmit} className="space-y-4">
+              {/* Name */}
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">
+                  ชื่อวัตถุดิบ / สินค้า <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={quickIngForm.name}
+                  onChange={e => setQuickIngForm(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="เช่น ซันไลต์เลมอน 2400 มล., เปาวินวอช 800 กรัม"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-slate-100 text-sm font-bold focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {/* Category */}
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    หมวดหมู่วัตถุดิบ
+                  </label>
+                  <select
+                    value={quickIngForm.category}
+                    onChange={e => setQuickIngForm(prev => ({ ...prev, category: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs font-bold focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="meat">🥩 เนื้อสัตว์ / อาหารสด</option>
+                    <option value="vegetable">🥬 ผักสด / สมุนไพร</option>
+                    <option value="sauce">🍶 ซอส / เครื่องปรุง / น้ำมัน</option>
+                    <option value="dry_good">🍚 ข้าว / แป้ง / ของแห้ง</option>
+                    <option value="egg">🥚 ไข่ไก่ / ไข่เป็ด</option>
+                    <option value="packaging">📦 บรรจุภัณฑ์ / กล่อง / ถุง</option>
+                    <option value="supplies">🧼 ของใช้ / น้ำยาทำความสะอาด</option>
+                    <option value="equipment">🍳 อุปกรณ์ / เครื่องครัว</option>
+                    <option value="other">🏷️ อื่นๆ</option>
+                  </select>
+                </div>
+
+                {/* Unit */}
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    หน่วยนับ (Unit)
+                  </label>
+                  <select
+                    value={quickIngForm.unit}
+                    onChange={e => setQuickIngForm(prev => ({ ...prev, unit: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs font-bold focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="pcs">ชิ้น / อัน (pcs)</option>
+                    <option value="pack">แพ็ค / ชุด (pack)</option>
+                    <option value="bottle">ขวด (bottle)</option>
+                    <option value="can">กระป๋อง (can)</option>
+                    <option value="box">กล่อง (box)</option>
+                    <option value="bag">ถุง (bag)</option>
+                    <option value="kg">กิโลกรัม (kg)</option>
+                    <option value="g">กรัม (g)</option>
+                    <option value="l">ลิตร (L)</option>
+                    <option value="ml">มิลลิลิตร (ml)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {/* Unit Cost */}
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    ต้นทุนต่อหน่วย (฿)
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    value={quickIngForm.unitCost}
+                    onChange={e => setQuickIngForm(prev => ({ ...prev, unitCost: Number(e.target.value) }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-emerald-300 font-mono font-bold text-xs"
+                  />
+                </div>
+
+                {/* Receive Qty */}
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    จำนวนรับเข้าคลังครั้งนี้
+                  </label>
+                  <div className="flex items-center space-x-1.5">
+                    <input
+                      type="number"
+                      step="any"
+                      min="0.1"
+                      value={quickIngForm.receiveQty}
+                      onChange={e => setQuickIngForm(prev => ({ ...prev, receiveQty: Number(e.target.value) }))}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-emerald-300 font-mono font-bold text-xs"
+                    />
+                    <span className="text-xs text-slate-400 font-bold shrink-0">
+                      {quickIngForm.unit}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {/* Min Stock Alert */}
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    จุดเตือนสต็อกขั้นต่ำ
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={quickIngForm.minStockAlert}
+                    onChange={e => setQuickIngForm(prev => ({ ...prev, minStockAlert: Number(e.target.value) }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-amber-300 font-mono font-bold text-xs"
+                  />
+                </div>
+
+                {/* Existing/Initial Stock */}
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    สต็อกเดิมในร้าน (ถ้ามี)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={quickIngForm.initialStock}
+                    onChange={e => setQuickIngForm(prev => ({ ...prev, initialStock: Number(e.target.value) }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-300 font-mono font-bold text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsQuickCreateIngOpen(false)}
+                  className="px-4 py-2.5 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-xl transition"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs rounded-xl flex items-center space-x-2 shadow-lg shadow-emerald-950/60 transition active:scale-95"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  <span>✓ ยืนยันสร้างวัตถุดิบ & รับเข้าสต็อก</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

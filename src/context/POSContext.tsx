@@ -194,7 +194,7 @@ interface POSContextType {
   addTaxInvoiceOrder: (newOrder: Order) => void;
 
   // Inventory operations
-  addIngredient: (ingredient: Omit<Ingredient, 'id'>) => void;
+  addIngredient: (ingredient: Omit<Ingredient, 'id'>) => Ingredient;
   updateIngredient: (ingredient: Ingredient) => void;
   deleteIngredients: (ingredientIds: string[]) => void;
   bulkUpdateIngredients: (ingredientIds: string[], updates: Partial<Omit<Ingredient, 'id'>>) => void;
@@ -1609,12 +1609,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Inventory functions
-  const addIngredient = (ingData: Omit<Ingredient, 'id'>) => {
+  const addIngredient = (ingData: Omit<Ingredient, 'id'>): Ingredient => {
     const newIng: Ingredient = {
       ...ingData,
-      id: `ing-${Date.now()}`
+      id: `ing-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
     };
     setIngredients(prev => [...prev, newIng]);
+    return newIng;
   };
 
   const updateIngredient = (updatedIng: Ingredient) => {
