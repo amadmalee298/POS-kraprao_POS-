@@ -72,6 +72,8 @@ import {
 import { usePOS } from '../../context/POSContext';
 import {
   ExpenseCategory,
+  OtherIncome,
+  IncomeCategory,
   AccountsReceivableItem,
   AccountsPayableItem,
   CashFlowEntry,
@@ -80,7 +82,7 @@ import {
 import { AIReceiptScannerModal } from './AIReceiptScannerModal';
 
 type TimeHorizon = 'selected' | '6months' | 'year';
-type ViewTab = 'overview' | 'statement' | 'balance_sheet' | 'cash_flow' | 'ar_ap' | 'expenses' | 'details';
+type ViewTab = 'overview' | 'statement' | 'balance_sheet' | 'cash_flow' | 'ar_ap' | 'expenses' | 'incomes' | 'details';
 
 interface MonthlyFinancialData {
   monthKey: string; // YYYY-MM
@@ -115,6 +117,90 @@ const categoryLabels: Record<ExpenseCategory, string> = {
   raw_material: 'ซื้อวัตถุดิบ',
   marketing: 'การตลาด/โฆษณา',
   other: 'ค่าใช้จ่ายอื่นๆ'
+};
+
+export const incomeCategoryLabels: Record<IncomeCategory, string> = {
+  catering: 'งานจัดเลี้ยง / เหมาบูธ',
+  ad_sponsor: 'สปอนเซอร์ / ป้ายโฆษณา',
+  recycling: 'ขายของรีไซเคิล / น้ำมันพืชเก่า',
+  interest: 'ดอกเบี้ยรับ / เงินปันผล',
+  rental: 'ค่าเช่าพื้นที่ / หน้าร้าน',
+  asset_sale: 'ขายสินทรัพย์ / อุปกรณ์เก่า',
+  subsidy: 'เงินช่วยเหลือ / เงินอุดหนุนรัฐ',
+  delivery_subsidy: 'เงินชดเชย / เงินคืนแพลตฟอร์ม',
+  other: 'รายได้เบ็ดเตล็ดอื่นๆ'
+};
+
+export const incomePaymentMethodLabels: Record<string, string> = {
+  promptpay: 'พร้อมเพย์ / QR Code',
+  cash: 'เงินสด (Cash)',
+  bank_transfer: 'โอนผ่านบัญชีธนาคาร',
+  credit_card: 'บัตรเครดิต / EDC',
+  other: 'อื่นๆ'
+};
+
+export const INCOME_CATEGORY_COLORS: Record<IncomeCategory, string> = {
+  catering: '#8b5cf6', // Violet
+  ad_sponsor: '#f59e0b', // Amber
+  recycling: '#10b981', // Emerald
+  interest: '#06b6d4', // Cyan
+  rental: '#3b82f6', // Blue
+  asset_sale: '#ec4899', // Pink
+  subsidy: '#14b8a6', // Teal
+  delivery_subsidy: '#6366f1', // Indigo
+  other: '#64748b'  // Slate
+};
+
+export const INCOME_TITLE_PRESETS: Record<IncomeCategory, string[]> = {
+  catering: [
+    'ค่ามัดจำบริการจัดเลี้ยงอาหารกล่อง (Catering)',
+    'ยอดชำระส่วนที่เหลือ งานเหมาเลี้ยงบริษัท',
+    'งานออกบูธเทศกาลอาหารนอกสถานที่',
+    'ชุดเบรคประชุมสัมมนาและเครื่องดื่ม'
+  ],
+  ad_sponsor: [
+    'ค่าเช่าป้ายโฆษณาแบนเนอร์หน้าร้าน',
+    'สปอนเซอร์เครื่องดื่มประจำสาขา',
+    'ค่าบริการพื้นที่ตั้งตู้จำหน่ายสินค้า',
+    'ค่าความร่วมมือส่งเสริมการขายแบรนด์สินค้า'
+  ],
+  recycling: [
+    'ขายน้ำมันพืชใช้แล้วให้โรงงานไบโอดีเซล',
+    'ขายขวดแก้ว/กระป๋องอลูมิเนียมรีไซเคิล',
+    'ขายกล่องกระดาษและเศษกระดาษลูกฟูก',
+    'ขายถุงพลาสติกและเศษวัสดุบรรจุภัณฑ์'
+  ],
+  interest: [
+    'ดอกเบี้ยเงินฝากประจำธนาคาร',
+    'เงินปันผลสหกรณ์ / การลงทุนกองทุน',
+    'ผลตอบแทนบัญชีออมทรัพย์ธุรกิจ'
+  ],
+  rental: [
+    'ค่าเช่าพื้นที่วางเคาน์เตอร์กาแฟ/เครื่องดื่ม',
+    'ค่าเช่ามุมหน้าร้านช่วงเย็น',
+    'ค่าเช่าจุดชาร์จแบตเตอรี่/ตู้หยอดเหรียญ'
+  ],
+  asset_sale: [
+    'ขายตู้แช่เก่า / เตาแก๊สปลดระวาง',
+    'ขายโต๊ะเก้าอี้และเฟอร์นิเจอร์มือสอง',
+    'ขายอุปกรณ์เครื่องครัวปลดระวาง'
+  ],
+  subsidy: [
+    'เงินช่วยเหลือโครงการพัฒนาผู้ประกอบการ',
+    'เงินชดเชยโครงการจ้างงานภาครัฐ',
+    'เงินอุดหนุนติดตั้งระบบประหยัดพลังงาน'
+  ],
+  delivery_subsidy: [
+    'เงินชดเชยเคลมสินค้าเสียหายจากแพลตฟอร์ม',
+    'เงินโบนัสยอดขายทะลุเป้าหมายเดลิเวอรี',
+    'เงินคืนค่าธรรมเนียมแคมเปญส่งเสริมการขาย'
+  ],
+  other: [
+    'เงินทิปรวมพนักงานส่วนกลาง',
+    'รายได้พิเศษจากการบริการเพิ่มเติม',
+    'ค่าปรับยกเลิกออเดอร์งานล่วงหน้า',
+    'รายรับเบ็ดเตล็ดอื่นๆ'
+  ]
 };
 
 const EXPENSE_COLORS: Record<string, string> = {
@@ -196,7 +282,7 @@ const getCurrentMonthKey = () => {
 };
 
 export const AccountingView: React.FC = () => {
-  const { orders, expenses, addExpense, deleteExpense, currentBranch, ingredients, addStockLot } = usePOS();
+  const { orders, expenses, incomes = [], addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot } = usePOS();
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     try {
@@ -231,10 +317,50 @@ export const AccountingView: React.FC = () => {
 
   // Income Form State
   const [incTitle, setIncTitle] = useState('');
+  const [incTitleSelect, setIncTitleSelect] = useState('');
   const [incAmount, setIncAmount] = useState<number>(0);
-  const [incCategory, setIncCategory] = useState<'catering' | 'ad_sponsor' | 'recycling' | 'other'>('catering');
+  const [incCategory, setIncCategory] = useState<IncomeCategory>('catering');
+  const [incDate, setIncDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [incPaymentMethod, setIncPaymentMethod] = useState<'promptpay' | 'cash' | 'bank_transfer' | 'credit_card' | 'other'>('promptpay');
+  const [incPayerName, setIncPayerName] = useState('');
   const [incRefNumber, setIncRefNumber] = useState('');
   const [incNote, setIncNote] = useState('');
+  const [incSlipImage, setIncSlipImage] = useState<string | null>(null);
+  const [incSlipName, setIncSlipName] = useState<string | null>(null);
+  const [isCompressingIncSlip, setIsCompressingIncSlip] = useState(false);
+
+  // Income Edit Modal State
+  const [editingIncome, setEditingIncome] = useState<OtherIncome | null>(null);
+  const [isEditIncomeOpen, setIsEditIncomeOpen] = useState(false);
+  const [editIncForm, setEditIncForm] = useState<{
+    id: string;
+    title: string;
+    amount: number;
+    category: IncomeCategory;
+    date: string;
+    paymentMethod: 'promptpay' | 'cash' | 'bank_transfer' | 'credit_card' | 'other';
+    payerName: string;
+    refNumber: string;
+    note: string;
+    slipImage?: string;
+    slipImageName?: string;
+  }>({
+    id: '',
+    title: '',
+    amount: 0,
+    category: 'catering',
+    date: '',
+    paymentMethod: 'promptpay',
+    payerName: '',
+    refNumber: '',
+    note: '',
+    slipImage: undefined,
+    slipImageName: undefined
+  });
+
+  // Income Table Search & Filter State
+  const [incomeSearchQuery, setIncomeSearchQuery] = useState('');
+  const [incomeCategoryFilter, setIncomeCategoryFilter] = useState<IncomeCategory | 'all'>('all');
 
   // Expense Form State
   const [expTitle, setExpTitle] = useState('');
@@ -253,11 +379,131 @@ export const AccountingView: React.FC = () => {
     date?: string;
     amount?: number;
     refNumber?: string;
-    category?: ExpenseCategory;
+    category?: string;
+    categoryLabel?: string;
     note?: string;
+    type?: 'expense' | 'income';
+    paymentMethod?: string;
+    payerName?: string;
   } | null>(null);
   const [expAutoUpdateStock, setExpAutoUpdateStock] = useState(false);
   const [expStockEntries, setExpStockEntries] = useState<Array<{ id: string; ingredientId: string; quantity: number }>>([]);
+
+  const openAddIncomeModal = () => {
+    const defaultCat: IncomeCategory = 'catering';
+    const defaultPreset = INCOME_TITLE_PRESETS[defaultCat]?.[0] || '';
+    setIncCategory(defaultCat);
+    setIncTitleSelect(defaultPreset);
+    setIncTitle(defaultPreset);
+    setIncAmount(0);
+    setIncDate(new Date().toISOString().split('T')[0]);
+    setIncPaymentMethod('promptpay');
+    setIncPayerName('');
+    setIncRefNumber('');
+    setIncNote('');
+    setIncSlipImage(null);
+    setIncSlipName(null);
+    setIsAddIncomeOpen(true);
+  };
+
+  const handleIncCategoryChange = (newCat: IncomeCategory) => {
+    setIncCategory(newCat);
+    const presets = INCOME_TITLE_PRESETS[newCat] || [];
+    const defaultPreset = presets[0] || '';
+    setIncTitleSelect(defaultPreset);
+    setIncTitle(defaultPreset);
+  };
+
+  const handleIncTitleSelectChange = (val: string) => {
+    setIncTitleSelect(val);
+    if (val === '__custom__') {
+      setIncTitle('');
+    } else {
+      setIncTitle(val);
+    }
+  };
+
+  const handleIncomeSlipUpload = (e: React.ChangeEvent<HTMLInputElement>, isEditMode = false) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsCompressingIncSlip(true);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_SIZE = 1600;
+        let width = img.width;
+        let height = img.height;
+        if (width > MAX_SIZE || height > MAX_SIZE) {
+          if (width > height) {
+            height = Math.round((height * MAX_SIZE) / width);
+            width = MAX_SIZE;
+          } else {
+            width = Math.round((width * MAX_SIZE) / height);
+            height = MAX_SIZE;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', 0.88);
+          if (isEditMode) {
+            setEditIncForm(prev => ({ ...prev, slipImage: compressed, slipImageName: file.name || 'slip.jpg' }));
+          } else {
+            setIncSlipImage(compressed);
+            setIncSlipName(file.name || 'slip.jpg');
+          }
+        } else {
+          const raw = event.target?.result as string;
+          if (isEditMode) {
+            setEditIncForm(prev => ({ ...prev, slipImage: raw, slipImageName: file.name || 'slip.jpg' }));
+          } else {
+            setIncSlipImage(raw);
+            setIncSlipName(file.name || 'slip.jpg');
+          }
+        }
+        setIsCompressingIncSlip(false);
+      };
+      img.onerror = () => {
+        const raw = event.target?.result as string;
+        if (isEditMode) {
+          setEditIncForm(prev => ({ ...prev, slipImage: raw, slipImageName: file.name || 'slip.jpg' }));
+        } else {
+          setIncSlipImage(raw);
+          setIncSlipName(file.name || 'slip.jpg');
+        }
+        setIsCompressingIncSlip(false);
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = () => setIsCompressingIncSlip(false);
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const openEditIncomeModal = (inc: OtherIncome) => {
+    setEditingIncome(inc);
+    setEditIncForm({
+      id: inc.id,
+      title: inc.title,
+      amount: inc.amount,
+      category: inc.category,
+      date: inc.date,
+      paymentMethod: (inc.paymentMethod as any) || 'promptpay',
+      payerName: inc.payerName || '',
+      refNumber: inc.refNumber || '',
+      note: inc.note || '',
+      slipImage: inc.slipImage,
+      slipImageName: inc.slipImageName
+    });
+    setIsEditIncomeOpen(true);
+  };
 
   const openAddExpenseModal = () => {
     const defaultCat: ExpenseCategory = 'raw_material';
@@ -560,25 +806,27 @@ export const AccountingView: React.FC = () => {
   const liveRetainedEarnings = useMemo(() => {
     const branchOrders = orders.filter(o => o.branchId === currentBranch.id && o.status === 'served');
     const totalRev = branchOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+    const totalOtherInc = (incomes || []).filter(inc => !inc.branchId || inc.branchId === currentBranch.id).reduce((sum, inc) => sum + (inc.amount || 0), 0);
     const totalCogs = branchOrders.reduce((sum, o) => {
       return sum + o.items.reduce((iSum, it) => iSum + (it.menuItem.costPrice || (it.menuItem.price * 0.4)) * it.quantity, 0);
     }, 0);
     const totalExp = expenses.filter(e => e.branchId === currentBranch.id).reduce((sum, e) => sum + (e.amount || 0), 0);
-    return totalRev - totalCogs - totalExp;
-  }, [orders, expenses, currentBranch.id]);
+    return (totalRev + totalOtherInc) - totalCogs - totalExp;
+  }, [orders, expenses, incomes, currentBranch.id]);
 
   const liveCashOnHand = useMemo(() => {
     const branchOrders = orders.filter(o => o.branchId === currentBranch.id && o.status === 'served');
     const orderCash = branchOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+    const otherIncCash = (incomes || []).filter(inc => !inc.branchId || inc.branchId === currentBranch.id).reduce((sum, inc) => sum + (inc.amount || 0), 0);
     const expenseCash = expenses.filter(e => e.branchId === currentBranch.id).reduce((sum, e) => sum + (e.amount || 0), 0);
     const arCollected = arList.filter(a => !a.branchId || a.branchId === currentBranch.id).reduce((sum, item) => sum + (item.paidAmount || 0), 0);
     const apDisbursed = apList.filter(a => !a.branchId || a.branchId === currentBranch.id).reduce((sum, item) => sum + (item.paidAmount || 0), 0);
     const cfNet = cashFlowEntries.filter(c => !c.branchId || c.branchId === currentBranch.id).reduce((sum, e) => sum + (e.flowType === 'inflow' ? e.amount : -e.amount), 0);
     const shareCap = balanceData.shareCapital || 0;
     const equip = balanceData.equipmentAssets || 0;
-    const net = orderCash - expenseCash + arCollected - apDisbursed + cfNet + shareCap - equip;
+    const net = orderCash + otherIncCash - expenseCash + arCollected - apDisbursed + cfNet + shareCap - equip;
     return Math.max(0, net);
-  }, [orders, expenses, arList, apList, cashFlowEntries, currentBranch.id, balanceData.shareCapital, balanceData.equipmentAssets]);
+  }, [orders, expenses, incomes, arList, apList, cashFlowEntries, currentBranch.id, balanceData.shareCapital, balanceData.equipmentAssets]);
 
   const activeCashOnHand = balanceData.overrideCashOnHand !== undefined ? balanceData.overrideCashOnHand : liveCashOnHand;
   const activeInventoryAsset = balanceData.overrideInventoryAsset !== undefined ? balanceData.overrideInventoryAsset : liveInventoryAsset;
@@ -647,6 +895,11 @@ export const AccountingView: React.FC = () => {
         e => e.branchId === currentBranch.id && e.date.startsWith(monthKey)
       );
 
+      // Filter incomes for this branch & month
+      const mIncomes = (incomes || []).filter(
+        inc => (!inc.branchId || inc.branchId === currentBranch.id) && inc.date.startsWith(monthKey)
+      );
+
       // POS Sales
       let posSales = mOrders.reduce((sum, o) => sum + o.grandTotal, 0);
 
@@ -680,7 +933,6 @@ export const AccountingView: React.FC = () => {
       // Pure Real data calculation
       let deliverySales = 0;
       let cateringSales = 0;
-      let otherIncome = 0;
 
       // Extract delivery orders if any
       mOrders.forEach(o => {
@@ -690,6 +942,9 @@ export const AccountingView: React.FC = () => {
           cateringSales += o.grandTotal || 0;
         }
       });
+
+      // Sum all other recorded incomes for this month
+      const otherIncome = mIncomes.reduce((sum, inc) => sum + (inc.amount || 0), 0);
 
       const totalRevenue = posSales + deliverySales + cateringSales + otherIncome;
       const grossProfit = totalRevenue - cogs;
@@ -718,7 +973,7 @@ export const AccountingView: React.FC = () => {
         netMarginPct
       };
     });
-  }, [monthsList, orders, expenses, currentBranch.id]);
+  }, [monthsList, orders, expenses, incomes, currentBranch.id]);
 
   // Selected Month Current Snapshot Metrics
   const currentMonthFinancials = useMemo(() => {
@@ -766,6 +1021,44 @@ export const AccountingView: React.FC = () => {
   const totalExpenseVat = selectedBranchExpenses.reduce((sum, e) => sum + e.vatAmount, 0);
   const netVatPayable = totalSalesVat - totalExpenseVat;
 
+  // Incomes for selected branch & selected month
+  const selectedBranchIncomes = useMemo(() => {
+    return (incomes || []).filter(
+      inc => (!inc.branchId || inc.branchId === currentBranch.id) && inc.date.startsWith(selectedMonth)
+    );
+  }, [incomes, currentBranch.id, selectedMonth]);
+
+  const allSelectedBranchIncomes = useMemo(() => {
+    return (incomes || []).filter(
+      inc => !inc.branchId || inc.branchId === currentBranch.id
+    );
+  }, [incomes, currentBranch.id]);
+
+  const filteredIncomes = useMemo(() => {
+    return selectedBranchIncomes.filter(inc => {
+      const matchCat = incomeCategoryFilter === 'all' || inc.category === incomeCategoryFilter;
+      const q = incomeSearchQuery.trim().toLowerCase();
+      const matchSearch =
+        !q ||
+        inc.title.toLowerCase().includes(q) ||
+        (inc.payerName && inc.payerName.toLowerCase().includes(q)) ||
+        (inc.refNumber && inc.refNumber.toLowerCase().includes(q)) ||
+        (inc.note && inc.note.toLowerCase().includes(q));
+      return matchCat && matchSearch;
+    });
+  }, [selectedBranchIncomes, incomeCategoryFilter, incomeSearchQuery]);
+
+  const filteredIncomeTotals = useMemo(() => {
+    return filteredIncomes.reduce(
+      (acc, inc) => {
+        acc.total += inc.amount;
+        acc.count += 1;
+        return acc;
+      },
+      { total: 0, count: 0 }
+    );
+  }, [filteredIncomes]);
+
   // Filtered Expense List
   const filteredExpenses = useMemo(() => {
     return selectedBranchExpenses.filter(e => {
@@ -810,6 +1103,9 @@ export const AccountingView: React.FC = () => {
       const dayExpenses = expenses.filter(
         e => e.branchId === currentBranch.id && e.date === fullDate
       );
+      const dayIncomes = (incomes || []).filter(
+        inc => (!inc.branchId || inc.branchId === currentBranch.id) && inc.date === fullDate
+      );
 
       let posSales = dayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
       let cogs = dayOrders.reduce((sum, o) => {
@@ -820,20 +1116,25 @@ export const AccountingView: React.FC = () => {
 
       let deliverySales = 0;
       let cateringSales = 0;
-      let otherIncome = 0;
+      const actualOtherIncome = dayIncomes.reduce((sum, inc) => sum + (inc.amount || 0), 0);
+      let otherIncome = actualOtherIncome;
 
       if (posSales === 0) {
         const dayFactor = 0.7 + ((d * 13) % 20) / 25;
         posSales = Math.round(1800 * dayFactor);
         deliverySales = Math.round(420 * dayFactor);
         cateringSales = d % 5 === 0 ? 1200 : 0;
-        otherIncome = 150;
+        if (actualOtherIncome === 0) {
+          otherIncome = 150;
+        }
         cogs = Math.round(posSales * 0.36);
         opex = Math.round(750 + (d % 3 === 0 ? 300 : 0));
       } else {
         deliverySales = Math.round(posSales * 0.22);
         cateringSales = d % 7 === 0 ? Math.round(posSales * 0.18) : 0;
-        otherIncome = 150;
+        if (actualOtherIncome === 0) {
+          otherIncome = 150;
+        }
       }
 
       const totalRevenue = posSales + deliverySales + cateringSales + otherIncome;
@@ -874,11 +1175,12 @@ export const AccountingView: React.FC = () => {
         netProfit,
         netMarginPct,
         dayOrders,
-        dayExpenses
+        dayExpenses,
+        dayIncomes
       });
     }
     return daysArr;
-  }, [selectedMonth, orders, expenses, currentBranch.id]);
+  }, [selectedMonth, orders, expenses, incomes, currentBranch.id]);
 
   const filteredDailyFinancials = useMemo(() => {
     if (!dailySearchQuery.trim()) return dailyFinancials;
@@ -969,17 +1271,55 @@ export const AccountingView: React.FC = () => {
     e.preventDefault();
     if (!incTitle.trim() || incAmount <= 0) return;
 
-    setBalanceData(prev => ({
-      ...prev,
-      cashOnHand: prev.cashOnHand + incAmount,
-      retainedEarnings: prev.retainedEarnings + incAmount
-    }));
+    addIncome({
+      branchId: currentBranch.id,
+      date: incDate || new Date().toISOString().split('T')[0],
+      category: incCategory,
+      title: incTitle.trim(),
+      amount: incAmount,
+      paymentMethod: incPaymentMethod,
+      payerName: incPayerName.trim() || undefined,
+      refNumber: incRefNumber.trim() || undefined,
+      note: incNote.trim() || undefined,
+      slipImage: incSlipImage || undefined,
+      slipImageName: incSlipName || undefined
+    });
 
     setIsAddIncomeOpen(false);
     setIncTitle('');
     setIncAmount(0);
+    setIncPayerName('');
     setIncRefNumber('');
     setIncNote('');
+    setIncSlipImage(null);
+    setIncSlipName(null);
+  };
+
+  const handleUpdateIncomeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editIncForm.id || !editIncForm.title.trim() || editIncForm.amount <= 0) return;
+
+    updateIncome(editIncForm.id, {
+      title: editIncForm.title.trim(),
+      amount: editIncForm.amount,
+      category: editIncForm.category,
+      date: editIncForm.date,
+      paymentMethod: editIncForm.paymentMethod,
+      payerName: editIncForm.payerName.trim() || undefined,
+      refNumber: editIncForm.refNumber.trim() || undefined,
+      note: editIncForm.note.trim() || undefined,
+      slipImage: editIncForm.slipImage || undefined,
+      slipImageName: editIncForm.slipImageName || undefined
+    });
+
+    setIsEditIncomeOpen(false);
+    setEditingIncome(null);
+  };
+
+  const handleDeleteIncome = (id: string, title?: string) => {
+    if (window.confirm(`ยืนยันการลบรายการรายรับ: "${title || id}" หรือไม่?\nยอดเงินจะถูกหักออกจากงบกำไรขาดทุน, กราฟ และงบกระแสเงินสดทันที`)) {
+      deleteIncome(id);
+    }
   };
 
   // Handlers for Accounts Receivable (AR)
@@ -1220,6 +1560,36 @@ export const AccountingView: React.FC = () => {
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
     link.setAttribute('download', `PL_Accounting_${currentBranch.id}_${selectedMonth}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportIncomeCSV = () => {
+    const headers = ['วันที่', 'หมวดหมู่', 'รายการ/คำอธิบาย', 'ช่องทางชำระเงิน', 'ผู้ชำระเงิน/ลูกค้า', 'เลขที่อ้างอิง', 'จำนวนเงิน (บาท)', 'หมายเหตุ'];
+    const rows: string[][] = [];
+
+    selectedBranchIncomes.forEach(inc => {
+      rows.push([
+        inc.date,
+        incomeCategoryLabels[inc.category] || inc.category,
+        inc.title,
+        inc.paymentMethod ? (incomePaymentMethodLabels[inc.paymentMethod] || inc.paymentMethod) : 'ไม่ระบุ',
+        inc.payerName || '-',
+        inc.refNumber || '-',
+        inc.amount.toFixed(2),
+        inc.note || '-'
+      ]);
+    });
+
+    const csvContent =
+      'data:text/csv;charset=utf-8,\uFEFF' +
+      [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `Other_Income_${currentBranch.id}_${selectedMonth}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1481,8 +1851,8 @@ export const AccountingView: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setIsAddIncomeOpen(true)}
-            className="flex items-center justify-center space-x-1 py-2.5 px-2 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition active:scale-95 shadow-lg"
+            onClick={openAddIncomeModal}
+            className="flex items-center justify-center space-x-1 py-2.5 px-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition active:scale-95 shadow-lg"
           >
             <Plus className="w-4 h-4 shrink-0" />
             <span className="truncate">+ บันทึกรายรับอื่น</span>
@@ -1556,6 +1926,21 @@ export const AccountingView: React.FC = () => {
               <span>👥 ลูกหนี้/เจ้าหนี้การค้า (AR & AP)</span>
               {activeTab === 'ar_ap' && (
                 <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-amber-500 rounded-full" />
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('incomes')}
+              className={`flex items-center space-x-1.5 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 whitespace-nowrap relative ${
+                activeTab === 'incomes'
+                  ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 shadow'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <Coins className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+              <span>💵 ทะเบียนรายรับอื่น ({selectedBranchIncomes.length})</span>
+              {activeTab === 'incomes' && (
+                <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-emerald-500 rounded-full" />
               )}
             </button>
 
@@ -2988,6 +3373,391 @@ export const AccountingView: React.FC = () => {
           </div>
         )}
 
+        {/* TAB 2.3: OTHER INCOME LOG TABLE & MANAGEMENT */}
+        {activeTab === 'incomes' && (
+          <div className="space-y-4 sm:space-y-6">
+            {/* Formal Report Header Box */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-3.5">
+                <div className="space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded text-[10px] font-bold uppercase tracking-wider">
+                      OFFICIAL OTHER REVENUE & INCOME LOG
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono">สาขา: {currentBranch.name}</span>
+                  </div>
+                  <h2 className="text-base sm:text-lg font-bold text-slate-100 flex items-center space-x-2">
+                    <DollarSign className="w-5 h-5 text-emerald-400" />
+                    <span>รายงานสมุดบันทึกรายรับอื่น & รายได้เสริมประจำเดือน ({selectedMonth})</span>
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    บันทึกรายรับพิเศษ งานจัดเลี้ยง ค่าโฆษณา ขายของเก่า ดอกเบี้ย และเงินชดเชย พร้อมสะท้อนเข้า P&L, กราฟสัดส่วน และงบกระแสเงินสดอัตโนมัติทันที
+                  </p>
+                </div>
+
+                <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 text-xs font-medium flex items-center space-x-1.5 transition active:scale-95"
+                    title="พิมพ์รายงานรายรับ"
+                  >
+                    <Printer className="w-4 h-4 text-sky-400" />
+                    <span className="hidden sm:inline">พิมพ์รายงาน</span>
+                  </button>
+                  <button
+                    onClick={handleExportIncomeCSV}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 text-xs font-medium flex items-center space-x-1.5 transition active:scale-95"
+                    title="ส่งออกไฟล์ CSV"
+                  >
+                    <Download className="w-4 h-4 text-emerald-400" />
+                    <span className="hidden sm:inline">ส่งออก CSV</span>
+                  </button>
+                  <button
+                    onClick={openAddIncomeModal}
+                    className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-medium text-xs flex items-center space-x-1.5 shadow-lg shadow-emerald-950 transition active:scale-95"
+                  >
+                    <Plus className="w-4 h-4 text-emerald-100" />
+                    <span>+ บันทึกรายรับใหม่</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Metric Summary Cards */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 text-xs">
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 space-y-1">
+                  <span className="text-slate-400 text-xs block truncate">รายรับอื่นๆ รวมงวดนี้:</span>
+                  <span className="text-base sm:text-lg font-bold text-emerald-400 font-mono block">
+                    ฿{selectedBranchIncomes.reduce((s, i) => s + i.amount, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">Total Other Revenue</span>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 space-y-1">
+                  <span className="text-slate-400 text-xs block truncate">จำนวนรายการรับเงิน:</span>
+                  <span className="text-base sm:text-lg font-bold text-sky-400 font-mono block">
+                    {selectedBranchIncomes.length} <span className="text-xs font-normal text-slate-400">รายการ</span>
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">Transaction Count</span>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 space-y-1">
+                  <span className="text-slate-400 text-xs block truncate">เฉลี่ยต่อรายการ:</span>
+                  <span className="text-base sm:text-lg font-bold text-purple-400 font-mono block">
+                    ฿{selectedBranchIncomes.length > 0
+                      ? (selectedBranchIncomes.reduce((s, i) => s + i.amount, 0) / selectedBranchIncomes.length).toLocaleString(undefined, { minimumFractionDigits: 2 })
+                      : '0.00'}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">Avg. per Transaction</span>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 space-y-1">
+                  <span className="text-slate-400 text-xs block truncate">สัดส่วนต่อรายได้รวมร้าน:</span>
+                  <span className="text-base sm:text-lg font-bold text-amber-400 font-mono block">
+                    {rangeTotals.totalRevenue > 0
+                      ? ((rangeTotals.otherIncome / rangeTotals.totalRevenue) * 100).toFixed(1)
+                      : '0.0'}%
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">Share of Total Revenue</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Income Table Section with Search & Filter Controls */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl space-y-3 p-3.5 sm:p-4">
+              {/* Filter Controls Toolbar */}
+              <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-slate-850 p-3 rounded-xl border border-slate-800">
+                {/* Search Input */}
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={incomeSearchQuery}
+                    onChange={(e) => setIncomeSearchQuery(e.target.value)}
+                    placeholder="ค้นหาชื่อรายการ, ผู้จ่ายเงิน, เลขที่อ้างอิง, หมายเหตุ..."
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl pl-9 pr-8 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition"
+                  />
+                  {incomeSearchQuery && (
+                    <button
+                      onClick={() => setIncomeSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs p-0.5"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Category Pills */}
+                <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none text-xs">
+                  <span className="text-slate-400 font-medium text-[11px] mr-1 hidden sm:inline-flex items-center space-x-1">
+                    <Filter className="w-3.5 h-3.5" />
+                    <span>หมวดหมู่:</span>
+                  </span>
+                  <button
+                    onClick={() => setIncomeCategoryFilter('all')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition ${
+                      incomeCategoryFilter === 'all'
+                        ? 'bg-emerald-600 text-white shadow'
+                        : 'bg-slate-800 text-slate-300 hover:bg-slate-750'
+                    }`}
+                  >
+                    ทั้งหมด ({selectedBranchIncomes.length})
+                  </button>
+                  {(Object.keys(incomeCategoryLabels) as IncomeCategory[]).map(catKey => {
+                    const count = selectedBranchIncomes.filter(inc => inc.category === catKey).length;
+                    return (
+                      <button
+                        key={catKey}
+                        onClick={() => setIncomeCategoryFilter(catKey)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition ${
+                          incomeCategoryFilter === catKey
+                            ? 'bg-emerald-600 text-white shadow'
+                            : 'bg-slate-800 text-slate-300 hover:bg-slate-750'
+                        }`}
+                      >
+                        {incomeCategoryLabels[catKey]} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Income Records Count & Quick Status */}
+              <div className="flex items-center justify-between text-xs text-slate-400 px-1 pt-1">
+                <span>
+                  แสดงผล <strong className="text-slate-200 font-mono">{filteredIncomes.length}</strong> จากทั้งหมด{' '}
+                  <strong className="text-slate-200 font-mono">{selectedBranchIncomes.length}</strong> รายการ
+                </span>
+                <span className="font-mono text-emerald-300">
+                  รวมมูลค่าตามตัวกรอง: <strong>฿{filteredIncomeTotals.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                </span>
+              </div>
+
+              {/* Mobile Card List View */}
+              <div className="block md:hidden space-y-2.5 pt-1">
+                {filteredIncomes.length === 0 ? (
+                  <div className="text-center py-10 text-slate-500 text-xs bg-slate-950/60 rounded-xl border border-slate-800 space-y-2">
+                    <div>ไม่พบรายการรายรับตรงตามเงื่อนไขค้นหา</div>
+                    <button
+                      onClick={openAddIncomeModal}
+                      className="px-3 py-1.5 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 rounded-lg text-xs font-medium inline-flex items-center space-x-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ บันทึกรายรับรายการแรก</span>
+                    </button>
+                  </div>
+                ) : (
+                  filteredIncomes.map(inc => (
+                    <div key={inc.id} className="p-3 bg-slate-950 border border-slate-800/80 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="px-2 py-0.5 bg-emerald-950/60 border border-emerald-500/30 rounded text-[10px] font-medium text-emerald-300">
+                          {incomeCategoryLabels[inc.category] || inc.category}
+                        </span>
+                        <span className="font-mono text-[11px] text-slate-400">{inc.date}</span>
+                      </div>
+
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <div className="font-bold text-slate-100 text-xs">{inc.title}</div>
+                          {inc.payerName && (
+                            <div className="text-[11px] text-slate-400 flex items-center space-x-1">
+                              <span>ผู้ชำระ:</span>
+                              <span className="text-slate-200 font-medium">{inc.payerName}</span>
+                            </div>
+                          )}
+                          {inc.refNumber && (
+                            <div className="text-[10px] text-slate-500 font-mono">
+                              เลขที่อ้างอิง: {inc.refNumber}
+                            </div>
+                          )}
+                          {inc.note && (
+                            <div className="text-[10px] text-slate-500 italic">
+                              หมายเหตุ: {inc.note}
+                            </div>
+                          )}
+                          {inc.paymentMethod && (
+                            <div className="pt-0.5">
+                              <span className="px-1.5 py-0.5 bg-slate-900 border border-slate-700/60 rounded text-[9px] text-slate-300">
+                                {incomePaymentMethodLabels[inc.paymentMethod] || inc.paymentMethod}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <span className="font-mono font-bold text-emerald-400 text-sm block">
+                            +฿{inc.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-900 text-xs">
+                        <div>
+                          {inc.slipImage ? (
+                            <button
+                              onClick={() => setSelectedReceiptPreview({
+                                url: inc.slipImage!,
+                                title: inc.title,
+                                date: inc.date,
+                                amount: inc.amount,
+                                refNumber: inc.refNumber,
+                                category: inc.category,
+                                note: inc.note
+                              })}
+                              className="inline-flex items-center space-x-1 py-1 px-2 bg-emerald-950/40 hover:bg-emerald-900/40 border border-emerald-500/30 rounded-lg text-[10px] text-emerald-300 transition active:scale-95"
+                            >
+                              <Paperclip className="w-3 h-3 text-emerald-400" />
+                              <span>ดูหลักฐานสลิป</span>
+                            </button>
+                          ) : (
+                            <span className="text-slate-600 text-[10px]">ไม่มีสลิป</span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center space-x-1">
+                          <button
+                            onClick={() => openEditIncomeModal(inc)}
+                            className="p-1.5 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded-lg transition"
+                            title="แก้ไขรายการรายรับ"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteIncome(inc.id, inc.title)}
+                            className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition"
+                            title="ลบรายการรายรับ"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto rounded-xl border border-slate-800">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">
+                    <tr>
+                      <th className="py-3 px-3.5">วันที่</th>
+                      <th className="py-3 px-3.5">หมวดหมู่รายรับ</th>
+                      <th className="py-3 px-3.5">รายการ / รายละเอียด</th>
+                      <th className="py-3 px-3.5">ผู้ชำระเงิน / ลูกค้า</th>
+                      <th className="py-3 px-3.5">ช่องทางชำระ</th>
+                      <th className="py-3 px-3.5">เลขที่อ้างอิง/บิล</th>
+                      <th className="py-3 px-3.5 text-center">สลิป/หลักฐาน</th>
+                      <th className="py-3 px-3.5 text-right font-bold text-emerald-400">จำนวนเงิน (บาท)</th>
+                      <th className="py-3 px-3.5 text-center">จัดการ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {filteredIncomes.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="py-12 text-center text-slate-500 space-y-2">
+                          <div>ไม่พบรายการรายรับตรงตามเงื่อนไขค้นหา</div>
+                          <button
+                            onClick={openAddIncomeModal}
+                            className="px-3 py-1.5 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 rounded-lg text-xs font-medium inline-flex items-center space-x-1"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>+ บันทึกรายรับรายการแรก</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredIncomes.map(inc => (
+                        <tr key={inc.id} className="hover:bg-slate-800/40 transition">
+                          <td className="py-3 px-3.5 font-mono text-slate-400 whitespace-nowrap">{inc.date}</td>
+                          <td className="py-3 px-3.5 whitespace-nowrap">
+                            <span className="px-2 py-0.5 bg-emerald-950/60 border border-emerald-500/30 rounded text-[10px] font-medium text-emerald-300">
+                              {incomeCategoryLabels[inc.category] || inc.category}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3.5">
+                            <div className="font-bold text-slate-100">{inc.title}</div>
+                            {inc.note && <div className="text-[10px] text-slate-500 mt-0.5">{inc.note}</div>}
+                          </td>
+                          <td className="py-3 px-3.5 text-slate-300 whitespace-nowrap">
+                            {inc.payerName || <span className="text-slate-600">-</span>}
+                          </td>
+                          <td className="py-3 px-3.5 whitespace-nowrap">
+                            <span className="px-2 py-0.5 bg-slate-800 border border-slate-700 rounded text-[10px] text-slate-300 font-medium">
+                              {inc.paymentMethod ? (incomePaymentMethodLabels[inc.paymentMethod] || inc.paymentMethod) : 'ไม่ระบุ'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3.5 font-mono text-slate-400 whitespace-nowrap">
+                            {inc.refNumber || '-'}
+                          </td>
+                          <td className="py-3 px-3.5 text-center whitespace-nowrap">
+                            {inc.slipImage ? (
+                              <button
+                                onClick={() => setSelectedReceiptPreview({
+                                  url: inc.slipImage!,
+                                  title: inc.title,
+                                  date: inc.date,
+                                  amount: inc.amount,
+                                  refNumber: inc.refNumber,
+                                  category: inc.category,
+                                  note: inc.note
+                                })}
+                                className="inline-flex items-center space-x-1.5 py-1 px-2.5 bg-slate-900 hover:bg-slate-800 border border-emerald-500/40 hover:border-emerald-400 rounded-lg text-[11px] text-emerald-300 hover:text-emerald-200 transition font-medium active:scale-95 group shadow-sm"
+                                title="คลิกเพื่อดูสลิป/หลักฐานการรับเงิน"
+                              >
+                                <img
+                                  src={inc.slipImage}
+                                  alt="Income Slip"
+                                  className="w-5 h-5 object-cover rounded border border-slate-700 group-hover:border-emerald-400 shrink-0"
+                                />
+                                <span className="text-[11px]">ดูสลิป</span>
+                              </button>
+                            ) : (
+                              <span className="text-slate-600 text-[11px]">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3.5 font-mono font-bold text-emerald-400 text-sm text-right whitespace-nowrap">
+                            +฿{inc.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-3 px-3.5 text-center whitespace-nowrap space-x-1">
+                            <button
+                              onClick={() => openEditIncomeModal(inc)}
+                              className="p-1.5 text-slate-400 hover:text-sky-300 hover:bg-sky-950/30 rounded-lg transition"
+                              title="แก้ไขรายการรายรับ"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteIncome(inc.id, inc.title)}
+                              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition"
+                              title="ลบรายการรายรับ"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  {/* Table Summary Footer */}
+                  {filteredIncomes.length > 0 && (
+                    <tfoot className="bg-slate-950 border-t border-slate-800 font-bold text-slate-200">
+                      <tr>
+                        <td colSpan={7} className="py-3 px-3.5 text-right uppercase tracking-wider text-slate-400">
+                          รวมยอดรายรับตามเงื่อนไขกรอง ({filteredIncomes.length} รายการ):
+                        </td>
+                        <td className="py-3 px-3.5 text-right font-mono text-emerald-400 text-sm font-black whitespace-nowrap">
+                          +฿{filteredIncomeTotals.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* TAB 3: EXPENSE LOG TABLE & MODAL */}
         {activeTab === 'expenses' && (
           <div className="space-y-4 sm:space-y-6">
@@ -4142,7 +4912,7 @@ export const AccountingView: React.FC = () => {
       {/* MODAL: ADD OTHER INCOME */}
       {isAddIncomeOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-4 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-4 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-slate-100 text-sm sm:text-base flex items-center space-x-2">
                 <Plus className="w-5 h-5 text-emerald-400" />
@@ -4153,75 +4923,440 @@ export const AccountingView: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCreateIncome} className="space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-400 mb-1">หมวดหมู่รายรับ *</label>
-                <select
-                  value={incCategory}
-                  onChange={e => setIncCategory(e.target.value as any)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm"
-                >
-                  <option value="catering">งานจัดเลี้ยง / อาหารกล่อง (Catering)</option>
-                  <option value="ad_sponsor">ค่าเช่าป้าย / ค่าโฆษณาหน้าร้าน</option>
-                  <option value="recycling">ขายวัสดุรีไซเคิล / เศษน้ำมันใช้แล้ว</option>
-                  <option value="other">รายได้เบ็ดเตล็ดอื่นๆ</option>
-                </select>
+            <form onSubmit={handleCreateIncome} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">หมวดหมู่รายรับ *</label>
+                  <select
+                    value={incCategory}
+                    onChange={e => handleIncCategoryChange(e.target.value as IncomeCategory)}
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
+                  >
+                    {(Object.keys(incomeCategoryLabels) as IncomeCategory[]).map(catKey => (
+                      <option key={catKey} value={catKey}>
+                        {incomeCategoryLabels[catKey]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">วันที่รับเงิน *</label>
+                  <input
+                    type="date"
+                    required
+                    value={incDate}
+                    onChange={e => setIncDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1">รายการ/รายละเอียดรายรับ *</label>
+                <label className="block text-slate-400 mb-1 font-medium">เลือกรายการมาตรฐาน (Preset) หรือกรอกเอง</label>
+                <select
+                  value={incTitleSelect}
+                  onChange={e => handleIncTitleSelectChange(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500 mb-2"
+                >
+                  {(INCOME_TITLE_PRESETS[incCategory] || []).map((preset, idx) => (
+                    <option key={idx} value={preset}>{preset}</option>
+                  ))}
+                  <option value="__custom__">-- กำหนดชื่อรายการเอง (Custom) --</option>
+                </select>
+
                 <input
                   type="text"
                   required
-                  placeholder="เช่น มัดจำงานจัดเลี้ยงบริษัท A..."
+                  placeholder="ระบุชื่อรายการ/คำอธิบายรายรับ..."
                   value={incTitle}
-                  onChange={e => setIncTitle(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm focus:outline-none focus:border-emerald-500"
+                  onChange={e => {
+                    setIncTitle(e.target.value);
+                    setIncTitleSelect('__custom__');
+                  }}
+                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 mb-1">จำนวนเงิน (บาท) *</label>
+                  <label className="block text-slate-400 mb-1 font-medium">จำนวนเงินที่ได้รับ (บาท) *</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-400 font-bold">฿</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      placeholder="0.00"
+                      value={incAmount || ''}
+                      onChange={e => setIncAmount(parseFloat(e.target.value) || 0)}
+                      className="w-full bg-slate-950 border border-slate-700/80 rounded-xl pl-8 pr-3 py-2 text-slate-100 font-mono font-bold text-sm focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">ช่องทางการชำระเงิน *</label>
+                  <select
+                    value={incPaymentMethod}
+                    onChange={e => setIncPaymentMethod(e.target.value as any)}
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="promptpay">พร้อมเพย์ / สแกน QR Code</option>
+                    <option value="cash">เงินสด (Cash)</option>
+                    <option value="bank_transfer">โอนเข้าบัญชีธนาคาร</option>
+                    <option value="credit_card">บัตรเครดิต / EDC</option>
+                    <option value="other">ช่องทางอื่นๆ</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">ผู้จ่ายเงิน / ชื่อลูกค้า / บริษัท</label>
                   <input
-                    type="number"
-                    required
-                    placeholder="0.00"
-                    value={incAmount || ''}
-                    onChange={e => setIncAmount(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 focus:outline-none focus:border-emerald-500 font-bold text-sm"
+                    type="text"
+                    placeholder="เช่น คุณสมชาย, บจก. เทคโนโลยี..."
+                    value={incPayerName}
+                    onChange={e => setIncPayerName(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-slate-400 mb-1">เลขที่ใบเสร็จ/อ้างอิง</label>
+                  <label className="block text-slate-400 mb-1 font-medium">เลขที่อ้างอิง / เลขที่ใบเสร็จ</label>
                   <input
                     type="text"
-                    placeholder="เช่น INC-2026-001"
+                    placeholder="เช่น REC-202607-001"
                     value={incRefNumber}
                     onChange={e => setIncRefNumber(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm"
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500 font-mono"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1">หมายเหตุเพิ่มเติม</label>
+                <label className="block text-slate-400 mb-1 font-medium">หมายเหตุเพิ่มเติม</label>
                 <input
                   type="text"
-                  placeholder="เช่น ชำระผ่านโอนเงินธนาคาร"
+                  placeholder="เช่น มัดจำ 50%, รอส่งของรอบบ่าย..."
                   value={incNote}
                   onChange={e => setIncNote(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm"
+                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition shadow-lg active:scale-95 text-sm"
-              >
-                บันทึกรายรับ
+              {/* Slip / Document Attachment */}
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-slate-400 font-medium">แนบหลักฐานสลิป / เอกสารการรับเงิน (ถ้ามี)</label>
+                {!incSlipImage ? (
+                  <div className="flex items-center space-x-2">
+                    <label className="flex-1 border border-dashed border-slate-700 hover:border-emerald-500/60 bg-slate-950/60 hover:bg-slate-950 rounded-xl p-3 text-center cursor-pointer transition flex flex-col items-center justify-center space-y-1">
+                      <Upload className="w-4 h-4 text-emerald-400" />
+                      <span className="text-[11px] text-slate-400">
+                        {isCompressingIncSlip ? 'กำลังประมวลผลรูปภาพ...' : 'คลิกเพื่อเลือกไฟล์รูปภาพ หรือ ลากวาง'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={e => handleIncomeSlipUpload(e, false)}
+                        className="hidden"
+                        disabled={isCompressingIncSlip}
+                      />
+                    </label>
+
+                    <label className="p-3 border border-slate-700 hover:border-emerald-500 bg-slate-950 rounded-xl cursor-pointer text-slate-400 hover:text-emerald-400 transition" title="ถ่ายภาพจากกล้อง">
+                      <Camera className="w-4 h-4" />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={e => handleIncomeSlipUpload(e, false)}
+                        className="hidden"
+                        disabled={isCompressingIncSlip}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="p-2.5 bg-slate-950 border border-emerald-500/40 rounded-xl flex items-center justify-between">
+                    <div className="flex items-center space-x-2.5 overflow-hidden">
+                      <img
+                        src={incSlipImage}
+                        alt="Slip Preview"
+                        className="w-9 h-9 object-cover rounded-lg border border-slate-700 shrink-0"
+                      />
+                      <div className="truncate">
+                        <div className="text-xs font-medium text-emerald-300 truncate">
+                          {incSlipName || 'แนบสลิปเรียบร้อยแล้ว'}
+                        </div>
+                        <div className="text-[10px] text-slate-500">พร้อมแนบเข้าระบบบัญชี</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-1">
+                      <label
+                        className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition cursor-pointer"
+                        title="เปลี่ยนรูปภาพใหม่"
+                      >
+                        <Upload className="w-4 h-4" />
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={e => handleIncomeSlipUpload(e, false)}
+                          className="hidden"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIncSlipImage(null);
+                          setIncSlipName(null);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition"
+                        title="ลบสลิปที่แนบ"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-2 flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddIncomeOpen(false)}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl transition text-xs"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl transition shadow-lg shadow-emerald-950 active:scale-95 text-xs"
+                >
+                  บันทึกรายรับเข้าระบบ
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT OTHER INCOME */}
+      {isEditIncomeOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-4 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="font-bold text-slate-100 text-sm sm:text-base flex items-center space-x-2">
+                <Edit3 className="w-5 h-5 text-sky-400" />
+                <span>แก้ไขรายการรายรับอื่น</span>
+              </h3>
+              <button onClick={() => setIsEditIncomeOpen(false)} className="text-slate-400 hover:text-slate-200 p-1">
+                <X className="w-5 h-5" />
               </button>
+            </div>
+
+            <form onSubmit={handleUpdateIncomeSubmit} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">หมวดหมู่รายรับ *</label>
+                  <select
+                    value={editIncForm.category}
+                    onChange={e => setEditIncForm(prev => ({ ...prev, category: e.target.value as IncomeCategory }))}
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-sky-500"
+                  >
+                    {(Object.keys(incomeCategoryLabels) as IncomeCategory[]).map(catKey => (
+                      <option key={catKey} value={catKey}>
+                        {incomeCategoryLabels[catKey]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">วันที่รับเงิน *</label>
+                  <input
+                    type="date"
+                    required
+                    value={editIncForm.date}
+                    onChange={e => setEditIncForm(prev => ({ ...prev, date: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-sky-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1 font-medium">รายการ/รายละเอียดรายรับ *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="ระบุชื่อรายการ/คำอธิบาย..."
+                  value={editIncForm.title}
+                  onChange={e => setEditIncForm(prev => ({ ...prev, title: e.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">จำนวนเงินที่ได้รับ (บาท) *</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-400 font-bold">฿</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      placeholder="0.00"
+                      value={editIncForm.amount || ''}
+                      onChange={e => setEditIncForm(prev => ({ ...prev, amount: parseFloat(e.target.value) || 0 }))}
+                      className="w-full bg-slate-950 border border-slate-700/80 rounded-xl pl-8 pr-3 py-2 text-slate-100 font-mono font-bold text-sm focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">ช่องทางการชำระเงิน *</label>
+                  <select
+                    value={editIncForm.paymentMethod}
+                    onChange={e => setEditIncForm(prev => ({ ...prev, paymentMethod: e.target.value as any }))}
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-sky-500"
+                  >
+                    <option value="promptpay">พร้อมเพย์ / สแกน QR Code</option>
+                    <option value="cash">เงินสด (Cash)</option>
+                    <option value="bank_transfer">โอนเข้าบัญชีธนาคาร</option>
+                    <option value="credit_card">บัตรเครดิต / EDC</option>
+                    <option value="other">ช่องทางอื่นๆ</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">ผู้จ่ายเงิน / ชื่อลูกค้า / บริษัท</label>
+                  <input
+                    type="text"
+                    placeholder="เช่น คุณสมชาย, บจก. เทคโนโลยี..."
+                    value={editIncForm.payerName}
+                    onChange={e => setEditIncForm(prev => ({ ...prev, payerName: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">เลขที่อ้างอิง / เลขที่ใบเสร็จ</label>
+                  <input
+                    type="text"
+                    placeholder="เช่น REC-202607-001"
+                    value={editIncForm.refNumber}
+                    onChange={e => setEditIncForm(prev => ({ ...prev, refNumber: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-sky-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1 font-medium">หมายเหตุเพิ่มเติม</label>
+                <input
+                  type="text"
+                  placeholder="เช่น มัดจำ 50%, รอส่งของรอบบ่าย..."
+                  value={editIncForm.note}
+                  onChange={e => setEditIncForm(prev => ({ ...prev, note: e.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              {/* Slip Attachment */}
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-slate-400 font-medium">แนบหลักฐานสลิป / เอกสารการรับเงิน (ถ้ามี)</label>
+                {!editIncForm.slipImage ? (
+                  <div className="flex items-center space-x-2">
+                    <label className="flex-1 border border-dashed border-slate-700 hover:border-sky-500/60 bg-slate-950/60 hover:bg-slate-950 rounded-xl p-3 text-center cursor-pointer transition flex flex-col items-center justify-center space-y-1">
+                      <Upload className="w-4 h-4 text-sky-400" />
+                      <span className="text-[11px] text-slate-400">
+                        {isCompressingIncSlip ? 'กำลังประมวลผลรูปภาพ...' : 'คลิกเพื่อเลือกไฟล์รูปภาพ หรือ ลากวาง'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={e => handleIncomeSlipUpload(e, true)}
+                        className="hidden"
+                        disabled={isCompressingIncSlip}
+                      />
+                    </label>
+
+                    <label className="p-3 border border-slate-700 hover:border-sky-500 bg-slate-950 rounded-xl cursor-pointer text-slate-400 hover:text-sky-400 transition" title="ถ่ายภาพจากกล้อง">
+                      <Camera className="w-4 h-4" />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={e => handleIncomeSlipUpload(e, true)}
+                        className="hidden"
+                        disabled={isCompressingIncSlip}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="p-2.5 bg-slate-950 border border-sky-500/40 rounded-xl flex items-center justify-between">
+                    <div className="flex items-center space-x-2.5 overflow-hidden">
+                      <img
+                        src={editIncForm.slipImage}
+                        alt="Slip Preview"
+                        className="w-9 h-9 object-cover rounded-lg border border-slate-700 shrink-0"
+                      />
+                      <div className="truncate">
+                        <div className="text-xs font-medium text-sky-300 truncate">
+                          {editIncForm.slipImageName || 'แนบสลิปเรียบร้อยแล้ว'}
+                        </div>
+                        <div className="text-[10px] text-slate-500">พร้อมอัปเดตเข้าระบบบัญชี</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-1">
+                      <label
+                        className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition cursor-pointer"
+                        title="เปลี่ยนรูปภาพใหม่"
+                      >
+                        <Upload className="w-4 h-4" />
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={e => handleIncomeSlipUpload(e, true)}
+                          className="hidden"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditIncForm(prev => ({ ...prev, slipImage: undefined, slipImageName: undefined }));
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition"
+                        title="ลบสลิปที่แนบ"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-2 flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditIncomeOpen(false)}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl transition text-xs"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold rounded-xl transition shadow-lg shadow-sky-950 active:scale-95 text-xs"
+                >
+                  บันทึกการแก้ไข
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -4377,86 +5512,101 @@ export const AccountingView: React.FC = () => {
       />
 
       {/* MODAL: RECEIPT / SLIP LIGHTBOX PREVIEW */}
-      {selectedReceiptPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-5 animate-in fade-in duration-150">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
-            <div className="flex items-center justify-between p-3.5 sm:p-4 border-b border-slate-800 bg-slate-950/70">
-              <div className="flex items-center space-x-2 min-w-0 pr-2">
-                <Paperclip className="w-4 h-4 text-rose-400 shrink-0" />
-                <h3 className="font-bold text-slate-100 text-sm truncate">
-                  หลักฐานค่าใช้จ่าย: {selectedReceiptPreview.title}
-                </h3>
-              </div>
-              <button
-                onClick={() => setSelectedReceiptPreview(null)}
-                className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition shrink-0"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {selectedReceiptPreview && (() => {
+        const isIncomeReceipt = selectedReceiptPreview.category && selectedReceiptPreview.category in incomeCategoryLabels;
+        const catLabel = isIncomeReceipt
+          ? (incomeCategoryLabels[selectedReceiptPreview.category as IncomeCategory] || selectedReceiptPreview.category)
+          : (categoryLabels[selectedReceiptPreview.category as ExpenseCategory] || selectedReceiptPreview.category);
 
-            <div className="p-3 bg-slate-950/50 border-b border-slate-800 flex items-center justify-between text-xs">
-              <div className="space-y-0.5 min-w-0">
-                <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                  {selectedReceiptPreview.category && (
-                    <span className="px-2 py-0.5 bg-slate-800 border border-slate-700 rounded text-[10px] font-medium text-slate-300">
-                      {categoryLabels[selectedReceiptPreview.category] || selectedReceiptPreview.category}
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-5 animate-in fade-in duration-150">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+              <div className="flex items-center justify-between p-3.5 sm:p-4 border-b border-slate-800 bg-slate-950/70">
+                <div className="flex items-center space-x-2 min-w-0 pr-2">
+                  <Paperclip className={`w-4 h-4 shrink-0 ${isIncomeReceipt ? 'text-emerald-400' : 'text-rose-400'}`} />
+                  <h3 className="font-bold text-slate-100 text-sm truncate">
+                    {isIncomeReceipt ? 'หลักฐานการรับเงิน / สลิปโอน:' : 'หลักฐานค่าใช้จ่าย / ใบเสร็จ:'} {selectedReceiptPreview.title}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setSelectedReceiptPreview(null)}
+                  className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-3 bg-slate-950/50 border-b border-slate-800 flex items-center justify-between text-xs">
+                <div className="space-y-0.5 min-w-0">
+                  <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                    {selectedReceiptPreview.category && (
+                      <span className={`px-2 py-0.5 border rounded text-[10px] font-medium ${
+                        isIncomeReceipt
+                          ? 'bg-emerald-950/60 border-emerald-500/30 text-emerald-300'
+                          : 'bg-slate-800 border-slate-700 text-slate-300'
+                      }`}>
+                        {catLabel}
+                      </span>
+                    )}
+                    {selectedReceiptPreview.date && (
+                      <span className="text-slate-400 font-mono text-[11px]">วันที่: {selectedReceiptPreview.date}</span>
+                    )}
+                  </div>
+                  {selectedReceiptPreview.refNumber && (
+                    <div className="text-slate-400 font-mono text-[10px]">
+                      เลขที่อ้างอิง: <span className="text-slate-200">{selectedReceiptPreview.refNumber}</span>
+                    </div>
+                  )}
+                  {selectedReceiptPreview.note && (
+                    <div className="text-slate-500 text-[10px] italic truncate max-w-[260px]">
+                      {selectedReceiptPreview.note}
+                    </div>
+                  )}
+                </div>
+                {selectedReceiptPreview.amount !== undefined && (
+                  <div className="text-right font-mono shrink-0 pl-2">
+                    <span className="text-[10px] text-slate-400 block">ยอดเงิน</span>
+                    <span className={`font-bold text-base ${isIncomeReceipt ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {isIncomeReceipt ? '+' : ''}฿{selectedReceiptPreview.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
-                  )}
-                  {selectedReceiptPreview.date && (
-                    <span className="text-slate-400 font-mono text-[11px]">วันที่: {selectedReceiptPreview.date}</span>
-                  )}
-                </div>
-                {selectedReceiptPreview.refNumber && (
-                  <div className="text-slate-400 font-mono text-[10px]">
-                    เลขที่อ้างอิง: <span className="text-slate-200">{selectedReceiptPreview.refNumber}</span>
-                  </div>
-                )}
-                {selectedReceiptPreview.note && (
-                  <div className="text-slate-500 text-[10px] italic truncate max-w-[260px]">
-                    {selectedReceiptPreview.note}
                   </div>
                 )}
               </div>
-              {selectedReceiptPreview.amount !== undefined && (
-                <div className="text-right font-mono shrink-0 pl-2">
-                  <span className="text-[10px] text-slate-400 block">ยอดเงิน</span>
-                  <span className="text-rose-300 font-bold text-base">
-                    ฿{selectedReceiptPreview.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
-              )}
-            </div>
 
-            <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-950/90 min-h-[220px]">
-              <img
-                src={selectedReceiptPreview.url}
-                alt="Receipt Slip"
-                className="max-h-[55vh] max-w-full object-contain rounded-xl border border-slate-800 shadow-2xl"
-              />
-            </div>
+              <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-950/90 min-h-[220px]">
+                <img
+                  src={selectedReceiptPreview.url}
+                  alt="Receipt / Slip"
+                  className="max-h-[55vh] max-w-full object-contain rounded-xl border border-slate-800 shadow-2xl"
+                />
+              </div>
 
-            <div className="p-3 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs">
-              <a
-                href={selectedReceiptPreview.url}
-                download={`receipt-slip-${selectedReceiptPreview.refNumber || Date.now()}.jpg`}
-                className="py-2 px-3 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl transition flex items-center space-x-1.5 font-medium border border-slate-700 active:scale-95"
-              >
-                <Download className="w-3.5 h-3.5 text-sky-400" />
-                <span>บันทึกรูปภาพ</span>
-              </a>
+              <div className="p-3 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs">
+                <a
+                  href={selectedReceiptPreview.url}
+                  download={`${isIncomeReceipt ? 'income-slip' : 'expense-receipt'}-${selectedReceiptPreview.refNumber || Date.now()}.jpg`}
+                  className="py-2 px-3 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl transition flex items-center space-x-1.5 font-medium border border-slate-700 active:scale-95"
+                >
+                  <Download className="w-3.5 h-3.5 text-sky-400" />
+                  <span>บันทึกรูปภาพ</span>
+                </a>
 
-              <button
-                type="button"
-                onClick={() => setSelectedReceiptPreview(null)}
-                className="py-2 px-4 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl transition active:scale-95 shadow-md shadow-rose-950/50"
-              >
-                ปิดหน้าต่าง
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedReceiptPreview(null)}
+                  className={`py-2 px-4 text-white font-bold rounded-xl transition active:scale-95 shadow-md ${
+                    isIncomeReceipt
+                      ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-950/50'
+                      : 'bg-rose-600 hover:bg-rose-500 shadow-rose-950/50'
+                  }`}
+                >
+                  ปิดหน้าต่าง
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* MODAL: ADD AR (Accounts Receivable) */}
       {isAddARModalOpen && (
