@@ -361,6 +361,8 @@ export const AccountingView: React.FC = () => {
   // Income Table Search & Filter State
   const [incomeSearchQuery, setIncomeSearchQuery] = useState('');
   const [incomeCategoryFilter, setIncomeCategoryFilter] = useState<IncomeCategory | 'all'>('all');
+  const [incomePeriodFilter, setIncomePeriodFilter] = useState<'month' | 'all'>('month');
+  const [saveIncomeSuccess, setSaveIncomeSuccess] = useState<string | null>(null);
 
   // Expense Form State
   const [expTitle, setExpTitle] = useState('');
@@ -934,7 +936,7 @@ export const AccountingView: React.FC = () => {
       let deliverySales = 0;
       let cateringSales = 0;
 
-      // Extract delivery orders if any
+      // Extract delivery & catering orders if any
       mOrders.forEach(o => {
         if ((o as any).type === 'delivery') {
           deliverySales += o.grandTotal || 0;
@@ -943,8 +945,24 @@ export const AccountingView: React.FC = () => {
         }
       });
 
-      // Sum all other recorded incomes for this month
-      const otherIncome = mIncomes.reduce((sum, inc) => sum + (inc.amount || 0), 0);
+      // Distribute recorded incomes to appropriate buckets
+      let cateringIncome = 0;
+      let deliverySubsidyIncome = 0;
+      let otherIncome = 0;
+
+      mIncomes.forEach(inc => {
+        const amt = inc.amount || 0;
+        if (inc.category === 'catering') {
+          cateringIncome += amt;
+        } else if (inc.category === 'delivery_subsidy') {
+          deliverySubsidyIncome += amt;
+        } else {
+          otherIncome += amt;
+        }
+      });
+
+      deliverySales += deliverySubsidyIncome;
+      cateringSales += cateringIncome;
 
       const totalRevenue = posSales + deliverySales + cateringSales + otherIncome;
       const grossProfit = totalRevenue - cogs;
@@ -958,7 +976,7 @@ export const AccountingView: React.FC = () => {
         posSales,
         deliverySales,
         cateringSales,
-        otherIncome,
+        otherIncome: otherIncome + cateringIncome + deliverySubsidyIncome,
         totalRevenue,
         cogs,
         grossProfit,
@@ -1021,12 +1039,12 @@ export const AccountingView: React.FC = () => {
   const totalExpenseVat = selectedBranchExpenses.reduce((sum, e) => sum + e.vatAmount, 0);
   const netVatPayable = totalSalesVat - totalExpenseVat;
 
-  // Incomes for selected branch & selected month
+  // Incomes for selected branch & selected month (or all if period filter is 'all')
   const selectedBranchIncomes = useMemo(() => {
     return (incomes || []).filter(
-      inc => (!inc.branchId || inc.branchId === currentBranch.id) && inc.date.startsWith(selectedMonth)
+      inc => (!inc.branchId || inc.branchId === currentBranch.id) && (incomePeriodFilter === 'all' || inc.date.startsWith(selectedMonth))
     );
-  }, [incomes, currentBranch.id, selectedMonth]);
+  }, [incomes, currentBranch.id, selectedMonth, incomePeriodFilter]);
 
   const allSelectedBranchIncomes = useMemo(() => {
     return (incomes || []).filter(
@@ -1085,7 +1103,7 @@ export const AccountingView: React.FC = () => {
     );
   }, [filteredExpenses]);
 
-  // Daily Financial Data for Detailed Report view
+  // Daily Financial Data for Detailed Report view (100% Real Data)
   const dailyFinancials = useMemo(() => {
     const [yearStr, monthStr] = selectedMonth.split('-');
     const y = parseInt(yearStr, 10) || 2026;
@@ -1107,55 +1125,61 @@ export const AccountingView: React.FC = () => {
         inc => (!inc.branchId || inc.branchId === currentBranch.id) && inc.date === fullDate
       );
 
-      let posSales = dayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
-      let cogs = dayOrders.reduce((sum, o) => {
+      let posSales = 0;
+      let deliverySales = 0;
+      let cateringSales = 0;
+
+      dayOrders.forEach(o => {
+        if ((o as any).type === 'delivery') {
+          deliverySales += o.grandTotal || 0;
+        } else if ((o as any).type === 'catering') {
+          cateringSales += o.grandTotal || 0;
+        } else {
+          posSales += o.grandTotal || 0;
+        }
+      });
+
+      const cogs = dayOrders.reduce((sum, o) => {
         return sum + o.items.reduce((iSum, item) => iSum + (item.menuItem.costPrice || item.menuItem.price * 0.4) * item.quantity, 0);
       }, 0);
 
-      let opex = dayExpenses.reduce((sum, e) => sum + e.amount, 0);
+      const opex = dayExpenses.reduce((sum, e) => sum + e.amount, 0);
 
-      let deliverySales = 0;
-      let cateringSales = 0;
-      const actualOtherIncome = dayIncomes.reduce((sum, inc) => sum + (inc.amount || 0), 0);
-      let otherIncome = actualOtherIncome;
+      let cateringIncome = 0;
+      let deliverySubsidyIncome = 0;
+      let otherIncome = 0;
 
-      if (posSales === 0) {
-        const dayFactor = 0.7 + ((d * 13) % 20) / 25;
-        posSales = Math.round(1800 * dayFactor);
-        deliverySales = Math.round(420 * dayFactor);
-        cateringSales = d % 5 === 0 ? 1200 : 0;
-        if (actualOtherIncome === 0) {
-          otherIncome = 150;
+      dayIncomes.forEach(inc => {
+        const amt = inc.amount || 0;
+        if (inc.category === 'catering') {
+          cateringIncome += amt;
+        } else if (inc.category === 'delivery_subsidy') {
+          deliverySubsidyIncome += amt;
+        } else {
+          otherIncome += amt;
         }
-        cogs = Math.round(posSales * 0.36);
-        opex = Math.round(750 + (d % 3 === 0 ? 300 : 0));
-      } else {
-        deliverySales = Math.round(posSales * 0.22);
-        cateringSales = d % 7 === 0 ? Math.round(posSales * 0.18) : 0;
-        if (actualOtherIncome === 0) {
-          otherIncome = 150;
-        }
-      }
+      });
+
+      deliverySales += deliverySubsidyIncome;
+      cateringSales += cateringIncome;
 
       const totalRevenue = posSales + deliverySales + cateringSales + otherIncome;
 
-      // Variable Costs: COGS + Delivery GP fees (25%) + Variable OPEX (ingredients/packaging/marketing)
+      // Variable Costs: COGS + Delivery GP fees (25% on delivery) + Variable OPEX
       const variableOpex = dayExpenses
-        .filter(e => ['ingredients', 'packaging', 'marketing'].includes(e.category))
+        .filter(e => ['raw_material', 'ingredients', 'packaging', 'marketing'].includes(e.category))
         .reduce((sum, e) => sum + e.amount, 0);
       const deliveryGpFee = Math.round(deliverySales * 0.25);
       const variableCosts = cogs + deliveryGpFee + variableOpex;
 
-      // Fixed Costs: Daily allocated overhead (rent, salary, utilities) + Fixed OPEX
-      const fixedOpex = dayExpenses
-        .filter(e => !['ingredients', 'packaging', 'marketing'].includes(e.category))
+      // Fixed Costs: Overhead (rent, salary, utilities)
+      const fixedCosts = dayExpenses
+        .filter(e => !['raw_material', 'ingredients', 'packaging', 'marketing'].includes(e.category))
         .reduce((sum, e) => sum + e.amount, 0);
-      const dailyAllocatedOverhead = Math.round(opex > 0 ? opex : 650);
-      const fixedCosts = dailyAllocatedOverhead + fixedOpex;
 
       const grossProfit = totalRevenue - cogs;
       const contributionMargin = totalRevenue - variableCosts;
-      const netProfit = totalRevenue - (variableCosts + fixedCosts);
+      const netProfit = grossProfit - opex;
       const netMarginPct = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
       daysArr.push({
@@ -1164,7 +1188,7 @@ export const AccountingView: React.FC = () => {
         posSales,
         deliverySales,
         cateringSales,
-        otherIncome,
+        otherIncome: otherIncome + cateringIncome + deliverySubsidyIncome,
         totalRevenue,
         cogs,
         opex,
@@ -1271,9 +1295,12 @@ export const AccountingView: React.FC = () => {
     e.preventDefault();
     if (!incTitle.trim() || incAmount <= 0) return;
 
+    const chosenDate = incDate || new Date().toISOString().split('T')[0];
+    const entryMonth = chosenDate.substring(0, 7);
+
     addIncome({
       branchId: currentBranch.id,
-      date: incDate || new Date().toISOString().split('T')[0],
+      date: chosenDate,
       category: incCategory,
       title: incTitle.trim(),
       amount: incAmount,
@@ -1284,6 +1311,14 @@ export const AccountingView: React.FC = () => {
       slipImage: incSlipImage || undefined,
       slipImageName: incSlipName || undefined
     });
+
+    if (entryMonth !== selectedMonth) {
+      setSelectedMonth(entryMonth);
+    }
+    setActiveTab('incomes');
+
+    setSaveIncomeSuccess(`บันทึกรายรับ "${incTitle.trim()}" จำนวน ฿${incAmount.toLocaleString()} เรียบร้อยแล้ว`);
+    setTimeout(() => setSaveIncomeSuccess(null), 5000);
 
     setIsAddIncomeOpen(false);
     setIncTitle('');
@@ -1299,11 +1334,14 @@ export const AccountingView: React.FC = () => {
     e.preventDefault();
     if (!editIncForm.id || !editIncForm.title.trim() || editIncForm.amount <= 0) return;
 
+    const chosenDate = editIncForm.date || new Date().toISOString().split('T')[0];
+    const entryMonth = chosenDate.substring(0, 7);
+
     updateIncome(editIncForm.id, {
       title: editIncForm.title.trim(),
       amount: editIncForm.amount,
       category: editIncForm.category,
-      date: editIncForm.date,
+      date: chosenDate,
       paymentMethod: editIncForm.paymentMethod,
       payerName: editIncForm.payerName.trim() || undefined,
       refNumber: editIncForm.refNumber.trim() || undefined,
@@ -1311,6 +1349,13 @@ export const AccountingView: React.FC = () => {
       slipImage: editIncForm.slipImage || undefined,
       slipImageName: editIncForm.slipImageName || undefined
     });
+
+    if (entryMonth !== selectedMonth) {
+      setSelectedMonth(entryMonth);
+    }
+
+    setSaveIncomeSuccess(`อัปเดตรายรับ "${editIncForm.title.trim()}" จำนวน ฿${editIncForm.amount.toLocaleString()} เรียบร้อยแล้ว`);
+    setTimeout(() => setSaveIncomeSuccess(null), 5000);
 
     setIsEditIncomeOpen(false);
     setEditingIncome(null);
@@ -3376,6 +3421,22 @@ export const AccountingView: React.FC = () => {
         {/* TAB 2.3: OTHER INCOME LOG TABLE & MANAGEMENT */}
         {activeTab === 'incomes' && (
           <div className="space-y-4 sm:space-y-6">
+            {/* Success Toast Banner */}
+            {saveIncomeSuccess && (
+              <div className="p-3.5 bg-emerald-500/15 border border-emerald-500/40 rounded-2xl flex items-center justify-between text-emerald-300 text-xs shadow-lg animate-fade-in">
+                <div className="flex items-center space-x-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="font-semibold">{saveIncomeSuccess}</span>
+                </div>
+                <button
+                  onClick={() => setSaveIncomeSuccess(null)}
+                  className="text-slate-400 hover:text-slate-200 p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             {/* Formal Report Header Box */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-3.5">
@@ -3388,7 +3449,10 @@ export const AccountingView: React.FC = () => {
                   </div>
                   <h2 className="text-base sm:text-lg font-bold text-slate-100 flex items-center space-x-2">
                     <DollarSign className="w-5 h-5 text-emerald-400" />
-                    <span>รายงานสมุดบันทึกรายรับอื่น & รายได้เสริมประจำเดือน ({selectedMonth})</span>
+                    <span>
+                      รายงานสมุดบันทึกรายรับอื่น & รายได้เสริม
+                      {incomePeriodFilter === 'month' ? ` ประจำเดือน (${selectedMonth})` : ' (ทั้งหมดทุกช่วงเวลา)'}
+                    </span>
                   </h2>
                   <p className="text-xs text-slate-400">
                     บันทึกรายรับพิเศษ งานจัดเลี้ยง ค่าโฆษณา ขายของเก่า ดอกเบี้ย และเงินชดเชย พร้อมสะท้อนเข้า P&L, กราฟสัดส่วน และงบกระแสเงินสดอัตโนมัติทันที
@@ -3396,6 +3460,30 @@ export const AccountingView: React.FC = () => {
                 </div>
 
                 <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+                  {/* Period Filter Toggle */}
+                  <div className="flex items-center p-1 bg-slate-950 border border-slate-800 rounded-xl text-xs">
+                    <button
+                      onClick={() => setIncomePeriodFilter('month')}
+                      className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                        incomePeriodFilter === 'month'
+                          ? 'bg-emerald-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      เดือนนี้ ({selectedMonth})
+                    </button>
+                    <button
+                      onClick={() => setIncomePeriodFilter('all')}
+                      className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                        incomePeriodFilter === 'all'
+                          ? 'bg-emerald-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      ทั้งหมด ({allSelectedBranchIncomes.length})
+                    </button>
+                  </div>
+
                   <button
                     onClick={() => window.print()}
                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 text-xs font-medium flex items-center space-x-1.5 transition active:scale-95"

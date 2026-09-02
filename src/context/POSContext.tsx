@@ -252,7 +252,7 @@ interface POSContextType {
   addExpense: (expense: Omit<Expense, 'id'>) => void;
   deleteExpense: (expenseId: string) => void;
   addIncome: (income: Omit<OtherIncome, 'id'>) => void;
-  updateIncome: (income: OtherIncome) => void;
+  updateIncome: (incomeOrId: string | OtherIncome, updates?: Partial<OtherIncome>) => void;
   deleteIncome: (incomeId: string) => void;
 
   // System Backup / Import / Export
@@ -1741,8 +1741,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIncomes(prev => [newInc, ...prev]);
   };
 
-  const updateIncome = (incData: OtherIncome) => {
-    setIncomes(prev => prev.map(inc => inc.id === incData.id ? incData : inc));
+  const updateIncome = (arg1: string | OtherIncome, arg2?: Partial<OtherIncome>) => {
+    if (typeof arg1 === 'string') {
+      const id = arg1;
+      const updates = arg2 || {};
+      setIncomes(prev => prev.map(inc => inc.id === id ? { ...inc, ...updates, id } : inc));
+    } else {
+      const incData = arg1;
+      setIncomes(prev => prev.map(inc => inc.id === incData.id ? { ...inc, ...incData } : inc));
+    }
   };
 
   const deleteIncome = (incomeId: string) => {
