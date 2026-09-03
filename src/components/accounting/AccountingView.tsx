@@ -98,6 +98,7 @@ interface MonthlyFinancialData {
   salary: number;
   utilities: number;
   rawMaterialExpense: number;
+  suppliesExpense: number;
   marketing: number;
   otherExpense: number;
   totalOpex: number;
@@ -111,10 +112,11 @@ const MONTH_NAMES_TH = [
 ];
 
 const categoryLabels: Record<ExpenseCategory, string> = {
+  raw_material: 'ซื้อวัตถุดิบ',
+  supplies: 'ซัพพลายใช้สอย/อุปกรณ์สิ้นเปลือง',
   rent: 'ค่าเช่าสถานที่',
   salary: 'ค่าแรง/เงินเดือน',
   utilities: 'ค่าน้ำ/ค่าไฟ/แก๊ส',
-  raw_material: 'ซื้อวัตถุดิบ',
   marketing: 'การตลาด/โฆษณา',
   other: 'ค่าใช้จ่ายอื่นๆ'
 };
@@ -205,6 +207,7 @@ export const INCOME_TITLE_PRESETS: Record<IncomeCategory, string[]> = {
 
 const EXPENSE_COLORS: Record<string, string> = {
   'ต้นทุนวัตถุดิบ (COGS)': '#f97316', // Orange
+  'ซัพพลาย/ของใช้สิ้นเปลือง': '#14b8a6', // Teal
   'ค่าเช่าสถานที่': '#38bdf8', // Sky
   'ค่าแรง/เงินเดือน': '#a855f7', // Purple
   'ค่าน้ำ/ค่าไฟ/แก๊ส': '#eab308', // Yellow
@@ -223,9 +226,21 @@ export const EXPENSE_TITLE_PRESETS: Record<ExpenseCategory, string[]> = {
     'ซื้อผักสดตลาดเช้า',
     'ซื้อเครื่องปรุงรส / ซอสปรุงรส / น้ำมันพืช',
     'ซื้อข้าวสารหอมมะลิ / ไข่ไก่สด',
-    'ซื้อบรรจุภัณฑ์ (กล่องอาหาร / ช้อนส้อม / ถุงหิ้ว)',
     'ซื้อน้ำแข็งหลอด / เครื่องดื่มสต็อก',
     'ซื้อวัตถุดิบจากแม็คโคร / โลตัส'
+  ],
+  supplies: [
+    'ซื้อน้ำยาล้างจาน / สก๊อตไบร์ท / ฝอยขัดหม้อ',
+    'ซื้อถุงขยะดำ / ถุงพลาสติกหูหิ้ว',
+    'ซื้อกล่องอาหารเดลิเวอรี / ฝาปิด / กล่องกระดาษ',
+    'ซื้อช้อน ส้อม ตะเกียบ หลอด ทิชชู่เช็ดปาก',
+    'ซื้อกระดาษทิชชู่ม้วน / ทิชชู่เปียก / กระดาษเช็ดมือ',
+    'ซื้อถุงมือพลาสติก / ถุงมือยาง / หน้ากากอนามัย',
+    'ซื้อฟิล์มยืดห่ออาหาร (Cling Wrap) / ฟอยล์ห่ออาหาร',
+    'ซื้อน้ำยาถูพื้น / น้ำยาเช็ดโต๊ะ / แอลกอฮอล์ฆ่าเชื้อ',
+    'ซื้อกระดาษความร้อนพิมพ์ใบเสร็จ POS (Thermal Paper)',
+    'ซื้อแก้วน้ำพลาสติก / ฝาปิด / หลอดดูดน้ำ',
+    'ซื้ออุปกรณ์ทำความสะอาดและของใช้สิ้นเปลืองเบ็ดเตล็ด'
   ],
   rent: [
     'ค่าเช่าพื้นที่ร้าน / ล็อคประจำ',
@@ -918,6 +933,7 @@ export const AccountingView: React.FC = () => {
       let salary = 0;
       let utilities = 0;
       let rawMaterialExpense = 0;
+      let suppliesExpense = 0;
       let marketing = 0;
       let otherExpense = 0;
 
@@ -927,6 +943,7 @@ export const AccountingView: React.FC = () => {
           case 'salary': salary += e.amount; break;
           case 'utilities': utilities += e.amount; break;
           case 'raw_material': rawMaterialExpense += e.amount; break;
+          case 'supplies': suppliesExpense += e.amount; break;
           case 'marketing': marketing += e.amount; break;
           case 'other': default: otherExpense += e.amount; break;
         }
@@ -966,7 +983,7 @@ export const AccountingView: React.FC = () => {
 
       const totalRevenue = posSales + deliverySales + cateringSales + otherIncome;
       const grossProfit = totalRevenue - cogs;
-      const totalOpex = rent + salary + utilities + rawMaterialExpense + marketing + otherExpense;
+      const totalOpex = rent + salary + utilities + rawMaterialExpense + suppliesExpense + marketing + otherExpense;
       const netProfit = grossProfit - totalOpex;
       const netMarginPct = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
@@ -984,6 +1001,7 @@ export const AccountingView: React.FC = () => {
         salary,
         utilities,
         rawMaterialExpense,
+        suppliesExpense,
         marketing,
         otherExpense,
         totalOpex,
@@ -1013,6 +1031,7 @@ export const AccountingView: React.FC = () => {
         acc.salary += d.salary;
         acc.utilities += d.utilities;
         acc.rawMaterialExpense += d.rawMaterialExpense;
+        acc.suppliesExpense += d.suppliesExpense;
         acc.marketing += d.marketing;
         acc.otherExpense += d.otherExpense;
         acc.totalOpex += d.totalOpex;
@@ -1021,7 +1040,7 @@ export const AccountingView: React.FC = () => {
       },
       {
         totalRevenue: 0, posSales: 0, deliverySales: 0, cateringSales: 0, otherIncome: 0,
-        cogs: 0, grossProfit: 0, rent: 0, salary: 0, utilities: 0, rawMaterialExpense: 0,
+        cogs: 0, grossProfit: 0, rent: 0, salary: 0, utilities: 0, rawMaterialExpense: 0, suppliesExpense: 0,
         marketing: 0, otherExpense: 0, totalOpex: 0, netProfit: 0
       }
     );
@@ -1167,14 +1186,14 @@ export const AccountingView: React.FC = () => {
 
       // Variable Costs: COGS + Delivery GP fees (25% on delivery) + Variable OPEX
       const variableOpex = dayExpenses
-        .filter(e => ['raw_material', 'ingredients', 'packaging', 'marketing'].includes(e.category))
+        .filter(e => ['raw_material', 'ingredients', 'packaging', 'supplies', 'marketing'].includes(e.category))
         .reduce((sum, e) => sum + e.amount, 0);
       const deliveryGpFee = Math.round(deliverySales * 0.25);
       const variableCosts = cogs + deliveryGpFee + variableOpex;
 
       // Fixed Costs: Overhead (rent, salary, utilities)
       const fixedCosts = dayExpenses
-        .filter(e => !['raw_material', 'ingredients', 'packaging', 'marketing'].includes(e.category))
+        .filter(e => !['raw_material', 'ingredients', 'packaging', 'supplies', 'marketing'].includes(e.category))
         .reduce((sum, e) => sum + e.amount, 0);
 
       const grossProfit = totalRevenue - cogs;
@@ -1223,6 +1242,7 @@ export const AccountingView: React.FC = () => {
   // Donut Chart Data: Expenses & Costs Breakdown
   const expenseDonutData = [
     { name: 'ต้นทุนวัตถุดิบ (COGS)', value: rangeTotals.cogs + rangeTotals.rawMaterialExpense },
+    { name: 'ซัพพลาย/ของใช้สิ้นเปลือง', value: rangeTotals.suppliesExpense },
     { name: 'ค่าเช่าสถานที่', value: rangeTotals.rent },
     { name: 'ค่าแรง/เงินเดือน', value: rangeTotals.salary },
     { name: 'ค่าน้ำ/ค่าไฟ/แก๊ส', value: rangeTotals.utilities },
@@ -4654,6 +4674,7 @@ export const AccountingView: React.FC = () => {
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm focus:outline-none focus:border-rose-500"
                 >
                   <option value="raw_material">ซื้อวัตถุดิบ (Raw Material)</option>
+                  <option value="supplies">ซัพพลายใช้สอย / อุปกรณ์สิ้นเปลือง (Supplies & Consumables)</option>
                   <option value="rent">ค่าเช่าสถานที่ (Rent)</option>
                   <option value="salary">ค่าแรง/เงินเดือนพนักงาน (Salary)</option>
                   <option value="utilities">ค่าน้ำ/ค่าไฟ/ค่าแก๊ส (Utilities)</option>

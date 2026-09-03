@@ -181,14 +181,26 @@ export const LoginScreen: React.FC = () => {
       setError('');
 
       if (nextPin.length === 4) {
-        if (nextPin === selectedUser.pin) {
+        // Priority 1: Check selected user
+        let authenticatedUser = (selectedUser && selectedUser.pin === nextPin) ? selectedUser : null;
+
+        // Priority 2: Auto-detect staff by PIN if the entered PIN belongs to any active user
+        if (!authenticatedUser) {
+          const matchedByPin = users.find(u => u.pin === nextPin);
+          if (matchedByPin) {
+            authenticatedUser = matchedByPin;
+            setSelectedUserId(matchedByPin.id);
+          }
+        }
+
+        if (authenticatedUser) {
           logSecurityEvent?.({
-            userId: selectedUser.id,
-            userName: selectedUser.name,
-            userRole: selectedUser.role,
+            userId: authenticatedUser.id,
+            userName: authenticatedUser.name,
+            userRole: authenticatedUser.role,
             action: 'PIN Login Screen',
             status: 'SUCCESS',
-            details: `เข้าสู่ระบบตำแหน่ง ${selectedUser.role} สำเร็จ${clockInAction ? ' (พร้อมลงเวลาเข้างาน)' : ''}`
+            details: `เข้าสู่ระบบด้วยรหัสพนักงาน PIN สำเร็จ (${authenticatedUser.name} - ${authenticatedUser.role})${clockInAction ? ' (พร้อมลงเวลาเข้างาน)' : ''}`
           });
 
           // Clock in logic if requested
@@ -205,8 +217,8 @@ export const LoginScreen: React.FC = () => {
               }
             } else {
               addShift({
-                staffId: selectedUser.id,
-                staffName: selectedUser.name,
+                staffId: authenticatedUser.id,
+                staffName: authenticatedUser.name,
                 date: todayStr,
                 dayOfWeek: 'Mon',
                 shiftType: 'fullday',
@@ -220,13 +232,14 @@ export const LoginScreen: React.FC = () => {
             }
           }
 
-          setCurrentUser(selectedUser);
+          setCurrentUser(authenticatedUser);
+          setSuccessNotice(`ยืนยันรหัสพนักงานสำเร็จ ยินดีต้อนรับ ${authenticatedUser.name}`);
           setTimeout(() => {
             setIsLocked(false);
             setPin('');
             setError('');
             setSuccessNotice('');
-          }, 300);
+          }, 350);
         } else {
           logSecurityEvent?.({
             userId: selectedUser.id,
@@ -234,14 +247,14 @@ export const LoginScreen: React.FC = () => {
             userRole: selectedUser.role,
             action: 'PIN Login Screen',
             status: 'FAILED',
-            details: `ป้อนรหัส PIN ผิดพลาดสำหรับบัญชี ${selectedUser.name}`
+            details: `ป้อนรหัสพนักงาน (PIN) ไม่ถูกต้องสำหรับบัญชี ${selectedUser.name}`
           });
-          setError('รหัส PIN ไม่ถูกต้อง!');
-          setTimeout(() => setPin(''), 400);
+          setError('รหัสพนักงาน (PIN) ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
+          setTimeout(() => setPin(''), 450);
         }
       }
     }
-  }, [pin, selectedUser, clockInAction, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
+  }, [pin, selectedUser, users, clockInAction, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
 
   const handleDelete = useCallback(() => {
     setPin(prev => prev.slice(0, -1));
@@ -277,16 +290,21 @@ export const LoginScreen: React.FC = () => {
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!password) {
-      setError('กรุณากรอกรหัสผ่าน');
+      setError('กรุณากรอกรหัสพนักงาน / รหัสผ่าน');
       return;
     }
-    if (password === selectedUser.pin || password === 'admin' || password === '1234') {
-      setCurrentUser(selectedUser);
+    // Strictly verify against user PIN or manager authorization
+    let matchedUser = (selectedUser.pin === password) ? selectedUser : null;
+    if (!matchedUser) {
+      matchedUser = users.find(u => u.pin === password) || null;
+    }
+    if (matchedUser) {
+      setCurrentUser(matchedUser);
       setIsLocked(false);
       setPassword('');
       setError('');
     } else {
-      setError('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+      setError('รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง');
     }
   };
 
@@ -320,11 +338,12 @@ export const LoginScreen: React.FC = () => {
 
         {/* Subtitle */}
         <div className="text-center space-y-1">
-          <p className="text-xs text-amber-400 font-bold">
-            ครัวกะเพรา POS ENTERPRISE
-          </p>
-          <p className="text-[11px] text-slate-400 max-w-xs mx-auto leading-relaxed">
-            ระบบจัดการร้านอาหาร ลงเวลา และสลับสิทธิ์การใช้งานพนักงาน
+          <div className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-red-950/80 border border-red-500/40 text-red-300 text-[10px] font-bold">
+            <Lock className="w-3 h-3 text-red-400" />
+            <span>ระบบความปลอดภัย: ต้องใส่รหัสพนักงานทุกครั้ง</span>
+          </div>
+          <p className="text-[11px] text-slate-300 max-w-xs mx-auto leading-relaxed pt-0.5">
+            กรุณาป้อนรหัสพนักงาน PIN 4 หลัก เพื่อเข้าสู่ระบบและยืนยันตัวตน
           </p>
         </div>
 
@@ -342,8 +361,8 @@ export const LoginScreen: React.FC = () => {
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Grid className="w-4 h-4" />
-            <span>PIN เข้างานด่วน</span>
+            <KeyRound className="w-4 h-4" />
+            <span>ใส่รหัสพนักงาน (PIN)</span>
           </button>
 
           <button
@@ -369,7 +388,7 @@ export const LoginScreen: React.FC = () => {
             {/* User Selector Cards */}
             <div className="space-y-1.5 text-center">
               <label className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
-                เลือกพนักงาน / ผู้ใช้งาน
+                เลือกพนักงาน หรือกดรหัส PIN 4 หลักได้ทันที
               </label>
               <div className="flex flex-wrap justify-center gap-2 max-h-48 overflow-y-auto p-1 border border-slate-800/80 rounded-2xl bg-slate-950/40 custom-scrollbar">
                 {users.map(u => (
@@ -393,8 +412,8 @@ export const LoginScreen: React.FC = () => {
                       {u.name.charAt(0)}
                     </div>
                     <span className="truncate max-w-[70px]">{u.name.split(' ')[0]}</span>
-                    <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-slate-900/80 text-slate-400 border border-slate-800">
-                      {u.role}
+                    <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-slate-900/80 text-amber-300/90 border border-slate-800">
+                      {u.role === 'admin' ? 'เจ้าของ' : u.role === 'manager' ? 'ผู้จัดการ' : u.role === 'cashier' ? 'แคชเชียร์' : 'พนักงาน'}
                     </span>
                   </button>
                 ))}
@@ -423,7 +442,8 @@ export const LoginScreen: React.FC = () => {
             {/* Title instructions */}
             <div className="text-center space-y-1">
               <div className="font-bold text-sm text-slate-200 flex items-center justify-center space-x-2">
-                <span>ปักหมุด PIN 4 หลัก</span>
+                <KeyRound className="w-4 h-4 text-amber-400" />
+                <span>ใส่รหัสพนักงาน (PIN 4 หลัก)</span>
                 <button
                   type="button"
                   onClick={() => setShowPin(!showPin)}
@@ -434,7 +454,7 @@ export const LoginScreen: React.FC = () => {
                 </button>
               </div>
               <div className="text-[11px] text-slate-400">
-                กดปุ่มตัวเลขบนหน้าจอ หรือพิมพ์ผ่านแป้นพิมพ์
+                กดตัวเลขบนหน้าจอ หรือพิมพ์ 0-9 จากแป้นพิมพ์คอมพิวเตอร์
               </div>
             </div>
 

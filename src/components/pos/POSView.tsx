@@ -68,7 +68,8 @@ export const POSView: React.FC = () => {
     updateOrderStatus,
     settings,
     currentOpenShift,
-    currentBranch
+    currentBranch,
+    setIsLocked
   } = usePOS();
 
   const [selectedCategory, setSelectedCategory] = useState<MenuCategory | 'all'>('all');
@@ -873,6 +874,9 @@ export const POSView: React.FC = () => {
         onClose={() => {
           setIsReceiptOpen(false);
           setMobileTab('menu');
+          if (settings.autoLockAfterPayment) {
+            setIsLocked(true);
+          }
         }}
         order={completedOrder}
         isPreBill={isPreBill}

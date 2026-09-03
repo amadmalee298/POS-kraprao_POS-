@@ -958,6 +958,88 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
 
+            {/* STAFF LOGIN SECURITY POLICIES */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+              <div className="flex items-center space-x-2 text-red-400 border-b border-slate-800 pb-3">
+                <ShieldCheck className="w-5 h-5 text-red-400" />
+                <div>
+                  <h3 className="font-bold text-slate-100 text-sm">นโยบายความปลอดภัยและการล็อกอินพนักงาน (Staff Login & Lock Policies)</h3>
+                  <p className="text-[11px] text-slate-400">ควบคุมการเข้าใช้งานระบบ POS การบังคับใส่รหัสพนักงาน PIN และการล็อคหน้าจออัตโนมัติ</p>
+                </div>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                {/* Policy 1: Always require PIN on startup/login */}
+                <div className="flex items-center justify-between p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl">
+                  <div className="space-y-0.5 max-w-md">
+                    <div className="font-bold text-slate-200 flex items-center space-x-1.5">
+                      <Lock className="w-3.5 h-3.5 text-red-400" />
+                      <span>บังคับใส่รหัสพนักงาน (PIN) ทุกครั้งที่เข้าใช้งาน</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      เมื่อเปิดหรือรีเฟรชระบบ หรือสลับผู้ใช้ จะต้องป้อนรหัส PIN 4 หลักของพนักงานเสมอ ป้องกันการเข้าใช้งานโดยไม่ได้รับอนุญาต
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.requirePinOnEveryLogin !== false}
+                      onChange={e => updateSettings({ requirePinOnEveryLogin: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-10 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
+                  </label>
+                </div>
+
+                {/* Policy 2: Auto-lock after checkout */}
+                <div className="flex items-center justify-between p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl">
+                  <div className="space-y-0.5 max-w-md">
+                    <div className="font-bold text-slate-200 flex items-center space-x-1.5">
+                      <Receipt className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>ล็อคหน้าจออัตโนมัติหลังปิดบิลการขาย (Auto-Lock after Payment)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      เมื่อแคชเชียร์รับชำระเงินและปิดใบเสร็จเสร็จสิ้น ระบบจะล็อคหน้าจอทันทีเพื่อให้พนักงานคนถัดไปใส่รหัส PIN
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!settings.autoLockAfterPayment}
+                      onChange={e => updateSettings({ autoLockAfterPayment: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-10 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                  </label>
+                </div>
+
+                {/* Policy 3: Auto-lock on inactivity */}
+                <div className="flex items-center justify-between p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl">
+                  <div className="space-y-0.5 max-w-md">
+                    <div className="font-bold text-slate-200 flex items-center space-x-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-400" />
+                      <span>ล็อคหน้าจออัตโนมัติเมื่อไม่มีการใช้งาน (Inactivity Timeout)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      เมื่อไม่มีการสัมผัสหน้าจอหรือกดแป้นพิมพ์ตามเวลาที่กำหนด ระบบจะเข้าสู่หน้าจอล็อคทันที
+                    </p>
+                  </div>
+                  <select
+                    value={settings.autoLockMinutes || 0}
+                    onChange={e => updateSettings({ autoLockMinutes: Number(e.target.value) })}
+                    className="bg-slate-900 border border-slate-800 text-slate-200 font-bold px-3 py-1.5 rounded-xl text-xs focus:border-red-500 focus:outline-none"
+                  >
+                    <option value={0}>ปิดการใช้งาน (ไม่ล็อค)</option>
+                    <option value={1}>1 นาที</option>
+                    <option value={3}>3 นาที</option>
+                    <option value={5}>5 นาที</option>
+                    <option value={10}>10 นาที</option>
+                    <option value={15}>15 นาที</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
             {/* OVERVIEW STATS METRICS */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-md space-y-1">

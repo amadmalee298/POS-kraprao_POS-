@@ -350,10 +350,10 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       };
     } else if (lower.includes('7-11') || lower.includes('7-eleven') || lower.includes('เซเว่น') || lower.includes('cp all')) {
       return {
-        title: 'ซื้อของใช้และน้ำดื่ม - 7-Eleven',
+        title: 'ซื้อของใช้และซัพพลายสิ้นเปลือง - 7-Eleven',
         vendorName: 'ซีพี ออลล์ (7-Eleven)',
         date: new Date().toISOString().split('T')[0],
-        category: 'other',
+        category: 'supplies',
         amount: 320.00,
         includeVat: true,
         vatAmount: 20.93,
@@ -433,12 +433,14 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     { "name": "ชื่อสินค้าแถวที่ 1 พร้อมจำนวน", "amount": 0.00 }
   ]
 }
-หมวดหมู่ category ต้องเป็นหนึ่งใน: 'raw_material', 'utilities', 'salary', 'rent', 'equipment', 'marketing', 'other'
+หมวดหมู่ category ต้องเป็นหนึ่งใน: 'raw_material', 'supplies', 'utilities', 'salary', 'rent', 'marketing', 'other'
 - วัตถุดิบ/อาหาร/เนื้อสัตว์/ผัก/เครื่องปรุง/ของสด = raw_material
+- ซัพพลายใช้สอย/อุปกรณ์สิ้นเปลือง/ของใช้ในร้าน/น้ำยาล้างจาน/ถุงขยะ/ถุงพลาสติก/กล่องอาหาร/ทิชชู่/ฟองน้ำ/อุปกรณ์ทำความสะอาด = supplies
 - ค่าน้ำ/ค่าไฟ/แก๊สหุงต้ม = utilities
-- อุปกรณ์/เครื่องครัว/ของใช้ในร้าน = equipment
 - ค่าแรง/เงินเดือน = salary
 - ค่าเช่า = rent
+- การตลาด/โฆษณา = marketing
+- อื่นๆ = other
 ให้ตอบเฉพาะ JSON ที่ถูกต้องตามหลักไวยากรณ์เท่านั้น`;
 
       const candidateModels = ['gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'];
@@ -474,8 +476,9 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
             if (rawText) {
               const clean = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
               const parsed = JSON.parse(clean);
-              const validCategories = ['raw_material', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'];
+              const validCategories = ['raw_material', 'supplies', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'];
               let cat = parsed.category || 'raw_material';
+              if (cat === 'equipment') cat = 'supplies';
               if (!validCategories.includes(cat)) cat = 'raw_material';
 
               const amt = typeof parsed.amount === 'number' ? parsed.amount : (parseFloat(parsed.amount) || 0);
@@ -1129,10 +1132,11 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   };
 
   const categoryLabels: Record<ExpenseCategory, string> = {
+    raw_material: 'ซื้อวัตถุดิบ',
+    supplies: 'ซัพพลายใช้สอย/อุปกรณ์สิ้นเปลือง',
     rent: 'ค่าเช่าสถานที่',
     salary: 'ค่าแรง/เงินเดือน',
     utilities: 'ค่าน้ำ/ค่าไฟ/แก๊ส',
-    raw_material: 'ซื้อวัตถุดิบ',
     marketing: 'การตลาด/โฆษณา',
     other: 'ค่าใช้จ่ายอื่นๆ'
   };
@@ -1579,6 +1583,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                       className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-100 font-bold"
                     >
                       <option value="raw_material">ซื้อวัตถุดิบ (Raw Material)</option>
+                      <option value="supplies">ซัพพลายใช้สอย / อุปกรณ์สิ้นเปลือง (Supplies & Consumables)</option>
                       <option value="rent">ค่าเช่าสถานที่ (Rent)</option>
                       <option value="salary">ค่าแรง/เงินเดือนพนักงาน (Salary)</option>
                       <option value="utilities">ค่าน้ำ/ค่าไฟ/ค่าแก๊ส (Utilities)</option>

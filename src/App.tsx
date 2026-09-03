@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { POSProvider, usePOS } from './context/POSContext';
 import { HeaderNavbar } from './components/HeaderNavbar';
 import { SidebarDrawer } from './components/SidebarDrawer';
@@ -28,12 +28,39 @@ const MainLayout: React.FC = () => {
   const {
     activeTab,
     isLocked,
+    setIsLocked,
+    settings,
     isOffline,
     forceOfflineMode,
     pendingOfflineCount,
     syncOfflineQueue
   } = usePOS();
   const effectiveOffline = isOffline || forceOfflineMode;
+
+  // Inactivity auto-lock timer
+  useEffect(() => {
+    const minutes = settings.autoLockMinutes || 0;
+    if (minutes <= 0 || isLocked) return;
+
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        setIsLocked(true);
+      }, minutes * 60 * 1000);
+    };
+
+    resetTimer();
+
+    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'touchstart', 'scroll'];
+    activityEvents.forEach(evt => window.addEventListener(evt, resetTimer, { passive: true }));
+
+    return () => {
+      clearTimeout(timeoutId);
+      activityEvents.forEach(evt => window.removeEventListener(evt, resetTimer));
+    };
+  }, [settings.autoLockMinutes, isLocked, setIsLocked]);
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans antialiased selection:bg-red-500 selection:text-white">

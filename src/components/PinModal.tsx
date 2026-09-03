@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { X, Lock, ShieldAlert, KeyRound, Check } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { User } from '../types';
@@ -23,65 +23,109 @@ export const PinModal: React.FC<PinModalProps> = ({
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
 
-  if (!isOpen) return null;
-
-  const handleNumClick = (num: string) => {
-    if (pin.length < 4) {
-      setPin(prev => prev + num);
-      setError('');
-    }
-  };
-
-  const handleDelete = () => {
-    setPin(prev => prev.slice(0, -1));
-    setError('');
-  };
-
-  const handleClear = () => {
-    setPin('');
-    setError('');
-  };
-
-  const handleVerify = () => {
-    if (pin.length !== 4) {
-      setError('กรุณากรอกรหัส PIN 4 หลัก');
+  // Auto-verify helper
+  const verifyPin = useCallback((currentPin: string, userToVerify: User) => {
+    if (currentPin.length !== 4) {
+      setError('กรุณากรอกรหัสพนักงาน (PIN 4 หลัก)');
       return;
     }
 
     if (requiredRole) {
-      if (selectedUser.role !== 'admin' && selectedUser.role !== requiredRole) {
+      if (userToVerify.role !== 'admin' && userToVerify.role !== requiredRole) {
         setError(`สิทธิ์ไม่เพียงพอ! ต้องการสิทธิ์ระดับ ${requiredRole === 'admin' ? 'เจ้าของร้าน (Admin)' : 'ผู้จัดการร้าน (Manager)'}`);
         return;
       }
     }
 
-    if (pin === selectedUser.pin) {
+    if (currentPin === userToVerify.pin) {
       logSecurityEvent({
-        userId: selectedUser.id,
-        userName: selectedUser.name,
-        userRole: selectedUser.role,
+        userId: userToVerify.id,
+        userName: userToVerify.name,
+        userRole: userToVerify.role,
         action: 'PIN Verification Modal',
         status: 'SUCCESS',
-        details: `ยืนยันตัวตนสำเร็จสำหรับผู้ใช้ ${selectedUser.name}`
+        details: `ยืนยันตัวตนสำเร็จสำหรับผู้ใช้ ${userToVerify.name}`
       });
-      setCurrentUser(selectedUser);
+      setCurrentUser(userToVerify);
       if (onSuccess) onSuccess();
       onClose();
       setPin('');
       setError('');
     } else {
       logSecurityEvent({
-        userId: selectedUser.id,
-        userName: selectedUser.name,
-        userRole: selectedUser.role,
+        userId: userToVerify.id,
+        userName: userToVerify.name,
+        userRole: userToVerify.role,
         action: 'PIN Verification Modal',
         status: 'FAILED',
-        details: `รหัส PIN ไม่ถูกต้องขณะยืนยันตัวตนสำหรับผู้ใช้ ${selectedUser.name}`
+        details: `รหัส PIN ไม่ถูกต้องขณะยืนยันตัวตนสำหรับผู้ใช้ ${userToVerify.name}`
       });
-      setError('รหัส PIN ไม่ถูกต้อง!');
+      setError('รหัสพนักงาน (PIN) ไม่ถูกต้อง!');
       setPin('');
     }
+  }, [requiredRole, logSecurityEvent, setCurrentUser, onSuccess, onClose]);
+
+  const handleNumClick = useCallback((num: string) => {
+    if (pin.length < 4) {
+      const nextPin = pin + num;
+      setPin(nextPin);
+      setError('');
+      if (nextPin.length === 4) {
+        // Check if matching selected user or another user
+        let userToAuth = selectedUser;
+        if (selectedUser.pin !== nextPin && !targetUser) {
+          const matched = users.find(u => u.pin === nextPin);
+          if (matched) {
+            userToAuth = matched;
+            setSelectedUser(matched);
+          }
+        }
+        setTimeout(() => verifyPin(nextPin, userToAuth), 100);
+      }
+    }
+  }, [pin, selectedUser, targetUser, users, verifyPin]);
+
+  const handleDelete = useCallback(() => {
+    setPin(prev => prev.slice(0, -1));
+    setError('');
+  }, []);
+
+  const handleClear = useCallback(() => {
+    setPin('');
+    setError('');
+  }, []);
+
+  const handleVerify = () => {
+    verifyPin(pin, selectedUser);
   };
+
+  // Keyboard support for hardware numpad / keyboard typing
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key >= '0' && e.key <= '9') {
+        e.preventDefault();
+        handleNumClick(e.key);
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        handleDelete();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (pin.length === 4) {
+          handleVerify();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, handleNumClick, handleDelete, onClose, pin, handleVerify]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">

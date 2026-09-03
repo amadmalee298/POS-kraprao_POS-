@@ -207,7 +207,7 @@ export interface WasteLog {
   reportedBy?: string;
 }
 
-export type ExpenseCategory = 'rent' | 'salary' | 'utilities' | 'raw_material' | 'marketing' | 'other';
+export type ExpenseCategory = 'rent' | 'salary' | 'utilities' | 'raw_material' | 'supplies' | 'marketing' | 'other';
 
 export type IncomeCategory = 'catering' | 'ad_sponsor' | 'recycling' | 'interest' | 'rental' | 'asset_sale' | 'subsidy' | 'delivery_subsidy' | 'other';
 
@@ -391,6 +391,9 @@ export interface SystemSettings {
   receiptUseMonospace?: boolean;
   receiptFooterNote?: string;
   merchantSettings?: MerchantConnectionSettings;
+  requirePinOnEveryLogin?: boolean; // บังคับใส่รหัสพนักงานทุกครั้งที่เข้าสู่ระบบ
+  autoLockAfterPayment?: boolean; // ล็อคหน้าจออัตโนมัติเมื่อปิดบิลการขาย
+  autoLockMinutes?: number; // ล็อคหน้าจออัตโนมัติเมื่อไม่มีการใช้งาน (0 = ปิด)
 }
 
 export interface StaffPermissions {

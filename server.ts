@@ -260,7 +260,7 @@ ${
 1. vendorName: อ่านชื่อร้านค้า/ซัพพลายเออร์/บริษัท/หน่วยงาน ที่พิมพ์อยู่บนหัวบิลหรือตราประทับจริง (เช่น 7-Eleven, Makro, Lotus, Big C, การไฟฟ้านครหลวง, การประปา, หรือชื่อร้านค้าตามที่ปรากฏ)
 2. title: หัวข้อสรุปค่าใช้จ่ายสั้นๆ เช่น "ซื้อวัตถุดิบ CP - แม็คโคร" หรือ "บิลค่าน้ำประปา" หรือ "ซื้อของสด - ตลาด"
 3. date: วันที่ที่ระบุในเอกสาร แปลงเป็นรูปแบบ YYYY-MM-DD (หากระบุปีเป็น พ.ศ. เช่น 2567, 2568, 2569 ให้แปลงเป็น ค.ศ. 2024, 2025, 2026 เสมอ หากไม่ระบุให้ใช้วันที่ปัจจุบัน)
-4. category: เลือกหมวดหมู่ที่ตรงที่สุดจาก ['raw_material', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'] (อาหาร/เนื้อสัตว์/ผัก/เครื่องปรุง/ของสด = raw_material, ค่าน้ำ/ค่าไฟ/แก๊ส = utilities, อุปกรณ์เครื่องครัว/ภาชนะ = equipment, ค่าแรง = salary, ค่าเช่า = rent)
+4. category: เลือกหมวดหมู่ที่ตรงที่สุดจาก ['raw_material', 'supplies', 'rent', 'salary', 'utilities', 'marketing', 'other'] (อาหาร/เนื้อสัตว์/ผัก/เครื่องปรุง/ของสด = raw_material, ซัพพลายใช้สอย/อุปกรณ์สิ้นเปลือง/ของใช้ในร้าน/น้ำยาล้างจาน/ถุงขยะ/ถุงพลาสติก/กล่องอาหาร/ทิชชู่/ฟองน้ำ/อุปกรณ์ทำความสะอาด = supplies, ค่าน้ำ/ค่าไฟ/แก๊ส = utilities, ค่าแรง = salary, ค่าเช่า = rent, การตลาด/โฆษณา = marketing, อื่นๆ = other)
 5. amount: ยอดเงินรวมสุทธิ/ยอดรวมทั้งสิ้น/ยอดชำระจริง (Grand Total / Total / Net Paid / ยอดสุทธิ) เป็นตัวเลขทศนิยมแท้จริงจากภาพ
 6. includeVat: true หากระบุภาษีมูลค่าเพิ่ม VAT 7% หรือระบุว่าราคารวม VAT
 7. vatAmount: จำนวนเงินภาษีมูลค่าเพิ่ม VAT 7% (ถ้ามีระบุในบิล)
@@ -316,8 +316,9 @@ ${
       });
 
       const parsedData = JSON.parse(response.text || '{}');
-      const validCategories = ['raw_material', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'];
+      const validCategories = ['raw_material', 'supplies', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'];
       let cat = parsedData.category || 'raw_material';
+      if (cat === 'equipment') cat = 'supplies';
       if (!validCategories.includes(cat)) cat = 'raw_material';
 
       const amt = typeof parsedData.amount === 'number' ? parsedData.amount : (parseFloat(parsedData.amount) || 0);

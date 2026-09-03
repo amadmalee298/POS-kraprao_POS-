@@ -390,7 +390,10 @@ export const INITIAL_SETTINGS: SystemSettings = {
       accountName: '',
       instructions: 'รองรับ Visa, Mastercard, JCB พนักงานจะนำเครื่องแตะบัตรมาให้บริการที่โต๊ะ'
     }
-  ]
+  ],
+  requirePinOnEveryLogin: true,
+  autoLockAfterPayment: false,
+  autoLockMinutes: 0
 };
 
 export const INITIAL_WASTE_LOGS: WasteLog[] = [];

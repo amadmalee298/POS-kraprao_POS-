@@ -292,7 +292,8 @@ const LOCAL_STORAGE_KEY = 'kaprao_pos_enterprise_v1';
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('pos');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [isLocked, setIsLocked] = useState(false);
+  // Default to true: ทุกครั้งที่เปิดระบบ ต้องใส่รหัสพนักงาน (PIN) เพื่อเข้าสู่ระบบ
+  const [isLocked, setIsLocked] = useState(true);
   const [branches, setBranches] = useState<Branch[]>(INITIAL_BRANCHES);
   const [currentBranch, setCurrentBranch] = useState<Branch>(INITIAL_BRANCHES[0]);
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
