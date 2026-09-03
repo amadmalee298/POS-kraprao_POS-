@@ -136,6 +136,8 @@ export interface Ingredient {
   unitCost: number; // cost per unit
   category: string;
   barcode?: string;
+  packageUnit?: string; // เช่น 'ขวด', 'ลัง', 'ถุง', 'แพ็ค', 'กล่อง', 'กระป๋อง'
+  packageSize?: number; // เช่น 680 (1 packageUnit = 680 ของหน่วย unit หลัก เช่น 1 ขวด = 680 ml)
 }
 
 export interface SmartAuditItem {
@@ -163,6 +165,9 @@ export interface StockLot {
   expiryDate: string; // ISO date
   supplier: string;
   notes?: string;
+  packageQty?: number;
+  packageUnit?: string;
+  packageSize?: number;
 }
 
 export type WasteReason = 'expired' | 'spoiled' | 'damaged' | 'overcooked' | 'trimming' | 'other';

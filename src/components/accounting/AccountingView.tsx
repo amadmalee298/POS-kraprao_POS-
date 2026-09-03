@@ -296,6 +296,39 @@ const getCurrentMonthKey = () => {
   return `${y}-${m}`;
 };
 
+const getLocalDateString = (d: Date = new Date()): string => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const isSameDay = (dateOrIso: string | undefined, targetDateStr: string): boolean => {
+  if (!dateOrIso || !targetDateStr) return false;
+  if (dateOrIso.startsWith(targetDateStr)) return true;
+  try {
+    const d = new Date(dateOrIso);
+    if (!isNaN(d.getTime())) {
+      return getLocalDateString(d) === targetDateStr;
+    }
+  } catch {}
+  return false;
+};
+
+const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boolean => {
+  if (!dateOrIso || !targetMonthStr) return false;
+  if (dateOrIso.startsWith(targetMonthStr)) return true;
+  try {
+    const d = new Date(dateOrIso);
+    if (!isNaN(d.getTime())) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      return `${y}-${m}` === targetMonthStr;
+    }
+  } catch {}
+  return false;
+};
+
 export const AccountingView: React.FC = () => {
   const { orders, expenses, incomes = [], addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot } = usePOS();
 
@@ -378,8 +411,11 @@ export const AccountingView: React.FC = () => {
   const [incomeCategoryFilter, setIncomeCategoryFilter] = useState<IncomeCategory | 'all'>('all');
   const [incomePeriodFilter, setIncomePeriodFilter] = useState<'month' | 'all'>('month');
   const [saveIncomeSuccess, setSaveIncomeSuccess] = useState<string | null>(null);
+  const [saveExpenseSuccess, setSaveExpenseSuccess] = useState<string | null>(null);
+  const [expenseFormError, setExpenseFormError] = useState<string | null>(null);
 
   // Expense Form State
+  const [expDate, setExpDate] = useState<string>(() => getLocalDateString());
   const [expTitle, setExpTitle] = useState('');
   const [expTitleSelect, setExpTitleSelect] = useState('');
   const [expAmount, setExpAmount] = useState<number>(0);
@@ -406,14 +442,15 @@ export const AccountingView: React.FC = () => {
   const [expAutoUpdateStock, setExpAutoUpdateStock] = useState(false);
   const [expStockEntries, setExpStockEntries] = useState<Array<{ id: string; ingredientId: string; quantity: number }>>([]);
 
-  const openAddIncomeModal = () => {
+  const openAddIncomeModal = (prefilledDate?: string | React.MouseEvent) => {
+    const dateStr = typeof prefilledDate === 'string' ? prefilledDate : getLocalDateString();
     const defaultCat: IncomeCategory = 'catering';
     const defaultPreset = INCOME_TITLE_PRESETS[defaultCat]?.[0] || '';
     setIncCategory(defaultCat);
     setIncTitleSelect(defaultPreset);
     setIncTitle(defaultPreset);
     setIncAmount(0);
-    setIncDate(new Date().toISOString().split('T')[0]);
+    setIncDate(dateStr);
     setIncPaymentMethod('promptpay');
     setIncPayerName('');
     setIncRefNumber('');
@@ -522,19 +559,22 @@ export const AccountingView: React.FC = () => {
     setIsEditIncomeOpen(true);
   };
 
-  const openAddExpenseModal = () => {
+  const openAddExpenseModal = (prefilledDate?: string | React.MouseEvent) => {
+    const dateStr = typeof prefilledDate === 'string' ? prefilledDate : getLocalDateString();
     const defaultCat: ExpenseCategory = 'raw_material';
     const defaultPreset = EXPENSE_TITLE_PRESETS[defaultCat]?.[0] || '';
     setExpCategory(defaultCat);
     setExpTitleSelect(defaultPreset);
     setExpTitle(defaultPreset);
     setExpAmount(0);
+    setExpDate(dateStr);
     setExpRefNumber('');
     setExpNote('');
     setExpReceiptImage(null);
     setExpReceiptName(null);
     setExpAutoUpdateStock(false);
     setExpStockEntries([]);
+    setExpenseFormError(null);
     setIsAddExpenseOpen(true);
   };
 
@@ -904,17 +944,17 @@ export const AccountingView: React.FC = () => {
 
       // Filter orders for this branch & month
       const mOrders = orders.filter(
-        o => o.branchId === currentBranch.id && o.status === 'served' && o.createdAt.startsWith(monthKey)
+        o => o.branchId === currentBranch.id && o.status === 'served' && isSameMonth(o.createdAt, monthKey)
       );
 
       // Filter expenses for this branch & month
       const mExpenses = expenses.filter(
-        e => e.branchId === currentBranch.id && e.date.startsWith(monthKey)
+        e => (!e.branchId || e.branchId === currentBranch.id) && isSameMonth(e.date, monthKey)
       );
 
       // Filter incomes for this branch & month
       const mIncomes = (incomes || []).filter(
-        inc => (!inc.branchId || inc.branchId === currentBranch.id) && inc.date.startsWith(monthKey)
+        inc => (!inc.branchId || inc.branchId === currentBranch.id) && isSameMonth(inc.date, monthKey)
       );
 
       // POS Sales
@@ -1048,10 +1088,10 @@ export const AccountingView: React.FC = () => {
 
   // Tax Calculations for selected month
   const selectedBranchOrders = orders.filter(
-    o => o.branchId === currentBranch.id && o.status === 'served' && o.createdAt.startsWith(selectedMonth)
+    o => o.branchId === currentBranch.id && o.status === 'served' && isSameMonth(o.createdAt, selectedMonth)
   );
   const selectedBranchExpenses = expenses.filter(
-    e => e.branchId === currentBranch.id && e.date.startsWith(selectedMonth)
+    e => (!e.branchId || e.branchId === currentBranch.id) && isSameMonth(e.date, selectedMonth)
   );
 
   const totalSalesVat = selectedBranchOrders.reduce((sum, o) => sum + o.vatAmount, 0);
@@ -1061,7 +1101,7 @@ export const AccountingView: React.FC = () => {
   // Incomes for selected branch & selected month (or all if period filter is 'all')
   const selectedBranchIncomes = useMemo(() => {
     return (incomes || []).filter(
-      inc => (!inc.branchId || inc.branchId === currentBranch.id) && (incomePeriodFilter === 'all' || inc.date.startsWith(selectedMonth))
+      inc => (!inc.branchId || inc.branchId === currentBranch.id) && (incomePeriodFilter === 'all' || isSameMonth(inc.date, selectedMonth))
     );
   }, [incomes, currentBranch.id, selectedMonth, incomePeriodFilter]);
 
@@ -1135,13 +1175,13 @@ export const AccountingView: React.FC = () => {
       const fullDate = `${yearStr}-${monthStr}-${dayStr}`;
 
       const dayOrders = orders.filter(
-        o => o.branchId === currentBranch.id && o.status === 'served' && o.createdAt.startsWith(fullDate)
+        o => o.branchId === currentBranch.id && o.status === 'served' && isSameDay(o.createdAt, fullDate)
       );
       const dayExpenses = expenses.filter(
-        e => e.branchId === currentBranch.id && e.date === fullDate
+        e => (!e.branchId || e.branchId === currentBranch.id) && isSameDay(e.date, fullDate)
       );
       const dayIncomes = (incomes || []).filter(
-        inc => (!inc.branchId || inc.branchId === currentBranch.id) && inc.date === fullDate
+        inc => (!inc.branchId || inc.branchId === currentBranch.id) && isSameDay(inc.date, fullDate)
       );
 
       let posSales = 0;
@@ -1262,9 +1302,11 @@ export const AccountingView: React.FC = () => {
       netAmount = expAmount - vatAmount;
     }
 
+    const chosenDate = expDate || getLocalDateString();
+
     addExpense({
       branchId: currentBranch.id,
-      date: new Date().toISOString().split('T')[0],
+      date: chosenDate,
       category: expCategory,
       title: expTitle.trim(),
       amount: expAmount,
@@ -1276,6 +1318,11 @@ export const AccountingView: React.FC = () => {
       receiptImage: expReceiptImage || undefined,
       receiptImageName: expReceiptName || undefined
     });
+
+    setSaveExpenseSuccess(`บันทึกค่าใช้จ่าย "${expTitle.trim()}" จำนวน ฿${expAmount.toLocaleString()} (${chosenDate}) เรียบร้อยแล้ว`);
+    setTimeout(() => {
+      setSaveExpenseSuccess(null);
+    }, 5000);
 
     if (expAutoUpdateStock && expStockEntries.length > 0) {
       const validEntries = expStockEntries.filter(e => e.ingredientId && e.quantity > 0);
@@ -3869,6 +3916,22 @@ export const AccountingView: React.FC = () => {
         {/* TAB 3: EXPENSE LOG TABLE & MODAL */}
         {activeTab === 'expenses' && (
           <div className="space-y-4 sm:space-y-6">
+            {/* Success Toast Banner */}
+            {saveExpenseSuccess && (
+              <div className="p-3.5 bg-rose-500/15 border border-rose-500/40 rounded-2xl flex items-center justify-between text-rose-300 text-xs shadow-lg animate-fade-in">
+                <div className="flex items-center space-x-2">
+                  <CheckCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span className="font-semibold">{saveExpenseSuccess}</span>
+                </div>
+                <button
+                  onClick={() => setSaveExpenseSuccess(null)}
+                  className="text-slate-400 hover:text-slate-200 p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             {/* Formal Report Header Box */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-3.5">
@@ -4593,23 +4656,126 @@ export const AccountingView: React.FC = () => {
 
               {/* Expenses recorded on this day */}
               <div className="space-y-2">
-                <h4 className="font-bold text-slate-200 text-xs flex items-center justify-between border-b border-slate-800 pb-1">
-                  <span>รายการค่าใช้จ่ายประจำวัน ({selectedDetailDay.dayExpenses?.length || 0} รายการ)</span>
-                  <span className="font-mono text-rose-400">฿{selectedDetailDay.opex.toLocaleString()}</span>
-                </h4>
+                <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+                  <h4 className="font-bold text-slate-200 text-xs flex items-center space-x-2">
+                    <span>รายการค่าใช้จ่ายประจำวัน ({selectedDetailDay.dayExpenses?.length || 0} รายการ)</span>
+                  </h4>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-mono text-rose-400 font-bold">฿{selectedDetailDay.opex.toLocaleString()}</span>
+                    <button
+                      onClick={() => openAddExpenseModal(selectedDetailDay.date)}
+                      className="px-2 py-0.5 bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded text-[10px] font-bold transition flex items-center space-x-1 active:scale-95"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>บันทึกค่าใช้จ่าย</span>
+                    </button>
+                  </div>
+                </div>
                 {!selectedDetailDay.dayExpenses || selectedDetailDay.dayExpenses.length === 0 ? (
-                  <div className="p-3 bg-slate-950 rounded-xl text-center text-slate-500 text-xs">
-                    ไม่มีการบันทึกใบเบิกจ่ายเฉพาะเจาะจงในวันนี้ (ประมาณการค่าใช้จ่ายเฉลี่ย)
+                  <div className="p-3 bg-slate-950 rounded-xl text-center text-slate-500 text-xs flex items-center justify-between">
+                    <span>ไม่มีการบันทึกค่าใช้จ่ายในวันนี้</span>
+                    <button
+                      onClick={() => openAddExpenseModal(selectedDetailDay.date)}
+                      className="text-[11px] text-rose-400 hover:text-rose-300 font-medium underline"
+                    >
+                      + เพิ่มค่าใช้จ่าย
+                    </button>
                   </div>
                 ) : (
                   <div className="space-y-1.5">
                     {selectedDetailDay.dayExpenses.map((e: any) => (
                       <div key={e.id} className="p-2 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-between text-xs">
-                        <div>
-                          <span className="font-bold text-slate-200">{e.title}</span>
-                          <span className="ml-2 text-[10px] text-slate-400">({categoryLabels[e.category as ExpenseCategory]})</span>
+                        <div className="flex items-center space-x-2">
+                          <div>
+                            <span className="font-bold text-slate-200">{e.title}</span>
+                            <span className="ml-2 text-[10px] text-slate-400">({categoryLabels[e.category as ExpenseCategory] || e.category})</span>
+                            {e.refNumber && <span className="ml-2 font-mono text-[10px] text-slate-500">[{e.refNumber}]</span>}
+                          </div>
                         </div>
-                        <div className="font-mono text-rose-400 font-bold">฿{e.amount.toLocaleString()}</div>
+                        <div className="flex items-center space-x-2">
+                          <div className="font-mono text-rose-400 font-bold">฿{e.amount.toLocaleString()}</div>
+                          {e.receiptImage && (
+                            <button
+                              onClick={() => setSelectedReceiptPreview({
+                                url: e.receiptImage,
+                                title: e.title,
+                                date: e.date,
+                                amount: e.amount,
+                                refNumber: e.refNumber,
+                                category: e.category,
+                                note: e.note
+                              })}
+                              className="p-1 text-slate-400 hover:text-rose-400 transition"
+                              title="ดูสลิป/บิล"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Other Incomes recorded on this day */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+                  <h4 className="font-bold text-slate-200 text-xs flex items-center space-x-2">
+                    <span>รายการรายรับอื่น / รายได้พิเศษประจำวัน ({selectedDetailDay.dayIncomes?.length || 0} รายการ)</span>
+                  </h4>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-mono text-emerald-400 font-bold">
+                      ฿{(selectedDetailDay.dayIncomes || []).reduce((s: number, i: any) => s + (i.amount || 0), 0).toLocaleString()}
+                    </span>
+                    <button
+                      onClick={() => openAddIncomeModal(selectedDetailDay.date)}
+                      className="px-2 py-0.5 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded text-[10px] font-bold transition flex items-center space-x-1 active:scale-95"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>บันทึกรายรับ</span>
+                    </button>
+                  </div>
+                </div>
+                {!selectedDetailDay.dayIncomes || selectedDetailDay.dayIncomes.length === 0 ? (
+                  <div className="p-3 bg-slate-950 rounded-xl text-center text-slate-500 text-xs flex items-center justify-between">
+                    <span>ไม่มีการบันทึกรายรับอื่นในวันนี้</span>
+                    <button
+                      onClick={() => openAddIncomeModal(selectedDetailDay.date)}
+                      className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium underline"
+                    >
+                      + เพิ่มรายรับ
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {selectedDetailDay.dayIncomes.map((inc: any) => (
+                      <div key={inc.id} className="p-2 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-between text-xs">
+                        <div>
+                          <span className="font-bold text-slate-200">{inc.title}</span>
+                          <span className="ml-2 text-[10px] text-emerald-400">({incomeCategoryLabels[inc.category as IncomeCategory] || inc.category})</span>
+                          {inc.payerName && <span className="ml-2 text-[10px] text-slate-400">จาก: {inc.payerName}</span>}
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <div className="font-mono text-emerald-400 font-bold">฿{inc.amount.toLocaleString()}</div>
+                          {inc.slipImage && (
+                            <button
+                              onClick={() => setSelectedReceiptPreview({
+                                url: inc.slipImage,
+                                title: inc.title,
+                                date: inc.date,
+                                amount: inc.amount,
+                                refNumber: inc.refNumber,
+                                category: inc.category,
+                                note: inc.note
+                              })}
+                              className="p-1 text-slate-400 hover:text-emerald-400 transition"
+                              title="ดูสลิป"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -4642,7 +4808,24 @@ export const AccountingView: React.FC = () => {
               </div>
             </div>
 
-            <div className="pt-2 border-t border-slate-800 flex justify-end">
+            <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => openAddExpenseModal(selectedDetailDay.date)}
+                  className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-semibold transition flex items-center space-x-1 active:scale-95"
+                >
+                  <Plus className="w-3.5 h-3.5 text-rose-400" />
+                  <span>+ บันทึกค่าใช้จ่าย</span>
+                </button>
+                <button
+                  onClick={() => openAddIncomeModal(selectedDetailDay.date)}
+                  className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold transition flex items-center space-x-1 active:scale-95"
+                >
+                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>+ บันทึกรายรับอื่น</span>
+                </button>
+              </div>
+
               <button
                 onClick={() => setIsDayDetailModalOpen(false)}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition"
@@ -4666,21 +4849,34 @@ export const AccountingView: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateExpense} className="space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-400 mb-1 font-medium">หมวดหมู่ค่าใช้จ่าย *</label>
-                <select
-                  value={expCategory}
-                  onChange={e => handleExpCategoryChange(e.target.value as ExpenseCategory)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm focus:outline-none focus:border-rose-500"
-                >
-                  <option value="raw_material">ซื้อวัตถุดิบ (Raw Material)</option>
-                  <option value="supplies">ซัพพลายใช้สอย / อุปกรณ์สิ้นเปลือง (Supplies & Consumables)</option>
-                  <option value="rent">ค่าเช่าสถานที่ (Rent)</option>
-                  <option value="salary">ค่าแรง/เงินเดือนพนักงาน (Salary)</option>
-                  <option value="utilities">ค่าน้ำ/ค่าไฟ/ค่าแก๊ส (Utilities)</option>
-                  <option value="marketing">การตลาด & โฆษณา (Marketing)</option>
-                  <option value="other">อื่นๆ (Others)</option>
-                </select>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">หมวดหมู่ค่าใช้จ่าย *</label>
+                  <select
+                    value={expCategory}
+                    onChange={e => handleExpCategoryChange(e.target.value as ExpenseCategory)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm focus:outline-none focus:border-rose-500"
+                  >
+                    <option value="raw_material">ซื้อวัตถุดิบ (Raw Material)</option>
+                    <option value="supplies">ซัพพลายใช้สอย / อุปกรณ์สิ้นเปลือง (Supplies & Consumables)</option>
+                    <option value="rent">ค่าเช่าสถานที่ (Rent)</option>
+                    <option value="salary">ค่าแรง/เงินเดือนพนักงาน (Salary)</option>
+                    <option value="utilities">ค่าน้ำ/ค่าไฟ/ค่าแก๊ส (Utilities)</option>
+                    <option value="marketing">การตลาด & โฆษณา (Marketing)</option>
+                    <option value="other">อื่นๆ (Others)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">วันที่ทำรายการ / วันที่บิล *</label>
+                  <input
+                    type="date"
+                    required
+                    value={expDate}
+                    onChange={e => setExpDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm focus:outline-none focus:border-rose-500 font-mono"
+                  />
+                </div>
               </div>
 
               <div>

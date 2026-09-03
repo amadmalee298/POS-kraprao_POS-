@@ -36,6 +36,10 @@ interface StockEntryItem {
   id: string;
   ingredientId: string;
   quantity: number;
+  usePackage?: boolean;
+  packageQty?: number;
+  packageUnit?: string;
+  packageSize?: number;
 }
 
 interface ReceiptQueueItem {
@@ -119,6 +123,9 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     minStockAlert: number;
     initialStock: number;
     receiveQty: number;
+    hasPackageConversion: boolean;
+    packageUnit: string;
+    packageSize: number;
   }>({
     name: '',
     unit: 'pcs',
@@ -126,7 +133,10 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     unitCost: 0,
     minStockAlert: 5,
     initialStock: 0,
-    receiveQty: 1
+    receiveQty: 1,
+    hasPackageConversion: false,
+    packageUnit: 'ขวด',
+    packageSize: 680
   });
   const [quickIngSuccess, setQuickIngSuccess] = useState<string | null>(null);
 
@@ -801,6 +811,8 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     let unit = 'pcs';
     let category = 'supplies';
     let quantity = 1;
+    let packageUnit: string | undefined;
+    let packageSize: number | undefined;
 
     // Detect quantity pattern: e.g. "X4", "x 4", "10 ชิ้น", "2 แผง"
     const xMatch = lower.match(/(?:x|จำนวน)\s*(\d+)/i) || lower.match(/(\d+)\s*(?:x|แผง|กำ|ขวด|กระป๋อง|ชิ้น|กล่อง|แพ็ค)/i);
@@ -808,9 +820,27 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       quantity = Number(xMatch[1]);
     }
 
-    // Unit detection
-    if (lower.includes('มล') || lower.includes('ml')) {
+    // Detect packaging size like 680ml, 680 มล, 700ml, 1000g, 500g, 1L, 1 ลิตร
+    const mlMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:มล|ml|ซีซี|cc)/i);
+    const gMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:กรัม|g)(?![a-z])/i);
+    const lMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:ลิตร|l)(?![a-z])/i);
+
+    if (mlMatch && Number(mlMatch[1]) > 0) {
       unit = 'ml';
+      packageUnit = 'ขวด';
+      packageSize = Math.round(Number(mlMatch[1]));
+    } else if (lMatch && Number(lMatch[1]) > 0) {
+      unit = 'ml';
+      packageUnit = 'ขวด';
+      packageSize = Math.round(Number(lMatch[1]) * 1000);
+    } else if (gMatch && Number(gMatch[1]) > 0) {
+      unit = 'g';
+      packageUnit = 'ถุง';
+      packageSize = Math.round(Number(gMatch[1]));
+    } else if (lower.includes('มล') || lower.includes('ml')) {
+      unit = 'ml';
+      packageUnit = 'ขวด';
+      packageSize = 680;
     } else if (lower.includes('กรัม') || lower.includes(' g') || lower.includes('ก.')) {
       unit = 'g';
     } else if (lower.includes('กก') || lower.includes('kg') || lower.includes('กิโล')) {
@@ -843,7 +873,11 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       if (unit === 'pcs') unit = 'pcs';
     } else if (/ซอส|น้ำมัน|ซีอิ๊ว|น้ำปลา|รสดี|ชูรส|น้ำตาล|เกลือ|พริกไทย|น้ำส้มสายชู|กะปิ|เต้าเจี้ยว|เนย|ผงปรุง/i.test(lower)) {
       category = 'sauce';
-      if (unit === 'pcs') unit = 'bottle';
+      if (unit === 'pcs' || unit === 'bottle') {
+        unit = 'ml';
+        packageUnit = 'ขวด';
+        if (!packageSize) packageSize = 680;
+      }
     } else if (/ข้าว|แป้ง|เส้น|วุ้นเส้น|แห้ง|งา/i.test(lower)) {
       category = 'dry_good';
       if (unit === 'pcs') unit = 'kg';
@@ -858,11 +892,12 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
 
     const unitCost = quantity > 0 ? Number((price / quantity).toFixed(2)) : price;
 
-    return { unit, category, quantity, unitCost };
+    return { unit, category, quantity, unitCost, packageUnit, packageSize };
   };
 
   const handleOpenQuickCreateModal = (name: string, price: number = 0) => {
     const inferred = inferUnitAndCategoryFromName(name, price);
+    const hasPkg = !!(inferred.packageSize && inferred.packageSize > 0) || inferred.unit === 'ml';
     setQuickIngForm({
       name: name.trim(),
       unit: inferred.unit,
@@ -870,7 +905,10 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       unitCost: inferred.unitCost,
       minStockAlert: 5,
       initialStock: 0,
-      receiveQty: inferred.quantity
+      receiveQty: inferred.quantity,
+      hasPackageConversion: hasPkg,
+      packageUnit: inferred.packageUnit || (inferred.unit === 'ml' ? 'ขวด' : inferred.unit === 'g' ? 'ถุง' : 'แพ็ค'),
+      packageSize: inferred.packageSize || (inferred.unit === 'ml' ? 680 : inferred.unit === 'g' ? 1000 : 1)
     });
     setIsQuickCreateIngOpen(true);
   };
@@ -879,22 +917,30 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     e.preventDefault();
     if (!quickIngForm.name.trim()) return;
 
+    const isPkg = quickIngForm.hasPackageConversion && quickIngForm.packageSize > 0;
     const newIng = addIngredient({
       name: quickIngForm.name.trim(),
       unit: quickIngForm.unit,
       category: quickIngForm.category,
       unitCost: quickIngForm.unitCost,
       minStockAlert: quickIngForm.minStockAlert || 5,
-      currentStock: quickIngForm.initialStock || 0
+      currentStock: quickIngForm.initialStock || 0,
+      packageUnit: isPkg ? quickIngForm.packageUnit : undefined,
+      packageSize: isPkg ? quickIngForm.packageSize : undefined
     });
 
     const targetId = newIng?.id || `ing-${Date.now()}`;
     const qtyToReceive = quickIngForm.receiveQty > 0 ? quickIngForm.receiveQty : 1;
+    const calculatedBaseQty = isPkg ? (qtyToReceive * quickIngForm.packageSize) : qtyToReceive;
 
     const newEntry: StockEntryItem = {
       id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       ingredientId: targetId,
-      quantity: qtyToReceive
+      quantity: calculatedBaseQty,
+      usePackage: isPkg,
+      packageQty: qtyToReceive,
+      packageUnit: quickIngForm.packageUnit,
+      packageSize: quickIngForm.packageSize
     };
 
     const nextEntries = [...stockEntries.filter(e => e.ingredientId !== targetId), newEntry];
@@ -924,25 +970,55 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
 
       let targetId: string;
       let qty = 1;
+      let isPkg = false;
+      let pUnit = 'ขวด';
+      let pSize = 680;
 
       if (existing) {
         targetId = existing.id;
+        if (existing.packageUnit && existing.packageSize) {
+          isPkg = true;
+          pUnit = existing.packageUnit;
+          pSize = existing.packageSize;
+          qty = pSize;
+        } else if (existing.unit === 'ml') {
+          isPkg = true;
+          pUnit = 'ขวด';
+          pSize = 680;
+          qty = 680;
+        }
       } else {
         const inferred = inferUnitAndCategoryFromName(item.name, item.amount);
+        isPkg = !!(inferred.packageSize && inferred.packageSize > 0) || inferred.unit === 'ml';
+        pUnit = inferred.packageUnit || (inferred.unit === 'ml' ? 'ขวด' : 'ถุง');
+        pSize = inferred.packageSize || (inferred.unit === 'ml' ? 680 : inferred.unit === 'g' ? 1000 : 1);
         const created = addIngredient({
           name: item.name.trim(),
           unit: inferred.unit,
           category: inferred.category,
           unitCost: inferred.unitCost,
           minStockAlert: 5,
-          currentStock: 0
+          currentStock: 0,
+          packageUnit: isPkg ? pUnit : undefined,
+          packageSize: isPkg ? pSize : undefined
         });
         targetId = created?.id || `ing-${Date.now()}-${idx}`;
-        qty = inferred.quantity;
+        qty = isPkg ? (inferred.quantity * pSize) : inferred.quantity;
         createdCount++;
       }
 
       if (!currentEntries.some(e => e.ingredientId === targetId)) {
+        currentEntries.push({
+          id: `${Date.now()}-${idx}`,
+          ingredientId: targetId,
+          quantity: qty,
+          usePackage: isPkg,
+          packageQty: 1,
+          packageUnit: pUnit,
+          packageSize: pSize
+        });
+      }
+    });
         currentEntries.push({
           id: `${Date.now()}-${idx}`,
           ingredientId: targetId,

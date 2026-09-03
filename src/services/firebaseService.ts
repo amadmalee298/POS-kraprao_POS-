@@ -6,6 +6,7 @@ import {
   setDoc,
   getDoc,
   getDocs,
+  deleteDoc,
   writeBatch,
   onSnapshot,
   query,
@@ -16,7 +17,7 @@ import {
   DocumentData
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Order, Ingredient, Branch, StockAdjustmentLog, WasteLog } from '../types';
+import { Order, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome } from '../types';
 
 export interface CentralBranchLiveStats {
   branchId: string;
@@ -492,3 +493,255 @@ export function subscribeToRecentCentralOrders(
     return () => {};
   }
 }
+
+/**
+ * Push a single expense entry to central Firebase
+ */
+export async function syncExpenseToFirestore(expense: Expense, branch?: Branch): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const expenseDocId = expense.id.startsWith('exp-') ? expense.id : `exp-${expense.id}`;
+    const expenseRef = doc(dbInstance, 'expenses', expenseDocId);
+    const nowIso = new Date().toISOString();
+
+    const payload = {
+      id: expense.id,
+      branchId: expense.branchId || branch?.id || '',
+      category: expense.category,
+      title: expense.title,
+      amount: Number(expense.amount) || 0,
+      includeVat: !!expense.includeVat,
+      vatAmount: Number(expense.vatAmount) || 0,
+      netAmount: Number(expense.netAmount) || 0,
+      refNumber: expense.refNumber || '',
+      note: expense.note || '',
+      date: expense.date,
+      receiptImage: expense.receiptImage || null,
+      receiptImageName: expense.receiptImageName || null,
+      syncedAt: nowIso,
+      updatedAt: serverTimestamp()
+    };
+
+    await setDoc(expenseRef, payload, { merge: true });
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to sync expense ${expense.id}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Delete an expense entry from central Firebase
+ */
+export async function deleteExpenseFromFirestore(expenseId: string): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const expenseDocId = expenseId.startsWith('exp-') ? expenseId : `exp-${expenseId}`;
+    const expenseRef = doc(dbInstance, 'expenses', expenseDocId);
+    await deleteDoc(expenseRef);
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to delete expense ${expenseId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Batch push expenses to central Firebase
+ */
+export async function syncExpensesBatchToFirestore(expenses: Expense[], branch?: Branch): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine || expenses.length === 0) return false;
+
+  try {
+    const batch = writeBatch(dbInstance);
+    const nowIso = new Date().toISOString();
+
+    expenses.forEach(expense => {
+      const expenseDocId = expense.id.startsWith('exp-') ? expense.id : `exp-${expense.id}`;
+      const expenseRef = doc(dbInstance!, 'expenses', expenseDocId);
+      batch.set(
+        expenseRef,
+        {
+          id: expense.id,
+          branchId: expense.branchId || branch?.id || '',
+          category: expense.category,
+          title: expense.title,
+          amount: Number(expense.amount) || 0,
+          includeVat: !!expense.includeVat,
+          vatAmount: Number(expense.vatAmount) || 0,
+          netAmount: Number(expense.netAmount) || 0,
+          refNumber: expense.refNumber || '',
+          note: expense.note || '',
+          date: expense.date,
+          receiptImage: expense.receiptImage || null,
+          receiptImageName: expense.receiptImageName || null,
+          syncedAt: nowIso,
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+    });
+
+    await batch.commit();
+    return true;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to batch sync expenses:', err);
+    return false;
+  }
+}
+
+/**
+ * Push a single other-income entry to central Firebase
+ */
+export async function syncIncomeToFirestore(income: OtherIncome, branch?: Branch): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const incomeDocId = income.id.startsWith('inc-') ? income.id : `inc-${income.id}`;
+    const incomeRef = doc(dbInstance, 'incomes', incomeDocId);
+    const nowIso = new Date().toISOString();
+
+    const payload = {
+      id: income.id,
+      branchId: income.branchId || branch?.id || '',
+      category: income.category,
+      title: income.title,
+      amount: Number(income.amount) || 0,
+      date: income.date,
+      paymentMethod: income.paymentMethod || 'promptpay',
+      payerName: income.payerName || '',
+      refNumber: income.refNumber || '',
+      note: income.note || '',
+      slipImage: income.slipImage || null,
+      slipImageName: income.slipImageName || null,
+      syncedAt: nowIso,
+      updatedAt: serverTimestamp()
+    };
+
+    await setDoc(incomeRef, payload, { merge: true });
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to sync income ${income.id}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Delete an income entry from central Firebase
+ */
+export async function deleteIncomeFromFirestore(incomeId: string): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const incomeDocId = incomeId.startsWith('inc-') ? incomeId : `inc-${incomeId}`;
+    const incomeRef = doc(dbInstance, 'incomes', incomeDocId);
+    await deleteDoc(incomeRef);
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to delete income ${incomeId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Real-time listener for central expenses
+ */
+export function subscribeToCentralExpenses(
+  limitCount: number = 100,
+  onUpdate: (expenses: Expense[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  if (!dbInstance) return () => {};
+
+  try {
+    const colRef = collection(dbInstance, 'expenses');
+    const q = query(colRef, limit(limitCount));
+
+    const unsubscribe = onSnapshot(
+      q,
+      snapshot => {
+        const list: Expense[] = [];
+        snapshot.forEach(docSnap => {
+          const d = docSnap.data();
+          list.push({
+            id: d.id || docSnap.id,
+            branchId: d.branchId || '',
+            date: d.date || '',
+            category: d.category || 'other',
+            title: d.title || '',
+            amount: Number(d.amount) || 0,
+            includeVat: !!d.includeVat,
+            vatAmount: Number(d.vatAmount) || 0,
+            netAmount: Number(d.netAmount) || Number(d.amount) || 0,
+            refNumber: d.refNumber || '',
+            note: d.note || '',
+            receiptImage: d.receiptImage || undefined,
+            receiptImageName: d.receiptImageName || undefined
+          });
+        });
+        onUpdate(list);
+      },
+      err => {
+        console.warn('[Firebase Service] ⚠️ Snapshot error on expenses:', err);
+        if (onError) onError(err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to subscribe to expenses:', err);
+    return () => {};
+  }
+}
+
+/**
+ * Real-time listener for central incomes
+ */
+export function subscribeToCentralIncomes(
+  limitCount: number = 100,
+  onUpdate: (incomes: OtherIncome[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  if (!dbInstance) return () => {};
+
+  try {
+    const colRef = collection(dbInstance, 'incomes');
+    const q = query(colRef, limit(limitCount));
+
+    const unsubscribe = onSnapshot(
+      q,
+      snapshot => {
+        const list: OtherIncome[] = [];
+        snapshot.forEach(docSnap => {
+          const d = docSnap.data();
+          list.push({
+            id: d.id || docSnap.id,
+            branchId: d.branchId || '',
+            date: d.date || '',
+            category: d.category || 'other',
+            title: d.title || '',
+            amount: Number(d.amount) || 0,
+            paymentMethod: d.paymentMethod || 'promptpay',
+            payerName: d.payerName || '',
+            refNumber: d.refNumber || '',
+            note: d.note || '',
+            slipImage: d.slipImage || undefined,
+            slipImageName: d.slipImageName || undefined,
+            createdAt: d.syncedAt || d.createdAt || undefined
+          });
+        });
+        onUpdate(list);
+      },
+      err => {
+        console.warn('[Firebase Service] ⚠️ Snapshot error on incomes:', err);
+        if (onError) onError(err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to subscribe to incomes:', err);
+    return () => {};
+  }
+}
+

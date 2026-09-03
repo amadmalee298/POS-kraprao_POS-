@@ -71,6 +71,47 @@
         "timestamp": { "type": "string" }
       },
       "required": ["id", "ingredientId", "changeQty", "reason", "timestamp"]
+    },
+    "expenses": {
+      "title": "Expenses",
+      "description": "Daily operational expenses, raw material purchases, and overhead",
+      "properties": {
+        "id": { "type": "string" },
+        "branchId": { "type": "string" },
+        "category": { "type": "string" },
+        "title": { "type": "string" },
+        "amount": { "type": "number" },
+        "includeVat": { "type": "boolean" },
+        "vatAmount": { "type": "number" },
+        "netAmount": { "type": "number" },
+        "refNumber": { "type": "string" },
+        "note": { "type": "string" },
+        "date": { "type": "string" },
+        "receiptImage": { "type": "string" },
+        "receiptImageName": { "type": "string" },
+        "syncedAt": { "type": "string" }
+      },
+      "required": ["id", "title", "amount", "date"]
+    },
+    "incomes": {
+      "title": "Other Incomes",
+      "description": "Other income entries such as catering, delivery subsidy, interest",
+      "properties": {
+        "id": { "type": "string" },
+        "branchId": { "type": "string" },
+        "category": { "type": "string" },
+        "title": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "payerName": { "type": "string" },
+        "refNumber": { "type": "string" },
+        "note": { "type": "string" },
+        "slipImage": { "type": "string" },
+        "slipName": { "type": "string" },
+        "syncedAt": { "type": "string" }
+      },
+      "required": ["id", "title", "amount", "date"]
     }
   }
 }

@@ -44,7 +44,13 @@ import {
   syncStockAdjustmentToFirestore,
   syncWasteLogToFirestore,
   subscribeToCentralBranches,
-  isFirebaseAvailable
+  isFirebaseAvailable,
+  syncExpenseToFirestore,
+  deleteExpenseFromFirestore,
+  syncIncomeToFirestore,
+  deleteIncomeFromFirestore,
+  subscribeToCentralExpenses,
+  subscribeToCentralIncomes
 } from '../services/firebaseService';
 import {
   INITIAL_BRANCHES,
@@ -663,6 +669,60 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     return () => {
       unsubscribe();
+    };
+  }, [effectiveOffline]);
+
+  // Real-time listener for central expenses and incomes from Firestore
+  useEffect(() => {
+    if (!isFirebaseAvailable() || effectiveOffline) return;
+
+    const unsubExpenses = subscribeToCentralExpenses(100, (centralExpList) => {
+      if (!centralExpList || centralExpList.length === 0) return;
+      setExpenses(prev => {
+        const localMap = new Map(prev.map(e => [e.id, e]));
+        let hasNew = false;
+        centralExpList.forEach(ce => {
+          if (!localMap.has(ce.id)) {
+            localMap.set(ce.id, ce);
+            hasNew = true;
+          }
+        });
+        if (!hasNew) return prev;
+        const merged = Array.from(localMap.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        try {
+          localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(merged));
+        } catch (e) {
+          console.warn('Failed to cache synced expenses', e);
+        }
+        return merged;
+      });
+    });
+
+    const unsubIncomes = subscribeToCentralIncomes(100, (centralIncList) => {
+      if (!centralIncList || centralIncList.length === 0) return;
+      setIncomes(prev => {
+        const localMap = new Map(prev.map(i => [i.id, i]));
+        let hasNew = false;
+        centralIncList.forEach(ci => {
+          if (!localMap.has(ci.id)) {
+            localMap.set(ci.id, ci);
+            hasNew = true;
+          }
+        });
+        if (!hasNew) return prev;
+        const merged = Array.from(localMap.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        try {
+          localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(merged));
+        } catch (e) {
+          console.warn('Failed to cache synced incomes', e);
+        }
+        return merged;
+      });
+    });
+
+    return () => {
+      unsubExpenses();
+      unsubIncomes();
     };
   }, [effectiveOffline]);
 
@@ -1727,11 +1787,39 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ...expData,
       id: `exp-${Date.now()}`
     };
-    setExpenses(prev => [newExp, ...prev]);
+    setExpenses(prev => {
+      const updated = [newExp, ...prev];
+      try {
+        localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Failed to cache expense immediately', e);
+      }
+      return updated;
+    });
+
+    if (isFirebaseAvailable()) {
+      syncExpenseToFirestore(newExp, currentBranch).catch(err => {
+        console.warn('[POSContext] Failed to sync expense to Firestore:', err);
+      });
+    }
   };
 
   const deleteExpense = (expenseId: string) => {
-    setExpenses(prev => prev.filter(e => e.id !== expenseId));
+    setExpenses(prev => {
+      const updated = prev.filter(e => e.id !== expenseId);
+      try {
+        localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Failed to cache expense deletion', e);
+      }
+      return updated;
+    });
+
+    if (isFirebaseAvailable()) {
+      deleteExpenseFromFirestore(expenseId).catch(err => {
+        console.warn('[POSContext] Failed to delete expense from Firestore:', err);
+      });
+    }
   };
 
   const addIncome = (incData: Omit<OtherIncome, 'id'>) => {
@@ -1740,22 +1828,74 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: `inc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       createdAt: new Date().toISOString()
     };
-    setIncomes(prev => [newInc, ...prev]);
+    setIncomes(prev => {
+      const updated = [newInc, ...prev];
+      try {
+        localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Failed to cache income immediately', e);
+      }
+      return updated;
+    });
+
+    if (isFirebaseAvailable()) {
+      syncIncomeToFirestore(newInc, currentBranch).catch(err => {
+        console.warn('[POSContext] Failed to sync income to Firestore:', err);
+      });
+    }
   };
 
   const updateIncome = (arg1: string | OtherIncome, arg2?: Partial<OtherIncome>) => {
-    if (typeof arg1 === 'string') {
-      const id = arg1;
-      const updates = arg2 || {};
-      setIncomes(prev => prev.map(inc => inc.id === id ? { ...inc, ...updates, id } : inc));
-    } else {
-      const incData = arg1;
-      setIncomes(prev => prev.map(inc => inc.id === incData.id ? { ...inc, ...incData } : inc));
+    let targetToSync: OtherIncome | null = null;
+    setIncomes(prev => {
+      const updated = prev.map(inc => {
+        if (typeof arg1 === 'string') {
+          if (inc.id === arg1) {
+            const merged = { ...inc, ...(arg2 || {}), id: arg1 };
+            targetToSync = merged;
+            return merged;
+          }
+          return inc;
+        } else {
+          if (inc.id === arg1.id) {
+            const merged = { ...inc, ...arg1 };
+            targetToSync = merged;
+            return merged;
+          }
+          return inc;
+        }
+      });
+      try {
+        localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Failed to cache updated income', e);
+      }
+      return updated;
+    });
+
+    if (targetToSync && isFirebaseAvailable()) {
+      syncIncomeToFirestore(targetToSync, currentBranch).catch(err => {
+        console.warn('[POSContext] Failed to sync updated income to Firestore:', err);
+      });
     }
   };
 
   const deleteIncome = (incomeId: string) => {
-    setIncomes(prev => prev.filter(inc => inc.id !== incomeId));
+    setIncomes(prev => {
+      const updated = prev.filter(inc => inc.id !== incomeId);
+      try {
+        localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Failed to cache deleted income', e);
+      }
+      return updated;
+    });
+
+    if (isFirebaseAvailable()) {
+      deleteIncomeFromFirestore(incomeId).catch(err => {
+        console.warn('[POSContext] Failed to delete income from Firestore:', err);
+      });
+    }
   };
 
   // Staff Scheduling & Payroll operations
