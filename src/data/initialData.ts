@@ -21,10 +21,9 @@ import {
 import { SHOP_LOGO_URL } from '../assets/logo';
 
 export const DEFAULT_CATEGORIES: CategoryItem[] = [
-  { id: 'kaprao', name: 'กะเพราโบราณ', icon: 'Flame' },
-  { id: 'fry_soup', name: 'เมนูผัด/ต้ม', icon: 'Utensils' },
-  { id: 'drinks_dessert', name: 'เครื่องดื่ม & ขนม', icon: 'CupSoda' },
-  { id: 'special', name: 'เมนูพิเศษ', icon: 'Sparkles' }
+  { id: 'kaprao', name: 'กะเพรา', icon: 'Flame' },
+  { id: 'special', name: 'เมนูพิเศษ', icon: 'Sparkles' },
+  { id: 'side_dish', name: 'เมนูกับข้าว', icon: 'Utensils' }
 ];
 
 export const INITIAL_BRANCHES: Branch[] = [
@@ -130,6 +129,108 @@ export const INITIAL_INGREDIENTS: Ingredient[] = [
 export const INITIAL_STOCK_LOTS: StockLot[] = [];
 
 export const INITIAL_MENU_ITEMS: MenuItem[] = [
+  {
+    id: 'menu-kaprao-chicken-egg',
+    name: 'กะเพราไก่ไข่ดาว',
+    nameEn: 'Minced Chicken Holy Basil with Fried Egg',
+    category: 'kaprao',
+    price: 50,
+    costPrice: 22,
+    description: 'กะเพราไก่ผัดพริกแห้งเข้มข้น หอมใบกะเพรา เสิร์ฟพร้อมไข่ดาวกรอบไข่แดงเยิ้มและข้าวหอมมะลิร้อนๆ',
+    image: 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?w=500&q=80',
+    isPopular: true,
+    recipe: [
+      { ingredientId: 'ing-basil', amountNeeded: 20 },
+      { ingredientId: 'ing-chili', amountNeeded: 15 },
+      { ingredientId: 'ing-sauce', amountNeeded: 30 },
+      { ingredientId: 'ing-rice', amountNeeded: 180 },
+      { ingredientId: 'ing-egg', amountNeeded: 1 },
+    ],
+    availableSpiceLevels: ['ไม่เผ็ด', 'เผ็ดน้อย', 'เผ็ดปานกลาง', 'เผ็ดมาก', 'เผ็ดหูดับ'],
+  },
+  {
+    id: 'menu-kaprao-beef',
+    name: 'กะเพราเนื้อ',
+    nameEn: 'Minced Beef Holy Basil with Rice',
+    category: 'kaprao',
+    price: 50,
+    costPrice: 24,
+    description: 'เนื้อวัวคัดพิเศษ ผัดไฟแรงกลิ่นหอมกระทะ รสชาติจัดจ้านถึงเครื่องกะเพราแท้',
+    image: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=500&q=80',
+    isPopular: true,
+    recipe: [
+      { ingredientId: 'ing-basil', amountNeeded: 20 },
+      { ingredientId: 'ing-chili', amountNeeded: 15 },
+      { ingredientId: 'ing-sauce', amountNeeded: 30 },
+      { ingredientId: 'ing-rice', amountNeeded: 180 },
+    ],
+    availableSpiceLevels: ['ไม่เผ็ด', 'เผ็ดน้อย', 'เผ็ดปานกลาง', 'เผ็ดมาก', 'เผ็ดหูดับ'],
+  },
+  {
+    id: 'menu-kaprao-seafood-dish',
+    name: 'กะเพราทะเล',
+    nameEn: 'Seafood Holy Basil (Squid & Shrimp)',
+    category: 'kaprao',
+    price: 60,
+    costPrice: 28,
+    description: 'กุ้งสดตัวโตและปลาหมึกเนื้อเด้ง ผัดซอสกะเพราสูตรโบราณ รสเผ็ดแซ่บกลมกล่อม',
+    image: 'https://images.unsplash.com/photo-1559847844-5315695dadae?w=500&q=80',
+    recipe: [
+      { ingredientId: 'ing-basil', amountNeeded: 20 },
+      { ingredientId: 'ing-chili', amountNeeded: 15 },
+      { ingredientId: 'ing-sauce', amountNeeded: 30 },
+      { ingredientId: 'ing-rice', amountNeeded: 180 },
+    ],
+    availableSpiceLevels: ['ไม่เผ็ด', 'เผ็ดน้อย', 'เผ็ดปานกลาง', 'เผ็ดมาก', 'เผ็ดหูดับ'],
+  },
+  {
+    id: 'menu-side-kaprao-chicken',
+    name: 'กับข้าวกะเพราไก่',
+    nameEn: 'A La Carte Basil Chicken (No Rice)',
+    category: 'side_dish',
+    price: 50,
+    costPrice: 22,
+    description: 'กับข้าวผัดกะเพราไก่สับ จานเดี่ยวปริมาณเนื้อจุใจ ทานคู่กับข้าวสวยหรือเครื่องดื่ม',
+    image: 'https://images.unsplash.com/photo-1562967914-608f82629710?w=500&q=80',
+    recipe: [
+      { ingredientId: 'ing-basil', amountNeeded: 25 },
+      { ingredientId: 'ing-chili', amountNeeded: 15 },
+      { ingredientId: 'ing-sauce', amountNeeded: 35 },
+    ],
+    availableSpiceLevels: ['ไม่เผ็ด', 'เผ็ดน้อย', 'เผ็ดปานกลาง', 'เผ็ดมาก', 'เผ็ดหูดับ'],
+  },
+  {
+    id: 'menu-side-kaprao-beef',
+    name: 'กับข้าวกะเพราเนื้อ',
+    nameEn: 'A La Carte Basil Beef (No Rice)',
+    category: 'side_dish',
+    price: 60,
+    costPrice: 26,
+    description: 'กับข้าวผัดกะเพราเนื้อวัว รสเข้มข้นหอมกรุ่นใบกะเพราแท้ เหมาะสำหรับทานร่วมโต๊ะ',
+    image: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=500&q=80',
+    recipe: [
+      { ingredientId: 'ing-basil', amountNeeded: 25 },
+      { ingredientId: 'ing-chili', amountNeeded: 15 },
+      { ingredientId: 'ing-sauce', amountNeeded: 35 },
+    ],
+    availableSpiceLevels: ['ไม่เผ็ด', 'เผ็ดน้อย', 'เผ็ดปานกลาง', 'เผ็ดมาก', 'เผ็ดหูดับ'],
+  },
+  {
+    id: 'menu-side-kaprao-seafood',
+    name: 'กับข้าวกะเพราทะเล',
+    nameEn: 'A La Carte Basil Seafood (No Rice)',
+    category: 'side_dish',
+    price: 70,
+    costPrice: 32,
+    description: 'กับข้าวผัดกะเพราทะเลรวมมิตร กุ้งสด หมึกสด เน้นเครื่องเต็มจาน รสชาติถึงใจ',
+    image: 'https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?w=500&q=80',
+    recipe: [
+      { ingredientId: 'ing-basil', amountNeeded: 25 },
+      { ingredientId: 'ing-chili', amountNeeded: 15 },
+      { ingredientId: 'ing-sauce', amountNeeded: 35 },
+    ],
+    availableSpiceLevels: ['ไม่เผ็ด', 'เผ็ดน้อย', 'เผ็ดปานกลาง', 'เผ็ดมาก', 'เผ็ดหูดับ'],
+  },
   {
     id: 'menu-kaprao-pork',
     name: 'กะเพราหมูสับโบราณ',

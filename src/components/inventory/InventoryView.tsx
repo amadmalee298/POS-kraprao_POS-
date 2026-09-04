@@ -93,6 +93,8 @@ export const InventoryView: React.FC = () => {
   const [editIngUnitCost, setEditIngUnitCost] = useState<number>(0);
   const [editIngCat, setEditIngCat] = useState<string>('meat');
   const [editIngBarcode, setEditIngBarcode] = useState('');
+  const [editIngPackageUnit, setEditIngPackageUnit] = useState('');
+  const [editIngPackageSize, setEditIngPackageSize] = useState<string>('');
 
   // Tab State
   const [activeTab, setActiveTab] = useState<'smart_audit' | 'forecast' | 'waste' | 'current' | 'usage' | 'stockcard'>('smart_audit');
@@ -138,16 +140,32 @@ export const InventoryView: React.FC = () => {
   const [quickNoteInput, setQuickNoteInput] = useState<string>('');
   const [quickWasteReason, setQuickWasteReason] = useState<'waste' | 'expired' | 'damage'>('waste');
   const [quickSupplierInput, setQuickSupplierInput] = useState<string>('');
+  const [quickUsePackage, setQuickUsePackage] = useState(false);
+  const [quickPackageQty, setQuickPackageQty] = useState<number>(1);
+  const [quickPackageUnit, setQuickPackageUnit] = useState<string>('ขวด');
+  const [quickPackageSize, setQuickPackageSize] = useState<number>(680);
 
   const handleOpenQuickAddStock = (ing: Ingredient) => {
     setQuickActionModal({ type: 'add_stock', ingredient: ing });
-    setQuickQtyInput('5');
+    const isLiquid = ing.unit === 'ml';
+    const isWeight = ing.unit === 'g';
+    const hasPkg = !!(ing.packageSize && ing.packageSize > 0);
+    const usePkg = hasPkg || isLiquid;
+    const pkgUnit = ing.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : 'แพ็ค');
+    const pkgSize = ing.packageSize || (isLiquid ? 680 : isWeight ? 1000 : 1);
+
+    setQuickUsePackage(usePkg);
+    setQuickPackageQty(1);
+    setQuickPackageUnit(pkgUnit);
+    setQuickPackageSize(pkgSize);
+    setQuickQtyInput(usePkg ? (1 * pkgSize).toString() : '5');
     setQuickNoteInput('เติมสต็อกด่วน');
     setQuickSupplierInput('');
   };
 
   const handleOpenQuickLogWaste = (ing: Ingredient) => {
     setQuickActionModal({ type: 'log_waste', ingredient: ing });
+    setQuickUsePackage(false);
     setQuickQtyInput('1');
     setQuickNoteInput('ตัดสต็อกของเสีย/เสื่อมสภาพ');
     setQuickWasteReason('waste');
@@ -158,7 +176,11 @@ export const InventoryView: React.FC = () => {
     if (!quickActionModal) return;
 
     const { type, ingredient } = quickActionModal;
-    const qty = parseFloat(quickQtyInput);
+    let qty = parseFloat(quickQtyInput);
+
+    if (type === 'add_stock' && quickUsePackage) {
+      qty = Number((quickPackageQty * quickPackageSize).toFixed(2));
+    }
 
     if (isNaN(qty) || qty <= 0) {
       alert('กรุณาระบุจำนวนที่ถูกต้อง');
@@ -167,11 +189,16 @@ export const InventoryView: React.FC = () => {
 
     if (type === 'add_stock') {
       const newStock = ingredient.currentStock + qty;
+      let finalNote = quickNoteInput.trim() || 'รับสินค้าเข้าสต็อกด่วน';
+      if (quickUsePackage) {
+        finalNote += ` (รับเข้า ${quickPackageQty} ${quickPackageUnit} @ 1 ${quickPackageUnit} = ${quickPackageSize} ${ingredient.unit})`;
+      }
+
       recordStockAdjustment(
         ingredient.id,
         newStock,
         'restock',
-        quickNoteInput.trim() || 'รับสินค้าเข้าสต็อกด่วน',
+        finalNote,
         currentUser?.name || 'ผู้จัดการ',
         currentUser?.role || 'manager'
       );
@@ -185,7 +212,19 @@ export const InventoryView: React.FC = () => {
           supplier: quickSupplierInput.trim(),
           receivedDate: new Date().toISOString().slice(0, 10),
           expiryDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 14).toISOString().slice(0, 10),
-          notes: quickNoteInput.trim()
+          notes: finalNote,
+          packageQty: quickUsePackage ? quickPackageQty : undefined,
+          packageUnit: quickUsePackage ? quickPackageUnit : undefined,
+          packageSize: quickUsePackage ? quickPackageSize : undefined
+        });
+      }
+
+      // Remember packaging settings if not yet saved on ingredient
+      if (quickUsePackage && (!ingredient.packageUnit || !ingredient.packageSize)) {
+        updateIngredient({
+          ...ingredient,
+          packageUnit: quickPackageUnit,
+          packageSize: quickPackageSize
         });
       }
 
@@ -525,6 +564,10 @@ export const InventoryView: React.FC = () => {
     setEditIngUnitCost(ing.unitCost);
     setEditIngCat(ing.category);
     setEditIngBarcode(ing.barcode || '');
+    const isLiquid = ing.unit === 'ml';
+    const isWeight = ing.unit === 'g';
+    setEditIngPackageUnit(ing.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : ''));
+    setEditIngPackageSize(ing.packageSize ? ing.packageSize.toString() : (isLiquid ? '680' : isWeight ? '1000' : ''));
     setIsEditIngOpen(true);
   };
 
@@ -545,6 +588,7 @@ export const InventoryView: React.FC = () => {
       );
     }
 
+    const pkgSizeNum = parseFloat(editIngPackageSize);
     updateIngredient({
       ...editingIng,
       name: editIngName.trim(),
@@ -553,7 +597,9 @@ export const InventoryView: React.FC = () => {
       minStockAlert: editIngMinAlert,
       unitCost: editIngUnitCost,
       category: editIngCat,
-      barcode: editIngBarcode.trim() || undefined
+      barcode: editIngBarcode.trim() || undefined,
+      packageUnit: editIngPackageUnit.trim() || undefined,
+      packageSize: !isNaN(pkgSizeNum) && pkgSizeNum > 0 ? pkgSizeNum : undefined
     });
 
     if (editIngUnit === 'custom' && editIngCustomUnit.trim()) {
@@ -1025,7 +1071,14 @@ export const InventoryView: React.FC = () => {
                                 {ing.name.charAt(0)}
                               </div>
                               <div>
-                                <div className="text-slate-100 font-semibold">{ing.name}</div>
+                                <div className="text-slate-100 font-semibold flex items-center space-x-1.5 flex-wrap">
+                                  <span>{ing.name}</span>
+                                  {ing.packageUnit && ing.packageSize && ing.packageSize > 0 ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono font-medium">
+                                      📦 1 {ing.packageUnit} = {ing.packageSize} {ing.unit}
+                                    </span>
+                                  ) : null}
+                                </div>
                                 <div className="text-[10px] text-slate-400 font-mono">ID: {ing.id}</div>
                               </div>
                             </div>
@@ -1039,7 +1092,12 @@ export const InventoryView: React.FC = () => {
 
                           {/* ราคาทุนเฉลี่ย */}
                           <td className="py-3.5 px-4 font-mono font-bold text-emerald-400 whitespace-nowrap">
-                            {ing.unitCost.toLocaleString('th-TH')} ฿ / {ing.unit}
+                            <div>{ing.unitCost.toLocaleString('th-TH')} ฿ / {ing.unit}</div>
+                            {ing.packageUnit && ing.packageSize && ing.packageSize > 0 && (
+                              <div className="text-[10px] text-slate-400 font-mono">
+                                ≈ {(ing.unitCost * ing.packageSize).toLocaleString('th-TH', { maximumFractionDigits: 1 })} ฿ / {ing.packageUnit}
+                              </div>
+                            )}
                           </td>
 
                           {/* เกณฑ์ขั้นต่ำ / คงเหลือ */}
@@ -1052,6 +1110,11 @@ export const InventoryView: React.FC = () => {
                                 (ขั้นต่ำ {ing.minStockAlert} {ing.unit})
                               </span>
                             </div>
+                            {ing.packageUnit && ing.packageSize && ing.packageSize > 0 && (
+                              <div className="text-[11px] text-amber-400/90 font-mono font-medium">
+                                ≈ {(ing.currentStock / ing.packageSize).toFixed(1)} {ing.packageUnit}
+                              </div>
+                            )}
                             {isLow && (
                               <span className="mt-1 inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-bold border border-rose-500/30">
                                 <AlertTriangle className="w-3 h-3 text-rose-400" />
@@ -1954,40 +2017,171 @@ export const InventoryView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Quantity input with preset pills */}
+              {/* Quantity input with packaging support */}
               <div className="space-y-2">
-                <label className="block text-slate-300 font-bold">
-                  {quickActionModal.type === 'add_stock' ? 'จำนวนที่เพิ่มเข้าสต็อก *' : 'จำนวนที่สูญเสีย/ตัดสต็อก *'}
-                </label>
-
-                <div className="relative flex items-center">
-                  <input
-                    type="number"
-                    step="any"
-                    min="0.001"
-                    required
-                    value={quickQtyInput}
-                    onChange={e => setQuickQtyInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-slate-100 font-mono font-bold text-sm focus:outline-none focus:border-amber-500"
-                  />
-                  <span className="absolute right-3 text-xs text-slate-400 font-bold font-mono">
-                    {quickActionModal.ingredient.unit}
-                  </span>
+                <div className="flex items-center justify-between">
+                  <label className="block text-slate-300 font-bold">
+                    {quickActionModal.type === 'add_stock' ? 'จำนวนที่เพิ่มเข้าสต็อก *' : 'จำนวนที่สูญเสีย/ตัดสต็อก *'}
+                  </label>
+                  {quickActionModal.type === 'add_stock' && (
+                    <div className="flex items-center space-x-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQuickUsePackage(false);
+                          setQuickQtyInput('5');
+                        }}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold transition ${
+                          !quickUsePackage
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        หน่วยหลัก ({quickActionModal.ingredient.unit})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQuickUsePackage(true);
+                          setQuickPackageQty(1);
+                        }}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center space-x-1 transition ${
+                          quickUsePackage
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <span>📦 แปลงหน่วยบรรจุ (ขวด/ลัง/แพ็ค)</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                {/* Quick Presets */}
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {[1, 5, 10, 20, 50].map(val => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setQuickQtyInput(val.toString())}
-                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-lg text-[11px] transition"
-                    >
-                      +{val} {quickActionModal.ingredient.unit}
-                    </button>
-                  ))}
-                </div>
+                {quickActionModal.type === 'add_stock' && quickUsePackage ? (
+                  <div className="bg-slate-950 p-3 rounded-xl border border-amber-500/30 space-y-2.5">
+                    <div className="grid grid-cols-12 gap-2 items-center">
+                      <div className="col-span-4">
+                        <label className="text-[10px] font-bold text-amber-300 block mb-0.5">
+                          รับเข้า (จำนวน):
+                        </label>
+                        <input
+                          type="number"
+                          min="0.1"
+                          step="any"
+                          required
+                          value={quickPackageQty}
+                          onChange={e => setQuickPackageQty(parseFloat(e.target.value) || 0)}
+                          className="w-full bg-slate-900 border border-amber-500/40 rounded-lg px-2.5 py-1.5 text-amber-300 font-mono font-bold text-sm focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+
+                      <div className="col-span-3">
+                        <label className="text-[10px] font-bold text-slate-400 block mb-0.5">
+                          หน่วยบรรจุ:
+                        </label>
+                        <input
+                          type="text"
+                          list="quick-pkg-units"
+                          value={quickPackageUnit}
+                          onChange={e => setQuickPackageUnit(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 font-bold text-xs focus:outline-none focus:border-slate-500"
+                          placeholder="ขวด"
+                        />
+                        <datalist id="quick-pkg-units">
+                          <option value="ขวด" />
+                          <option value="ลัง" />
+                          <option value="แพ็ค" />
+                          <option value="ถุง" />
+                          <option value="กล่อง" />
+                          <option value="กระป๋อง" />
+                          <option value="แผง" />
+                          <option value="ถัง" />
+                        </datalist>
+                      </div>
+
+                      <div className="col-span-5">
+                        <label className="text-[10px] font-bold text-emerald-400 block mb-0.5">
+                          1 {quickPackageUnit} มีขนาด:
+                        </label>
+                        <div className="flex items-center space-x-1">
+                          <input
+                            type="number"
+                            min="0.1"
+                            step="any"
+                            required
+                            value={quickPackageSize}
+                            onChange={e => setQuickPackageSize(parseFloat(e.target.value) || 0)}
+                            className="w-full bg-slate-900 border border-emerald-500/40 rounded-lg px-2.5 py-1.5 text-emerald-300 font-mono font-bold text-xs focus:outline-none focus:border-emerald-400"
+                            placeholder="680"
+                          />
+                          <span className="text-[10px] text-emerald-400 font-bold shrink-0">
+                            {quickActionModal.ingredient.unit}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quick presets for package counts */}
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="flex items-center space-x-1">
+                        {[1, 2, 3, 5, 10, 12, 24].map(num => (
+                          <button
+                            key={num}
+                            type="button"
+                            onClick={() => setQuickPackageQty(num)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono transition ${
+                              quickPackageQty === num
+                                ? 'bg-amber-500 text-slate-950'
+                                : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                            }`}
+                          >
+                            {num} {quickPackageUnit}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between px-3 py-2 bg-emerald-950/50 rounded-lg border border-emerald-800/60 text-xs">
+                      <span className="text-slate-300">
+                        สูตรคำนวณ: <strong className="text-amber-300 font-mono">{quickPackageQty} {quickPackageUnit}</strong> × <strong className="text-emerald-300 font-mono">{quickPackageSize} {quickActionModal.ingredient.unit}</strong>
+                      </span>
+                      <span className="text-emerald-400 font-bold font-mono text-sm">
+                        = +{(quickPackageQty * quickPackageSize).toLocaleString()} {quickActionModal.ingredient.unit}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="relative flex items-center">
+                      <input
+                        type="number"
+                        step="any"
+                        min="0.001"
+                        required
+                        value={quickQtyInput}
+                        onChange={e => setQuickQtyInput(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-slate-100 font-mono font-bold text-sm focus:outline-none focus:border-amber-500"
+                      />
+                      <span className="absolute right-3 text-xs text-slate-400 font-bold font-mono">
+                        {quickActionModal.ingredient.unit}
+                      </span>
+                    </div>
+
+                    {/* Quick Presets */}
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {[1, 5, 10, 20, 50].map(val => (
+                        <button
+                          key={val}
+                          type="button"
+                          onClick={() => setQuickQtyInput(val.toString())}
+                          className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-lg text-[11px] transition"
+                        >
+                          +{val} {quickActionModal.ingredient.unit}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Calculation Preview */}
@@ -1996,11 +2190,13 @@ export const InventoryView: React.FC = () => {
                 <span className="font-mono font-black text-sm">
                   {quickActionModal.ingredient.currentStock}
                   {quickActionModal.type === 'add_stock' ? ' + ' : ' - '}
-                  {parseFloat(quickQtyInput) || 0}
+                  {quickActionModal.type === 'add_stock' && quickUsePackage
+                    ? Number((quickPackageQty * quickPackageSize).toFixed(2))
+                    : (parseFloat(quickQtyInput) || 0)}
                   {' = '}
                   <span className={quickActionModal.type === 'add_stock' ? 'text-emerald-400' : 'text-rose-400'}>
                     {quickActionModal.type === 'add_stock'
-                      ? (quickActionModal.ingredient.currentStock + (parseFloat(quickQtyInput) || 0)).toFixed(2)
+                      ? (quickActionModal.ingredient.currentStock + (quickUsePackage ? quickPackageQty * quickPackageSize : (parseFloat(quickQtyInput) || 0))).toFixed(2)
                       : Math.max(0, quickActionModal.ingredient.currentStock - (parseFloat(quickQtyInput) || 0)).toFixed(2)}
                     {' '}{quickActionModal.ingredient.unit}
                   </span>
@@ -2602,6 +2798,60 @@ export const InventoryView: React.FC = () => {
                   onChange={e => setEditIngBarcode(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-sky-500"
                 />
+              </div>
+
+              {/* Packaging Unit Settings */}
+              <div className="bg-slate-950/80 p-3.5 rounded-xl border border-amber-500/20 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-amber-300 font-bold block">
+                    📦 ตั้งค่าหน่วยบรรจุสำหรับรับเข้า (Packaging Unit)
+                  </label>
+                  <span className="text-[10px] text-slate-400">ระบุหรือไม่ก็ได้</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 items-center">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">หน่วยบรรจุ (เช่น ขวด, ถุง, ลัง)</label>
+                    <input
+                      type="text"
+                      list="edit-pkg-units"
+                      placeholder="เช่น ขวด"
+                      value={editIngPackageUnit}
+                      onChange={e => setEditIngPackageUnit(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-amber-500"
+                    />
+                    <datalist id="edit-pkg-units">
+                      <option value="ขวด" />
+                      <option value="ลัง" />
+                      <option value="แพ็ค" />
+                      <option value="ถุง" />
+                      <option value="กล่อง" />
+                      <option value="กระป๋อง" />
+                    </datalist>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      ขนาดบรรจุต่อ 1 {editIngPackageUnit || 'หน่วย'}
+                    </label>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="number"
+                        step="any"
+                        placeholder="เช่น 680"
+                        value={editIngPackageSize}
+                        onChange={e => setEditIngPackageSize(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-emerald-300 font-mono font-bold focus:outline-none focus:border-emerald-500"
+                      />
+                      <span className="text-xs text-slate-400 font-bold shrink-0">
+                        {editIngUnit === 'custom' ? editIngCustomUnit || 'หน่วย' : editIngUnit}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                {editIngPackageUnit && editIngPackageSize && (
+                  <p className="text-[11px] text-amber-300/90 font-mono">
+                    💡 ตัวอย่าง: เมื่อรับเข้า 1 {editIngPackageUnit} ระบบจะเพิ่มสต็อก {editIngPackageSize} {editIngUnit === 'custom' ? editIngCustomUnit : editIngUnit}
+                  </p>
+                )}
               </div>
 
               <div className="pt-2 flex items-center justify-end space-x-2">

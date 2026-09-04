@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { ExpenseCategory } from '../../types';
 import { usePOS } from '../../context/POSContext';
+import { compressBase64Image } from '../../utils/imageCompressor';
 
 interface StockEntryItem {
   id: string;
@@ -93,7 +94,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   onClose,
   onSaveExpense
 }) => {
-  const { ingredients, addStockLot, addIngredient, ingredientCategories, ingredientUnits } = usePOS();
+  const { ingredients, addStockLot, addIngredient, updateIngredient, ingredientCategories, ingredientUnits } = usePOS();
 
   // Multi-image Queue State
   const [queue, setQueue] = useState<ReceiptQueueItem[]>([]);
@@ -1019,13 +1020,6 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
         });
       }
     });
-        currentEntries.push({
-          id: `${Date.now()}-${idx}`,
-          ingredientId: targetId,
-          quantity: qty
-        });
-      }
-    });
 
     setStockEntries(currentEntries);
     setAutoUpdateStock(true);
@@ -1043,10 +1037,22 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       handleOpenQuickCreateModal('');
       return;
     }
+    const targetIng = ingredients[0];
+    const isLiquid = targetIng?.unit === 'ml';
+    const isWeight = targetIng?.unit === 'g';
+    const hasDefaultPkg = !!(targetIng?.packageSize && targetIng.packageSize > 0);
+    const usePkg = hasDefaultPkg || isLiquid;
+    const pkgUnit = targetIng?.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : 'แพ็ค');
+    const pkgSize = targetIng?.packageSize || (isLiquid ? 680 : isWeight ? 1000 : 1);
+
     const newEntry: StockEntryItem = {
       id: Date.now().toString() + '-' + Math.random().toString(36).substring(2, 6),
-      ingredientId: ingredients[0].id,
-      quantity: 1
+      ingredientId: targetIng.id,
+      quantity: usePkg ? pkgSize : 1,
+      usePackage: usePkg,
+      packageQty: 1,
+      packageUnit: pkgUnit,
+      packageSize: pkgSize
     };
     const next = [...stockEntries, newEntry];
     setStockEntries(next);
@@ -1055,12 +1061,45 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     }
   };
 
-  const handleUpdateStockEntry = (id: string, field: 'ingredientId' | 'quantity', value: string | number) => {
-    if (field === 'ingredientId' && value === '__CREATE_NEW__') {
-      handleOpenQuickCreateModal('');
-      return;
+  const handleUpdateStockEntry = (id: string, fieldOrUpdates: 'ingredientId' | 'quantity' | Partial<StockEntryItem>, value?: string | number | boolean) => {
+    let updates: Partial<StockEntryItem> = {};
+    if (typeof fieldOrUpdates === 'string') {
+      if (fieldOrUpdates === 'ingredientId' && value === '__CREATE_NEW__') {
+        handleOpenQuickCreateModal('');
+        return;
+      }
+      updates = { [fieldOrUpdates]: value } as Partial<StockEntryItem>;
+    } else {
+      updates = fieldOrUpdates;
     }
-    const next = stockEntries.map(entry => entry.id === id ? { ...entry, [field]: value } : entry);
+
+    const next = stockEntries.map(entry => {
+      if (entry.id !== id) return entry;
+      const merged: StockEntryItem = { ...entry, ...updates };
+
+      if (updates.ingredientId && updates.ingredientId !== entry.ingredientId) {
+        const targetIng = ingredients.find(i => i.id === updates.ingredientId);
+        if (targetIng) {
+          const isLiquid = targetIng.unit === 'ml';
+          const isWeight = targetIng.unit === 'g';
+          const hasPkg = !!(targetIng.packageSize && targetIng.packageSize > 0);
+          merged.usePackage = hasPkg || isLiquid;
+          merged.packageUnit = targetIng.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : 'แพ็ค');
+          merged.packageSize = targetIng.packageSize || (isLiquid ? 680 : isWeight ? 1000 : 1);
+          merged.packageQty = 1;
+          merged.quantity = merged.usePackage ? (merged.packageSize || 1) : 1;
+        }
+      }
+
+      if (merged.usePackage) {
+        const pQty = typeof merged.packageQty === 'number' && merged.packageQty > 0 ? merged.packageQty : 1;
+        const pSize = typeof merged.packageSize === 'number' && merged.packageSize > 0 ? merged.packageSize : 1;
+        merged.quantity = Number((pQty * pSize).toFixed(2));
+      }
+
+      return merged;
+    });
+
     setStockEntries(next);
     if (next[0]) {
       setSelectedIngredientId(next[0].ingredientId);
@@ -1087,12 +1126,29 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
 
     if (matched) {
       const existingEntryIndex = stockEntries.findIndex(e => e.ingredientId === matched.id);
+      const isLiquid = matched.unit === 'ml';
+      const isWeight = matched.unit === 'g';
+      const hasPkg = !!(matched.packageSize && matched.packageSize > 0);
+      const usePkg = hasPkg || isLiquid;
+      const pkgUnit = matched.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : 'แพ็ค');
+      const pkgSize = matched.packageSize || (isLiquid ? 680 : isWeight ? 1000 : 1);
+
       if (existingEntryIndex >= 0) {
         const next = [...stockEntries];
-        next[existingEntryIndex] = {
-          ...next[existingEntryIndex],
-          quantity: next[existingEntryIndex].quantity + 1
-        };
+        const prevEntry = next[existingEntryIndex];
+        if (prevEntry.usePackage) {
+          const newPkgQty = (prevEntry.packageQty || 1) + 1;
+          next[existingEntryIndex] = {
+            ...prevEntry,
+            packageQty: newPkgQty,
+            quantity: Number((newPkgQty * (prevEntry.packageSize || pkgSize)).toFixed(2))
+          };
+        } else {
+          next[existingEntryIndex] = {
+            ...prevEntry,
+            quantity: prevEntry.quantity + 1
+          };
+        }
         setStockEntries(next);
         if (activeItem) {
           setQueue(prev => prev.map(q => q.id === activeItem.id ? { ...q, stockEntries: next } : q));
@@ -1101,7 +1157,11 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
         const newEntry: StockEntryItem = {
           id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           ingredientId: matched.id,
-          quantity: 1
+          quantity: usePkg ? pkgSize : 1,
+          usePackage: usePkg,
+          packageQty: 1,
+          packageUnit: pkgUnit,
+          packageSize: pkgSize
         };
         const next = [...stockEntries, newEntry];
         setStockEntries(next);
@@ -1129,7 +1189,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     });
   };
 
-  const saveExpenseItem = (item: ReceiptQueueItem) => {
+  const saveExpenseItem = async (item: ReceiptQueueItem) => {
     if (!item.result) return;
     const res = item.result;
 
@@ -1146,6 +1206,12 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
           if (matchedIng) {
             const qty = entry.quantity > 0 ? entry.quantity : 1;
             const calcUnitCost = Number((res.amount / validEntries.length / qty).toFixed(2));
+            
+            let lotNote = `เพิ่มจากสแกนใบเสร็จ OCR: ${res.title}`;
+            if (entry.usePackage && entry.packageUnit && entry.packageSize) {
+              lotNote += ` (รับเข้า ${entry.packageQty || 1} ${entry.packageUnit} @ 1 ${entry.packageUnit} = ${entry.packageSize} ${matchedIng.unit})`;
+            }
+
             addStockLot({
               ingredientId: entry.ingredientId,
               lotNumber: `OCR-${Date.now().toString().slice(-6)}-${idx + 1}`,
@@ -1154,12 +1220,27 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
               receivedDate: res.date || new Date().toISOString().split('T')[0],
               expiryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
               supplier: res.vendorName || 'ผู้จัดจำหน่ายจากใบเสร็จ (OCR)',
-              notes: `เพิ่มจากสแกนใบเสร็จ OCR: ${res.title}`
+              notes: lotNote,
+              packageQty: entry.usePackage ? entry.packageQty : undefined,
+              packageUnit: entry.usePackage ? entry.packageUnit : undefined,
+              packageSize: entry.usePackage ? entry.packageSize : undefined
             });
+
+            // Remember packaging unit on the ingredient if not yet configured
+            if (entry.usePackage && entry.packageUnit && entry.packageSize && (!matchedIng.packageUnit || !matchedIng.packageSize)) {
+              updateIngredient({
+                ...matchedIng,
+                packageUnit: entry.packageUnit,
+                packageSize: entry.packageSize
+              });
+            }
           }
         });
       }
     }
+
+    // Optimize receipt image for storage (< 80KB) so that LocalStorage and Firestore don't exceed size limits
+    const optimizedImage = item.base64 ? await compressBase64Image(item.base64, 850, 0.68) : undefined;
 
     onSaveExpense({
       category: res.category,
@@ -1171,15 +1252,15 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       refNumber: res.refNumber,
       note: res.note,
       date: res.date,
-      receiptImage: item.base64,
+      receiptImage: optimizedImage,
       receiptImageName: item.name
     });
   };
 
   // Confirm Save Single active Expense
-  const handleConfirmSaveSingle = () => {
+  const handleConfirmSaveSingle = async () => {
     if (!activeItem || !activeItem.result) return;
-    saveExpenseItem(activeItem);
+    await saveExpenseItem(activeItem);
 
     setQueue(prev => prev.map(q => q.id === activeItem.id ? { ...q, saved: true } : q));
 
@@ -1192,12 +1273,12 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   };
 
   // Confirm Save ALL successfully scanned Expenses
-  const handleConfirmSaveAll = () => {
+  const handleConfirmSaveAll = async () => {
     const unsavedSuccess = queue.filter(q => q.status === 'success' && q.result && !q.saved);
     if (unsavedSuccess.length === 0) return;
 
     for (const item of unsavedSuccess) {
-      saveExpenseItem(item);
+      await saveExpenseItem(item);
     }
 
     setQueue(prev => prev.map(q => q.status === 'success' && q.result ? { ...q, saved: true } : q));
@@ -1813,67 +1894,209 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                           </div>
                         </div>
 
-                        <div className="space-y-2">
+                        <div className="space-y-2.5">
                           {stockEntries.map((entry, index) => {
                             const selectedIng = ingredients.find(i => i.id === entry.ingredientId);
+                            const baseUnit = selectedIng?.unit || 'หน่วย';
+                            const pkgUnit = entry.packageUnit || selectedIng?.packageUnit || (baseUnit === 'ml' ? 'ขวด' : baseUnit === 'g' ? 'ถุง' : 'แพ็ค');
+                            const pkgSize = entry.packageSize || selectedIng?.packageSize || (baseUnit === 'ml' ? 680 : baseUnit === 'g' ? 1000 : 1);
+                            const isPkg = entry.usePackage !== undefined ? entry.usePackage : (!!selectedIng?.packageSize || baseUnit === 'ml');
+
                             return (
                               <div
                                 key={entry.id}
-                                className="grid grid-cols-12 gap-2 items-center bg-slate-900/80 p-2 rounded-lg border border-emerald-900/40"
+                                className="bg-slate-900/90 p-2.5 rounded-xl border border-emerald-900/50 space-y-2 transition shadow-sm"
                               >
-                                <div className="col-span-7">
-                                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">
-                                    รายการ #{index + 1} วัตถุดิบ:
-                                  </label>
-                                  <select
-                                    value={entry.ingredientId}
-                                    onChange={e => handleUpdateStockEntry(entry.id, 'ingredientId', e.target.value)}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-100 text-xs font-bold"
-                                  >
-                                    <option value="__CREATE_NEW__" className="text-amber-300 font-bold bg-slate-900">
-                                      ✨ + สร้างรายการวัตถุดิบใหม่เข้าระบบ...
-                                    </option>
-                                    {ingredients.length === 0 ? (
-                                      <option value="">ไม่มีวัตถุดิบในคลัง (แตะเพื่อสร้างใหม่)</option>
-                                    ) : (
-                                      ingredients.map(ing => (
-                                        <option key={ing.id} value={ing.id}>
-                                          {ing.name} (คงเหลือ: {ing.currentStock} {ing.unit})
-                                        </option>
-                                      ))
-                                    )}
-                                  </select>
-                                </div>
-
-                                <div className="col-span-4">
-                                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">
-                                    จำนวน (Qty):
-                                  </label>
-                                  <div className="flex items-center space-x-1">
-                                    <input
-                                      type="number"
-                                      min="0.1"
-                                      step="any"
-                                      value={entry.quantity}
-                                      onChange={e => handleUpdateStockEntry(entry.id, 'quantity', Number(e.target.value))}
-                                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-emerald-300 font-mono font-bold text-xs"
-                                    />
-                                    <span className="text-[10px] text-emerald-400 font-bold shrink-0">
-                                      {selectedIng?.unit || 'หน่วย'}
-                                    </span>
+                                {/* Header row: Item label, dropdown, and remove button */}
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <label className="text-[10px] font-bold text-slate-400">
+                                        รายการ #{index + 1} วัตถุดิบ:
+                                      </label>
+                                      {selectedIng && (
+                                        <span className="text-[10px] text-slate-400 font-medium">
+                                          คลังปัจจุบัน: <strong className="text-emerald-400">{selectedIng.currentStock} {selectedIng.unit}</strong>
+                                        </span>
+                                      )}
+                                    </div>
+                                    <select
+                                      value={entry.ingredientId}
+                                      onChange={e => handleUpdateStockEntry(entry.id, { ingredientId: e.target.value })}
+                                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-100 text-xs font-bold focus:border-emerald-500 focus:outline-none"
+                                    >
+                                      <option value="__CREATE_NEW__" className="text-amber-300 font-bold bg-slate-900">
+                                        ✨ + สร้างรายการวัตถุดิบใหม่เข้าระบบ...
+                                      </option>
+                                      {ingredients.length === 0 ? (
+                                        <option value="">ไม่มีวัตถุดิบในคลัง (แตะเพื่อสร้างใหม่)</option>
+                                      ) : (
+                                        ingredients.map(ing => (
+                                          <option key={ing.id} value={ing.id}>
+                                            {ing.name} ({ing.category} | คงเหลือ: {ing.currentStock} {ing.unit})
+                                          </option>
+                                        ))
+                                      )}
+                                    </select>
                                   </div>
-                                </div>
 
-                                <div className="col-span-1 flex justify-end pt-3">
                                   {stockEntries.length > 1 && (
                                     <button
                                       type="button"
                                       onClick={() => handleRemoveStockEntry(entry.id)}
-                                      className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
+                                      className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition shrink-0 self-end mb-0.5"
                                       title="ลบรายการนี้"
                                     >
                                       <Trash2 className="w-4 h-4" />
                                     </button>
+                                  )}
+                                </div>
+
+                                {/* Quantity & Unit Conversion Controls */}
+                                <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800/80 space-y-1.5">
+                                  {/* Mode toggle bar */}
+                                  <div className="flex items-center justify-between gap-1 flex-wrap">
+                                    <span className="text-[10px] font-bold text-slate-400">
+                                      โหมดการรับเข้า:
+                                    </span>
+                                    <div className="flex items-center space-x-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateStockEntry(entry.id, { usePackage: false })}
+                                        className={`px-2 py-0.5 rounded text-[10px] font-bold transition ${
+                                          !isPkg
+                                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                        }`}
+                                      >
+                                        ระบุหน่วยหลัก ({baseUnit})
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateStockEntry(entry.id, {
+                                          usePackage: true,
+                                          packageUnit: pkgUnit,
+                                          packageSize: pkgSize,
+                                          packageQty: entry.packageQty || 1
+                                        })}
+                                        className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center space-x-1 transition ${
+                                          isPkg
+                                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                        }`}
+                                      >
+                                        <span>📦 แปลงหน่วยบรรจุ (ขวด/ลัง/แพ็ค)</span>
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {isPkg ? (
+                                    /* Packaging Mode: e.g. รับเข้า 1 ขวด (1 ขวด = 680 ml) => 680 ml เข้าคลัง */
+                                    <div className="space-y-1.5 pt-1">
+                                      <div className="grid grid-cols-12 gap-2 items-center">
+                                        <div className="col-span-4">
+                                          <label className="text-[9px] font-bold text-amber-400/90 block mb-0.5">
+                                            รับเข้า (จำนวน):
+                                          </label>
+                                          <input
+                                            type="number"
+                                            min="0.1"
+                                            step="any"
+                                            value={entry.packageQty !== undefined ? entry.packageQty : 1}
+                                            onChange={e => handleUpdateStockEntry(entry.id, {
+                                              usePackage: true,
+                                              packageQty: Number(e.target.value)
+                                            })}
+                                            className="w-full bg-slate-900 border border-amber-500/30 rounded-lg px-2 py-1 text-amber-300 font-mono font-bold text-xs focus:border-amber-400 focus:outline-none"
+                                          />
+                                        </div>
+
+                                        <div className="col-span-3">
+                                          <label className="text-[9px] font-bold text-slate-400 block mb-0.5">
+                                            หน่วยบรรจุ:
+                                          </label>
+                                          <input
+                                            type="text"
+                                            list={`pkg-units-${entry.id}`}
+                                            value={pkgUnit}
+                                            onChange={e => handleUpdateStockEntry(entry.id, {
+                                              usePackage: true,
+                                              packageUnit: e.target.value
+                                            })}
+                                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-slate-200 text-xs font-bold focus:border-slate-600 focus:outline-none"
+                                            placeholder="ขวด"
+                                          />
+                                          <datalist id={`pkg-units-${entry.id}`}>
+                                            <option value="ขวด" />
+                                            <option value="ลัง" />
+                                            <option value="แพ็ค" />
+                                            <option value="ถุง" />
+                                            <option value="กล่อง" />
+                                            <option value="กระป๋อง" />
+                                            <option value="แผง" />
+                                            <option value="ถัง" />
+                                          </datalist>
+                                        </div>
+
+                                        <div className="col-span-5">
+                                          <label className="text-[9px] font-bold text-emerald-400/90 block mb-0.5">
+                                            1 {pkgUnit} มีขนาด:
+                                          </label>
+                                          <div className="flex items-center space-x-1">
+                                            <input
+                                              type="number"
+                                              min="0.1"
+                                              step="any"
+                                              value={pkgSize}
+                                              onChange={e => handleUpdateStockEntry(entry.id, {
+                                                usePackage: true,
+                                                packageSize: Number(e.target.value)
+                                              })}
+                                              className="w-full bg-slate-900 border border-emerald-500/30 rounded-lg px-2 py-1 text-emerald-300 font-mono font-bold text-xs focus:border-emerald-400 focus:outline-none"
+                                              placeholder="680"
+                                            />
+                                            <span className="text-[10px] text-emerald-400 font-bold shrink-0">
+                                              {baseUnit}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Real-time Calculation Badge */}
+                                      <div className="flex items-center justify-between px-2.5 py-1.5 bg-emerald-950/60 rounded-lg border border-emerald-800/60 text-[11px]">
+                                        <span className="text-slate-400 text-[10px]">
+                                          สูตรคำนวณ: <span className="text-amber-300 font-mono font-bold">{entry.packageQty !== undefined ? entry.packageQty : 1} {pkgUnit}</span> × <span className="text-emerald-300 font-mono font-bold">{pkgSize} {baseUnit}</span>
+                                        </span>
+                                        <span className="text-emerald-300 font-bold font-mono">
+                                          = เข้าสต็อก {entry.quantity.toLocaleString()} {baseUnit}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    /* Direct Base Unit Mode */
+                                    <div className="flex items-center space-x-2 pt-1">
+                                      <div className="flex-1">
+                                        <label className="text-[9px] font-bold text-slate-500 block mb-0.5">
+                                          จำนวนที่รับเข้า ({baseUnit}):
+                                        </label>
+                                        <div className="flex items-center space-x-2">
+                                          <input
+                                            type="number"
+                                            min="0.1"
+                                            step="any"
+                                            value={entry.quantity}
+                                            onChange={e => handleUpdateStockEntry(entry.id, {
+                                              usePackage: false,
+                                              quantity: Number(e.target.value)
+                                            })}
+                                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-emerald-300 font-mono font-bold text-xs focus:border-emerald-500 focus:outline-none"
+                                          />
+                                          <span className="text-xs text-emerald-400 font-bold shrink-0">
+                                            {baseUnit}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
                                   )}
                                 </div>
                               </div>
@@ -2184,10 +2407,61 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-emerald-300 font-mono font-bold text-xs"
                     />
                     <span className="text-xs text-slate-400 font-bold shrink-0">
-                      {quickIngForm.unit}
+                      {quickIngForm.hasPackageConversion ? (quickIngForm.packageUnit || 'ขวด') : quickIngForm.unit}
                     </span>
                   </div>
                 </div>
+              </div>
+
+              {/* Packaging Conversion Setting */}
+              <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={quickIngForm.hasPackageConversion}
+                    onChange={e => setQuickIngForm(prev => ({ ...prev, hasPackageConversion: e.target.checked }))}
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500"
+                  />
+                  <span className="text-xs font-bold text-amber-300">
+                    📦 ตั้งค่าแปลงหน่วยบรรจุภัณฑ์ (เช่น 1 ขวด = 680 {quickIngForm.unit})
+                  </span>
+                </label>
+
+                {quickIngForm.hasPackageConversion && (
+                  <div className="space-y-2 pt-1 border-t border-slate-800/60">
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-0.5">
+                          หน่วยบรรจุภัณฑ์:
+                        </label>
+                        <input
+                          type="text"
+                          value={quickIngForm.packageUnit}
+                          onChange={e => setQuickIngForm(prev => ({ ...prev, packageUnit: e.target.value }))}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 text-xs font-bold"
+                          placeholder="ขวด"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-0.5">
+                          ขนาดต่อ 1 {quickIngForm.packageUnit || 'ขวด'} ({quickIngForm.unit}):
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0.1"
+                          value={quickIngForm.packageSize}
+                          onChange={e => setQuickIngForm(prev => ({ ...prev, packageSize: Number(e.target.value) }))}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-emerald-300 font-mono text-xs font-bold"
+                          placeholder="680"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      ✨ รับเข้า {quickIngForm.receiveQty} {quickIngForm.packageUnit || 'ขวด'} = <strong className="text-emerald-400">{(quickIngForm.receiveQty * quickIngForm.packageSize).toLocaleString()} {quickIngForm.unit}</strong> เข้าสต็อก
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">

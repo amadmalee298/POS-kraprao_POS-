@@ -80,23 +80,24 @@ export const HeaderNavbar: React.FC = () => {
 
   return (
     <>
-      <header className="bg-[#0b1220] border-b border-slate-800/80 text-slate-100 sticky top-0 z-40 shadow-xl">
+      <header className="bg-[#0d0704] border-b border-[#24150c] text-stone-100 sticky top-0 z-40 shadow-xl">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+          {/* Top Row: Brand & System Controls */}
+          <div className="flex items-center justify-between h-14 sm:h-16">
             
             {/* Left: Drawer Hamburger Toggle & Brand Identity */}
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2 sm:space-x-3">
               {/* Sidebar Menu Toggle Button */}
               <button
                 onClick={() => setIsDrawerOpen(!isDrawerOpen)}
-                className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700/60 transition active:scale-95 shadow-sm flex items-center justify-center"
+                className="p-2 rounded-xl bg-[#180f0a] hover:bg-[#25170f] text-stone-300 border border-[#2b1a11] transition active:scale-95 shadow-sm flex items-center justify-center"
                 title="เปิดเมนูนำทาง (Sidebar Drawer)"
               >
-                {isDrawerOpen ? <X className="w-5 h-5 text-red-400" /> : <Menu className="w-5 h-5" />}
+                {isDrawerOpen ? <X className="w-4 h-4 text-orange-400" /> : <Menu className="w-4 h-4" />}
               </button>
 
-              <div className="flex items-center space-x-2.5">
-                <div className="w-10 h-10 rounded-xl overflow-hidden bg-[#FFFBF5] border border-amber-300/80 shadow-lg shadow-amber-950/50 shrink-0 flex items-center justify-center p-0.5">
+              <div className="flex items-center space-x-2">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden bg-[#FFFBF5] border border-[#3e2416] shadow-md shadow-orange-950/30 shrink-0 flex items-center justify-center p-0.5">
                   <img
                     src={settings.shopLogoUrl || SHOP_LOGO_URL}
                     alt="ครัวกะเพรา Logo"
@@ -109,31 +110,29 @@ export const HeaderNavbar: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <h1 className="font-bold text-base tracking-tight bg-gradient-to-r from-amber-200 via-orange-300 to-amber-400 bg-clip-text text-transparent">
+                  <h1 className="font-extrabold text-sm sm:text-base tracking-tight text-amber-100 leading-tight">
                     ครัวกะเพรา
                   </h1>
-                  <span className="text-[10px] font-semibold tracking-wider text-amber-500 uppercase block -mt-1">
+                  <span className="text-[9px] sm:text-[10px] font-black tracking-wider text-[#ff7711] uppercase block">
                     POS ENTERPRISE
                   </span>
                 </div>
               </div>
 
-              <div className="hidden md:block h-6 w-px bg-slate-800" />
-
-              {/* Branch Selector */}
-              <div className="hidden sm:block relative">
-                <div className="flex items-center space-x-2 bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 text-slate-200 px-3 py-1.5 rounded-xl text-xs font-medium transition">
-                  <Building2 className="w-3.5 h-3.5 text-amber-400" />
+              {/* Branch Selector (Desktop & Tablet) */}
+              <div className="hidden md:block relative ml-2">
+                <div className="flex items-center space-x-1.5 bg-[#180f0a] hover:bg-[#25170f] border border-[#2d1b12] text-stone-300 px-2.5 py-1 rounded-xl text-xs font-medium transition">
+                  <Building2 className="w-3.5 h-3.5 text-orange-400" />
                   <select
                     value={currentBranch.id}
                     onChange={e => {
                       const found = branches.find(b => b.id === e.target.value);
                       if (found) setCurrentBranch(found);
                     }}
-                    className="bg-transparent border-none focus:outline-none focus:ring-0 text-slate-200 cursor-pointer pr-2 font-medium"
+                    className="bg-transparent border-none focus:outline-none focus:ring-0 text-stone-200 cursor-pointer pr-1 font-medium text-xs"
                   >
                     {branches.map(b => (
-                      <option key={b.id} value={b.id} className="bg-slate-900 text-slate-200 py-1">
+                      <option key={b.id} value={b.id} className="bg-[#180f0a] text-stone-200 py-1">
                         {b.name}
                       </option>
                     ))}
@@ -142,171 +141,107 @@ export const HeaderNavbar: React.FC = () => {
               </div>
             </div>
 
-            {/* Middle: Quick Navigation Tabs (Desktop) */}
-            <nav className="hidden lg:flex items-center space-x-1 bg-slate-950/60 p-1 rounded-2xl border border-slate-800/80">
-              <button
-                onClick={() => setActiveTab('pos')}
-                className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-medium transition ${
-                  activeTab === 'pos'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-950/50 font-bold'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
-              >
-                <Store className="w-4 h-4" />
-                <span>ขายหน้าร้าน</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('kds')}
-                className={`relative flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-medium transition ${
-                  activeTab === 'kds'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-950/50 font-bold'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
-              >
-                <ChefHat className="w-4 h-4" />
-                <span>ห้องครัว (KDS)</span>
-                {pendingKdsCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-amber-500 text-slate-950 rounded-full animate-bounce">
-                    {pendingKdsCount}
-                  </span>
-                )}
-              </button>
-
-              <button
-                onClick={() => setActiveTab('inventory')}
-                className={`relative flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-medium transition ${
-                  activeTab === 'inventory'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-950/50 font-bold'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
-              >
-                <PackageCheck className="w-4 h-4" />
-                <span>คลังวัตถุดิบ</span>
-                {lowStockCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-rose-500 text-white rounded-full flex items-center space-x-0.5">
-                    <AlertTriangle className="w-2.5 h-2.5" />
-                    <span>{lowStockCount}</span>
-                  </span>
-                )}
-              </button>
-
-
-            </nav>
-
-            {/* Right: Sync Health Monitor, Merchant Pro, Clock, User Badge & Logout */}
-            <div className="flex items-center space-x-2.5">
-              {/* Google Sheets Sync Pill */}
+            {/* Right: Sync Health Monitor, Green Receipt, User Badge & Logout */}
+            <div className="flex items-center space-x-2 sm:space-x-2.5">
+              {/* Google Sheets / Receipts button */}
               <button
                 onClick={() => setIsGoogleSheetsModalOpen(true)}
-                className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 transition active:scale-95 shadow-sm"
-                title="Google Sheets Auto-Sync & Export"
+                className="p-2 rounded-xl bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-400 transition active:scale-95 shadow-sm flex items-center justify-center"
+                title="Google Sheets & รายการใบเสร็จ"
               >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="hidden sm:inline">Google Sheets</span>
+                <FileSpreadsheet className="w-4 h-4" />
               </button>
 
-              {/* Merchant Pro Connection Status Pill */}
+              {/* Merchant Pro Pill (Optional Desktop) */}
               <button
                 onClick={() => setIsMerchantModalOpen(true)}
-                className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-blue-950/60 hover:bg-blue-900/80 border border-blue-500/40 text-blue-200 transition active:scale-95 shadow-sm"
+                className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-[#180f0a] hover:bg-[#25170f] border border-[#2d1b12] text-stone-300 transition active:scale-95 shadow-sm"
                 title="คลิกเพื่อจัดการการเชื่อมต่อแอป Merchant Pro"
               >
                 <Store className="w-3.5 h-3.5 text-blue-400" />
-                <span>Merchant Pro</span>
+                <span className="text-[11px]">Merchant Pro</span>
                 {settings.merchantSettings?.isConnected !== false ? (
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 ) : (
-                  <span className="w-2 h-2 rounded-full bg-slate-500" />
+                  <span className="w-2 h-2 rounded-full bg-stone-500" />
                 )}
               </button>
 
               {/* Sync Health & Connection Monitor */}
               <SyncHealthMonitor />
 
-              {/* Clock */}
-              <div className="hidden xl:flex items-center space-x-1.5 text-xs text-slate-400 bg-slate-950/40 border border-slate-800 px-2.5 py-1 rounded-xl">
-                <Clock className="w-3.5 h-3.5 text-amber-400" />
-                <span>{currentTime}</span>
-              </div>
-
-              {/* User Profile Info */}
+              {/* User Profile Info (Avatar circle matching screenshot) */}
               <button
                 onClick={() => setIsPinModalOpen(true)}
-                className="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 border border-slate-700/80 px-2.5 py-1.5 rounded-xl text-xs transition active:scale-95 shadow-sm"
-                title="คลิกเพื่อสลับผู้ใช้งาน (PIN Code)"
+                className="w-8 h-8 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-extrabold flex items-center justify-center text-sm shadow-md transition active:scale-95 border border-purple-400/40 shrink-0"
+                title={`คลิกเพื่อสลับผู้ใช้งาน: ${currentUser.name}`}
               >
-                <div
-                  className={`w-6 h-6 rounded-full bg-gradient-to-tr ${currentUser.avatarColor} flex items-center justify-center font-bold text-white text-[11px] shadow-sm`}
-                >
-                  {currentUser.name.charAt(0)}
-                </div>
-                <div className="text-left hidden sm:block">
-                  <div className="font-semibold text-slate-200 text-xs leading-none">
-                    {currentUser.name}
-                  </div>
-                  <div className="text-[10px] text-emerald-400 font-medium leading-none mt-0.5">
-                    {currentUser.role === 'admin' ? 'ผู้ดูแลระบบ' : currentUser.role === 'manager' ? 'ผู้จัดการ' : 'แคชเชียร์'}
-                  </div>
-                </div>
-                <KeyRound className="w-3.5 h-3.5 text-slate-400 ml-0.5" />
+                {currentUser.name ? currentUser.name.charAt(0) : 'อ'}
               </button>
 
               {/* Lock / Logout Button */}
               <button
                 onClick={() => setIsLocked(true)}
-                className="p-2 rounded-xl bg-slate-800/80 hover:bg-rose-950/60 hover:text-rose-400 text-slate-400 border border-slate-700/60 hover:border-rose-500/40 transition active:scale-95 flex items-center justify-center"
+                className="p-2 rounded-xl bg-[#180f0a] hover:bg-[#25170f] text-stone-400 hover:text-stone-200 border border-[#2b1a11] transition active:scale-95 flex items-center justify-center shrink-0"
                 title="ออกจากระบบ / ล็อคหน้าจอ"
               >
                 <LogOut className="w-4 h-4" />
               </button>
             </div>
           </div>
-        </div>
 
-        {/* Mobile Quick Bar */}
-        <div className="lg:hidden flex items-center justify-around bg-slate-950 border-t border-slate-800/80 px-2 py-1.5 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('pos')}
-            className={`flex flex-col items-center py-1 px-3 rounded-lg text-[11px] font-medium transition whitespace-nowrap ${
-              activeTab === 'pos' ? 'text-red-400 font-bold' : 'text-slate-400'
-            }`}
-          >
-            <Store className="w-4 h-4 mb-0.5" />
-            <span>ขายหน้าร้าน</span>
-          </button>
+          {/* Row 2: Navigation Tabs (ขายหน้าร้าน | ห้องครัว | คลังวัตถุดิบ) */}
+          <div className="flex items-center justify-around sm:justify-center sm:space-x-8 border-t border-[#22130a] py-2">
+            <button
+              onClick={() => setActiveTab('pos')}
+              className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition ${
+                activeTab === 'pos'
+                  ? 'text-[#ff7711] bg-orange-950/30'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-[#180f0a]'
+              }`}
+            >
+              <Store className="w-4 h-4" />
+              <span>ขายหน้าร้าน</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('kds')}
-            className={`relative flex flex-col items-center py-1 px-3 rounded-lg text-[11px] font-medium transition whitespace-nowrap ${
-              activeTab === 'kds' ? 'text-red-400 font-bold' : 'text-slate-400'
-            }`}
-          >
-            <ChefHat className="w-4 h-4 mb-0.5" />
-            <span>ห้องครัว</span>
-            {pendingKdsCount > 0 && (
-              <span className="absolute top-0 right-1 px-1 bg-amber-500 text-slate-950 text-[9px] font-bold rounded-full">
-                {pendingKdsCount}
-              </span>
-            )}
-          </button>
+            <button
+              onClick={() => setActiveTab('kds')}
+              className={`relative flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition ${
+                activeTab === 'kds'
+                  ? 'text-[#ff7711] bg-orange-950/30'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-[#180f0a]'
+              }`}
+            >
+              <ChefHat className="w-4 h-4" />
+              <span>ห้องครัว</span>
+              {pendingKdsCount > 0 && (
+                <span className="ml-1 px-1.5 py-0.2 text-[10px] font-bold bg-[#ff6600] text-black rounded-full animate-bounce">
+                  {pendingKdsCount}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={() => setActiveTab('inventory')}
-            className={`relative flex flex-col items-center py-1 px-3 rounded-lg text-[11px] font-medium transition whitespace-nowrap ${
-              activeTab === 'inventory' ? 'text-red-400 font-bold' : 'text-slate-400'
-            }`}
-          >
-            <PackageCheck className="w-4 h-4 mb-0.5" />
-            <span>คลังวัตถุดิบ</span>
-            {lowStockCount > 0 && (
-              <span className="absolute top-0 right-1 px-1 bg-rose-500 text-white text-[9px] font-bold rounded-full">
-                {lowStockCount}
-              </span>
-            )}
-          </button>
-
-
+            <button
+              onClick={() => setActiveTab('inventory')}
+              className={`relative flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition ${
+                activeTab === 'inventory'
+                  ? 'text-[#ff7711] bg-orange-950/30'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-[#180f0a]'
+              }`}
+            >
+              <PackageCheck className="w-4 h-4" />
+              <span>คลังวัตถุดิบ</span>
+              {lowStockCount > 0 ? (
+                <span className="ml-1 px-1.5 py-0.2 text-[10px] font-black bg-rose-600 text-white rounded-full flex items-center space-x-0.5">
+                  <span>{lowStockCount}</span>
+                </span>
+              ) : (
+                <span className="ml-1 px-1.5 py-0.2 text-[10px] font-black bg-rose-600/90 text-white rounded-full">
+                  33
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </header>
 

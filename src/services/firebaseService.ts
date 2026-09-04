@@ -527,6 +527,38 @@ export async function syncExpenseToFirestore(expense: Expense, branch?: Branch):
     return true;
   } catch (err) {
     console.error(`[Firebase Service] ❌ Failed to sync expense ${expense.id}:`, err);
+    // Fallback: If document size exceeds Firestore limit (1MB) due to receiptImage, retry without image so financial log is never lost
+    try {
+      if (expense.receiptImage) {
+        const expenseDocId = expense.id.startsWith('exp-') ? expense.id : `exp-${expense.id}`;
+        const expenseRef = doc(dbInstance, 'expenses', expenseDocId);
+        await setDoc(
+          expenseRef,
+          {
+            id: expense.id,
+            branchId: expense.branchId || branch?.id || '',
+            category: expense.category,
+            title: expense.title,
+            amount: Number(expense.amount) || 0,
+            includeVat: !!expense.includeVat,
+            vatAmount: Number(expense.vatAmount) || 0,
+            netAmount: Number(expense.netAmount) || 0,
+            refNumber: expense.refNumber || '',
+            note: expense.note || '',
+            date: expense.date,
+            receiptImage: null,
+            receiptImageName: expense.receiptImageName || null,
+            syncedAt: new Date().toISOString(),
+            updatedAt: serverTimestamp()
+          },
+          { merge: true }
+        );
+        console.log(`[Firebase Service] ✅ Rescued expense ${expense.id} without heavy image.`);
+        return true;
+      }
+    } catch (rescueErr) {
+      console.error(`[Firebase Service] ❌ Failed fallback sync for expense:`, rescueErr);
+    }
     return false;
   }
 }
@@ -561,6 +593,8 @@ export async function syncExpensesBatchToFirestore(expenses: Expense[], branch?:
     expenses.forEach(expense => {
       const expenseDocId = expense.id.startsWith('exp-') ? expense.id : `exp-${expense.id}`;
       const expenseRef = doc(dbInstance!, 'expenses', expenseDocId);
+      // Ensure image doesn't blow up the 10MB batch limit
+      const safeImage = expense.receiptImage && expense.receiptImage.length < 150000 ? expense.receiptImage : null;
       batch.set(
         expenseRef,
         {
@@ -575,7 +609,7 @@ export async function syncExpensesBatchToFirestore(expenses: Expense[], branch?:
           refNumber: expense.refNumber || '',
           note: expense.note || '',
           date: expense.date,
-          receiptImage: expense.receiptImage || null,
+          receiptImage: safeImage,
           receiptImageName: expense.receiptImageName || null,
           syncedAt: nowIso,
           updatedAt: serverTimestamp()
@@ -614,7 +648,7 @@ export async function syncIncomeToFirestore(income: OtherIncome, branch?: Branch
       payerName: income.payerName || '',
       refNumber: income.refNumber || '',
       note: income.note || '',
-      slipImage: income.slipImage || null,
+      slipImage: (income.slipImage && income.slipImage.length < 250000) ? income.slipImage : null,
       slipImageName: income.slipImageName || null,
       syncedAt: nowIso,
       updatedAt: serverTimestamp()
@@ -624,6 +658,37 @@ export async function syncIncomeToFirestore(income: OtherIncome, branch?: Branch
     return true;
   } catch (err) {
     console.error(`[Firebase Service] ❌ Failed to sync income ${income.id}:`, err);
+    // Fallback: Retry without slipImage if too large
+    try {
+      if (income.slipImage) {
+        const incomeDocId = income.id.startsWith('inc-') ? income.id : `inc-${income.id}`;
+        const incomeRef = doc(dbInstance, 'incomes', incomeDocId);
+        await setDoc(
+          incomeRef,
+          {
+            id: income.id,
+            branchId: income.branchId || branch?.id || '',
+            category: income.category,
+            title: income.title,
+            amount: Number(income.amount) || 0,
+            date: income.date,
+            paymentMethod: income.paymentMethod || 'promptpay',
+            payerName: income.payerName || '',
+            refNumber: income.refNumber || '',
+            note: income.note || '',
+            slipImage: null,
+            slipImageName: income.slipImageName || null,
+            syncedAt: new Date().toISOString(),
+            updatedAt: serverTimestamp()
+          },
+          { merge: true }
+        );
+        console.log(`[Firebase Service] ✅ Rescued income ${income.id} without heavy image.`);
+        return true;
+      }
+    } catch (rescueErr) {
+      console.error(`[Firebase Service] ❌ Failed fallback sync for income:`, rescueErr);
+    }
     return false;
   }
 }

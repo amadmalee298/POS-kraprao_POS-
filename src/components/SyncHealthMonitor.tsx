@@ -207,13 +207,7 @@ export const SyncHealthMonitor: React.FC = () => {
       {/* Trigger Button inside Navbar */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition border cursor-pointer active:scale-95 shadow-sm ${
-          effectiveOffline
-            ? 'bg-amber-950/60 border-amber-500/50 text-amber-300 hover:bg-amber-900/60'
-            : pingStatus === 'degraded'
-            ? 'bg-yellow-950/50 border-yellow-500/40 text-yellow-300 hover:bg-yellow-900/50'
-            : 'bg-slate-900/90 hover:bg-slate-850 border-slate-700/80 text-slate-200'
-        }`}
+        className="flex items-center space-x-2 px-3 py-1.5 rounded-2xl text-xs font-semibold transition border cursor-pointer active:scale-95 shadow-sm bg-[#1a100a] hover:bg-[#25170f] border-[#382215] text-amber-100"
         title="Sync Health Monitor & Firebase Multi-Branch Status"
       >
         {/* Status Animated Pulse Dot */}
@@ -223,50 +217,26 @@ export const SyncHealthMonitor: React.FC = () => {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
             </span>
-          ) : pingStatus === 'degraded' ? (
-            <span className="flex h-2.5 w-2.5 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-500"></span>
-            </span>
           ) : (
             <span className="flex h-2.5 w-2.5 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400 shadow-sm shadow-amber-400/50"></span>
             </span>
           )}
         </div>
 
-        {/* Status Text & Latency Badge */}
+        {/* Status Text */}
         <div className="flex items-center space-x-1.5">
-          {effectiveOffline ? (
-            <div className="flex items-center space-x-1 text-amber-300">
-              <CloudOff className="w-3.5 h-3.5" />
-              <span className="font-bold">Sync: ออฟไลน์</span>
-            </div>
-          ) : (
-            <div className="flex items-center space-x-1.5">
-              <Flame className="w-3.5 h-3.5 text-amber-400" />
-              <span className="font-bold text-slate-200">
-                {firebaseSyncState.status === 'connected' ? 'Firebase Live' : 'เชื่อมต่ออยู่'}
-              </span>
-              {latency !== null && (
-                <span className="text-[10px] text-emerald-400 font-mono font-bold">
-                  {latency}ms
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Pending Tasks Pill Badge */}
+          <span className="font-bold text-amber-100 text-xs">
+            {effectiveOffline ? 'ออฟไลน์' : 'เชื่อมต่ออยู่'}
+          </span>
           {pendingOfflineCount > 0 && (
             <span className="px-1.5 py-0.2 bg-amber-400 text-slate-950 font-mono font-black text-[10px] rounded-full flex items-center space-x-0.5 animate-pulse">
               <Zap className="w-2.5 h-2.5 fill-slate-950" />
-              <span>{pendingOfflineCount} ค้าง</span>
+              <span>{pendingOfflineCount}</span>
             </span>
           )}
+          <ChevronDown className={`w-3.5 h-3.5 text-stone-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
         </div>
-
-        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {/* Expanded Sync Health Popover / Dropdown Panel */}

@@ -330,7 +330,7 @@ const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boo
 };
 
 export const AccountingView: React.FC = () => {
-  const { orders, expenses, incomes = [], addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot } = usePOS();
+  const { orders, expenses, incomes = [], addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient } = usePOS();
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     try {
@@ -440,7 +440,15 @@ export const AccountingView: React.FC = () => {
     payerName?: string;
   } | null>(null);
   const [expAutoUpdateStock, setExpAutoUpdateStock] = useState(false);
-  const [expStockEntries, setExpStockEntries] = useState<Array<{ id: string; ingredientId: string; quantity: number }>>([]);
+  const [expStockEntries, setExpStockEntries] = useState<Array<{
+    id: string;
+    ingredientId: string;
+    quantity: number;
+    usePackage?: boolean;
+    packageQty?: number;
+    packageUnit?: string;
+    packageSize?: number;
+  }>>([]);
 
   const openAddIncomeModal = (prefilledDate?: string | React.MouseEvent) => {
     const dateStr = typeof prefilledDate === 'string' ? prefilledDate : getLocalDateString();
@@ -587,7 +595,8 @@ export const AccountingView: React.FC = () => {
     reader.onload = (event) => {
       const img = new Image();
       img.onload = () => {
-        const MAX_SIZE = 1600;
+        // Restrict to max 900px and 0.70 quality for safe LocalStorage (<80KB) and Firestore sync
+        const MAX_SIZE = 900;
         let width = img.width;
         let height = img.height;
         if (width > MAX_SIZE || height > MAX_SIZE) {
@@ -607,7 +616,7 @@ export const AccountingView: React.FC = () => {
           ctx.fillStyle = '#ffffff';
           ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.88);
+          const compressed = canvas.toDataURL('image/jpeg', 0.70);
           setExpReceiptImage(compressed);
           setExpReceiptName(file.name || 'slip-receipt.jpg');
         } else {
@@ -647,18 +656,73 @@ export const AccountingView: React.FC = () => {
 
   const handleAddExpStockEntry = () => {
     if (ingredients.length === 0) return;
+    const targetIng = ingredients[0];
+    const isLiquid = targetIng?.unit === 'ml';
+    const isWeight = targetIng?.unit === 'g';
+    const hasDefaultPkg = !!(targetIng?.packageSize && targetIng.packageSize > 0);
+    const usePkg = hasDefaultPkg || isLiquid;
+    const pkgUnit = targetIng?.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : 'แพ็ค');
+    const pkgSize = targetIng?.packageSize || (isLiquid ? 680 : isWeight ? 1000 : 1);
+
     setExpStockEntries(prev => [
       ...prev,
       {
         id: Date.now().toString() + '-' + Math.random().toString(36).substring(2, 6),
-        ingredientId: ingredients[0].id,
-        quantity: 1
+        ingredientId: targetIng.id,
+        quantity: usePkg ? pkgSize : 1,
+        usePackage: usePkg,
+        packageQty: 1,
+        packageUnit: pkgUnit,
+        packageSize: pkgSize
       }
     ]);
   };
 
-  const handleUpdateExpStockEntry = (id: string, field: 'ingredientId' | 'quantity', value: string | number) => {
-    setExpStockEntries(prev => prev.map(entry => entry.id === id ? { ...entry, [field]: value } : entry));
+  const handleUpdateExpStockEntry = (
+    id: string,
+    fieldOrUpdates: 'ingredientId' | 'quantity' | Partial<{
+      ingredientId: string;
+      quantity: number;
+      usePackage?: boolean;
+      packageQty?: number;
+      packageUnit?: string;
+      packageSize?: number;
+    }>,
+    value?: string | number | boolean
+  ) => {
+    let updates: Record<string, any> = {};
+    if (typeof fieldOrUpdates === 'string') {
+      updates = { [fieldOrUpdates]: value };
+    } else {
+      updates = fieldOrUpdates;
+    }
+
+    setExpStockEntries(prev => prev.map(entry => {
+      if (entry.id !== id) return entry;
+      const merged = { ...entry, ...updates };
+
+      if (updates.ingredientId && updates.ingredientId !== entry.ingredientId) {
+        const targetIng = ingredients.find(i => i.id === updates.ingredientId);
+        if (targetIng) {
+          const isLiquid = targetIng.unit === 'ml';
+          const isWeight = targetIng.unit === 'g';
+          const hasPkg = !!(targetIng.packageSize && targetIng.packageSize > 0);
+          merged.usePackage = hasPkg || isLiquid;
+          merged.packageUnit = targetIng.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : 'แพ็ค');
+          merged.packageSize = targetIng.packageSize || (isLiquid ? 680 : isWeight ? 1000 : 1);
+          merged.packageQty = 1;
+          merged.quantity = merged.usePackage ? (merged.packageSize || 1) : 1;
+        }
+      }
+
+      if (merged.usePackage) {
+        const pQty = typeof merged.packageQty === 'number' && merged.packageQty > 0 ? merged.packageQty : 1;
+        const pSize = typeof merged.packageSize === 'number' && merged.packageSize > 0 ? merged.packageSize : 1;
+        merged.quantity = Number((pQty * pSize).toFixed(2));
+      }
+
+      return merged;
+    }));
   };
 
   const handleRemoveExpStockEntry = (id: string) => {
@@ -1332,6 +1396,12 @@ export const AccountingView: React.FC = () => {
           if (matchedIng) {
             const qty = entry.quantity > 0 ? entry.quantity : 1;
             const calcUnitCost = Number((expAmount / validEntries.length / qty).toFixed(2));
+
+            let lotNote = `เพิ่มจากบันทึกค่าใช้จ่าย: ${expTitle.trim()}`;
+            if (entry.usePackage && entry.packageUnit && entry.packageSize) {
+              lotNote += ` (รับเข้า ${entry.packageQty || 1} ${entry.packageUnit} @ 1 ${entry.packageUnit} = ${entry.packageSize} ${matchedIng.unit})`;
+            }
+
             addStockLot({
               ingredientId: entry.ingredientId,
               lotNumber: `EXP-${Date.now().toString().slice(-6)}-${idx + 1}`,
@@ -1340,8 +1410,20 @@ export const AccountingView: React.FC = () => {
               receivedDate: new Date().toISOString().split('T')[0],
               expiryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
               supplier: 'บันทึกค่าใช้จ่ายรายวัน',
-              notes: `เพิ่มจากบันทึกค่าใช้จ่าย: ${expTitle.trim()}`
+              notes: lotNote,
+              packageQty: entry.usePackage ? entry.packageQty : undefined,
+              packageUnit: entry.usePackage ? entry.packageUnit : undefined,
+              packageSize: entry.usePackage ? entry.packageSize : undefined
             });
+
+            // Update ingredient packaging config if not yet set
+            if (entry.usePackage && entry.packageUnit && entry.packageSize && (!matchedIng.packageUnit || !matchedIng.packageSize)) {
+              updateIngredient({
+                ...matchedIng,
+                packageUnit: entry.packageUnit,
+                packageSize: entry.packageSize
+              });
+            }
           }
         });
       }
@@ -4977,10 +5059,22 @@ export const AccountingView: React.FC = () => {
                       onChange={e => {
                         setExpAutoUpdateStock(e.target.checked);
                         if (e.target.checked && expStockEntries.length === 0 && ingredients.length > 0) {
+                          const targetIng = ingredients[0];
+                          const isLiquid = targetIng?.unit === 'ml';
+                          const isWeight = targetIng?.unit === 'g';
+                          const hasDefaultPkg = !!(targetIng?.packageSize && targetIng.packageSize > 0);
+                          const usePkg = hasDefaultPkg || isLiquid;
+                          const pkgUnit = targetIng?.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : 'แพ็ค');
+                          const pkgSize = targetIng?.packageSize || (isLiquid ? 680 : isWeight ? 1000 : 1);
+
                           setExpStockEntries([{
                             id: Date.now().toString(),
-                            ingredientId: ingredients[0].id,
-                            quantity: 1
+                            ingredientId: targetIng.id,
+                            quantity: usePkg ? pkgSize : 1,
+                            usePackage: usePkg,
+                            packageQty: 1,
+                            packageUnit: pkgUnit,
+                            packageSize: pkgSize
                           }]);
                         }
                       }}
@@ -5006,64 +5100,201 @@ export const AccountingView: React.FC = () => {
                       </button>
                     </div>
 
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       {expStockEntries.map((entry, index) => {
                         const selectedIng = ingredients.find(i => i.id === entry.ingredientId);
+                        const baseUnit = selectedIng?.unit || 'หน่วย';
+                        const pkgUnit = entry.packageUnit || selectedIng?.packageUnit || (baseUnit === 'ml' ? 'ขวด' : baseUnit === 'g' ? 'ถุง' : 'แพ็ค');
+                        const pkgSize = entry.packageSize || selectedIng?.packageSize || (baseUnit === 'ml' ? 680 : baseUnit === 'g' ? 1000 : 1);
+                        const isPkg = entry.usePackage !== undefined ? entry.usePackage : (!!selectedIng?.packageSize || baseUnit === 'ml');
+
                         return (
                           <div
                             key={entry.id}
-                            className="grid grid-cols-12 gap-2 items-center bg-slate-900/80 p-2 rounded-lg border border-emerald-900/40"
+                            className="bg-slate-900/90 p-2.5 rounded-xl border border-emerald-900/50 space-y-2 transition shadow-sm"
                           >
-                            <div className="col-span-7">
-                              <label className="text-[9px] font-bold text-slate-500 block mb-0.5">
-                                รายการ #{index + 1} วัตถุดิบ:
-                              </label>
-                              <select
-                                value={entry.ingredientId}
-                                onChange={e => handleUpdateExpStockEntry(entry.id, 'ingredientId', e.target.value)}
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-100 text-xs font-bold"
-                              >
-                                {ingredients.length === 0 ? (
-                                  <option value="">ไม่มีวัตถุดิบในคลัง</option>
-                                ) : (
-                                  ingredients.map(ing => (
-                                    <option key={ing.id} value={ing.id}>
-                                      {ing.name} (คงเหลือ: {ing.currentStock} {ing.unit})
-                                    </option>
-                                  ))
-                                )}
-                              </select>
-                            </div>
-
-                            <div className="col-span-4">
-                              <label className="text-[9px] font-bold text-slate-500 block mb-0.5">
-                                จำนวน (Qty):
-                              </label>
-                              <div className="flex items-center space-x-1">
-                                <input
-                                  type="number"
-                                  min="0.1"
-                                  step="any"
-                                  value={entry.quantity}
-                                  onChange={e => handleUpdateExpStockEntry(entry.id, 'quantity', Number(e.target.value))}
-                                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-emerald-300 font-mono font-bold text-xs"
-                                />
-                                <span className="text-[10px] text-emerald-400 font-bold shrink-0">
-                                  {selectedIng?.unit || 'หน่วย'}
-                                </span>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-1">
+                                  <label className="text-[10px] font-bold text-slate-400">
+                                    รายการ #{index + 1} วัตถุดิบ:
+                                  </label>
+                                  {selectedIng && (
+                                    <span className="text-[10px] text-slate-400 font-medium">
+                                      คลังปัจจุบัน: <strong className="text-emerald-400">{selectedIng.currentStock} {selectedIng.unit}</strong>
+                                    </span>
+                                  )}
+                                </div>
+                                <select
+                                  value={entry.ingredientId}
+                                  onChange={e => handleUpdateExpStockEntry(entry.id, { ingredientId: e.target.value })}
+                                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-100 text-xs font-bold focus:border-emerald-500 focus:outline-none"
+                                >
+                                  {ingredients.length === 0 ? (
+                                    <option value="">ไม่มีวัตถุดิบในคลัง</option>
+                                  ) : (
+                                    ingredients.map(ing => (
+                                      <option key={ing.id} value={ing.id}>
+                                        {ing.name} ({ing.category} | คงเหลือ: {ing.currentStock} {ing.unit})
+                                      </option>
+                                    ))
+                                  )}
+                                </select>
                               </div>
-                            </div>
 
-                            <div className="col-span-1 flex justify-end pt-3">
                               {expStockEntries.length > 1 && (
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveExpStockEntry(entry.id)}
-                                  className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
+                                  className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition shrink-0 self-end mb-0.5"
                                   title="ลบรายการนี้"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
+                              )}
+                            </div>
+
+                            {/* Quantity & Packaging Conversion Controls */}
+                            <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800/80 space-y-1.5">
+                              <div className="flex items-center justify-between gap-1 flex-wrap">
+                                <span className="text-[10px] font-bold text-slate-400">
+                                  โหมดการรับเข้า:
+                                </span>
+                                <div className="flex items-center space-x-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateExpStockEntry(entry.id, { usePackage: false })}
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition ${
+                                      !isPkg
+                                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                        : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    ระบุหน่วยหลัก ({baseUnit})
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateExpStockEntry(entry.id, {
+                                      usePackage: true,
+                                      packageUnit: pkgUnit,
+                                      packageSize: pkgSize,
+                                      packageQty: entry.packageQty || 1
+                                    })}
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center space-x-1 transition ${
+                                      isPkg
+                                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                        : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    <span>📦 แปลงหน่วยบรรจุ (ขวด/ลัง/แพ็ค)</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {isPkg ? (
+                                <div className="space-y-1.5 pt-1">
+                                  <div className="grid grid-cols-12 gap-2 items-center">
+                                    <div className="col-span-4">
+                                      <label className="text-[9px] font-bold text-amber-400/90 block mb-0.5">
+                                        รับเข้า (จำนวน):
+                                      </label>
+                                      <input
+                                        type="number"
+                                        min="0.1"
+                                        step="any"
+                                        value={entry.packageQty !== undefined ? entry.packageQty : 1}
+                                        onChange={e => handleUpdateExpStockEntry(entry.id, {
+                                          usePackage: true,
+                                          packageQty: Number(e.target.value)
+                                        })}
+                                        className="w-full bg-slate-900 border border-amber-500/30 rounded-lg px-2 py-1 text-amber-300 font-mono font-bold text-xs focus:border-amber-400 focus:outline-none"
+                                      />
+                                    </div>
+
+                                    <div className="col-span-3">
+                                      <label className="text-[9px] font-bold text-slate-400 block mb-0.5">
+                                        หน่วยบรรจุ:
+                                      </label>
+                                      <input
+                                        type="text"
+                                        list={`exp-pkg-units-${entry.id}`}
+                                        value={pkgUnit}
+                                        onChange={e => handleUpdateExpStockEntry(entry.id, {
+                                          usePackage: true,
+                                          packageUnit: e.target.value
+                                        })}
+                                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-slate-200 text-xs font-bold focus:border-slate-600 focus:outline-none"
+                                        placeholder="ขวด"
+                                      />
+                                      <datalist id={`exp-pkg-units-${entry.id}`}>
+                                        <option value="ขวด" />
+                                        <option value="ลัง" />
+                                        <option value="แพ็ค" />
+                                        <option value="ถุง" />
+                                        <option value="กล่อง" />
+                                        <option value="กระป๋อง" />
+                                        <option value="แผง" />
+                                        <option value="ถัง" />
+                                      </datalist>
+                                    </div>
+
+                                    <div className="col-span-5">
+                                      <label className="text-[9px] font-bold text-emerald-400/90 block mb-0.5">
+                                        1 {pkgUnit} มีขนาด:
+                                      </label>
+                                      <div className="flex items-center space-x-1">
+                                        <input
+                                          type="number"
+                                          min="0.1"
+                                          step="any"
+                                          value={pkgSize}
+                                          onChange={e => handleUpdateExpStockEntry(entry.id, {
+                                            usePackage: true,
+                                            packageSize: Number(e.target.value)
+                                          })}
+                                          className="w-full bg-slate-900 border border-emerald-500/30 rounded-lg px-2 py-1 text-emerald-300 font-mono font-bold text-xs focus:border-emerald-400 focus:outline-none"
+                                          placeholder="680"
+                                        />
+                                        <span className="text-[10px] text-emerald-400 font-bold shrink-0">
+                                          {baseUnit}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center justify-between px-2.5 py-1.5 bg-emerald-950/60 rounded-lg border border-emerald-800/60 text-[11px]">
+                                    <span className="text-slate-400 text-[10px]">
+                                      สูตรคำนวณ: <span className="text-amber-300 font-mono font-bold">{entry.packageQty !== undefined ? entry.packageQty : 1} {pkgUnit}</span> × <span className="text-emerald-300 font-mono font-bold">{pkgSize} {baseUnit}</span>
+                                    </span>
+                                    <span className="text-emerald-300 font-bold font-mono">
+                                      = เข้าสต็อก {entry.quantity.toLocaleString()} {baseUnit}
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center space-x-2 pt-1">
+                                  <div className="flex-1">
+                                    <label className="text-[9px] font-bold text-slate-500 block mb-0.5">
+                                      จำนวนที่รับเข้า ({baseUnit}):
+                                    </label>
+                                    <div className="flex items-center space-x-2">
+                                      <input
+                                        type="number"
+                                        min="0.1"
+                                        step="any"
+                                        value={entry.quantity}
+                                        onChange={e => handleUpdateExpStockEntry(entry.id, {
+                                          usePackage: false,
+                                          quantity: Number(e.target.value)
+                                        })}
+                                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-emerald-300 font-mono font-bold text-xs focus:border-emerald-500 focus:outline-none"
+                                      />
+                                      <span className="text-xs text-emerald-400 font-bold shrink-0">
+                                        {baseUnit}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
                               )}
                             </div>
                           </div>

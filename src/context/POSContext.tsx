@@ -944,8 +944,39 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setCashShifts(parsed.cashShifts);
             loadedShiftsCount = parsed.cashShifts.length;
           }
-          if (parsed.expenses && Array.isArray(parsed.expenses)) setExpenses(parsed.expenses);
-          if (parsed.incomes && Array.isArray(parsed.incomes)) setIncomes(parsed.incomes);
+          let loadedExpenses: Expense[] = (parsed.expenses && Array.isArray(parsed.expenses)) ? parsed.expenses : [];
+          try {
+            const sepExp = localStorage.getItem('POS_EXPENSES_DATA');
+            if (sepExp) {
+              const parsedSep = JSON.parse(sepExp);
+              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                const expMap = new Map<string, Expense>();
+                loadedExpenses.forEach(e => { if (e && e.id) expMap.set(e.id, e); });
+                parsedSep.forEach(e => { if (e && e.id) expMap.set(e.id, e); });
+                loadedExpenses = Array.from(expMap.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+              }
+            }
+          } catch (e) {
+            console.warn('[POS Storage Sync] Failed to merge separate POS_EXPENSES_DATA', e);
+          }
+          setExpenses(loadedExpenses);
+
+          let loadedIncomes: OtherIncome[] = (parsed.incomes && Array.isArray(parsed.incomes)) ? parsed.incomes : [];
+          try {
+            const sepInc = localStorage.getItem('POS_INCOMES_DATA');
+            if (sepInc) {
+              const parsedSep = JSON.parse(sepInc);
+              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                const incMap = new Map<string, OtherIncome>();
+                loadedIncomes.forEach(i => { if (i && i.id) incMap.set(i.id, i); });
+                parsedSep.forEach(i => { if (i && i.id) incMap.set(i.id, i); });
+                loadedIncomes = Array.from(incMap.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+              }
+            }
+          } catch (e) {
+            console.warn('[POS Storage Sync] Failed to merge separate POS_INCOMES_DATA', e);
+          }
+          setIncomes(loadedIncomes);
           if (parsed.settings && typeof parsed.settings === 'object') {
             const mergedSettings = { ...INITIAL_SETTINGS, ...parsed.settings };
             // If previous shopLogoUrl was the older default SVG or empty, update to the new official brand logo
@@ -1098,7 +1129,31 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         branchId: currentBranch?.id,
         savedAt: new Date().toISOString()
       };
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
+      } catch (storageErr) {
+        console.warn('[POS Storage Sync] ⚠️ LocalStorage quota exceeded or save error. Performing self-healing storage compaction...', storageErr);
+        // Prune heavy image payloads while keeping all core business, stock, financial and accounting data 100% intact
+        const compactedExpenses = expenses.map(e => {
+          if (e.receiptImage && e.receiptImage.length > 50000) {
+            return { ...e, receiptImage: undefined };
+          }
+          return e;
+        });
+        const compactedIncomes = incomes.map(i => {
+          if (i.slipImage && i.slipImage.length > 50000) {
+            return { ...i, slipImage: undefined };
+          }
+          return i;
+        });
+        const compactedState = {
+          ...stateToSave,
+          expenses: compactedExpenses,
+          incomes: compactedIncomes
+        };
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compactedState));
+        console.log('[POS Storage Sync] ✅ Successfully recovered and saved state after image compaction.');
+      }
       const pendingSync = orders.filter(o => o.isOfflineOrder && !o.isSynced).length;
       console.log(`[POS Storage Sync] 💾 Persisted state & order draft (${cart.length} items) to LocalStorage at ${stateToSave.savedAt}. Orders: ${orders.length} (${pendingSync} pending sync), Cash Shifts: ${cashShifts.length}.`);
     } catch (err) {
@@ -1792,7 +1847,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try {
         localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
       } catch (e) {
-        console.warn('Failed to cache expense immediately', e);
+        console.warn('Failed to cache expense immediately, retrying compact', e);
+        try {
+          const compact = updated.map(item => (item.receiptImage && item.receiptImage.length > 50000) ? { ...item, receiptImage: undefined } : item);
+          localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(compact));
+        } catch (e2) {
+          console.warn('Failed to cache compact expenses', e2);
+        }
       }
       return updated;
     });
@@ -1833,7 +1894,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try {
         localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
       } catch (e) {
-        console.warn('Failed to cache income immediately', e);
+        console.warn('Failed to cache income immediately, retrying compact', e);
+        try {
+          const compact = updated.map(item => (item.slipImage && item.slipImage.length > 50000) ? { ...item, slipImage: undefined } : item);
+          localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(compact));
+        } catch (e2) {
+          console.warn('Failed to cache compact incomes', e2);
+        }
       }
       return updated;
     });

@@ -63,7 +63,7 @@ const MainLayout: React.FC = () => {
   }, [settings.autoLockMinutes, isLocked, setIsLocked]);
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans antialiased selection:bg-red-500 selection:text-white">
+    <div className="min-h-screen bg-[#0d0704] text-stone-100 flex flex-col font-sans antialiased selection:bg-orange-500 selection:text-white">
       {/* Fullscreen PIN Lock Screen */}
       {isLocked && <LoginScreen />}
 
