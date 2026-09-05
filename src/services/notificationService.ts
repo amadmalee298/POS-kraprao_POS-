@@ -327,10 +327,11 @@ export async function dispatchNotification(
 
   const results: SendResult[] = [];
   const channel = options?.channelOverride || 'both';
+  const fullMessage = message.startsWith('🔔') ? message : `🔔 [ครัวกะเพรา POS - ${eventTitle}]\n\n${message}`;
 
   // Send Telegram
   if ((channel === 'both' || channel === 'telegram') && creds.telegramToken && creds.telegramChatId) {
-    const tgRes = await sendTelegramMessage(creds.telegramToken, creds.telegramChatId, message);
+    const tgRes = await sendTelegramMessage(creds.telegramToken, creds.telegramChatId, fullMessage);
     results.push(tgRes);
 
     addStoredLog({
@@ -343,7 +344,7 @@ export async function dispatchNotification(
 
   // Send LINE
   if ((channel === 'both' || channel === 'line') && creds.lineToken) {
-    const lineRes = await sendLineMessage(creds.lineToken, message);
+    const lineRes = await sendLineMessage(creds.lineToken, fullMessage);
     results.push(lineRes);
 
     addStoredLog({
@@ -379,13 +380,25 @@ export function generateDailySummaryMessage(
   const shopName = settings?.shopName || 'บริษัท กะเพรา เอ็นเตอร์ไพรส์ จำกัด (สำนักงานใหญ่)';
   const branchName = branch?.name || 'ครัวกะเพรา ตลาด กกท';
   const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
+
+  // Local date helper in client's local timezone (Thailand UTC+7)
+  const getLocalDateStr = (d: Date | string) => {
+    const date = typeof d === 'string' ? new Date(d) : d;
+    if (isNaN(date.getTime())) return '';
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const todayStr = getLocalDateStr(now);
   const dateThai = now.toLocaleDateString('th-TH', { year: 'numeric', month: 'numeric', day: 'numeric' });
   const timeThai = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 
-  // Filter today's real orders
+  // Filter today's real orders in this branch
   const todayOrders = orders.filter(o => {
-    const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+    const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
+    if (branch?.id && o.branchId && o.branchId !== branch.id) return false;
     return oDate === todayStr && o.status !== 'cancelled';
   });
 
@@ -393,7 +406,7 @@ export function generateDailySummaryMessage(
   const billCount = todayOrders.length;
   const avgBill = billCount > 0 ? todayRevenue / billCount : 0;
 
-  // Real channel breakdown
+  // Real channel breakdown (100% truthful data - zero fallback)
   const posOrders = todayOrders.filter(o => !o.isQrOrder && (o.orderType === 'dine-in' || o.orderType === 'takeaway' || !o.orderType));
   const qrOrders = todayOrders.filter(o => o.isQrOrder || (o as any).orderType === 'qr');
   const deliveryOrders = todayOrders.filter(o => o.orderType === 'delivery');
@@ -413,16 +426,16 @@ export function generateDailySummaryMessage(
   const creditTotal = creditOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
   const trueMoneyTotal = trueMoneyOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
 
-  // Real Top 3 Best-Selling Menu Items
+  // Real Top 3 Best-Selling Menu Items from today's orders
   const itemCounts: Record<string, { qty: number; totalSales: number }> = {};
   todayOrders.forEach(o => {
     o.items?.forEach(it => {
-      const name = it.menuItem?.name || 'รายการทั่วไป';
+      const name = it.menuItem?.name || (it as any).name || 'รายการอาหาร';
       if (!itemCounts[name]) {
         itemCounts[name] = { qty: 0, totalSales: 0 };
       }
       itemCounts[name].qty += it.quantity || 1;
-      itemCounts[name].totalSales += it.totalPrice || 0;
+      itemCounts[name].totalSales += it.totalPrice || (it.unitPrice ? it.unitPrice * (it.quantity || 1) : 0);
     });
   });
 
@@ -431,34 +444,31 @@ export function generateDailySummaryMessage(
     .slice(0, 3);
 
   const topItemsText = sortedItems.length > 0
-    ? sortedItems.map((item, idx) => `  ${idx + 1}. ${item[0]} (${item[1].qty} จาน)`).join('\n')
+    ? sortedItems.map((item, idx) => `  ${idx + 1}. ${item[0]} (${item[1].qty} รายการ)`).join('\n')
     : '  (ยังไม่มีรายการขายในวันนี้)';
 
   // Real low stock count
-  const lowStockCount = ingredients.filter(i => i.currentStock <= i.minStockAlert).length;
+  const lowStockCount = ingredients.filter(i => (i.currentStock || 0) <= (i.minStockAlert || 5)).length;
   const stockSummaryLine = lowStockCount > 0
     ? `⚠️ สถานะสต็อก: พบวัตถุดิบใกล้หมด ${lowStockCount} รายการ`
     : '✅ สถานะสต็อก: วัตถุดิบทุกรายการอยู่ในเกณฑ์ปกติ';
 
-  // Format channels cleanly (only show real channels)
-  const channelLines: string[] = [];
-  channelLines.push(`  • หน้าร้าน (POS): ฿${posTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${posOrders.length} บิล)`);
-  if (qrOrders.length > 0) {
-    channelLines.push(`  • สแกนสั่งโต๊ะ (QR): ฿${qrTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${qrOrders.length} บิล)`);
-  }
-  if (deliveryOrders.length > 0) {
-    channelLines.push(`  • เดลิเวอรี่ (Delivery): ฿${deliveryTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${deliveryOrders.length} บิล)`);
-  }
+  // Format channels cleanly (Clear & accurate sum matching total)
+  const channelLines: string[] = [
+    `  • หน้าร้าน (POS): ฿${posTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${posOrders.length} บิล)`,
+    `  • สแกนสั่งโต๊ะ (QR): ฿${qrTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${qrOrders.length} บิล)`,
+    `  • เดลิเวอรี่ (Delivery): ฿${deliveryTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${deliveryOrders.length} บิล)`,
+  ];
 
   // Format payments cleanly
   const paymentLines: string[] = [];
-  paymentLines.push(`  • เงินสด (Cash): ฿${cashTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`);
-  paymentLines.push(`  • สแกนโอน (PromptPay/QR): ฿${promptPayTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`);
-  if (creditOrders.length > 0) {
-    paymentLines.push(`  • บัตรเครดิต (Credit): ฿${creditTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`);
+  paymentLines.push(`  • เงินสด (Cash): ฿${cashTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${cashOrders.length} บิล)`);
+  paymentLines.push(`  • สแกนโอน (PromptPay/QR): ฿${promptPayTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${promptPayOrders.length} บิล)`);
+  if (creditOrders.length > 0 || creditTotal > 0) {
+    paymentLines.push(`  • บัตรเครดิต (Credit): ฿${creditTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${creditOrders.length} บิล)`);
   }
-  if (trueMoneyOrders.length > 0) {
-    paymentLines.push(`  • TrueMoney Wallet: ฿${trueMoneyTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`);
+  if (trueMoneyOrders.length > 0 || trueMoneyTotal > 0) {
+    paymentLines.push(`  • TrueMoney Wallet: ฿${trueMoneyTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${trueMoneyOrders.length} บิล)`);
   }
 
   return `📊 [${shopName}] - สรุปยอดขายประจำวัน
@@ -479,7 +489,7 @@ ${topItemsText}
 
 ${stockSummaryLine}
 ──────────────────────────────
-✅ สรุปยอดขายจากข้อมูลจริงเรียบร้อยแล้ว`;
+✅ สรุปยอดขายจากข้อมูลระบบ POS จริงเรียบร้อยแล้ว`;
 }
 
 export function generateNewOrderMessage(
