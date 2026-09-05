@@ -17,7 +17,7 @@ import {
   DocumentData
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Order, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome } from '../types';
+import { Order, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome } from '../types';
 
 export interface CentralBranchLiveStats {
   branchId: string;
@@ -443,11 +443,85 @@ export function subscribeToCentralBranches(
 }
 
 /**
+ * Helper to safely convert Firestore order document into a fully-hydrated Order
+ */
+export function docToOrder(docId: string, data: any): Order {
+  const items: CartItem[] = Array.isArray(data.items)
+    ? data.items.map((it: any, idx: number) => {
+        if (it.menuItem && it.cartItemId) {
+          return it as CartItem;
+        }
+        return {
+          cartItemId: it.cartItemId || `ci-${docId}-${idx}`,
+          menuItem: {
+            id: it.menuItemId || it.id || `item-${idx}`,
+            name: it.name || 'เมนูอาหาร',
+            nameEn: it.nameEn || '',
+            category: it.category || 'kaprao',
+            price: Number(it.unitPrice) || Number(it.price) || 0,
+            costPrice: Number(it.costPrice) || (Number(it.unitPrice || it.price || 0) * 0.35),
+            description: it.description || '',
+            image: it.image || '',
+            recipe: []
+          },
+          quantity: Number(it.quantity) || 1,
+          spiceLevel: it.spiceLevel || undefined,
+          proteinChoice: it.proteinChoice ? { name: it.proteinChoice, extraPrice: 0 } : undefined,
+          selectedAddOns: Array.isArray(it.selectedAddOns)
+            ? it.selectedAddOns.map((a: any, aIdx: number) =>
+                typeof a === 'string' ? { id: `addon-${aIdx}`, name: a, price: 0 } : a
+              )
+            : [],
+          specialNotes: it.specialNotes || '',
+          unitPrice: Number(it.unitPrice) || Number(it.price) || 0,
+          totalPrice: Number(it.totalPrice) || ((Number(it.unitPrice) || 0) * (Number(it.quantity) || 1))
+        };
+      })
+    : [];
+
+  const grandTotal = Number(data.grandTotal) || 0;
+  const subtotal = Number(data.subtotal) || grandTotal;
+
+  return {
+    id: data.id || docId,
+    orderNumber: data.orderNumber || `#${docId.slice(-6).toUpperCase()}`,
+    branchId: data.branchId || 'main-branch',
+    orderType: data.orderType || 'dine-in',
+    tableNumber: data.tableNumber || undefined,
+    items,
+    subtotal,
+    discountAmount: Number(data.discountAmount) || 0,
+    discountType: data.discountType || 'fixed',
+    discountNote: data.discountNote || '',
+    vatAmount: Number(data.vatAmount) || 0,
+    grandTotal,
+    paymentMethod: data.paymentMethod || 'cash',
+    tenderedAmount: Number(data.tenderedAmount) || grandTotal,
+    changeAmount: Number(data.changeAmount) || 0,
+    status: data.status || 'pending',
+    createdAt: data.createdAt || (data.updatedAt?.toDate?.() ? data.updatedAt.toDate().toISOString() : new Date().toISOString()),
+    updatedAt: data.updatedAt?.toDate?.() ? data.updatedAt.toDate().toISOString() : (data.updatedAt || data.createdAt || new Date().toISOString()),
+    completedAt: data.completedAt,
+    customerTaxInfo: data.customerTaxInfo,
+    isFullTaxInvoiceRequested: Boolean(data.isFullTaxInvoiceRequested),
+    isOfflineOrder: false,
+    isSynced: true,
+    syncedAt: data.syncedAt || new Date().toISOString(),
+    checksum: data.checksum || '',
+    cancelledBy: data.cancelledBy,
+    cancelReason: data.cancelReason,
+    cancelNote: data.cancelNote,
+    isQrOrder: Boolean(data.isQrOrder),
+    orderSource: data.orderSource || 'pos'
+  };
+}
+
+/**
  * Real-time listener for recent central sales orders
  */
 export function subscribeToRecentCentralOrders(
-  limitCount: number = 50,
-  onUpdate: (orders: Partial<Order>[]) => void,
+  limitCount: number = 300,
+  onUpdate: (orders: Order[]) => void,
   onError?: (err: Error) => void
 ): () => void {
   if (!dbInstance) return () => {};
@@ -459,27 +533,11 @@ export function subscribeToRecentCentralOrders(
     const unsubscribe = onSnapshot(
       q,
       snapshot => {
-        const orderList: Partial<Order>[] = [];
+        const orderList: Order[] = [];
         snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          orderList.push({
-            id: docSnap.id,
-            orderNumber: data.orderNumber,
-            branchId: data.branchId,
-            orderType: data.orderType,
-            tableNumber: data.tableNumber,
-            subtotal: data.subtotal,
-            discountAmount: data.discountAmount,
-            vatAmount: data.vatAmount,
-            grandTotal: data.grandTotal,
-            paymentMethod: data.paymentMethod,
-            status: data.status,
-            createdAt: data.createdAt,
-            syncedAt: data.syncedAt,
-            isOfflineOrder: false,
-            isSynced: true
-          });
+          orderList.push(docToOrder(docSnap.id, docSnap.data()));
         });
+        orderList.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
         onUpdate(orderList);
       },
       err => {
@@ -491,6 +549,27 @@ export function subscribeToRecentCentralOrders(
   } catch (err) {
     console.error('[Firebase Service] ❌ Failed to subscribe to orders:', err);
     return () => {};
+  }
+}
+
+/**
+ * Manually fetch recent sales orders from Firestore
+ */
+export async function fetchCentralOrdersFromFirestore(limitCount: number = 500): Promise<Order[]> {
+  if (!dbInstance || !navigator.onLine) return [];
+  try {
+    const ordersCol = collection(dbInstance, 'orders');
+    const q = query(ordersCol, limit(limitCount));
+    const snap = await getDocs(q);
+    const list: Order[] = [];
+    snap.forEach(docSnap => {
+      list.push(docToOrder(docSnap.id, docSnap.data()));
+    });
+    list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    return list;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to fetch orders from Firestore:', err);
+    return [];
   }
 }
 

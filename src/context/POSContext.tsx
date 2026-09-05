@@ -50,7 +50,9 @@ import {
   syncIncomeToFirestore,
   deleteIncomeFromFirestore,
   subscribeToCentralExpenses,
-  subscribeToCentralIncomes
+  subscribeToCentralIncomes,
+  subscribeToRecentCentralOrders,
+  fetchCentralOrdersFromFirestore
 } from '../services/firebaseService';
 import {
   getStoredTriggers,
@@ -299,6 +301,7 @@ interface POSContextType {
   firebaseSyncState: FirebaseSyncState;
   centralBranchesLive: Record<string, CentralBranchLiveStats>;
   pushAllBranchDataToCloud: () => Promise<boolean>;
+  pullCloudOrders: () => Promise<{ count: number; success: boolean }>;
 
   // Real-Time Notification Service
   sendDailySummaryNotification: (channel?: 'telegram' | 'line' | 'both') => Promise<{ success: boolean; summary: string }>;
@@ -685,9 +688,38 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, [effectiveOffline]);
 
-  // Real-time listener for central expenses and incomes from Firestore
+  // Real-time listener for central orders, expenses, and incomes from Firestore
   useEffect(() => {
     if (!isFirebaseAvailable() || effectiveOffline) return;
+
+    const unsubOrders = subscribeToRecentCentralOrders(300, (centralOrderList) => {
+      if (!centralOrderList || centralOrderList.length === 0) return;
+      setOrders(prev => {
+        const localMap = new Map<string, Order>();
+        prev.forEach(o => { if (o && o.id) localMap.set(o.id, o); });
+        let hasChanges = false;
+        centralOrderList.forEach(co => {
+          if (!localMap.has(co.id)) {
+            localMap.set(co.id, co);
+            hasChanges = true;
+          } else {
+            const existing = localMap.get(co.id)!;
+            if (!existing.isSynced && co.isSynced) {
+              localMap.set(co.id, { ...existing, ...co, isSynced: true });
+              hasChanges = true;
+            }
+          }
+        });
+        if (!hasChanges) return prev;
+        const merged = Array.from(localMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        try {
+          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(merged));
+        } catch (e) {
+          console.warn('[POS Real-Time Sync] Failed to cache synced orders', e);
+        }
+        return merged;
+      });
+    });
 
     const unsubExpenses = subscribeToCentralExpenses(100, (centralExpList) => {
       if (!centralExpList || centralExpList.length === 0) return;
@@ -734,6 +766,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
 
     return () => {
+      unsubOrders();
       unsubExpenses();
       unsubIncomes();
     };
@@ -918,6 +951,46 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const pullCloudOrders = useCallback(async (): Promise<{ count: number; success: boolean }> => {
+    if (!isFirebaseAvailable() || effectiveOffline) {
+      return { count: 0, success: false };
+    }
+    try {
+      const cloudOrders = await fetchCentralOrdersFromFirestore(500);
+      if (!cloudOrders || cloudOrders.length === 0) {
+        return { count: 0, success: true };
+      }
+      let newOrUpdatedCount = 0;
+      setOrders(prev => {
+        const orderMap = new Map<string, Order>();
+        prev.forEach(o => { if (o && o.id) orderMap.set(o.id, o); });
+        cloudOrders.forEach(co => {
+          if (!orderMap.has(co.id)) {
+            orderMap.set(co.id, co);
+            newOrUpdatedCount++;
+          } else {
+            const existing = orderMap.get(co.id)!;
+            if (!existing.isSynced && co.isSynced) {
+              orderMap.set(co.id, { ...existing, ...co, isSynced: true });
+              newOrUpdatedCount++;
+            }
+          }
+        });
+        const merged = Array.from(orderMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        try {
+          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(merged));
+        } catch (e) {
+          console.warn('[POS Cloud Pull] Failed to cache POS_ORDERS_DATA', e);
+        }
+        return merged;
+      });
+      return { count: newOrUpdatedCount, success: true };
+    } catch (err) {
+      console.error('[POS Cloud Pull] Error pulling cloud orders:', err);
+      return { count: 0, success: false };
+    }
+  }, [effectiveOffline]);
+
   // Periodic Background Auto Sync Effect based on settings
   useEffect(() => {
     const isAutoSyncEnabled = settings.autoSyncEnabled !== false;
@@ -949,11 +1022,25 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           let loadedMenuItemsCount = 0;
           let loadedShiftsCount = 0;
 
-          if (parsed.orders && Array.isArray(parsed.orders)) {
-            const validOrders = parsed.orders.filter((o: any) => o && typeof o === 'object' && o.id);
-            setOrders(validOrders);
-            loadedOrdersCount = validOrders.length;
+          let loadedOrders: Order[] = (parsed.orders && Array.isArray(parsed.orders))
+            ? parsed.orders.filter((o: any) => o && typeof o === 'object' && o.id)
+            : [];
+          try {
+            const sepOrders = localStorage.getItem('POS_ORDERS_DATA');
+            if (sepOrders) {
+              const parsedSep = JSON.parse(sepOrders);
+              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                const ordMap = new Map<string, Order>();
+                loadedOrders.forEach(o => { if (o && o.id) ordMap.set(o.id, o); });
+                parsedSep.forEach((o: any) => { if (o && o.id) ordMap.set(o.id, o); });
+                loadedOrders = Array.from(ordMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+              }
+            }
+          } catch (e) {
+            console.warn('[POS Storage Sync] Failed to merge separate POS_ORDERS_DATA', e);
           }
+          setOrders(loadedOrders);
+          loadedOrdersCount = loadedOrders.length;
           let loadedCats = DEFAULT_CATEGORIES;
           if (parsed.categories && Array.isArray(parsed.categories)) {
             loadedCats = parsed.categories;
@@ -1074,6 +1161,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
       } else {
         console.log('[POS Storage Sync] ℹ️ No prior LocalStorage state found. Initializing new POS session.');
+        try {
+          const sepOrders = localStorage.getItem('POS_ORDERS_DATA');
+          if (sepOrders) {
+            const parsedSep = JSON.parse(sepOrders);
+            if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+              setOrders(parsedSep);
+              console.log(`[POS Storage Sync] 🛡️ Recovered ${parsedSep.length} orders from resilient POS_ORDERS_DATA backup.`);
+            }
+          }
+        } catch (e) {
+          console.warn('[POS Storage Sync] Failed to recover POS_ORDERS_DATA on empty session', e);
+        }
       }
     } catch (err) {
       console.error('[POS Storage Sync] ❌ Failed to load state from LocalStorage:', err);
@@ -1220,6 +1319,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         };
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compactedState));
         console.log('[POS Storage Sync] ✅ Successfully recovered and saved state after image compaction.');
+      }
+      try {
+        localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(orders));
+      } catch (backupErr) {
+        console.warn('[POS Storage Sync] ⚠️ Failed to save POS_ORDERS_DATA backup:', backupErr);
       }
       const pendingSync = orders.filter(o => o.isOfflineOrder && !o.isSynced).length;
       console.log(`[POS Storage Sync] 💾 Persisted state & order draft (${cart.length} items) to LocalStorage at ${stateToSave.savedAt}. Orders: ${orders.length} (${pendingSync} pending sync), Cash Shifts: ${cashShifts.length}.`);
@@ -2642,6 +2746,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         firebaseSyncState,
         centralBranchesLive,
         pushAllBranchDataToCloud,
+        pullCloudOrders,
         sendDailySummaryNotification
       }}
     >

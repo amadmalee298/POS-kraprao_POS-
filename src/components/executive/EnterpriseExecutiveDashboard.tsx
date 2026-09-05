@@ -42,10 +42,12 @@ import {
   Gift,
   Trash2,
   Users,
-  PieChart as PieChartIcon
+  PieChart as PieChartIcon,
+  CloudDownload
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { MenuItem } from '../../types';
+import { getLocalDateStr } from '../../utils/dateUtils';
 import { exportToPDF } from '../../utils/exportDocument';
 
 interface EnterpriseExecutiveDashboardProps {
@@ -61,16 +63,17 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     menuItems,
     currentBranch,
     updateMenuItem,
-    sendDailySummaryNotification
+    sendDailySummaryNotification,
+    pullCloudOrders
   } = usePOS();
 
-  // Date Presets & Filter States
-  const todayStr = new Date().toISOString().split('T')[0];
+  // Date Presets & Filter States (Using local Thailand timezone)
+  const todayStr = useMemo(() => getLocalDateStr(new Date()), []);
   const [datePreset, setDatePreset] = useState<'today' | '7days' | '30days' | 'this_month' | 'this_year' | 'custom'>('this_month');
   const [startDate, setStartDate] = useState<string>(() => {
     const d = new Date();
     d.setDate(1); // First day of current month
-    return d.toISOString().split('T')[0];
+    return getLocalDateStr(d);
   });
   const [endDate, setEndDate] = useState<string>(todayStr);
   const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
@@ -93,11 +96,28 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   const [telegramSending, setTelegramSending] = useState<boolean>(false);
   const [telegramSentSuccess, setTelegramSentSuccess] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isPullingCloud, setIsPullingCloud] = useState<boolean>(false);
   const [liveLastUpdated, setLiveLastUpdated] = useState<string>(new Date().toLocaleTimeString('th-TH'));
 
-  // Refresh
-  const handleRefresh = () => {
+  // Refresh with Cloud Sync
+  const handleRefresh = async () => {
     setLiveLastUpdated(new Date().toLocaleTimeString('th-TH'));
+    if (pullCloudOrders) {
+      setIsPullingCloud(true);
+      try {
+        const res = await pullCloudOrders();
+        if (res.count > 0) {
+          setActionNotification(`ดึงข้อมูลยอดขายจาก Cloud สำเร็จ (+${res.count} รายการ)`);
+        } else {
+          setActionNotification('ข้อมูลยอดขายเป็นปัจจุบันแล้ว');
+        }
+      } catch (e) {
+        console.warn('Pull cloud orders error:', e);
+      } finally {
+        setIsPullingCloud(false);
+        setTimeout(() => setActionNotification(null), 3500);
+      }
+    }
   };
 
   // Date Preset Switcher
@@ -128,16 +148,16 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
       return;
     }
 
-    setStartDate(s.toISOString().split('T')[0]);
-    setEndDate(e.toISOString().split('T')[0]);
+    setStartDate(getLocalDateStr(s));
+    setEndDate(getLocalDateStr(e));
   };
 
   // -------------------------------------------------------------
-  // Dynamic Real Orders & Expenses Filtering
+  // Dynamic Real Orders & Expenses Filtering (Local Timezone Aware)
   // -------------------------------------------------------------
   const filteredOrders = useMemo(() => {
     return orders.filter(o => {
-      const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+      const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
       if (startDate && oDate && oDate < startDate) return false;
       if (endDate && oDate && oDate > endDate) return false;
       if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
@@ -147,7 +167,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter(e => {
-      const eDate = e.date ? e.date.split('T')[0] : '';
+      const eDate = e.date ? getLocalDateStr(e.date) : '';
       if (startDate && eDate && eDate < startDate) return false;
       if (endDate && eDate && eDate > endDate) return false;
       if (selectedBranchId !== 'all' && e.branchId && e.branchId !== selectedBranchId) return false;
@@ -157,7 +177,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
   const todayOrders = useMemo(() => {
     return orders.filter(o => {
-      const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+      const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
       if (oDate !== todayStr) return false;
       if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
       return o.status !== 'cancelled';
@@ -167,12 +187,12 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   const yesterdayStr = useMemo(() => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
-    return d.toISOString().split('T')[0];
+    return getLocalDateStr(d);
   }, []);
 
   const yesterdayOrders = useMemo(() => {
     return orders.filter(o => {
-      const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+      const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
       if (oDate !== yesterdayStr) return false;
       if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
       return o.status !== 'cancelled';
@@ -181,7 +201,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
   const todayExpensesList = useMemo(() => {
     return expenses.filter(e => {
-      const eDate = e.date ? e.date.split('T')[0] : '';
+      const eDate = e.date ? getLocalDateStr(e.date) : '';
       if (eDate !== todayStr) return false;
       if (selectedBranchId !== 'all' && e.branchId && e.branchId !== selectedBranchId) return false;
       return true;
@@ -267,10 +287,10 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
       for (let i = 6; i >= 0; i--) {
         const d = new Date();
         d.setDate(d.getDate() - i);
-        const dStr = d.toISOString().split('T')[0];
+        const dStr = getLocalDateStr(d);
         const dayName = d.toLocaleDateString('th-TH', { weekday: 'short' });
         const dayOrders = orders.filter(o => {
-          const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+          const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
           if (oDate !== dStr) return false;
           if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
           return o.status !== 'cancelled';
@@ -294,11 +314,11 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         endW.setDate(endW.getDate() - (w * 7));
         const startW = new Date(endW);
         startW.setDate(startW.getDate() - 6);
-        const sStr = startW.toISOString().split('T')[0];
-        const eStr = endW.toISOString().split('T')[0];
+        const sStr = getLocalDateStr(startW);
+        const eStr = getLocalDateStr(endW);
 
         const wOrders = orders.filter(o => {
-          const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+          const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
           if (oDate < sStr || oDate > eStr) return false;
           if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
           return o.status !== 'cancelled';
@@ -322,7 +342,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         const mStr = String(mIdx + 1).padStart(2, '0');
         const prefix = `${currentYear}-${mStr}`;
         const mOrders = orders.filter(o => {
-          const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+          const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
           if (!oDate.startsWith(prefix)) return false;
           if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
           return o.status !== 'cancelled';
@@ -344,7 +364,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
       return years.map(yr => {
         const yrStr = String(yr);
         const yrOrders = orders.filter(o => {
-          const oDate = o.createdAt ? o.createdAt.split('T')[0] : '';
+          const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
           if (!oDate.startsWith(yrStr)) return false;
           if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
           return o.status !== 'cancelled';
@@ -888,10 +908,25 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
             </span>
             <span className="text-slate-300 font-medium">เรียลไทม์ ({liveLastUpdated})</span>
-            <button onClick={handleRefresh} className="p-1 hover:text-amber-400 transition" title="รีเฟรชข้อมูล">
+            <button 
+              onClick={handleRefresh} 
+              disabled={isPullingCloud}
+              className={`p-1 hover:text-amber-400 transition ${isPullingCloud ? 'animate-spin text-amber-400' : ''}`} 
+              title="ดึงยอดขายจาก Cloud / รีเฟรชข้อมูล"
+            >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          <button
+            onClick={handleRefresh}
+            disabled={isPullingCloud}
+            className="px-3 py-1.5 bg-amber-950/80 hover:bg-amber-900 border border-amber-500/40 text-amber-300 font-bold text-xs rounded-2xl transition flex items-center space-x-1.5 shadow-sm active:scale-95 disabled:opacity-50"
+            title="ดึงข้อมูลคำสั่งซื้อทั้งหมดจาก Firebase Cloud"
+          >
+            <CloudDownload className={`w-3.5 h-3.5 ${isPullingCloud ? 'animate-bounce' : ''}`} />
+            <span>{isPullingCloud ? 'กำลังดึงยอด...' : 'ดึงยอดจาก Cloud'}</span>
+          </button>
 
           <button
             onClick={() => setIsTelegramModalOpen(true)}
