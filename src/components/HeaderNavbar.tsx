@@ -80,7 +80,7 @@ export const HeaderNavbar: React.FC = () => {
 
   return (
     <>
-      <header className="bg-[#0d0704] border-b border-[#24150c] text-stone-100 sticky top-0 z-40 shadow-xl">
+      <header className="bg-[#0d0704] border-b border-[#24150c] text-stone-100 sticky top-0 z-40 shadow-xl pt-[env(safe-area-inset-top)]">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
           {/* Top Row: Brand & System Controls */}
           <div className="flex items-center justify-between h-14 sm:h-16">

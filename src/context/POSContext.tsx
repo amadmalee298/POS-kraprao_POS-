@@ -53,6 +53,15 @@ import {
   subscribeToCentralIncomes
 } from '../services/firebaseService';
 import {
+  getStoredTriggers,
+  getStoredRules,
+  dispatchNotification,
+  generateDailySummaryMessage,
+  generateNewOrderMessage,
+  generateVoidOrderMessage,
+  generateLowStockMessage
+} from '../services/notificationService';
+import {
   INITIAL_BRANCHES,
   INITIAL_USERS,
   INITIAL_INGREDIENTS,
@@ -290,6 +299,9 @@ interface POSContextType {
   firebaseSyncState: FirebaseSyncState;
   centralBranchesLive: Record<string, CentralBranchLiveStats>;
   pushAllBranchDataToCloud: () => Promise<boolean>;
+
+  // Real-Time Notification Service
+  sendDailySummaryNotification: (channel?: 'telegram' | 'line' | 'both') => Promise<{ success: boolean; summary: string }>;
 }
 
 const POSContext = createContext<POSContextType | undefined>(undefined);
@@ -726,6 +738,40 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       unsubIncomes();
     };
   }, [effectiveOffline]);
+
+  // Automated Daily Sales Summary Notification at Scheduled Time (e.g. 22:00)
+  useEffect(() => {
+    const checkDailySummarySchedule = () => {
+      try {
+        const triggers = getStoredTriggers();
+        if (!triggers.dailySummary) return;
+
+        const rules = getStoredRules();
+        const summaryTime = rules.dailySummaryTime || '22:00';
+
+        const now = new Date();
+        const currentHours = String(now.getHours()).padStart(2, '0');
+        const currentMinutes = String(now.getMinutes()).padStart(2, '0');
+        const currentTimeStr = `${currentHours}:${currentMinutes}`;
+        const todayStr = now.toISOString().split('T')[0];
+
+        const lastSentDate = localStorage.getItem('kaprao_last_daily_summary_date');
+        // If current time reached summary time and hasn't been sent yet today
+        if (currentTimeStr >= summaryTime && lastSentDate !== todayStr) {
+          localStorage.setItem('kaprao_last_daily_summary_date', todayStr);
+          const msg = generateDailySummaryMessage(orders, ingredients, currentBranch, settings);
+          dispatchNotification('สรุปยอดขายประจำวันอัตโนมัติ (Daily Summary)', msg, { force: true }).catch(console.error);
+        }
+      } catch (err) {
+        console.warn('[Notification Schedule] Check error:', err);
+      }
+    };
+
+    // Run initial check and then every 30 seconds
+    checkDailySummarySchedule();
+    const intervalId = setInterval(checkDailySummarySchedule, 30000);
+    return () => clearInterval(intervalId);
+  }, [orders, ingredients, currentBranch, settings]);
 
   const syncOfflineQueue = async () => {
     const nowIso = new Date().toISOString();
@@ -1568,6 +1614,42 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       syncInventoryToFirestore(ingredients, currentBranch);
     }
 
+    // Real-Time Notification Trigger: New Order & Low Stock
+    try {
+      const triggers = getStoredTriggers();
+      const rules = getStoredRules();
+
+      // 1. New Order Notification
+      if (triggers.newOrder && (newOrder.grandTotal || 0) >= (rules.minOrderAmount || 0)) {
+        const msg = generateNewOrderMessage(newOrder, currentBranch, settings);
+        dispatchNotification(`ออเดอร์ใหม่ (${newOrder.orderNumber})`, msg).catch(console.error);
+      }
+
+      // 2. Low Stock Detection Notification (debounced 15 mins)
+      if (triggers.lowStock) {
+        setTimeout(() => {
+          setIngredients(currIngredients => {
+            const lowItems = currIngredients.filter(i => {
+              if (rules.onlyCriticalStock) {
+                return i.currentStock <= (i.minStockAlert * 0.2);
+              }
+              return i.currentStock <= i.minStockAlert;
+            });
+            const lastAlertTime = parseInt(localStorage.getItem('kaprao_last_low_stock_alert_time') || '0', 10);
+            const nowMs = Date.now();
+            if (lowItems.length > 0 && (nowMs - lastAlertTime > 15 * 60 * 1000)) {
+              localStorage.setItem('kaprao_last_low_stock_alert_time', nowMs.toString());
+              const msg = generateLowStockMessage(lowItems, currentBranch, rules.onlyCriticalStock);
+              dispatchNotification('เตือนวัตถุดิบใกล้หมดสต็อก', msg).catch(console.error);
+            }
+            return currIngredients;
+          });
+        }, 150);
+      }
+    } catch (err) {
+      console.warn('[POS Notification] Order trigger error:', err);
+    }
+
     return newOrder;
   };
 
@@ -1676,6 +1758,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       syncInventoryToFirestore(ingredients, currentBranch);
     }
 
+    // Real-Time Notification Trigger: QR / Direct Order
+    try {
+      const triggers = getStoredTriggers();
+      const rules = getStoredRules();
+      if (triggers.newOrder && (newOrder.grandTotal || 0) >= (rules.minOrderAmount || 0)) {
+        const msg = generateNewOrderMessage(newOrder, currentBranch, settings);
+        dispatchNotification(`ออเดอร์ใหม่ QR (${newOrder.orderNumber})`, msg).catch(console.error);
+      }
+    } catch (err) {
+      console.warn('[POS Notification] Direct order trigger error:', err);
+    }
+
     return newOrder;
   };
 
@@ -1736,6 +1830,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return ord;
       })
     );
+
+    // Real-Time Notification Trigger: Void Order Alert
+    try {
+      const triggers = getStoredTriggers();
+      const rules = getStoredRules();
+      const targetOrder = orders.find(o => o.id === orderId);
+      if (triggers.voidOrder && targetOrder && (targetOrder.grandTotal || 0) >= (rules.minVoidAmount || 0)) {
+        const msg = generateVoidOrderMessage(targetOrder, reason, note, operator.userName, currentBranch);
+        dispatchNotification(`ยกเลิกบิล (${targetOrder.orderNumber})`, msg).catch(console.error);
+      }
+    } catch (err) {
+      console.warn('[POS Notification] Void order trigger error:', err);
+    }
   };
 
   const updateOrderTaxInfo = (orderId: string, taxInfo: CustomerTaxInfo) => {
@@ -2396,6 +2503,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.removeItem(LOCAL_STORAGE_KEY);
   };
 
+  const sendDailySummaryNotification = async (channel: 'telegram' | 'line' | 'both' = 'both') => {
+    const msg = generateDailySummaryMessage(orders, ingredients, currentBranch, settings);
+    const res = await dispatchNotification('สรุปยอดขายประจำวัน (Daily Sales Summary)', msg, {
+      force: true,
+      channelOverride: channel,
+    });
+    return { success: res.success, summary: res.summary };
+  };
+
   return (
     <POSContext.Provider
       value={{
@@ -2525,7 +2641,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         syncOfflineQueue,
         firebaseSyncState,
         centralBranchesLive,
-        pushAllBranchDataToCloud
+        pushAllBranchDataToCloud,
+        sendDailySummaryNotification
       }}
     >
       {children}

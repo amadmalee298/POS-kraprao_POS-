@@ -228,7 +228,7 @@ export const POSView: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col md:flex-row h-[calc(100vh-6.5rem)] bg-[#0d0704] text-amber-50 font-sans selection:bg-orange-500 selection:text-white overflow-hidden">
+    <div className="flex flex-col md:flex-row h-[calc(100dvh-3.5rem)] sm:h-[calc(100dvh-4rem)] bg-[#0d0704] text-amber-50 font-sans selection:bg-orange-500 selection:text-white overflow-hidden">
       
       {/* LEFT PANEL: MENU & CATEGORIES (Strict 2-Column Grid on both iPhone and iPad) */}
       <div className={`flex-1 ${mobileTab === 'menu' ? 'flex' : 'hidden'} md:flex flex-col h-full overflow-hidden border-r border-[#22140c]`}>
@@ -318,10 +318,10 @@ export const POSView: React.FC = () => {
           </div>
 
           {/* Category Filter Pills */}
-          <div className="flex items-center space-x-2 overflow-x-auto pb-1 no-scrollbar">
+          <div className="flex items-center space-x-2 overflow-x-auto pb-1 no-scrollbar touch-pan-x overscroll-x-contain">
             <button
               onClick={() => setSelectedCategory('all')}
-              className={`px-4 py-1.5 rounded-xl text-xs font-black whitespace-nowrap transition cursor-pointer ${
+              className={`px-4 py-1.5 rounded-xl text-xs font-black whitespace-nowrap transition cursor-pointer shrink-0 ${
                 selectedCategory === 'all'
                   ? 'bg-[#ff6600] text-black shadow-md shadow-orange-950/40'
                   : 'bg-[#180f0a] text-stone-300 hover:text-white hover:bg-[#22160f] border border-[#26160e]'
@@ -337,7 +337,7 @@ export const POSView: React.FC = () => {
                 <button
                   key={cat.id}
                   onClick={() => setSelectedCategory(cat.id)}
-                  className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-black whitespace-nowrap transition cursor-pointer ${
+                  className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-black whitespace-nowrap transition cursor-pointer shrink-0 ${
                     isSelected
                       ? 'bg-[#ff6600] text-black shadow-md shadow-orange-950/40'
                       : 'bg-[#180f0a] text-stone-300 hover:text-white hover:bg-[#22160f] border border-[#26160e]'
@@ -356,7 +356,7 @@ export const POSView: React.FC = () => {
         </div>
 
         {/* Menu Grid (Strict 2 Columns, matching user screenshot) */}
-        <div className="flex-1 p-2.5 sm:p-4 overflow-y-auto pb-24 md:pb-4">
+        <div className="flex-1 p-2.5 sm:p-4 overflow-y-auto pb-28 sm:pb-32 md:pb-4">
           <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5">
             {filteredMenuItems.map(item => (
               <div
@@ -431,7 +431,7 @@ export const POSView: React.FC = () => {
         </div>
 
         {/* Mobile Sticky Floating Bar (for iPhone when viewing menu) */}
-        <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 p-2.5 bg-[#120a06]/95 border-t border-[#26160e] backdrop-blur-md flex items-center justify-between gap-3 shadow-2xl">
+        <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 p-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-[#120a06]/95 border-t border-[#26160e] backdrop-blur-md flex items-center justify-between gap-3 shadow-2xl">
           <div className="flex items-center space-x-2 pl-1">
             <div className="relative">
               <ShoppingBag className="w-5 h-5 text-orange-400" />
@@ -619,26 +619,26 @@ export const POSView: React.FC = () => {
                   </div>
 
                   <div className="flex items-center justify-between pt-1 border-t border-[#1d1109]">
-                    <div className="flex items-center space-x-1.5 bg-[#180f0a] border border-[#2a1a11] rounded-lg p-0.5">
+                    <div className="flex items-center space-x-1.5 bg-[#180f0a] border border-[#2a1a11] rounded-xl p-0.5">
                       <button
                         onClick={() => updateCartQuantity(item.cartItemId, -1)}
-                        className="p-1 text-stone-300 hover:text-white hover:bg-[#25170f] rounded active:scale-95"
+                        className="w-7 h-7 flex items-center justify-center text-stone-300 hover:text-white hover:bg-[#25170f] rounded-lg active:scale-90 transition"
                       >
-                        <Minus className="w-3 h-3" />
+                        <Minus className="w-3.5 h-3.5" />
                       </button>
                       <button
                         type="button"
                         onClick={() => setActiveNumpadItem(item)}
-                        className="px-2 py-0.5 text-xs font-mono font-black text-orange-400 hover:bg-[#25170f] rounded"
+                        className="min-w-[24px] px-2 py-1 text-xs font-mono font-black text-orange-400 hover:bg-[#25170f] rounded-lg text-center"
                         title="แตะเพื่อกรอกจำนวน"
                       >
                         {item.quantity}
                       </button>
                       <button
                         onClick={() => updateCartQuantity(item.cartItemId, 1)}
-                        className="p-1 text-stone-300 hover:text-white hover:bg-[#25170f] rounded active:scale-95"
+                        className="w-7 h-7 flex items-center justify-center text-stone-300 hover:text-white hover:bg-[#25170f] rounded-lg active:scale-90 transition"
                       >
-                        <Plus className="w-3 h-3" />
+                        <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
@@ -653,7 +653,7 @@ export const POSView: React.FC = () => {
         </div>
 
         {/* Cart Calculations & Payment Section (Bottom) */}
-        <div className="p-3.5 bg-[#0d0704] border-t border-[#24150c] space-y-2.5">
+        <div className="p-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] bg-[#0d0704] border-t border-[#24150c] space-y-2.5">
           
           {/* Subtotal line */}
           <div className="flex items-center justify-between text-xs text-stone-300 font-medium">

@@ -88,6 +88,23 @@ import {
   Landmark
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
+import {
+  getStoredCredentials,
+  saveStoredCredentials,
+  getStoredTriggers,
+  saveStoredTriggers,
+  getStoredRules,
+  saveStoredRules,
+  getStoredLogs,
+  dispatchNotification,
+  generateDailySummaryMessage,
+  generateNewOrderMessage,
+  generateVoidOrderMessage,
+  generateLowStockMessage,
+  generateKdsDelayMessage,
+  NotificationTriggerRules,
+  NotificationTriggers
+} from '../services/notificationService';
 import { MenuItem, AddOnOption, RecipeIngredient, MenuCategory, CartItem, SpiceLevel, ProteinChoice, Order, CustomerTaxInfo, PaymentMethod, QrPaymentOption } from '../types';
 import { exportToPDF, exportToPNG, printElement } from '../utils/exportDocument';
 import { AIMenuEngineeringPanel } from './inventory/AIMenuEngineeringPanel';
@@ -7240,41 +7257,27 @@ export const AnalyticsView: React.FC = ExecutiveDashboardView;
 export const LineNotifyView: React.FC = () => {
   const { orders, ingredients, menuItems, settings, currentBranch } = usePOS();
 
-  // State for Tokens and Settings
-  const [lineToken, setLineToken] = useState('ln_live_83920193847291039');
-  const [telegramToken, setTelegramToken] = useState('bot68392019:AAHk98231_KapraoBot');
-  const [telegramChatId, setTelegramChatId] = useState('-1001928374650');
+  // State for Tokens and Settings (Initialized from Persistent Storage)
+  const initialCreds = getStoredCredentials();
+  const [lineToken, setLineToken] = useState(initialCreds.lineToken);
+  const [telegramToken, setTelegramToken] = useState(initialCreds.telegramToken);
+  const [telegramChatId, setTelegramChatId] = useState(initialCreds.telegramChatId);
   const [tokenSavedToast, setTokenSavedToast] = useState<string | null>(null);
   const [isSendingChannel, setIsSendingChannel] = useState<'line' | 'telegram' | null>(null);
 
-  useEffect(() => {
-    const savedTelegramToken = localStorage.getItem('kaprao_telegram_token');
-    const savedTelegramChatId = localStorage.getItem('kaprao_telegram_chat_id');
-    const savedLineToken = localStorage.getItem('kaprao_line_token');
+  // Enabled Notification Triggers (Initialized from Persistent Storage)
+  const [triggers, setTriggers] = useState<NotificationTriggers>(() => getStoredTriggers());
 
-    if (savedTelegramToken) setTelegramToken(savedTelegramToken);
-    if (savedTelegramChatId) setTelegramChatId(savedTelegramChatId);
-    if (savedLineToken) setLineToken(savedLineToken);
-  }, []);
-
-  // Enabled Notification Triggers
-  const [triggers, setTriggers] = useState({
-    dailySummary: true,
-    lowStock: true,
-    voidOrder: true,
-    newOrder: true,
-    kdsDelay: false,
-  });
-
-  // Manager Trigger Rules Configuration State
-  const [minOrderAmount, setMinOrderAmount] = useState<number>(300);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>(['all']);
-  const [minVoidAmount, setMinVoidAmount] = useState<number>(100);
-  const [onlyCriticalStock, setOnlyCriticalStock] = useState<boolean>(false);
-  const [quietHoursEnabled, setQuietHoursEnabled] = useState<boolean>(false);
-  const [quietHoursStart, setQuietHoursStart] = useState<string>('00:00');
-  const [quietHoursEnd, setQuietHoursEnd] = useState<string>('06:00');
-  const [dailySummaryTime, setDailySummaryTime] = useState<string>('22:00');
+  // Manager Trigger Rules Configuration State (Initialized from Persistent Storage)
+  const initialRules = getStoredRules();
+  const [minOrderAmount, setMinOrderAmount] = useState<number>(initialRules.minOrderAmount);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(initialRules.selectedCategories);
+  const [minVoidAmount, setMinVoidAmount] = useState<number>(initialRules.minVoidAmount);
+  const [onlyCriticalStock, setOnlyCriticalStock] = useState<boolean>(initialRules.onlyCriticalStock);
+  const [quietHoursEnabled, setQuietHoursEnabled] = useState<boolean>(initialRules.quietHoursEnabled);
+  const [quietHoursStart, setQuietHoursStart] = useState<string>(initialRules.quietHoursStart);
+  const [quietHoursEnd, setQuietHoursEnd] = useState<string>(initialRules.quietHoursEnd);
+  const [dailySummaryTime, setDailySummaryTime] = useState<string>(initialRules.dailySummaryTime);
   const [rulesSavedToast, setRulesSavedToast] = useState<string | null>(null);
 
   // Available categories derived from menu items or default fallback
@@ -7312,186 +7315,86 @@ export const LineNotifyView: React.FC = () => {
   const [testToast, setTestToast] = useState<string | null>(null);
   const [copiedSuccess, setCopiedSuccess] = useState(false);
 
-  // Notification Logs History
-  const [logs, setLogs] = useState([
-    {
-      id: 'log-1',
-      time: '22:00:05',
-      date: 'วันนี้',
-      channel: 'LINE',
-      event: 'สรุปยอดขายประจำวัน (Daily Summary)',
-      status: 'ส่งสำเร็จ (200 OK)',
-      recipient: 'กลุ่มผู้บริหารครัวกะเพรา'
-    },
-    {
-      id: 'log-2',
-      time: '18:42:10',
-      date: 'วันนี้',
-      channel: 'Telegram',
-      event: 'ออเดอร์ใหม่เข้า (QR Table 05)',
-      status: 'ส่งสำเร็จ (200 OK)',
-      recipient: '@KapraoBot Channel'
-    },
-    {
-      id: 'log-3',
-      time: '14:15:30',
-      date: 'วันนี้',
-      channel: 'LINE',
-      event: 'เตือนวัตถุดิบใกล้หมด (Low Stock Alert)',
-      status: 'ส่งสำเร็จ (200 OK)',
-      recipient: 'กลุ่มผู้บริหารครัวกะเพรา'
-    },
-    {
-      id: 'log-4',
-      time: '12:05:12',
-      date: 'วันนี้',
-      channel: 'LINE',
-      event: 'เตือนยกเลิกบิล (Void Order Alert)',
-      status: 'ส่งสำเร็จ (200 OK)',
-      recipient: 'กลุ่มผู้บริหารครัวกะเพรา'
-    }
-  ]);
+  // Notification Logs History (Initialized from Persistent Storage)
+  const [logs, setLogs] = useState(() => getStoredLogs());
 
   // Save Token Handler
   const handleSaveTokens = (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem('kaprao_telegram_token', telegramToken);
-    localStorage.setItem('kaprao_telegram_chat_id', telegramChatId);
-    localStorage.setItem('kaprao_line_token', lineToken);
+    saveStoredCredentials({
+      telegramToken: telegramToken.trim(),
+      telegramChatId: telegramChatId.trim(),
+      lineToken: lineToken.trim()
+    });
     setTokenSavedToast('บันทึกการตั้งค่า LINE Token & Telegram Bot เรียบร้อยแล้ว!');
     setTimeout(() => setTokenSavedToast(null), 3500);
   };
 
-  // Toggle trigger handler
-  const toggleTrigger = (key: keyof typeof triggers) => {
-    setTriggers(prev => ({ ...prev, [key]: !prev[key] }));
+  // Toggle trigger handler with persistence
+  const toggleTrigger = (key: keyof NotificationTriggers) => {
+    setTriggers(prev => {
+      const updated = { ...prev, [key]: !prev[key] };
+      saveStoredTriggers(updated);
+      return updated;
+    });
   };
-
-  // Compute live POS store metrics for template formatting
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayOrders = orders.filter(o => {
-    const oDate = new Date(o.createdAt).toISOString().split('T')[0];
-    return oDate === todayStr && o.status !== 'cancelled';
-  });
-  const todayRevenue = todayOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-  const avgBill = todayOrders.length > 0 ? todayRevenue / todayOrders.length : 0;
-
-  const posOrders = todayOrders.filter(o => o.orderType === 'dine-in' || o.orderType === 'takeaway' || !o.orderType);
-  const qrOrders = todayOrders.filter(o => (o.orderType as string) === 'qr');
-  const deliveryOrders = todayOrders.filter(o => o.orderType === 'delivery');
-
-  const cashTotal = todayOrders.filter(o => o.paymentMethod === 'cash').reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-  const promptPayTotal = todayOrders.filter(o => o.paymentMethod !== 'cash').reduce((sum, o) => sum + (o.grandTotal || 0), 0);
 
   // Low stock ingredients list
   const lowStockItems = ingredients.filter(i => (i.currentStock || 0) <= (i.minStockAlert || 5));
 
-  // Generate dynamic notification message texts
+  // Generate dynamic notification message texts pulling 100% REAL DATA from store
   const getMessageContent = (type: 'daily' | 'stock' | 'void' | 'new_order' | 'kds') => {
-    const shopName = settings.shopName || 'ครัวกะเพรา POS Enterprise';
-    const branchName = currentBranch?.name || 'สาขาหลัก (พญาไท)';
-    const nowTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-
     if (type === 'daily') {
-      return `📊 [${shopName}] - สรุปยอดขายประจำวัน
-📅 วันที่: ${new Date().toLocaleDateString('th-TH')} | เวลาส่งอัตโนมัติ: ${dailySummaryTime} น.
-🏪 สาขา: ${branchName}
-──────────────────────────────
-💰 ยอดขายรวมสุทธิ: ฿${todayRevenue > 0 ? todayRevenue.toLocaleString('th-TH', { minimumFractionDigits: 2 }) : '14,850.00'}
-🧾 จำนวนออเดอร์ขาย: ${todayOrders.length > 0 ? todayOrders.length : 86} บิล (เฉลี่ย ฿${avgBill > 0 ? avgBill.toFixed(2) : '172.67'}/บิล)
-
-💳 สรุปยอดขายตามช่องทาง:
-  • หน้าร้าน (POS): ฿${posOrders.reduce((s, o) => s + (o.grandTotal || 0), 0) || 9800} (${posOrders.length || 58} บิล)
-  • สแกนสั่งโต๊ะ (QR): ฿${qrOrders.reduce((s, o) => s + (o.grandTotal || 0), 0) || 3800} (${qrOrders.length || 20} บิล)
-  • เดลิเวอรี่ (Delivery): ฿${deliveryOrders.reduce((s, o) => s + (o.grandTotal || 0), 0) || 1250} (${deliveryOrders.length || 8} บิล)
-
-💵 สรุปยอดตามวิธีชำระเงิน:
-  • เงินสด (Cash): ฿${cashTotal || 4850}
-  • สแกนโอน (PromptPay/QR): ฿${promptPayTotal || 10000}
-
-🏆 เมนูขายดีท็อป 3 ประจำวัน:
-  1. กะเพราเนื้อสับไข่ดาว (42 จาน)
-  2. กะเพราหมูกรอบกรอบ (31 จาน)
-  3. ชาไทยเย็นโบราณ (38 แก้ว)
-${quietHoursEnabled ? `\n🌙 โหมดห้ามรบกวนเปิดใช้งาน: (${quietHoursStart} - ${quietHoursEnd} น.)` : ''}
-✅ ปิดยอดขายกะประจำวันเรียบร้อยแล้ว`;
+      return generateDailySummaryMessage(orders, ingredients, currentBranch, settings);
     }
 
     if (type === 'stock') {
-      const ruleText = onlyCriticalStock ? 'เตือนเฉพาะสต็อกวิกฤต (<= 20% ของเกณฑ์)' : 'เตือนทันทีเมื่อต่ำกว่าเกณฑ์สั่งซื้อ';
-      const displayStock = lowStockItems.length > 0
-        ? lowStockItems.map((i, idx) => `  ${idx + 1}. ${i.name} (เหลือ: ${i.currentStock} ${i.unit} | เกณฑ์: ${i.minStockAlert} ${i.unit})`).join('\n')
-        : `  1. เนื้อวัวบด A5 (คงเหลือ: 1.50 กก. | เกณฑ์: 5.00 กก.)
-  2. ไข่ไก่สดเบอร์ 1 (คงเหลือ: 12 ฟอง | เกณฑ์: 30 ฟอง)
-  3. ใบกะเพราป่า (คงเหลือ: 0.30 กก. | เกณฑ์: 2.00 กก.)`;
-
-      return `⚠️ [ALERT] แจ้งเตือนวัตถุดิบใกล้หมดสต็อก!
-🏪 สาขา: ${branchName}
-🕒 เวลาตรวจพบ: ${nowTime} น.
-⚙️ เงื่อนไข Trigger Rules: ${ruleText}
-──────────────────────────────
-📦 รายการวัตถุดิบที่ต่ำกว่าจุดสั่งซื้อด่วน:
-${displayStock}
-
-💡 คำแนะนำ: โปรดดำเนินการสั่งซื้อวัตถุดิบเพิ่มเติมจาก Supplier เพื่อป้องกันสินค้าขาดหน้าร้าน`;
+      return generateLowStockMessage(lowStockItems, currentBranch, onlyCriticalStock);
     }
 
     if (type === 'void') {
-      const statusText = 325 >= minVoidAmount ? `✅ ผ่านเงื่อนไข (ยอด ฿325.00 >= ฿${minVoidAmount.toLocaleString()})` : `⚠️ ยอดต่ำกว่าเกณฑ์ ฿${minVoidAmount.toLocaleString()} (จะไม่ส่งเตือน)`;
+      const cancelledOrder = orders.find(o => o.status === 'cancelled');
+      if (cancelledOrder) {
+        return generateVoidOrderMessage(
+          cancelledOrder,
+          cancelledOrder.cancelReason || 'ลูกค้ายกเลิกรายการบิล',
+          cancelledOrder.cancelNote,
+          cancelledOrder.cancelledBy?.userName || 'ผู้จัดการ',
+          currentBranch
+        );
+      }
+      // If no cancelled order yet, preview format with recent order or notice
+      const recentOrder = orders[0];
+      if (recentOrder) {
+        return generateVoidOrderMessage(
+          recentOrder,
+          'ทดสอบระบบแจ้งเตือนการยกเลิกบิล (Simulation)',
+          undefined,
+          'ผู้จัดการร้าน',
+          currentBranch
+        );
+      }
       return `❌ [SECURITY ALERT] แจ้งเตือนการยกเลิกบิล / คืนเงิน
-🏪 สาขา: ${branchName}
-🧾 บิลเลขที่: #ORD-20260729-014
-🕒 เวลาทำรายการ: ${nowTime} น.
-──────────────────────────────
-💵 ยอดเงินที่ยกเลิก: ฿325.00
-👤 พนักงานขาย: คุณสมชาย (แคชเชียร์)
-🔑 อนุมัติโดย: Manager PIN (คุณวิภา)
-📝 เหตุผลที่ยกเลิก: ลูกค้าขอยกเลิกเนื่องจากสั่งผิดเมนู
-⚙️ เงื่อนไข Trigger Rules: แจ้งเตือนเมื่อยกเลิกบิล >= ฿${minVoidAmount.toLocaleString()}
-📌 สถานะกฎ: ${statusText}
-
-📋 รายการอาหารในบิลที่ยกเลิก:
-  • กะเพราไก่สับ x2 (฿170.00)
-  • ชามะนาวเย็น x2 (฿80.00)
-  • ไข่ดาวกรอบ x3 (฿75.00)`;
+🏪 สาขา: ${currentBranch?.name || 'ครัวกะเพรา ตลาด กกท'}
+(ยังไม่มีรายการบิลในระบบ)`;
     }
 
     if (type === 'new_order') {
-      const catText = selectedCategories.includes('all') ? 'ทุกหมวดหมู่' : selectedCategories.join(', ');
-      const ruleText = `🎯 เงื่อนไข Trigger Rules: ยอดขั้นต่ำ >= ฿${minOrderAmount.toLocaleString()} | หมวดหมู่: ${catText}`;
-      const statusText = minOrderAmount > 0 ? (385 >= minOrderAmount ? `✅ ผ่านเงื่อนไข (ยอด ฿385.00 >= ฿${minOrderAmount.toLocaleString()})` : `⚠️ ยอดต่ำกว่าเกณฑ์ ฿${minOrderAmount.toLocaleString()} (จะไม่ส่งเตือน)`) : '✅ ส่งเตือนทุกยอดขาย';
-
+      const latestOrder = orders[0];
+      if (latestOrder) {
+        return generateNewOrderMessage(latestOrder, currentBranch, settings);
+      }
       return `🔔 [NEW ORDER] มีออเดอร์ใหม่เข้าจากลูกค้า!
-🏪 สาขา: ${branchName}
-🪑 โต๊ะ / ช่องทาง: Table 05 (QR Ordering)
-🧾 เลขออเดอร์: #ORD-20260729-088
-🕒 เวลาที่สั่ง: ${nowTime} น.
-──────────────────────────────
-🍲 รายการอาหารที่สั่ง (3 รายการ):
-  • กะเพราเนื้อสับเผ็ดมาก + ไข่ดาว x1 (฿115.00)
-  • ต้มยำกุ้งน้ำข้น x1 (฿180.00)
-  • ชาไทยเย็นหวานน้อย x2 (฿90.00)
-
-💰 ยอดเงินรวมทั้งสิ้น: ฿385.00 (ชำระเงินแล้ว - PromptPay QR)
-⚙️ ${ruleText}
-📌 สถานะกฎ: ${statusText}
-🍳 สถานะครัว KDS: ส่งเข้าคิวทำอาหารเรียบร้อยแล้ว`;
+🏪 สาขา: ${currentBranch?.name || 'ครัวกะเพรา ตลาด กกท'}
+(ยังไม่มีออเดอร์ในระบบ เมื่อมีรายการสั่งซื้อใหม่ระบบจะส่งเตือนทันที)`;
     }
 
     // KDS Kitchen delay
-    return `⏰ [KDS DELAY WARNING] แจ้งเตือนออเดอร์ช้าเกินกำหนดในครัว!
-🏪 สาขา: ${branchName}
-🪑 โต๊ะ: Table 02
-🧾 เลขออเดอร์: #ORD-20260729-075
-⏱️ รอนานแล้ว: 18 นาที (เกณฑ์เตือน: 15 นาที)
-──────────────────────────────
-🍳 เมนูที่กำลังทำค้างอยู่:
-  • กะเพราหมูกรอบสเปเชียล x2 จาน
-
-💡 โปรดประสานงานเชฟในครัวเพื่อเร่งปรุงอาหารให้ลูกค้า`;
+    const cookingOrder = orders.find(o => o.status === 'cooking' || o.status === 'pending');
+    return generateKdsDelayMessage(cookingOrder, currentBranch);
   };
 
-  // Send real notification via Telegram/LINE API & open mobile preview
+  // Send real notification via Centralized Notification Service & open mobile preview
   const handleTriggerTest = async (channel: 'line' | 'telegram', type: 'daily' | 'stock' | 'void' | 'new_order' | 'kds') => {
     const titles: Record<string, string> = {
       daily: 'สรุปยอดขายประจำวัน (Daily Sales Summary)',
@@ -7503,7 +7406,6 @@ ${displayStock}
 
     const titleText = titles[type] || 'การแจ้งเตือนระบบ';
     const msgContent = getMessageContent(type);
-    const fullMessage = `🔔 [ครัวกะเพรา POS - ${titleText}]\n\n${msgContent}`;
 
     setSimulatedChannel(channel);
     setSimulatedTitle(titleText);
@@ -7511,100 +7413,25 @@ ${displayStock}
     setIsSimulatedMobileOpen(true);
     setIsSendingChannel(channel);
 
-    let isSuccess = false;
-    let statusLogText = '';
-    let errorMessage = '';
+    // Save tokens before dispatching
+    saveStoredCredentials({
+      telegramToken: telegramToken.trim(),
+      telegramChatId: telegramChatId.trim(),
+      lineToken: lineToken.trim()
+    });
 
-    try {
-      if (channel === 'telegram') {
-        if (!telegramToken.trim() || !telegramChatId.trim()) {
-          throw new Error('กรุณากรอก Bot Token และ Group Chat ID ให้ครบถ้วน');
-        }
+    const res = await dispatchNotification(titleText, msgContent, {
+      force: true,
+      channelOverride: channel
+    });
 
-        // Try sending via server endpoint first
-        let res = await fetch('/api/notify/telegram', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            botToken: telegramToken,
-            chatId: telegramChatId,
-            message: fullMessage
-          })
-        });
+    setIsSendingChannel(null);
+    setLogs(getStoredLogs());
 
-        let data = await res.json().catch(() => ({}));
-
-        if (res.ok && data.success) {
-          isSuccess = true;
-          statusLogText = 'ส่งสำเร็จ (200 OK - Telegram Real)';
-        } else {
-          // Fallback to client-side direct fetch to Telegram Bot API
-          const cleanToken = telegramToken.trim().startsWith('bot') ? telegramToken.trim().slice(3) : telegramToken.trim();
-          const directRes = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: telegramChatId.trim(),
-              text: fullMessage
-            })
-          });
-
-          const directData = await directRes.json().catch(() => ({}));
-
-          if (directRes.ok && directData.ok) {
-            isSuccess = true;
-            statusLogText = 'ส่งสำเร็จ (200 OK - Direct Telegram)';
-          } else {
-            throw new Error(data.error || directData.description || 'เกิดข้อผิดพลาดจาก Telegram Bot API');
-          }
-        }
-      } else {
-        // LINE
-        if (!lineToken.trim()) {
-          throw new Error('กรุณากรอก LINE Notify Token');
-        }
-
-        const res = await fetch('/api/notify/line', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lineToken,
-            message: fullMessage
-          })
-        });
-
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.success) {
-          isSuccess = true;
-          statusLogText = 'ส่งสำเร็จ (200 OK - LINE Real)';
-        } else {
-          throw new Error(data.error || 'เกิดข้อผิดพลาดจาก LINE Notify API');
-        }
-      }
-    } catch (err: any) {
-      isSuccess = false;
-      errorMessage = err.message || 'ส่งข้อความไม่สำเร็จ';
-      statusLogText = `ล้มเหลว (${errorMessage})`;
-    } finally {
-      setIsSendingChannel(null);
-    }
-
-    const newLog = {
-      id: `log-${Date.now()}`,
-      time: new Date().toLocaleTimeString('th-TH'),
-      date: 'วันนี้',
-      channel: channel === 'line' ? 'LINE' : 'Telegram',
-      event: titles[type],
-      status: statusLogText,
-      recipient: channel === 'line' ? 'กลุ่ม LINE Notify' : `Chat ID: ${telegramChatId || 'Telegram'}`
-    };
-
-    setLogs(prev => [newLog, ...prev.slice(0, 9)]);
-
-    if (isSuccess) {
-      setTestToast(`✅ ส่งการแจ้งเตือนจริงไปยัง ${channel.toUpperCase()} (${channel === 'telegram' ? telegramChatId : 'LINE'}) เรียบร้อยแล้ว!`);
+    if (res.success) {
+      setTestToast(`✅ ส่งการแจ้งเตือนจริงสำเร็จ: ${res.summary}`);
     } else {
-      setTestToast(`❌ เกิดข้อผิดพลาดในการส่ง ${channel.toUpperCase()}: ${errorMessage}`);
+      setTestToast(`❌ การแจ้งเตือนไม่สำเร็จ: ${res.summary}`);
     }
     setTimeout(() => setTestToast(null), 6000);
   };
@@ -8058,6 +7885,16 @@ ${displayStock}
                 <button
                   type="button"
                   onClick={() => {
+                    saveStoredRules({
+                      minOrderAmount,
+                      selectedCategories,
+                      minVoidAmount,
+                      onlyCriticalStock,
+                      quietHoursEnabled,
+                      quietHoursStart,
+                      quietHoursEnd,
+                      dailySummaryTime
+                    });
                     setRulesSavedToast('บันทึกเงื่อนไข Trigger Rules เรียบร้อยแล้ว!');
                     setTimeout(() => setRulesSavedToast(null), 3500);
                   }}

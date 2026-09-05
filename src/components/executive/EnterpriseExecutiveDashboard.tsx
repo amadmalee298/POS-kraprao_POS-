@@ -60,7 +60,8 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     branches,
     menuItems,
     currentBranch,
-    updateMenuItem
+    updateMenuItem,
+    sendDailySummaryNotification
   } = usePOS();
 
   // Date Presets & Filter States
@@ -787,13 +788,25 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   // -------------------------------------------------------------
   // EXPORT & TELEGRAM HANDLERS
   // -------------------------------------------------------------
-  const handleTriggerTelegramDigest = () => {
+  const [telegramStatusMessage, setTelegramStatusMessage] = useState<string | null>(null);
+
+  const handleTriggerTelegramDigest = async () => {
     setTelegramSending(true);
-    setTimeout(() => {
+    setTelegramStatusMessage(null);
+    try {
+      const res = await sendDailySummaryNotification('both');
+      if (res.success) {
+        setTelegramSentSuccess(true);
+        setTelegramStatusMessage('ส่งรายงานสรุปยอดขายจริงไปยัง Telegram & LINE เรียบร้อยแล้ว!');
+        setTimeout(() => setTelegramSentSuccess(false), 5000);
+      } else {
+        setTelegramStatusMessage(`❌ ${res.summary}`);
+      }
+    } catch (err: any) {
+      setTelegramStatusMessage(`❌ เกิดข้อผิดพลาด: ${err.message || 'ส่งรายงานไม่สำเร็จ'}`);
+    } finally {
       setTelegramSending(false);
-      setTelegramSentSuccess(true);
-      setTimeout(() => setTelegramSentSuccess(false), 4000);
-    }, 1200);
+    }
   };
 
   const handleExportPDFReport = async () => {
@@ -1804,6 +1817,12 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               <p>🧾 จำนวนบิล: {todayBillCount} บิล (เฉลี่ย ฿{todayAvgBill}/บิล)</p>
               <p>⭐ Business Health Score: {businessHealthScore}/100</p>
             </div>
+
+            {telegramStatusMessage && !telegramSentSuccess && (
+              <div className="p-3 bg-red-950/80 border border-red-500/50 text-red-300 rounded-2xl text-xs text-center font-medium leading-relaxed">
+                {telegramStatusMessage}
+              </div>
+            )}
 
             {telegramSentSuccess ? (
               <div className="p-3 bg-emerald-950 border border-emerald-500/50 text-emerald-300 rounded-2xl text-xs text-center font-bold flex items-center justify-center space-x-2">
