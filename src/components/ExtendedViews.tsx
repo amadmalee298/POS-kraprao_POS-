@@ -1860,6 +1860,7 @@ export const RecipeCostingView: React.FC = () => {
     updateMenuItem,
     deleteMenuItem,
     updateMenuItemRecipe,
+    toggleMenuItemAddOns,
     addAddOn,
     updateAddOn,
     deleteAddOn
@@ -1882,6 +1883,7 @@ export const RecipeCostingView: React.FC = () => {
   const [menuFormPrice, setMenuFormPrice] = useState<number>(65);
   const [menuFormImage, setMenuFormImage] = useState('');
   const [menuFormDescription, setMenuFormDescription] = useState('');
+  const [menuFormAllowAddOns, setMenuFormAllowAddOns] = useState<boolean>(true);
 
   // Topping Modal State
   const [isToppingModalOpen, setIsToppingModalOpen] = useState(false);
@@ -1922,6 +1924,7 @@ export const RecipeCostingView: React.FC = () => {
     setMenuFormPrice(65);
     setMenuFormImage('https://images.unsplash.com/photo-1562967914-608f82629710?w=600&auto=format&fit=crop');
     setMenuFormDescription('');
+    setMenuFormAllowAddOns(true);
     setIsMenuModalOpen(true);
   };
 
@@ -1932,6 +1935,7 @@ export const RecipeCostingView: React.FC = () => {
     setMenuFormPrice(item.price);
     setMenuFormImage(item.image);
     setMenuFormDescription(item.description);
+    setMenuFormAllowAddOns(item.allowAddOns !== false);
     setIsMenuModalOpen(true);
   };
 
@@ -1946,7 +1950,8 @@ export const RecipeCostingView: React.FC = () => {
         category: menuFormCategory,
         price: Number(menuFormPrice),
         image: menuFormImage || 'https://images.unsplash.com/photo-1562967914-608f82629710?w=600&auto=format&fit=crop',
-        description: menuFormDescription
+        description: menuFormDescription,
+        allowAddOns: menuFormAllowAddOns
       });
     } else {
       addMenuItem({
@@ -1957,6 +1962,7 @@ export const RecipeCostingView: React.FC = () => {
         costPrice: 20,
         image: menuFormImage || 'https://images.unsplash.com/photo-1562967914-608f82629710?w=600&auto=format&fit=crop',
         description: menuFormDescription,
+        allowAddOns: menuFormAllowAddOns,
         recipe: [
           { ingredientId: ingredients[0]?.id || 'ing-pork-minced', amountNeeded: 100 }
         ]
@@ -2353,6 +2359,35 @@ export const RecipeCostingView: React.FC = () => {
                   <p className="text-xs text-slate-400 line-clamp-2 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/50">
                     {item.description || 'ไม่มีคำอธิบาย'}
                   </p>
+
+                  {/* Topping Toggle for this specific menu item */}
+                  <div className="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800/80">
+                    <div className="flex items-center space-x-2">
+                      <Egg className={`w-4 h-4 ${item.allowAddOns !== false ? 'text-amber-400' : 'text-slate-600'}`} />
+                      <div>
+                        <span className="text-xs font-bold text-slate-200 block">
+                          {item.allowAddOns !== false ? 'เปิดเลือกท็อปปิ้ง' : 'ปิดท็อปปิ้ง (ไม่มี)'}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {item.allowAddOns !== false ? 'ลูกค้าสามารถเลือกไข่ดาว/ท็อปปิ้งได้' : 'ปิดตัวเลือกท็อปปิ้งสำหรับเมนูนี้'}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleMenuItemAddOns(item.id)}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                        item.allowAddOns !== false ? 'bg-amber-500' : 'bg-slate-800'
+                      }`}
+                      title={item.allowAddOns !== false ? 'คลิกเพื่อปิดท็อปปิ้งสำหรับเมนูนี้' : 'คลิกเพื่อเปิดท็อปปิ้งสำหรับเมนูนี้'}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                          item.allowAddOns !== false ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
 
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1 text-xs">
                     <div className="flex justify-between text-slate-400">
@@ -2968,6 +3003,36 @@ export const RecipeCostingView: React.FC = () => {
                   onChange={e => setMenuFormDescription(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-amber-500"
                 />
+              </div>
+
+              {/* Topping option toggle */}
+              <div className="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-xl">
+                <div className="flex items-center space-x-2.5">
+                  <div className={`p-2 rounded-lg ${menuFormAllowAddOns ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-800 text-slate-500'}`}>
+                    <Egg className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-slate-100 block">
+                      อนุญาตให้เลือก Topping (Allow Toppings)
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      {menuFormAllowAddOns ? 'เปิดให้ลูกค้าสามารถเลือกไข่ดาว และท็อปปิ้งเพิ่มเติมได้' : 'ปิดการเลือกท็อปปิ้ง (เช่น เครื่องดื่ม, ของหวาน)'}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMenuFormAllowAddOns(!menuFormAllowAddOns)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                    menuFormAllowAddOns ? 'bg-amber-500' : 'bg-slate-800'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      menuFormAllowAddOns ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
               </div>
 
               <div className="pt-3 border-t border-slate-800 flex justify-end space-x-2">

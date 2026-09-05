@@ -251,4 +251,5 @@ const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512
   </g>
 </svg>`;
 
-export const SHOP_LOGO_URL = `data:image/svg+xml;utf8,${encodeURIComponent(svgContent)}`;
+export const FALLBACK_SVG_LOGO = `data:image/svg+xml;utf8,${encodeURIComponent(svgContent)}`;
+export const SHOP_LOGO_URL = './logo.png';

@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { SHOP_LOGO_URL } from '../assets/logo';
+import { UserRole } from '../types';
 import {
   Flame,
   Lock,
@@ -24,8 +25,32 @@ import { usePOS } from '../context/POSContext';
 export const LoginScreen: React.FC = () => {
   const { users, setCurrentUser, setIsLocked, currentUser, shifts, addShift, updateShift, updateUserPin, logSecurityEvent } = usePOS();
   const [loginMode, setLoginMode] = useState<'pin' | 'password'>('pin');
-  const [selectedUserId, setSelectedUserId] = useState<string>(currentUser?.id || users[0]?.id || '');
-  const [pin, setPin] = useState('');
+
+  // Filter out any legacy "สมศักดิ์" and ensure "อาห์มัด" is top priority
+  const sanitizedUsers = useMemo(() => {
+    const filtered = users
+      .filter(u => !u.name?.includes('สมศักดิ์'))
+      .map(u => (u.id === 'usr-admin' && u.name?.includes('สมศักดิ์')) ? { ...u, name: 'อาห์มัด (เจ้าของร้าน)', pin: '1234' } : u);
+
+    if (!filtered.some(u => u.name?.includes('อาห์มัด'))) {
+      filtered.unshift({
+        id: 'usr-admin',
+        name: 'อาห์มัด (เจ้าของร้าน)',
+        role: 'admin' as UserRole,
+        pin: '1234',
+        avatarColor: 'from-orange-500 to-amber-600'
+      });
+    }
+    return filtered;
+  }, [users]);
+
+  const defaultUser = sanitizedUsers.find(u => u.name?.includes('อาห์มัด') || u.id === 'usr-admin' || u.id === 'staff-ahmad') || sanitizedUsers[0];
+
+  const [selectedUserId, setSelectedUserId] = useState<string>(
+    currentUser && !currentUser.name?.includes('สมศักดิ์') ? currentUser.id : defaultUser.id
+  );
+  // Default PIN '1234' as requested by user
+  const [pin, setPin] = useState('1234');
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -51,23 +76,17 @@ export const LoginScreen: React.FC = () => {
   const [forgotError, setForgotError] = useState('');
   const [forgotSuccess, setForgotSuccess] = useState('');
 
-  const selectedUser = users.find(u => u.id === selectedUserId) || users[0] || {
-    id: 'usr-admin',
-    name: 'เจ้าของร้าน',
-    role: 'admin',
-    pin: '1234',
-    avatarColor: 'from-amber-500 to-orange-600'
-  };
-  const managerUsers = users.filter(u => u.role === 'admin' || u.role === 'manager');
+  const selectedUser = sanitizedUsers.find(u => u.id === selectedUserId) || defaultUser;
+  const managerUsers = sanitizedUsers.filter(u => u.role === 'admin' || u.role === 'manager');
 
   // Keep selectedUserId synchronized when users array updates
   useEffect(() => {
-    if (users.length > 0) {
-      if (!selectedUserId || !users.some(u => u.id === selectedUserId)) {
-        setSelectedUserId(currentUser?.id && users.some(u => u.id === currentUser.id) ? currentUser.id : users[0].id);
+    if (sanitizedUsers.length > 0) {
+      if (!selectedUserId || !sanitizedUsers.some(u => u.id === selectedUserId)) {
+        setSelectedUserId(currentUser?.id && sanitizedUsers.some(u => u.id === currentUser.id) ? currentUser.id : defaultUser.id);
       }
     }
-  }, [users, selectedUserId, currentUser]);
+  }, [sanitizedUsers, selectedUserId, currentUser, defaultUser]);
 
   // Countdown timer for resending email code
   useEffect(() => {
@@ -174,87 +193,97 @@ export const LoginScreen: React.FC = () => {
 
   const isAlreadyClockedIn = todayShift?.status === 'clocked_in';
 
-  const handleNumClick = useCallback((num: string) => {
-    if (pin.length < 4) {
-      const nextPin = pin + num;
-      setPin(nextPin);
-      setError('');
+  const executePinLogin = useCallback((pinToTest: string) => {
+    if (!pinToTest || pinToTest.length !== 4) {
+      setError('กรุณาใส่รหัสพนักงาน PIN 4 หลัก');
+      return;
+    }
 
-      if (nextPin.length === 4) {
-        // Priority 1: Check selected user
-        let authenticatedUser = (selectedUser && selectedUser.pin === nextPin) ? selectedUser : null;
+    // Priority 1: Check selected user
+    let authenticatedUser = (selectedUser && selectedUser.pin === pinToTest) ? selectedUser : null;
 
-        // Priority 2: Auto-detect staff by PIN if the entered PIN belongs to any active user
-        if (!authenticatedUser) {
-          const matchedByPin = users.find(u => u.pin === nextPin);
-          if (matchedByPin) {
-            authenticatedUser = matchedByPin;
-            setSelectedUserId(matchedByPin.id);
-          }
-        }
-
-        if (authenticatedUser) {
-          logSecurityEvent?.({
-            userId: authenticatedUser.id,
-            userName: authenticatedUser.name,
-            userRole: authenticatedUser.role,
-            action: 'PIN Login Screen',
-            status: 'SUCCESS',
-            details: `เข้าสู่ระบบด้วยรหัสพนักงาน PIN สำเร็จ (${authenticatedUser.name} - ${authenticatedUser.role})${clockInAction ? ' (พร้อมลงเวลาเข้างาน)' : ''}`
-          });
-
-          // Clock in logic if requested
-          if (clockInAction) {
-            const nowTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-            if (todayShift) {
-              if (todayShift.status !== 'clocked_in') {
-                updateShift({
-                  ...todayShift,
-                  clockInTime: nowTime,
-                  status: 'clocked_in'
-                });
-                setSuccessNotice(`ลงเวลาเข้างานสำเร็จ (${nowTime})`);
-              }
-            } else {
-              addShift({
-                staffId: authenticatedUser.id,
-                staffName: authenticatedUser.name,
-                date: todayStr,
-                dayOfWeek: 'Mon',
-                shiftType: 'fullday',
-                scheduledStart: '08:00',
-                scheduledEnd: '17:00',
-                scheduledHours: 8,
-                clockInTime: nowTime,
-                status: 'clocked_in'
-              });
-              setSuccessNotice(`ลงเวลาเข้างานสำเร็จ (${nowTime})`);
-            }
-          }
-
-          setCurrentUser(authenticatedUser);
-          setSuccessNotice(`ยืนยันรหัสพนักงานสำเร็จ ยินดีต้อนรับ ${authenticatedUser.name}`);
-          setTimeout(() => {
-            setIsLocked(false);
-            setPin('');
-            setError('');
-            setSuccessNotice('');
-          }, 350);
-        } else {
-          logSecurityEvent?.({
-            userId: selectedUser.id,
-            userName: selectedUser.name,
-            userRole: selectedUser.role,
-            action: 'PIN Login Screen',
-            status: 'FAILED',
-            details: `ป้อนรหัสพนักงาน (PIN) ไม่ถูกต้องสำหรับบัญชี ${selectedUser.name}`
-          });
-          setError('รหัสพนักงาน (PIN) ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
-          setTimeout(() => setPin(''), 450);
-        }
+    // Priority 2: Auto-detect staff by PIN if entered PIN matches any active user
+    if (!authenticatedUser) {
+      const matchedByPin = sanitizedUsers.find(u => u.pin === pinToTest);
+      if (matchedByPin) {
+        authenticatedUser = matchedByPin;
+        setSelectedUserId(matchedByPin.id);
       }
     }
-  }, [pin, selectedUser, users, clockInAction, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
+
+    if (authenticatedUser) {
+      logSecurityEvent?.({
+        userId: authenticatedUser.id,
+        userName: authenticatedUser.name,
+        userRole: authenticatedUser.role,
+        action: 'PIN Login Screen',
+        status: 'SUCCESS',
+        details: `เข้าสู่ระบบด้วยรหัสพนักงาน PIN สำเร็จ (${authenticatedUser.name} - ${authenticatedUser.role})${clockInAction ? ' (พร้อมลงเวลาเข้างาน)' : ''}`
+      });
+
+      // Clock in logic if requested
+      if (clockInAction) {
+        const nowTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+        if (todayShift) {
+          if (todayShift.status !== 'clocked_in') {
+            updateShift({
+              ...todayShift,
+              clockInTime: nowTime,
+              status: 'clocked_in'
+            });
+            setSuccessNotice(`ลงเวลาเข้างานสำเร็จ (${nowTime})`);
+          }
+        } else {
+          addShift({
+            staffId: authenticatedUser.id,
+            staffName: authenticatedUser.name,
+            date: todayStr,
+            dayOfWeek: 'Mon',
+            shiftType: 'fullday',
+            scheduledStart: '08:00',
+            scheduledEnd: '17:00',
+            scheduledHours: 8,
+            clockInTime: nowTime,
+            status: 'clocked_in'
+          });
+          setSuccessNotice(`ลงเวลาเข้างานสำเร็จ (${nowTime})`);
+        }
+      }
+
+      setCurrentUser(authenticatedUser);
+      setSuccessNotice(`ยืนยันรหัสพนักงานสำเร็จ ยินดีต้อนรับ ${authenticatedUser.name}`);
+      setTimeout(() => {
+        setIsLocked(false);
+        setError('');
+        setSuccessNotice('');
+      }, 300);
+    } else {
+      logSecurityEvent?.({
+        userId: selectedUser.id,
+        userName: selectedUser.name,
+        userRole: selectedUser.role,
+        action: 'PIN Login Screen',
+        status: 'FAILED',
+        details: `ป้อนรหัสพนักงาน (PIN) ไม่ถูกต้องสำหรับบัญชี ${selectedUser.name}`
+      });
+      setError('รหัสพนักงาน (PIN) ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
+      setTimeout(() => setPin(''), 450);
+    }
+  }, [selectedUser, sanitizedUsers, clockInAction, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
+
+  const handleNumClick = useCallback((num: string) => {
+    setPin(prev => {
+      if (prev.length < 4) {
+        const nextPin = prev + num;
+        setError('');
+        if (nextPin.length === 4) {
+          setTimeout(() => executePinLogin(nextPin), 60);
+        }
+        return nextPin;
+      }
+      return prev;
+    });
+  }, [executePinLogin]);
 
   const handleDelete = useCallback(() => {
     setPin(prev => prev.slice(0, -1));
@@ -280,12 +309,15 @@ export const LoginScreen: React.FC = () => {
       } else if (e.key === 'Escape' || e.key === 'Delete') {
         e.preventDefault();
         handleClear();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        executePinLogin(pin);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [loginMode, handleNumClick, handleDelete, handleClear]);
+  }, [loginMode, pin, handleNumClick, handleDelete, handleClear, executePinLogin]);
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -309,59 +341,53 @@ export const LoginScreen: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0a0f1d] text-slate-100 p-4 font-sans selection:bg-red-500 selection:text-white overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0d0704] text-amber-50 p-2.5 sm:p-4 font-sans selection:bg-orange-500 selection:text-white overflow-y-auto">
       {/* Background Glow */}
-      <div className="absolute inset-0 bg-gradient-to-b from-slate-900/40 via-[#0a0f1d] to-[#070b14] pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-b from-[#180f0a] via-[#0d0704] to-[#080402] pointer-events-none" />
 
-      <div className="relative w-full max-w-md bg-slate-900/95 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl flex flex-col items-center space-y-5 my-auto">
+      <div className="relative w-full max-w-sm sm:max-w-md bg-[#130c08] border border-[#26160e] rounded-3xl p-4 sm:p-6 shadow-2xl backdrop-blur-xl flex flex-col items-center space-y-3 sm:space-y-3.5 my-auto">
         
-        {/* Brand Logo Hero Banner */}
-        <div className="relative flex flex-col items-center justify-center p-3 rounded-2xl bg-white shadow-xl shadow-amber-950/30 border border-amber-500/30 w-full max-w-[280px]">
-          <div className="relative w-32 h-32 overflow-hidden rounded-xl">
+        {/* Brand Logo Hero Banner (No white square, dark espresso matching POS) */}
+        <div className="flex flex-col items-center justify-center space-y-1.5">
+          <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl overflow-hidden bg-[#1a100a] p-1 border border-[#ff6600]/30 shadow-lg shadow-black/60 ring-1 ring-orange-500/20 flex items-center justify-center">
             <img
               src={SHOP_LOGO_URL}
               alt="ครัวกะเพรา Logo"
-              className="w-full h-full object-contain"
+              className="w-full h-full object-contain rounded-xl"
               onError={(e) => {
-                if (e.currentTarget.src !== SHOP_LOGO_URL) {
-                  e.currentTarget.src = SHOP_LOGO_URL;
-                }
+                e.currentTarget.src = './logo.png';
               }}
             />
           </div>
-          <div className="text-center mt-1.5">
-            <p className="text-[13px] font-black text-slate-950 tracking-wide">
-              ครัวกะเพรา POS ENTERPRISE
-            </p>
+          <div className="text-center">
+            <h1 className="text-sm sm:text-base font-black text-amber-50 tracking-wide">
+              ครัวกะเพรา <span className="text-[#ff6600]">POS ENTERPRISE</span>
+            </h1>
+            <p className="text-[10px] text-stone-400">ระบบเข้าสู่ระบบแคชเชียร์ & พนักงาน</p>
           </div>
         </div>
 
-        {/* Subtitle */}
-        <div className="text-center space-y-1">
-          <div className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-red-950/80 border border-red-500/40 text-red-300 text-[10px] font-bold">
-            <Lock className="w-3 h-3 text-red-400" />
-            <span>ระบบความปลอดภัย: ต้องใส่รหัสพนักงานทุกครั้ง</span>
-          </div>
-          <p className="text-[11px] text-slate-300 max-w-xs mx-auto leading-relaxed pt-0.5">
-            กรุณาป้อนรหัสพนักงาน PIN 4 หลัก เพื่อเข้าสู่ระบบและยืนยันตัวตน
-          </p>
+        {/* Security Badge */}
+        <div className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-orange-950/40 border border-orange-500/30 text-orange-300 text-[10px] font-bold">
+          <Lock className="w-3 h-3 text-[#ff6600]" />
+          <span>ค่าเริ่มต้น: อาห์มัด (PIN: 1234)</span>
         </div>
 
         {/* Tab Selector Buttons */}
-        <div className="w-full grid grid-cols-2 gap-2 bg-slate-950/80 p-1.5 rounded-2xl border border-slate-800/90">
+        <div className="w-full grid grid-cols-2 gap-1.5 bg-[#180f0a] p-1 rounded-2xl border border-[#26160e]">
           <button
             type="button"
             onClick={() => {
               setLoginMode('pin');
               setError('');
             }}
-            className={`py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2 ${
+            className={`py-2 px-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 ${
               loginMode === 'pin'
-                ? 'bg-gradient-to-r from-red-600 via-orange-500 to-red-600 text-white shadow-lg shadow-red-950/60'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-[#ff6600] text-black shadow-md shadow-orange-950/60 font-black'
+                : 'text-stone-400 hover:text-stone-200'
             }`}
           >
-            <KeyRound className="w-4 h-4" />
+            <KeyRound className="w-3.5 h-3.5 stroke-[2.5]" />
             <span>ใส่รหัสพนักงาน (PIN)</span>
           </button>
 
@@ -371,131 +397,100 @@ export const LoginScreen: React.FC = () => {
               setLoginMode('password');
               setError('');
             }}
-            className={`py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2 ${
+            className={`py-2 px-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 ${
               loginMode === 'password'
-                ? 'bg-gradient-to-r from-red-600 via-orange-500 to-red-600 text-white shadow-lg shadow-red-950/60'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-[#ff6600] text-black shadow-md shadow-orange-950/60 font-black'
+                : 'text-stone-400 hover:text-stone-200'
             }`}
           >
-            <Lock className="w-4 h-4" />
-            <span>ชื่อผู้ใช้และรหัสผ่าน</span>
+            <Lock className="w-3.5 h-3.5" />
+            <span>รหัสผ่านผู้ดูแล</span>
           </button>
         </div>
 
         {/* Mode 1: PIN Login */}
         {loginMode === 'pin' ? (
-          <div className="w-full space-y-4">
+          <div className="w-full space-y-2.5">
             {/* User Selector Cards */}
-            <div className="space-y-1.5 text-center">
-              <label className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
-                เลือกพนักงาน หรือกดรหัส PIN 4 หลักได้ทันที
-              </label>
-              <div className="flex flex-wrap justify-center gap-2 max-h-48 overflow-y-auto p-1 border border-slate-800/80 rounded-2xl bg-slate-950/40 custom-scrollbar">
-                {users.map(u => (
+            <div className="space-y-1 text-center">
+              <div className="flex items-center justify-center gap-1.5 overflow-x-auto p-1 max-w-full no-scrollbar">
+                {sanitizedUsers.map(u => (
                   <button
                     key={u.id}
                     type="button"
                     onClick={() => {
                       setSelectedUserId(u.id);
-                      setPin('');
+                      setPin(u.name.includes('อาห์มัด') ? '1234' : '');
                       setError('');
                     }}
-                    className={`px-3 py-2 rounded-xl border text-xs font-semibold transition flex flex-col items-center space-y-1 min-w-[76px] ${
+                    className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition flex items-center space-x-2 shrink-0 ${
                       selectedUserId === u.id
-                        ? 'bg-red-950/60 border-red-500 text-red-300 ring-2 ring-red-500/50 shadow-md'
-                        : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800'
+                        ? 'bg-[#2a170d] border-[#ff6600] text-orange-200 ring-1 ring-[#ff6600]/60 shadow-md'
+                        : 'bg-[#180f0a] border-[#26160e] text-stone-300 hover:bg-[#20130d]'
                     }`}
                   >
                     <div
-                      className={`w-7 h-7 rounded-full bg-gradient-to-tr ${u.avatarColor} text-xs font-bold text-white flex items-center justify-center shadow-inner`}
+                      className={`w-6 h-6 rounded-full bg-gradient-to-tr ${u.avatarColor} text-[10px] font-bold text-white flex items-center justify-center shadow-inner`}
                     >
                       {u.name.charAt(0)}
                     </div>
-                    <span className="truncate max-w-[70px]">{u.name.split(' ')[0]}</span>
-                    <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-slate-900/80 text-amber-300/90 border border-slate-800">
-                      {u.role === 'admin' ? 'เจ้าของ' : u.role === 'manager' ? 'ผู้จัดการ' : u.role === 'cashier' ? 'แคชเชียร์' : 'พนักงาน'}
-                    </span>
+                    <div className="text-left leading-none">
+                      <span className="truncate max-w-[80px] block font-bold text-xs">{u.name.split(' ')[0]}</span>
+                      <span className="text-[9px] text-amber-400/90 font-mono">
+                        {u.role === 'admin' ? 'เจ้าของ' : u.role === 'manager' ? 'ผจก.' : u.role === 'cashier' ? 'แคชเชียร์' : 'พนักงาน'}
+                      </span>
+                    </div>
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Clock-In Checkbox Option */}
-            <div className="flex items-center justify-between px-3 py-2 bg-slate-950/60 border border-slate-800 rounded-xl">
-              <div className="flex items-center space-x-2">
-                <Clock className={`w-4 h-4 ${isAlreadyClockedIn ? 'text-emerald-400' : 'text-amber-400'}`} />
-                <span className="text-xs text-slate-300 font-medium">
-                  {isAlreadyClockedIn ? 'ลงเวลาเข้างานแล้ว' : 'ลงเวลาเข้างานอัตโนมัติ'}
-                </span>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={clockInAction}
-                  onChange={e => setClockInAction(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
-              </label>
-            </div>
-
-            {/* Title instructions */}
-            <div className="text-center space-y-1">
-              <div className="font-bold text-sm text-slate-200 flex items-center justify-center space-x-2">
-                <KeyRound className="w-4 h-4 text-amber-400" />
-                <span>ใส่รหัสพนักงาน (PIN 4 หลัก)</span>
-                <button
-                  type="button"
-                  onClick={() => setShowPin(!showPin)}
-                  className="text-slate-400 hover:text-slate-200 transition p-1"
-                  title={showPin ? 'ซ่อนรหัส' : 'แสดงรหัส'}
-                >
-                  {showPin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-              <div className="text-[11px] text-slate-400">
-                กดตัวเลขบนหน้าจอ หรือพิมพ์ 0-9 จากแป้นพิมพ์คอมพิวเตอร์
-              </div>
-            </div>
-
             {/* 4 Dot Indicators */}
-            <div className="flex justify-center items-center space-x-4 py-1">
+            <div className="flex justify-center items-center space-x-3 py-0.5">
               {[0, 1, 2, 3].map(i => (
                 <div
                   key={i}
-                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center font-bold text-xs transition-all duration-200 ${
+                  className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full border-2 flex items-center justify-center font-bold text-xs transition-all duration-150 ${
                     pin.length > i
-                      ? 'bg-red-500 border-red-400 shadow-md shadow-red-950/80 scale-110 text-white'
-                      : 'border-slate-700 bg-slate-950 text-transparent'
+                      ? 'bg-[#ff6600] border-orange-400 shadow-md shadow-orange-950/80 scale-110 text-black'
+                      : 'border-[#331d12] bg-[#180f0a] text-transparent'
                   }`}
                 >
                   {showPin && pin.length > i ? pin[i] : pin.length > i ? '•' : ''}
                 </div>
               ))}
+              <button
+                type="button"
+                onClick={() => setShowPin(!showPin)}
+                className="text-stone-400 hover:text-stone-200 transition p-1 ml-1"
+                title={showPin ? 'ซ่อนรหัส' : 'แสดงรหัส'}
+              >
+                {showPin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5 text-stone-400" />}
+              </button>
             </div>
 
             {error && (
-              <div className="flex items-center justify-center space-x-1.5 text-rose-400 text-xs font-medium bg-rose-500/10 py-2 px-3 rounded-xl border border-rose-500/20 animate-bounce">
-                <ShieldAlert className="w-4 h-4 shrink-0" />
+              <div className="flex items-center justify-center space-x-1.5 text-rose-400 text-xs font-medium bg-rose-500/10 py-1.5 px-3 rounded-xl border border-rose-500/20">
+                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
 
             {successNotice && (
-              <div className="flex items-center justify-center space-x-1.5 text-emerald-400 text-xs font-medium bg-emerald-500/10 py-2 px-3 rounded-xl border border-emerald-500/20">
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <div className="flex items-center justify-center space-x-1.5 text-emerald-400 text-xs font-medium bg-emerald-500/10 py-1.5 px-3 rounded-xl border border-emerald-500/20">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                 <span>{successNotice}</span>
               </div>
             )}
 
-            {/* Round Numpad Keypad */}
-            <div className="grid grid-cols-3 gap-2.5 pt-1 max-w-xs mx-auto">
+            {/* Round Numpad Keypad (Optimized for iPhone touch targets >= 44px) */}
+            <div className="grid grid-cols-3 gap-2 sm:gap-2.5 max-w-[260px] mx-auto">
               {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(num => (
                 <button
                   key={num}
                   type="button"
                   onClick={() => handleNumClick(num)}
-                  className="w-14 h-14 sm:w-16 sm:h-16 mx-auto rounded-full bg-slate-800/80 hover:bg-slate-700 active:bg-orange-600 border border-slate-700/60 active:scale-95 text-slate-100 text-2xl font-bold transition flex items-center justify-center shadow-lg shadow-slate-950/50"
+                  className="w-12 h-12 sm:w-14 sm:h-14 mx-auto rounded-full bg-[#180f0a] hover:bg-[#22150e] active:bg-[#ff6600] active:text-black border border-[#2c1a11] active:scale-95 text-amber-50 text-xl font-bold transition flex items-center justify-center shadow-md cursor-pointer"
                 >
                   {num}
                 </button>
@@ -504,7 +499,7 @@ export const LoginScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={handleClear}
-                className="w-14 h-14 sm:w-16 sm:h-16 mx-auto rounded-full bg-slate-950/80 hover:bg-slate-800 border border-slate-800 active:scale-95 text-rose-400 text-xs font-bold transition flex items-center justify-center"
+                className="w-12 h-12 sm:w-14 sm:h-14 mx-auto rounded-full bg-[#140c07] hover:bg-[#1e120b] border border-[#26160e] active:scale-95 text-rose-400 text-xs font-bold transition flex items-center justify-center cursor-pointer"
               >
                 ล้าง
               </button>
@@ -512,7 +507,7 @@ export const LoginScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleNumClick('0')}
-                className="w-14 h-14 sm:w-16 sm:h-16 mx-auto rounded-full bg-slate-800/80 hover:bg-slate-700 active:bg-orange-600 border border-slate-700/60 active:scale-95 text-slate-100 text-2xl font-bold transition flex items-center justify-center shadow-lg shadow-slate-950/50"
+                className="w-12 h-12 sm:w-14 sm:h-14 mx-auto rounded-full bg-[#180f0a] hover:bg-[#22150e] active:bg-[#ff6600] active:text-black border border-[#2c1a11] active:scale-95 text-amber-50 text-xl font-bold transition flex items-center justify-center shadow-md cursor-pointer"
               >
                 0
               </button>
@@ -520,71 +515,95 @@ export const LoginScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={handleDelete}
-                className="w-14 h-14 sm:w-16 sm:h-16 mx-auto rounded-full bg-slate-950/80 hover:bg-slate-800 border border-slate-800 active:scale-95 text-slate-300 text-xs font-bold transition flex items-center justify-center"
+                className="w-12 h-12 sm:w-14 sm:h-14 mx-auto rounded-full bg-[#140c07] hover:bg-[#1e120b] border border-[#26160e] active:scale-95 text-stone-300 text-xs font-bold transition flex items-center justify-center cursor-pointer"
               >
                 ลบ
               </button>
             </div>
 
-            {/* Forgot PIN trigger button */}
-            <div className="text-center pt-1">
+            {/* Direct 1-Tap Login CTA button */}
+            <button
+              type="button"
+              onClick={() => executePinLogin(pin)}
+              disabled={pin.length !== 4}
+              className={`w-full py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center space-x-2 transition shadow-lg active:scale-[0.98] ${
+                pin.length === 4
+                  ? 'bg-[#ff6600] hover:bg-[#ff7711] text-black shadow-orange-950/60 cursor-pointer'
+                  : 'bg-[#180f0a] text-stone-500 border border-[#26160e] cursor-not-allowed'
+              }`}
+            >
+              <KeyRound className="w-4 h-4 stroke-[2.5]" />
+              <span>เข้าสู่ระบบ ({selectedUser.name.split(' ')[0]})</span>
+            </button>
+
+            {/* Clock-In Option & Forgot PIN in 1 clean line */}
+            <div className="flex items-center justify-between text-[11px] pt-0.5 px-1">
+              <label className="flex items-center space-x-1.5 cursor-pointer text-stone-400 hover:text-stone-200">
+                <input
+                  type="checkbox"
+                  checked={clockInAction}
+                  onChange={e => setClockInAction(e.target.checked)}
+                  className="rounded border-[#2c1a11] bg-[#180f0a] text-[#ff6600] focus:ring-0 w-3.5 h-3.5"
+                />
+                <span>ลงเวลาเข้างาน</span>
+              </label>
+
               <button
                 type="button"
                 onClick={handleOpenForgotModal}
-                className="text-xs text-orange-400/90 hover:text-orange-300 font-semibold underline underline-offset-4 transition flex items-center justify-center space-x-1 mx-auto"
+                className="text-orange-400/90 hover:text-orange-300 underline underline-offset-2 transition"
               >
-                <KeyRound className="w-3.5 h-3.5" />
-                <span>ลืมรหัส PIN (Forgot PIN)?</span>
+                ลืมรหัส PIN?
               </button>
             </div>
           </div>
         ) : (
           /* Mode 2: Username & Password Login */
-          <form onSubmit={handlePasswordSubmit} className="w-full space-y-4 pt-2">
+          <form onSubmit={handlePasswordSubmit} className="w-full space-y-3 pt-1">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">
+              <label className="block text-xs font-medium text-stone-400 mb-1">
                 ชื่อผู้ใช้งาน (Username)
               </label>
               <input
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
-                className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 text-sm focus:outline-none focus:border-red-500"
+                className="w-full px-3.5 py-2 bg-[#180f0a] border border-[#26160e] rounded-xl text-amber-50 text-xs focus:outline-none focus:border-[#ff6600]"
                 placeholder="กรอกชื่อผู้ใช้"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">
+              <label className="block text-xs font-medium text-stone-400 mb-1">
                 รหัสผ่าน (Password)
               </label>
               <input
                 type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 text-sm focus:outline-none focus:border-red-500"
+                className="w-full px-3.5 py-2 bg-[#180f0a] border border-[#26160e] rounded-xl text-amber-50 text-xs focus:outline-none focus:border-[#ff6600]"
                 placeholder="กรอกรหัสผ่าน"
               />
             </div>
 
             {error && (
               <div className="flex items-center space-x-1.5 text-rose-400 text-xs font-medium bg-rose-500/10 py-1.5 px-3 rounded-xl border border-rose-500/20">
-                <ShieldAlert className="w-4 h-4 shrink-0" />
+                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
 
             <button
               type="submit"
-              className="w-full py-3 bg-gradient-to-r from-red-600 via-orange-500 to-red-600 hover:from-red-500 hover:to-orange-400 text-white font-bold text-sm rounded-xl shadow-lg shadow-red-950/60 transition active:scale-[0.98] flex items-center justify-center space-x-2"
+              className="w-full py-2.5 bg-[#ff6600] hover:bg-[#ff7711] text-black font-black text-xs rounded-xl shadow-lg shadow-orange-950/60 transition active:scale-[0.98] flex items-center justify-center space-x-2"
             >
-              <LogIn className="w-5 h-5" />
+              <LogIn className="w-4 h-4 stroke-[2.5]" />
               <span>เข้าสู่ระบบ</span>
             </button>
           </form>
         )}
 
-        <div className="text-[10px] text-slate-500 font-mono text-center pt-2">
+        <div className="text-[10px] text-stone-500 font-mono text-center pt-0.5">
           Kaprao POS Enterprise System v1.2.4
         </div>
       </div>

@@ -148,6 +148,7 @@ interface POSContextType {
   updateMenuItem: (item: MenuItem) => void;
   deleteMenuItem: (itemId: string) => void;
   updateMenuItemRecipe: (menuItemId: string, recipe: RecipeIngredient[], costPrice: number) => void;
+  toggleMenuItemAddOns: (menuItemId: string, allow?: boolean) => void;
 
   // AddOn / Topping CRUD
   addAddOn: (addonData: Omit<AddOnOption, 'id'>) => void;
@@ -988,7 +989,21 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (parsed.securityLogs && Array.isArray(parsed.securityLogs)) setSecurityLogs(parsed.securityLogs);
           if (typeof parsed.autoApproveQR === 'boolean') setAutoApproveQR(parsed.autoApproveQR);
           if (parsed.tables && Array.isArray(parsed.tables)) setTables(parsed.tables);
-          if (parsed.users && Array.isArray(parsed.users)) setUsers(parsed.users);
+          if (parsed.users && Array.isArray(parsed.users)) {
+            const sanitizedUsers = parsed.users
+              .filter((u: any) => u && !u.name?.includes('สมศักดิ์'))
+              .map((u: any) => {
+                if (u.id === 'usr-admin' || u.name?.includes('สมศักดิ์')) {
+                  return { ...u, name: 'อาห์มัด (เจ้าของร้าน)', role: 'admin', pin: u.pin || '1234' };
+                }
+                return u;
+              });
+            // Ensure อาห์มัด is in users
+            if (!sanitizedUsers.some((u: any) => u.name?.includes('อาห์มัด'))) {
+              sanitizedUsers.unshift(INITIAL_USERS[0]);
+            }
+            setUsers(sanitizedUsers);
+          }
           if (parsed.cart && Array.isArray(parsed.cart)) {
             const validCart = parsed.cart.filter((c: any) => c && typeof c === 'object' && c.cartItemId && c.menuItem);
             setCart(validCart);
@@ -1035,7 +1050,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       'from-teal-500 to-emerald-600'
     ];
 
-    const activeStaff = staffMembers.filter(s => s.status !== 'inactive');
+    const activeStaff = staffMembers
+      .filter(s => s.status !== 'inactive')
+      .filter(s => !s.name?.includes('สมศักดิ์'));
 
     const staffAsUsers: User[] = activeStaff.map((staff, idx) => {
       const existingUser = users.find(u => u.id === staff.id);
@@ -1060,8 +1077,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     });
 
+    const defaultAdmin = INITIAL_USERS[0];
     const extraAdmin = users.find(u => u.id === 'usr-admin' && !staffAsUsers.some(s => s.id === 'usr-admin'));
-    const finalUsers = extraAdmin ? [extraAdmin, ...staffAsUsers] : staffAsUsers;
+    const safeAdmin = extraAdmin ? { ...extraAdmin, name: extraAdmin.name?.includes('สมศักดิ์') ? 'อาห์มัด (เจ้าของร้าน)' : extraAdmin.name } : defaultAdmin;
+    const finalUsers = staffAsUsers.some(s => s.id === 'usr-admin' || s.name?.includes('อาห์มัด'))
+      ? staffAsUsers
+      : [safeAdmin, ...staffAsUsers];
 
     const isDifferent =
       finalUsers.length !== users.length ||
@@ -1286,6 +1307,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateMenuItemRecipe = (menuItemId: string, recipe: RecipeIngredient[], costPrice: number) => {
     setMenuItems(prev =>
       prev.map(m => (m.id === menuItemId ? { ...m, recipe, costPrice } : m))
+    );
+  };
+
+  const toggleMenuItemAddOns = (menuItemId: string, allow?: boolean) => {
+    setMenuItems(prev =>
+      prev.map(m => {
+        if (m.id === menuItemId) {
+          const currentAllow = m.allowAddOns !== false;
+          const nextAllow = allow !== undefined ? allow : !currentAllow;
+          return { ...m, allowAddOns: nextAllow };
+        }
+        return m;
+      })
     );
   };
 
@@ -2387,6 +2421,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateMenuItem,
         deleteMenuItem,
         updateMenuItemRecipe,
+        toggleMenuItemAddOns,
         addAddOn,
         updateAddOn,
         deleteAddOn,

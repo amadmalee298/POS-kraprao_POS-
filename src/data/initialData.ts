@@ -60,15 +60,15 @@ export const INITIAL_BRANCHES: Branch[] = [
 export const INITIAL_USERS: User[] = [
   {
     id: 'usr-admin',
-    name: 'คุณสมศักดิ์ (เจ้าของร้าน)',
+    name: 'อาห์มัด (เจ้าของร้าน)',
     role: 'admin',
     pin: '1234',
-    avatarColor: 'from-amber-500 to-orange-600',
+    avatarColor: 'from-orange-500 to-amber-600',
   },
   {
-    id: 'staff-3',
-    name: 'คุณนภา (ผู้จัดการสาขา)',
-    role: 'manager',
+    id: 'staff-samfatin',
+    name: 'ซัมฟาติน (พนักงาน)',
+    role: 'staff',
     pin: '5555',
     avatarColor: 'from-emerald-500 to-teal-600',
   },
@@ -80,25 +80,18 @@ export const INITIAL_USERS: User[] = [
     avatarColor: 'from-sky-500 to-blue-600',
   },
   {
-    id: 'staff-5',
-    name: 'น้องแพรว (พนักงานต้อนรับ/เสิร์ฟ)',
-    role: 'staff',
-    pin: '4444',
-    avatarColor: 'from-rose-500 to-pink-600',
+    id: 'staff-3',
+    name: 'คุณนภา (ผู้จัดการสาขา)',
+    role: 'manager',
+    pin: '3333',
+    avatarColor: 'from-purple-500 to-indigo-600',
   },
   {
     id: 'staff-1',
     name: 'เชฟวิชัย (หัวหน้าเชฟ)',
     role: 'staff',
     pin: '1111',
-    avatarColor: 'from-purple-500 to-indigo-600',
-  },
-  {
-    id: 'staff-2',
-    name: 'กุ๊กต้น (ผู้ช่วยเชฟ)',
-    role: 'staff',
-    pin: '2222',
-    avatarColor: 'from-teal-500 to-emerald-600',
+    avatarColor: 'from-rose-500 to-pink-600',
   },
 ];
 
@@ -390,6 +383,7 @@ export const INITIAL_MENU_ITEMS: MenuItem[] = [
     description: 'ชาไทยชงสด หอมใบชาตรามือ ใส่นมสดแท้หวานมันลงตัว',
     image: 'https://images.unsplash.com/photo-1558857563-b371033873b8?w=500&q=80',
     recipe: [],
+    allowAddOns: false,
   },
   {
     id: 'menu-drink-lemontea',
@@ -401,6 +395,7 @@ export const INITIAL_MENU_ITEMS: MenuItem[] = [
     description: 'ชาดำคั้นมะนาวสดแท้ 100% เปรี้ยวหวานสดชื่น แก้เผ็ดดีเยี่ยม',
     image: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=500&q=80',
     recipe: [],
+    allowAddOns: false,
   },
   {
     id: 'menu-dessert-coconut-ice',
@@ -412,6 +407,7 @@ export const INITIAL_MENU_ITEMS: MenuItem[] = [
     description: 'ไอศกรีมกะทิสดมะพร้าวอ่อน โรยถั่วลิงทอด ถั่วแดง และข้าวเหนียวลืมผัว',
     image: 'https://images.unsplash.com/photo-1563805042-7684c019e1cb?w=500&q=80',
     recipe: [],
+    allowAddOns: false,
   }
 ];
 
@@ -500,6 +496,42 @@ export const INITIAL_SETTINGS: SystemSettings = {
 export const INITIAL_WASTE_LOGS: WasteLog[] = [];
 
 export const INITIAL_STAFF_MEMBERS: StaffMember[] = [
+  {
+    id: 'staff-ahmad',
+    name: 'อาห์มัด (เจ้าของร้าน)',
+    role: 'เจ้าของร้าน / ผู้จัดการใหญ่',
+    hourlyRate: 250,
+    otRateMultiplier: 1.5,
+    phone: '081-234-5678',
+    branchId: 'branch-siam',
+    status: 'active',
+    pin: '1234',
+    permissions: {
+      canAccessPOS: true,
+      canAccessKDS: true,
+      canAccessInventory: true,
+      canAccessAccounting: true,
+      canAccessSettings: true,
+      canVoidOrder: true,
+      canGiveDiscount: true,
+      canEditRecipe: true
+    }
+  },
+  {
+    id: 'staff-samfatin',
+    name: 'ซัมฟาติน (พนักงาน)',
+    role: 'พนักงานบริการ',
+    hourlyRate: 90,
+    otRateMultiplier: 1.5,
+    phone: '089-876-5432',
+    branchId: 'branch-siam',
+    status: 'active',
+    pin: '5555',
+    permissions: {
+      canAccessPOS: true,
+      canAccessKDS: true
+    }
+  },
   {
     id: 'staff-1',
     name: 'เชฟวิชัย (หัวหน้าเชฟ)',

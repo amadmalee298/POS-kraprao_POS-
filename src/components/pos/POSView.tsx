@@ -41,6 +41,7 @@ export const POSView: React.FC = () => {
   const {
     menuItems,
     categories,
+    addOns,
     cart,
     addToCart,
     updateCartQuantity,
@@ -90,11 +91,12 @@ export const POSView: React.FC = () => {
   const [isBulkEditMode, setIsBulkEditMode] = useState(false);
   const [selectedCartItemIds, setSelectedCartItemIds] = useState<string[]>([]);
 
-  // Auto-clean selectedCartItemIds if items are removed from cart
+  // Auto-clean selectedCartItemIds if items are removed from cart, and reset mobileTab
   React.useEffect(() => {
     if (cart.length === 0) {
       setIsBulkEditMode(false);
       setSelectedCartItemIds([]);
+      setMobileTab('menu');
     } else {
       setSelectedCartItemIds(prev => prev.filter(id => cart.some(item => item.cartItemId === id)));
     }
@@ -194,10 +196,13 @@ export const POSView: React.FC = () => {
   );
 
   const handleItemClick = (item: MenuItem) => {
-    if (
+    const hasAddOns = item.allowAddOns !== false && (addOns && addOns.length > 0);
+    const hasCustomization =
+      hasAddOns ||
       (item.availableSpiceLevels && item.availableSpiceLevels.length > 0) ||
-      (item.availableProteins && item.availableProteins.length > 0)
-    ) {
+      (item.availableProteins && item.availableProteins.length > 0);
+
+    if (hasCustomization) {
       setSelectedMenuItem(item);
       setIsCustomizationOpen(true);
     } else {
@@ -376,13 +381,29 @@ export const POSView: React.FC = () => {
                 </div>
 
                 {/* Info Row: Title on Left, Price on Right */}
-                <div className="flex items-center justify-between gap-1 mb-2">
+                <div className="flex items-center justify-between gap-1 mb-1">
                   <h4 className="font-extrabold text-amber-50 text-xs sm:text-sm line-clamp-1 group-hover:text-orange-400 transition">
                     {item.name}
                   </h4>
                   <span className="font-black text-[#ff6600] text-xs sm:text-base font-mono whitespace-nowrap">
                     ฿{item.price}
                   </span>
+                </div>
+
+                {/* Topping status badge */}
+                <div className="flex items-center justify-between text-[10px] mb-2">
+                  {item.allowAddOns !== false ? (
+                    <span className="text-amber-400/90 bg-[#21140c] px-1.5 py-0.5 rounded font-medium inline-flex items-center">
+                      🥚 เลือกท็อปปิ้งได้
+                    </span>
+                  ) : (
+                    <span className="text-stone-500 bg-[#170e09] px-1.5 py-0.5 rounded font-medium">
+                      ไม่มีท็อปปิ้ง
+                    </span>
+                  )}
+                  {item.availableSpiceLevels && item.availableSpiceLevels.length > 0 && (
+                    <span className="text-orange-400/80">เลือกระดับเผ็ด</span>
+                  )}
                 </div>
 
                 {/* Action Button: + เพิ่มสั่ง */}
@@ -395,7 +416,7 @@ export const POSView: React.FC = () => {
                   className="w-full bg-[#ff6600] hover:bg-[#ff7711] text-black font-extrabold text-xs sm:text-sm py-2 px-3 rounded-xl shadow flex items-center justify-center space-x-1 active:scale-95 transition cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                  <span>เพิ่มสั่ง</span>
+                  <span>{item.allowAddOns !== false ? 'เลือกท็อปปิ้ง' : 'เพิ่มสั่ง'}</span>
                 </button>
               </div>
             ))}

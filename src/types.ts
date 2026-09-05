@@ -38,6 +38,8 @@ export interface MenuItem {
   recipe: RecipeIngredient[];
   availableSpiceLevels?: SpiceLevel[];
   availableProteins?: { name: ProteinChoice; extraPrice: number }[];
+  allowAddOns?: boolean; // When true or undefined, toppings can be selected for this item; if false, toppings are disabled
+  allowedAddOnIds?: string[]; // Optional specific list of enabled topping IDs for this menu item
 }
 
 export interface CartItem {
