@@ -1,0 +1,902 @@
+[
+  {
+    "id": "ing-1786350171994",
+    "name": "กุ้งสด",
+    "isLowStock": true,
+    "minStockAlert": 0.01,
+    "barcode": "",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "branchId": "branch-1786349847821",
+    "currentStock": 0,
+    "unit": "kg",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "unitCost": 220,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "category": "meat",
+    "ingredientId": "ing-1786350171994"
+  },
+  {
+    "id": "ing-1786350187976",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "name": "ปลาหมึก",
+    "barcode": "",
+    "branchId": "branch-1786349847821",
+    "unit": "kg",
+    "ingredientId": "ing-1786350187976",
+    "unitCost": 200,
+    "isLowStock": false,
+    "minStockAlert": 0.01,
+    "currentStock": 9,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "category": "meat"
+  },
+  {
+    "id": "ing-1786350201831",
+    "isLowStock": false,
+    "unitCost": 190,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "barcode": "",
+    "category": "meat",
+    "minStockAlert": 0.01,
+    "unit": "kg",
+    "branchId": "branch-1786349847821",
+    "ingredientId": "ing-1786350201831",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "name": "เนื้อวัวบด",
+    "currentStock": 0.55
+  },
+  {
+    "id": "ing-1786350213036",
+    "isLowStock": false,
+    "barcode": "",
+    "unitCost": 70,
+    "category": "meat",
+    "ingredientId": "ing-1786350213036",
+    "unit": "kg",
+    "currentStock": 23.950000000000006,
+    "branchId": "branch-1786349847821",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "minStockAlert": 0.01,
+    "name": "เนื้อไก่บด",
+    "lastUpdated": "2026-09-05T14:56:46.687Z"
+  },
+  {
+    "id": "ing-1786350284929",
+    "ingredientId": "ing-1786350284929",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "unit": "kg",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "branchId": "branch-1786349847821",
+    "currentStock": 3.9899999999999993,
+    "minStockAlert": 0.01,
+    "isLowStock": false,
+    "barcode": "",
+    "name": "กะเทียม",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "category": "vegetable",
+    "unitCost": 70
+  },
+  {
+    "id": "ing-1786350299731",
+    "isLowStock": false,
+    "unit": "kg",
+    "currentStock": 4.2,
+    "category": "vegetable",
+    "barcode": "",
+    "unitCost": 70,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "ingredientId": "ing-1786350299731",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "name": "พริกจินดาแดงเด็ด",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "branchId": "branch-1786349847821",
+    "minStockAlert": 0.01
+  },
+  {
+    "id": "ing-1786350366201",
+    "unit": "kg",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "branchId": "branch-1786349847821",
+    "barcode": "",
+    "ingredientId": "ing-1786350366201",
+    "isLowStock": false,
+    "unitCost": 80,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "minStockAlert": 0.01,
+    "category": "vegetable",
+    "currentStock": 3.4800000000000013,
+    "name": "ใบกะเพรา"
+  },
+  {
+    "id": "ing-1786350422838",
+    "barcode": "",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "name": "ไข่ไก่เบอร์3-4",
+    "ingredientId": "ing-1786350422838",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unitCost": 4.13,
+    "currentStock": 0,
+    "category": "egg",
+    "isLowStock": true,
+    "unit": "pcs",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "minStockAlert": 1,
+    "branchId": "branch-1786349847821"
+  },
+  {
+    "id": "ing-1786350510720",
+    "category": "dry_good",
+    "unit": "kg",
+    "unitCost": 27,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "minStockAlert": 1,
+    "isLowStock": true,
+    "branchId": "branch-1786349847821",
+    "name": "ข้าวสาร",
+    "currentStock": 1,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "ingredientId": "ing-1786350510720",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "barcode": ""
+  },
+  {
+    "id": "ing-1786350788425",
+    "unit": "pcs",
+    "isLowStock": true,
+    "barcode": "",
+    "currentStock": 1,
+    "unitCost": 0.65,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "minStockAlert": 1,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "ingredientId": "ing-1786350788425",
+    "category": "packaging",
+    "name": "ถ้วยคราฟท์",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "branchId": "branch-1786349847821"
+  },
+  {
+    "id": "ing-1786350813299",
+    "barcode": "",
+    "minStockAlert": 1,
+    "unitCost": 150,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "category": "packaging",
+    "ingredientId": "ing-1786350813299",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "unit": "pcs",
+    "currentStock": 1,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "branchId": "branch-1786349847821",
+    "isLowStock": true,
+    "name": "ช้อน"
+  },
+  {
+    "id": "ing-1786350821032",
+    "unitCost": 150,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "name": "ส้อม",
+    "category": "packaging",
+    "ingredientId": "ing-1786350821032",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "minStockAlert": 1,
+    "currentStock": 1,
+    "unit": "pcs",
+    "isLowStock": true,
+    "branchId": "branch-1786349847821",
+    "barcode": "",
+    "lastUpdated": "2026-09-05T14:56:46.687Z"
+  },
+  {
+    "id": "ing-1786350844750",
+    "branchId": "branch-1786349847821",
+    "name": "ถุง 6*14",
+    "ingredientId": "ing-1786350844750",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "currentStock": 1,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "minStockAlert": 1,
+    "unit": "g",
+    "isLowStock": true,
+    "category": "packaging",
+    "unitCost": 150,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "barcode": ""
+  },
+  {
+    "id": "ing-1786351009780",
+    "unit": "pcs",
+    "category": "sauce",
+    "barcode": "",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unitCost": 150,
+    "name": "น้ำปลาพริก",
+    "currentStock": 1,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "isLowStock": true,
+    "branchId": "branch-1786349847821",
+    "minStockAlert": 1,
+    "ingredientId": "ing-1786351009780"
+  },
+  {
+    "id": "ing-1786351065687",
+    "isLowStock": true,
+    "unit": "g",
+    "branchId": "branch-1786349847821",
+    "minStockAlert": 1,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "barcode": "",
+    "unitCost": 150,
+    "ingredientId": "ing-1786351065687",
+    "category": "dry_good",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "name": "เติมทิพ",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "currentStock": 1
+  },
+  {
+    "id": "ing-1786351117501",
+    "ingredientId": "ing-1786351117501",
+    "isLowStock": false,
+    "name": "น้ำปลาแท้",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "currentStock": 2945,
+    "barcode": "",
+    "branchId": "branch-1786349847821",
+    "unit": "ml",
+    "minStockAlert": 1,
+    "category": "dry_good",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "unitCost": 150
+  },
+  {
+    "id": "ing-1786351147559",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "category": "dry_good",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "unitCost": 150,
+    "ingredientId": "ing-1786351147559",
+    "isLowStock": true,
+    "unit": "ml",
+    "currentStock": 0,
+    "barcode": "",
+    "branchId": "branch-1786349847821",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "name": "แม็กกี้ฝาเขียว",
+    "minStockAlert": 1
+  },
+  {
+    "id": "ing-1786351175465",
+    "category": "dry_good",
+    "isLowStock": true,
+    "name": "ผงชูรส",
+    "unitCost": 150,
+    "branchId": "branch-1786349847821",
+    "currentStock": 1,
+    "minStockAlert": 1,
+    "unit": "g",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "barcode": "",
+    "ingredientId": "ing-1786351175465",
+    "lastUpdated": "2026-09-05T14:56:46.687Z"
+  },
+  {
+    "id": "ing-1786351212897",
+    "unitCost": 99,
+    "ingredientId": "ing-1786351212897",
+    "unit": "g",
+    "category": "dry_good",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "currentStock": 0.6499999999999998,
+    "isLowStock": true,
+    "name": "พริกไทยดำป่น",
+    "barcode": "",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "minStockAlert": 1,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "branchId": "branch-1786349847821"
+  },
+  {
+    "id": "ing-1786351252720",
+    "unit": "ml",
+    "currentStock": 0,
+    "barcode": "",
+    "isLowStock": true,
+    "branchId": "branch-1786349847821",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "ingredientId": "ing-1786351252720",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "name": "ซีอิ๊วดำ",
+    "minStockAlert": 1,
+    "unitCost": 150,
+    "category": "dry_good"
+  },
+  {
+    "id": "ing-1786351284741",
+    "unit": "l",
+    "branchId": "branch-1786349847821",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "minStockAlert": 1,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "unitCost": 50,
+    "isLowStock": true,
+    "name": "น้ำมันปาล์ม",
+    "barcode": "",
+    "category": "dry_good",
+    "ingredientId": "ing-1786351284741",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "currentStock": 1
+  },
+  {
+    "id": "ing-1786351298859",
+    "unit": "l",
+    "branchId": "branch-1786349847821",
+    "isLowStock": true,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unitCost": 50,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "category": "dry_good",
+    "name": "น้ำมันถั่วเหลือง",
+    "minStockAlert": 1,
+    "barcode": "",
+    "currentStock": 0.9299999999999999,
+    "ingredientId": "ing-1786351298859"
+  },
+  {
+    "id": "ing-1786351322983",
+    "category": "dry_good",
+    "unitCost": 25,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "name": "น้ำตาลทรายขาว",
+    "minStockAlert": 1,
+    "barcode": "",
+    "branchId": "branch-1786349847821",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "currentStock": 0.4750000000000002,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "unit": "kg",
+    "ingredientId": "ing-1786351322983",
+    "isLowStock": true
+  },
+  {
+    "id": "ing-1786351367995",
+    "barcode": "",
+    "unitCost": 150,
+    "category": "dry_good",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "currentStock": 14931,
+    "unit": "ml",
+    "ingredientId": "ing-1786351367995",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "branchId": "branch-1786349847821",
+    "minStockAlert": 1,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "isLowStock": false,
+    "name": "ซอสหอยนางรม"
+  },
+  {
+    "id": "ing-1786519608241",
+    "name": "ซอสผัดกะเพราสูตรลับ",
+    "minStockAlert": 0,
+    "branchId": "branch-1786349847821",
+    "isLowStock": false,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unitCost": 150,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "unit": "ml",
+    "ingredientId": "ing-1786519608241",
+    "category": "sauce",
+    "barcode": "",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "currentStock": 2500
+  },
+  {
+    "id": "ing-1788280359170",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "ingredientId": "ing-1788280359170",
+    "currentStock": 4,
+    "branchId": "branch-1786349847821",
+    "name": "พริกซอย",
+    "barcode": "",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unit": "g",
+    "minStockAlert": 1,
+    "unitCost": 10,
+    "isLowStock": false,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "category": "vegetable"
+  },
+  {
+    "id": "ing-1788280379192",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "isLowStock": false,
+    "ingredientId": "ing-1788280379192",
+    "category": "vegetable",
+    "currentStock": 2,
+    "unitCost": 10,
+    "name": "หอมแดงซอย",
+    "minStockAlert": 1,
+    "barcode": "",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "unit": "g",
+    "branchId": "branch-1786349847821",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    }
+  },
+  {
+    "id": "ing-1788359295839-tvu1",
+    "ingredientId": "ing-1788359295839-tvu1",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "minStockAlert": 5,
+    "currentStock": 0,
+    "name": "แม็กซ์โมนิคยัวร์ไซค์R",
+    "isLowStock": true,
+    "branchId": "branch-1786349847821",
+    "barcode": "",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unitCost": 138,
+    "category": "supplies",
+    "unit": "pcs"
+  },
+  {
+    "id": "ing-1788359298438-zkwe",
+    "unitCost": 14.75,
+    "unit": "pack",
+    "currentStock": 0,
+    "category": "supplies",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "ingredientId": "ing-1788359298438-zkwe",
+    "name": "แม็กซ์โมนิคแฮนด์60S X4",
+    "isLowStock": true,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "branchId": "branch-1786349847821",
+    "barcode": "",
+    "minStockAlert": 5
+  },
+  {
+    "id": "ing-1788359299346-0712",
+    "name": "MT บีกเกอร์ตวงน้ำ1000 ML",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "category": "equipment",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "unitCost": 79,
+    "barcode": "",
+    "currentStock": 1,
+    "unit": "ml",
+    "isLowStock": true,
+    "branchId": "branch-1786349847821",
+    "ingredientId": "ing-1788359299346-0712",
+    "minStockAlert": 5
+  },
+  {
+    "id": "ing-1788359299346-860o",
+    "category": "supplies",
+    "unit": "pcs",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "unitCost": 110,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "minStockAlert": 5,
+    "currentStock": 1,
+    "branchId": "branch-1786349847821",
+    "name": "คลิปดำ ตราม้า เบอร์ 108",
+    "barcode": "",
+    "ingredientId": "ing-1788359299346-860o",
+    "isLowStock": true
+  },
+  {
+    "id": "ing-1788359299346-cudf",
+    "barcode": "",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "branchId": "branch-1786349847821",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "unit": "pcs",
+    "minStockAlert": 5,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unitCost": 99,
+    "currentStock": 1,
+    "category": "equipment",
+    "name": "LTที่คีบเคลือบซิลิโคน9น.",
+    "ingredientId": "ing-1788359299346-cudf",
+    "isLowStock": true
+  },
+  {
+    "id": "ing-1788359299346-i8eu",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "unit": "ml",
+    "branchId": "branch-1786349847821",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "minStockAlert": 5,
+    "ingredientId": "ing-1788359299346-i8eu",
+    "isLowStock": false,
+    "currentStock": 2400,
+    "category": "supplies",
+    "barcode": "",
+    "unitCost": 125,
+    "name": "ซันไลต์เลมอน 2400 มล."
+  },
+  {
+    "id": "ing-1788359299346-ubme",
+    "minStockAlert": 5,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unitCost": 49,
+    "isLowStock": true,
+    "unit": "g",
+    "category": "supplies",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "barcode": "",
+    "currentStock": 0,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "name": "เปาวินวอช 800 กรัม",
+    "ingredientId": "ing-1788359299346-ubme",
+    "branchId": "branch-1786349847821"
+  },
+  {
+    "id": "ing-1788410257433-8kwo",
+    "currentStock": 0,
+    "branchId": "branch-1786349847821",
+    "name": "ทิพรส น้ำปลาแท้ ขวดเพ็ท 1.5 ล.",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "isLowStock": true,
+    "ingredientId": "ing-1788410257433-8kwo",
+    "minStockAlert": 5,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "category": "meat",
+    "unit": "bottle",
+    "unitCost": 59,
+    "barcode": "",
+    "branchName": "ครัวกะเพรา ตลาด กกท"
+  },
+  {
+    "id": "ing-1788410279990-051v",
+    "branchId": "branch-1786349847821",
+    "minStockAlert": 5,
+    "barcode": "",
+    "isLowStock": true,
+    "name": "มิตรผล น้ำตาลทรายขาวบริสุทธิ์ 1 กก.",
+    "unitCost": 27,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "currentStock": 0,
+    "category": "sauce",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unit": "g",
+    "ingredientId": "ing-1788410279990-051v"
+  },
+  {
+    "id": "ing-1788410385065-rnz0",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "barcode": "",
+    "name": "เอโร่ ไข่ไก่คละ เบอร์ 3-4 มีฝา 30 ฟอง",
+    "minStockAlert": 5,
+    "branchId": "branch-1786349847821",
+    "unit": "kg",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "ingredientId": "ing-1788410385065-rnz0",
+    "unitCost": 130,
+    "isLowStock": true,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "category": "meat",
+    "currentStock": 0
+  },
+  {
+    "id": "ing-1788412698237-av0w",
+    "unit": "g",
+    "barcode": "",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "branchId": "branch-1786349847821",
+    "ingredientId": "ing-1788412698237-av0w",
+    "isLowStock": true,
+    "name": "ตราฉัตร ข้าวหอมผสม 70%:30% 5 กก.",
+    "currentStock": 4,
+    "unitCost": 137,
+    "category": "dry_good",
+    "minStockAlert": 5,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    }
+  },
+  {
+    "id": "ing-1788455293416-dcnd",
+    "name": "แม็กซ์โมนิค์ยัวร์ไซค์6R",
+    "branchId": "branch-1786349847821",
+    "isLowStock": true,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "minStockAlert": 5,
+    "unitCost": 138,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "barcode": "",
+    "ingredientId": "ing-1788455293416-dcnd",
+    "category": "supplies",
+    "unit": "pcs",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "currentStock": 0
+  },
+  {
+    "id": "ing-1788455302243-i9lz",
+    "branchId": "branch-1786349847821",
+    "currentStock": 0,
+    "isLowStock": true,
+    "ingredientId": "ing-1788455302243-i9lz",
+    "barcode": "",
+    "minStockAlert": 5,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unit": "pack",
+    "category": "supplies",
+    "unitCost": 14.75,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "name": "แม็กซ์โมนิแฮนด์60S X4",
+    "branchName": "ครัวกะเพรา ตลาด กกท"
+  },
+  {
+    "id": "ing-1788455628021-jw2p",
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "branchId": "branch-1786349847821",
+    "barcode": "",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "minStockAlert": 5,
+    "name": "เอโร่ ไข่ไก่คละ เบอร์ 3-4 มีฟ่า 30 ฟอง จำนวน 7",
+    "unitCost": 130,
+    "ingredientId": "ing-1788455628021-jw2p",
+    "category": "meat",
+    "isLowStock": true,
+    "currentStock": 0,
+    "unit": "kg",
+    "lastUpdated": "2026-09-05T14:56:46.687Z"
+  },
+  {
+    "id": "ing-1788463214798-w832",
+    "branchId": "branch-1786349847821",
+    "ingredientId": "ing-1788463214798-w832",
+    "minStockAlert": 5,
+    "isLowStock": true,
+    "currentStock": 0,
+    "barcode": "",
+    "name": "แม็กซ์โมแฮนด์60S X4",
+    "category": "supplies",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "unitCost": 14.75,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "unit": "pack",
+    "branchName": "ครัวกะเพรา ตลาด กกท"
+  },
+  {
+    "id": "ing-1788463218397-m7qo",
+    "ingredientId": "ing-1788463218397-m7qo",
+    "branchId": "branch-1786349847821",
+    "unit": "pcs",
+    "currentStock": 0,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "barcode": "",
+    "name": "แม็กซ์โมนิคยัวร์ไซซ์6R",
+    "unitCost": 138,
+    "category": "supplies",
+    "isLowStock": true,
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "minStockAlert": 5
+  },
+  {
+    "id": "ing-1788545141992-gsmo",
+    "branchId": "branch-1786349847821",
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "name": "แม็กซ์โมนิคยัวร์ไซด์6R",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "minStockAlert": 5,
+    "branchName": "ครัวกะเพรา ตลาด กกท",
+    "category": "supplies",
+    "unit": "pcs",
+    "currentStock": 1,
+    "unitCost": 138,
+    "isLowStock": true,
+    "barcode": "",
+    "ingredientId": "ing-1788545141992-gsmo"
+  },
+  {
+    "id": "ing-1788554322946-qhbt",
+    "isLowStock": false,
+    "currentStock": 2040,
+    "unit": "ml",
+    "lastUpdated": "2026-09-05T14:56:46.687Z",
+    "ingredientId": "ing-1788554322946-qhbt",
+    "category": "sauce",
+    "barcode": "",
+    "unitCost": 35,
+    "minStockAlert": 5,
+    "updatedAt": {
+      "type": "firestore/timestamp/1.0",
+      "seconds": 1788620207,
+      "nanoseconds": 784000000
+    },
+    "name": "แม็กกี้ ซอสปรุง ฝาเขียว 680 มล. x 3",
+    "branchId": "branch-1786349847821",
+    "branchName": "ครัวกะเพรา ตลาด กกท"
+  }
+]

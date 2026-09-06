@@ -61,8 +61,13 @@ export const InventoryView: React.FC = () => {
     addIngredientUnit,
     updateIngredientUnit,
     deleteIngredientUnit,
-    resetIngredientUnits
+    resetIngredientUnits,
+    pullCloudAllData
   } = usePOS();
+
+  // Cloud Sync State
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const [cloudSyncMsg, setCloudSyncMsg] = useState<string | null>(null);
 
   // Google Sheets Export State
   const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
@@ -519,6 +524,25 @@ export const InventoryView: React.FC = () => {
     }
   ];
 
+  const handleCloudSync = async () => {
+    if (!pullCloudAllData) return;
+    setIsSyncingCloud(true);
+    try {
+      const res = await pullCloudAllData();
+      if (res && res.success) {
+        setCloudSyncMsg(`ดึงข้อมูลสำเร็จ! พบวัตถุดิบ ${res.ingredientsCount} รายการ, เมนู ${res.menuItemsCount} รายการ`);
+      } else {
+        setCloudSyncMsg('ข้อมูลวัตถุดิบเป็นปัจจุบันแล้ว');
+      }
+    } catch (err) {
+      console.warn('Inventory Cloud Sync error:', err);
+      setCloudSyncMsg('ไม่สามารถเชื่อมต่อ Cloud ได้');
+    } finally {
+      setIsSyncingCloud(false);
+      setTimeout(() => setCloudSyncMsg(null), 4000);
+    }
+  };
+
   const handleCreateIngredient = (e: React.FormEvent) => {
     e.preventDefault();
     if (!ingName.trim()) return;
@@ -709,6 +733,16 @@ export const InventoryView: React.FC = () => {
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
           <button
+            onClick={handleCloudSync}
+            disabled={isSyncingCloud}
+            className="px-3.5 py-2.5 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/50 text-indigo-300 font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap disabled:opacity-50"
+            title="ดึงข้อมูลวัตถุดิบและสต็อกจาก Cloud เพื่อกู้คืนข้อมูลหรืออัปเดตให้ตรงกับระบบคลาวด์"
+          >
+            <RefreshCw className={`w-4 h-4 text-indigo-400 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+            <span>{isSyncingCloud ? 'กำลังซิงค์...' : 'ดึงข้อมูลจาก Cloud'}</span>
+          </button>
+
+          <button
             onClick={() => setIsSheetsModalOpen(true)}
             className="px-3.5 py-2.5 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
             title="ส่งออกสต็อกและประวัติการเคลื่อนไหวไปยัง Google Sheets"
@@ -767,6 +801,18 @@ export const InventoryView: React.FC = () => {
 
       {/* Main Container */}
       <div className="p-3 sm:p-6 space-y-5 max-w-7xl mx-auto w-full">
+        {cloudSyncMsg && (
+          <div className="p-3 bg-indigo-950/90 border border-indigo-500/60 rounded-xl text-indigo-200 text-xs font-semibold flex items-center justify-between shadow-lg animate-fade-in">
+            <div className="flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{cloudSyncMsg}</span>
+            </div>
+            <button onClick={() => setCloudSyncMsg(null)} className="text-slate-400 hover:text-white text-xs">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Navigation Tabs */}
         <div className="flex items-center overflow-x-auto no-scrollbar gap-2 p-1.5 bg-slate-900 border border-slate-800/80 rounded-2xl">
           <button

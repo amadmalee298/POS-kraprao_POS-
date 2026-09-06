@@ -17,7 +17,7 @@ import {
   DocumentData
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Order, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome } from '../types';
+import { Order, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem } from '../types';
 
 export interface CentralBranchLiveStats {
   branchId: string;
@@ -888,4 +888,272 @@ export function subscribeToCentralIncomes(
     return () => {};
   }
 }
+
+/**
+ * Fetch inventory items for a branch from Firestore
+ */
+export async function fetchBranchInventoryFromFirestore(branchId: string = 'branch-1786349847821'): Promise<Ingredient[]> {
+  if (!dbInstance) return [];
+
+  try {
+    const list: Ingredient[] = [];
+    const seenIds = new Set<string>();
+
+    // 1. Try branch-specific sub-collection: /branches/{branchId}/inventory
+    try {
+      const branchCol = collection(dbInstance, 'branches', branchId, 'inventory');
+      const snap = await getDocs(branchCol);
+      snap.forEach(d => {
+        const data = d.data();
+        const ingId = data.ingredientId || d.id;
+        if (!seenIds.has(ingId)) {
+          seenIds.add(ingId);
+          list.push({
+            id: ingId,
+            name: data.name || 'วัตถุดิบ',
+            unit: data.unit || 'g',
+            currentStock: typeof data.currentStock === 'number' ? Number(data.currentStock.toFixed(3)) : 0,
+            minStockAlert: typeof data.minStockAlert === 'number' ? data.minStockAlert : 0.01,
+            unitCost: typeof data.unitCost === 'number' ? data.unitCost : 0,
+            category: data.category || 'meat',
+            barcode: data.barcode || ''
+          });
+        }
+      });
+    } catch (subErr) {
+      console.warn(`[Firebase Service] Sub-collection fetch failed for ${branchId}:`, subErr);
+    }
+
+    // 2. If needed, also check global /inventory collection for any items belonging to this branch or all items
+    if (list.length === 0) {
+      try {
+        const globalCol = collection(dbInstance, 'inventory');
+        const snap = await getDocs(globalCol);
+        snap.forEach(d => {
+          const data = d.data();
+          if (data.branchId && data.branchId !== branchId) return;
+          const ingId = data.ingredientId || d.id.replace(`${branchId}_`, '');
+          if (!seenIds.has(ingId)) {
+            seenIds.add(ingId);
+            list.push({
+              id: ingId,
+              name: data.name || 'วัตถุดิบ',
+              unit: data.unit || 'g',
+              currentStock: typeof data.currentStock === 'number' ? Number(data.currentStock.toFixed(3)) : 0,
+              minStockAlert: typeof data.minStockAlert === 'number' ? data.minStockAlert : 0.01,
+              unitCost: typeof data.unitCost === 'number' ? data.unitCost : 0,
+              category: data.category || 'meat',
+              barcode: data.barcode || ''
+            });
+          }
+        });
+      } catch (globalErr) {
+        console.warn('[Firebase Service] Global inventory fetch failed:', globalErr);
+      }
+    }
+
+    console.log(`[Firebase Service] 📦 Fetched ${list.length} ingredients from Firestore for branch ${branchId}`);
+    return list;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to fetch inventory from Firestore:', err);
+    return [];
+  }
+}
+
+/**
+ * Sync a single ingredient change to Firestore
+ */
+export async function syncIngredientToFirestore(
+  ingredient: Ingredient,
+  branchId: string = 'branch-1786349847821',
+  branchName: string = 'ครัวกะเพรา ตลาด กกท'
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const nowIso = new Date().toISOString();
+    const payload = {
+      ingredientId: ingredient.id,
+      id: ingredient.id,
+      name: ingredient.name,
+      currentStock: ingredient.currentStock,
+      minStockAlert: ingredient.minStockAlert,
+      unit: ingredient.unit,
+      unitCost: ingredient.unitCost,
+      category: ingredient.category,
+      barcode: ingredient.barcode || '',
+      branchId,
+      branchName,
+      isLowStock: ingredient.currentStock <= ingredient.minStockAlert,
+      lastUpdated: nowIso,
+      updatedAt: serverTimestamp()
+    };
+
+    // Save to branch-specific subcollection
+    const branchDocRef = doc(dbInstance, 'branches', branchId, 'inventory', ingredient.id);
+    await setDoc(branchDocRef, payload, { merge: true });
+
+    // Save to global lookup collection
+    const globalDocRef = doc(dbInstance, 'inventory', `${branchId}_${ingredient.id}`);
+    await setDoc(globalDocRef, payload, { merge: true });
+
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to sync ingredient ${ingredient.id}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Delete an ingredient from Firestore
+ */
+export async function deleteIngredientFromFirestore(
+  ingredientId: string,
+  branchId: string = 'branch-1786349847821'
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const branchDocRef = doc(dbInstance, 'branches', branchId, 'inventory', ingredientId);
+    await deleteDoc(branchDocRef);
+
+    const globalDocRef = doc(dbInstance, 'inventory', `${branchId}_${ingredientId}`);
+    await deleteDoc(globalDocRef);
+
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to delete ingredient ${ingredientId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Fetch all custom menu items from Firestore
+ */
+export async function fetchMenuItemsFromFirestore(): Promise<MenuItem[]> {
+  if (!dbInstance) return [];
+
+  try {
+    const colRef = collection(dbInstance, 'menu_items');
+    const snap = await getDocs(colRef);
+    const list: MenuItem[] = [];
+    snap.forEach(d => {
+      const data = d.data();
+      list.push({
+        id: d.id,
+        name: data.name || '',
+        nameEn: data.nameEn || '',
+        category: data.category || 'kaprao',
+        price: Number(data.price) || 0,
+        costPrice: Number(data.costPrice) || 0,
+        description: data.description || '',
+        image: data.image || '',
+        isPopular: !!data.isPopular,
+        recipe: Array.isArray(data.recipe) ? data.recipe : [],
+        availableSpiceLevels: Array.isArray(data.availableSpiceLevels) ? data.availableSpiceLevels : undefined,
+        availableProteins: Array.isArray(data.availableProteins) ? data.availableProteins : undefined,
+        allowAddOns: data.allowAddOns !== undefined ? data.allowAddOns : true,
+        allowedAddOnIds: Array.isArray(data.allowedAddOnIds) ? data.allowedAddOnIds : undefined
+      });
+    });
+
+    console.log(`[Firebase Service] 🍽️ Fetched ${list.length} menu items from Firestore.`);
+    return list;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to fetch menu items from Firestore:', err);
+    return [];
+  }
+}
+
+/**
+ * Sync a single menu item to Firestore
+ */
+export async function syncSingleMenuItemToFirestore(item: MenuItem): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const docRef = doc(dbInstance, 'menu_items', item.id);
+    await setDoc(docRef, {
+      ...item,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to sync menu item ${item.id}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Batch sync all menu items to Firestore
+ */
+export async function syncMenuItemsBatchToFirestore(items: MenuItem[]): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine || items.length === 0) return false;
+
+  try {
+    const batch = writeBatch(dbInstance);
+    items.forEach(item => {
+      const ref = doc(dbInstance!, 'menu_items', item.id);
+      batch.set(ref, {
+        ...item,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    });
+    await batch.commit();
+    console.log(`[Firebase Service] 🍽️ Committed ${items.length} menu items to Firestore.`);
+    return true;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to batch sync menu items:', err);
+    return false;
+  }
+}
+
+/**
+ * Delete a menu item from Firestore
+ */
+export async function deleteMenuItemFromFirestore(itemId: string): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const docRef = doc(dbInstance, 'menu_items', itemId);
+    await deleteDoc(docRef);
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to delete menu item ${itemId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Fetch branches from Firestore
+ */
+export async function fetchBranchesFromFirestore(): Promise<Branch[]> {
+  if (!dbInstance) return [];
+
+  try {
+    const colRef = collection(dbInstance, 'branches');
+    const snap = await getDocs(colRef);
+    const list: Branch[] = [];
+    snap.forEach(d => {
+      const data = d.data();
+      list.push({
+        id: d.id,
+        name: data.name || '',
+        nameEn: data.nameEn || '',
+        address: data.address || '',
+        phone: data.phone || '',
+        taxId: data.taxId || '',
+        promptpayMobileOrTaxId: data.promptpayMobileOrTaxId || '',
+        isMainBranch: !!data.isMainBranch
+      });
+    });
+
+    console.log(`[Firebase Service] 🏢 Fetched ${list.length} branches from Firestore.`);
+    return list;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to fetch branches from Firestore:', err);
+    return [];
+  }
+}
+
 

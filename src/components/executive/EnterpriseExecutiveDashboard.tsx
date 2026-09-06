@@ -64,7 +64,8 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     currentBranch,
     updateMenuItem,
     sendDailySummaryNotification,
-    pullCloudOrders
+    pullCloudOrders,
+    pullCloudAllData
   } = usePOS();
 
   // Date Presets & Filter States (Using local Thailand timezone)
@@ -102,14 +103,23 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   // Refresh with Cloud Sync
   const handleRefresh = async () => {
     setLiveLastUpdated(new Date().toLocaleTimeString('th-TH'));
-    if (pullCloudOrders) {
+    if (pullCloudAllData || pullCloudOrders) {
       setIsPullingCloud(true);
       try {
-        const res = await pullCloudOrders();
-        if (res.count > 0) {
-          setActionNotification(`ดึงข้อมูลยอดขายจาก Cloud สำเร็จ (+${res.count} รายการ)`);
+        if (pullCloudAllData) {
+          const res = await pullCloudAllData();
+          if (res.success) {
+            setActionNotification(`ซิงค์ข้อมูลจาก Cloud สำเร็จ (ยอดขาย: ${res.ordersCount}, วัตถุดิบ: ${res.ingredientsCount}, เมนู: ${res.menuItemsCount})`);
+          } else {
+            setActionNotification('ข้อมูลเป็นปัจจุบันแล้ว');
+          }
         } else {
-          setActionNotification('ข้อมูลยอดขายเป็นปัจจุบันแล้ว');
+          const res = await pullCloudOrders();
+          if (res.count > 0) {
+            setActionNotification(`ดึงข้อมูลยอดขายจาก Cloud สำเร็จ (+${res.count} รายการ)`);
+          } else {
+            setActionNotification('ข้อมูลยอดขายเป็นปัจจุบันแล้ว');
+          }
         }
       } catch (e) {
         console.warn('Pull cloud orders error:', e);

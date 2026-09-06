@@ -52,7 +52,15 @@ import {
   subscribeToCentralExpenses,
   subscribeToCentralIncomes,
   subscribeToRecentCentralOrders,
-  fetchCentralOrdersFromFirestore
+  fetchCentralOrdersFromFirestore,
+  syncIngredientToFirestore,
+  deleteIngredientFromFirestore,
+  fetchBranchInventoryFromFirestore,
+  fetchMenuItemsFromFirestore,
+  syncSingleMenuItemToFirestore,
+  syncMenuItemsBatchToFirestore,
+  deleteMenuItemFromFirestore,
+  fetchBranchesFromFirestore
 } from '../services/firebaseService';
 import {
   getStoredTriggers,
@@ -302,6 +310,7 @@ interface POSContextType {
   centralBranchesLive: Record<string, CentralBranchLiveStats>;
   pushAllBranchDataToCloud: () => Promise<boolean>;
   pullCloudOrders: () => Promise<{ count: number; success: boolean }>;
+  pullCloudAllData: () => Promise<{ ordersCount: number; ingredientsCount: number; menuItemsCount: number; success: boolean }>;
 
   // Real-Time Notification Service
   sendDailySummaryNotification: (channel?: 'telegram' | 'line' | 'both') => Promise<{ success: boolean; summary: string }>;
@@ -531,9 +540,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const changeQty = parseFloat((sanitizedNewStock - previousStock).toFixed(3));
 
     // Update stock level
+    const updatedIng = { ...targetIng, currentStock: sanitizedNewStock };
     setIngredients(prev =>
-      prev.map(ing => (ing.id === ingredientId ? { ...ing, currentStock: sanitizedNewStock } : ing))
+      prev.map(ing => (ing.id === ingredientId ? updatedIng : ing))
     );
+    syncIngredientToFirestore(updatedIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
+      console.warn('[POS Ingredient Sync] Failed to sync stock adjustment to Cloud:', err);
+    });
 
     // Record adjustment log
     const performer = userName || currentUser?.name || 'ผู้ใช้งานระบบ';
@@ -991,6 +1004,100 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [effectiveOffline]);
 
+  const pullCloudAllData = useCallback(async (): Promise<{
+    ordersCount: number;
+    ingredientsCount: number;
+    menuItemsCount: number;
+    success: boolean;
+  }> => {
+    if (!isFirebaseAvailable() || effectiveOffline) {
+      return { ordersCount: 0, ingredientsCount: 0, menuItemsCount: 0, success: false };
+    }
+
+    try {
+      console.log('[POS Cloud Pull All] 🔄 Pulling all central data (Orders, Ingredients, Menu Items, Branches)...');
+      
+      // 1. Orders
+      const orderRes = await pullCloudOrders();
+
+      // 2. Ingredients for active branch
+      const branchTargetId = currentBranch?.id || 'branch-1786349847821';
+      const cloudIngs = await fetchBranchInventoryFromFirestore(branchTargetId);
+      let ingCount = 0;
+      if (cloudIngs && cloudIngs.length > 0) {
+        setIngredients(prev => {
+          const ingMap = new Map<string, Ingredient>();
+          // Cloud items take precedence
+          cloudIngs.forEach(ci => {
+            if (ci && ci.id) ingMap.set(ci.id, ci);
+          });
+          // Preserve any local ingredients not present in cloud
+          prev.forEach(pi => {
+            if (pi && pi.id && !ingMap.has(pi.id)) {
+              ingMap.set(pi.id, pi);
+            }
+          });
+          const merged = Array.from(ingMap.values());
+          try {
+            localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(merged));
+          } catch (e) {}
+          ingCount = merged.length;
+          console.log(`[POS Cloud Pull All] 📦 Ingredients synchronized: ${merged.length} items`);
+          return merged;
+        });
+      }
+
+      // 3. Menu Items
+      const cloudMenus = await fetchMenuItemsFromFirestore();
+      let menuCount = 0;
+      if (cloudMenus && cloudMenus.length > 0) {
+        setMenuItems(prev => {
+          const menuMap = new Map<string, MenuItem>();
+          cloudMenus.forEach(cm => {
+            if (cm && cm.id) menuMap.set(cm.id, cm);
+          });
+          prev.forEach(pm => {
+            if (pm && pm.id && !menuMap.has(pm.id)) {
+              menuMap.set(pm.id, pm);
+            }
+          });
+          const merged = Array.from(menuMap.values());
+          try {
+            localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(merged));
+          } catch (e) {}
+          menuCount = merged.length;
+          console.log(`[POS Cloud Pull All] 🍽️ Menu items synchronized: ${merged.length} items`);
+          return merged;
+        });
+      }
+
+      // 4. Branches
+      const cloudBranches = await fetchBranchesFromFirestore();
+      if (cloudBranches && cloudBranches.length > 0) {
+        setBranches(prev => {
+          const bMap = new Map<string, Branch>();
+          prev.forEach(b => bMap.set(b.id, b));
+          cloudBranches.forEach(cb => bMap.set(cb.id, cb));
+          const merged = Array.from(bMap.values());
+          try {
+            localStorage.setItem('POS_BRANCHES_DATA', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }
+
+      return {
+        ordersCount: orderRes.count,
+        ingredientsCount: ingCount,
+        menuItemsCount: menuCount,
+        success: true
+      };
+    } catch (err) {
+      console.error('[POS Cloud Pull All] ❌ Error pulling all data from cloud:', err);
+      return { ordersCount: 0, ingredientsCount: 0, menuItemsCount: 0, success: false };
+    }
+  }, [effectiveOffline, currentBranch?.id, pullCloudOrders]);
+
   // Periodic Background Auto Sync Effect based on settings
   useEffect(() => {
     const isAutoSyncEnabled = settings.autoSyncEnabled !== false;
@@ -1047,11 +1154,27 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
 
           let loadedItems = INITIAL_MENU_ITEMS;
-          if (parsed.menuItems && Array.isArray(parsed.menuItems)) {
-            const validItems = parsed.menuItems.filter((m: any) => m && typeof m === 'object' && m.id);
-            setMenuItems(validItems);
-            loadedItems = validItems;
-            loadedMenuItemsCount = validItems.length;
+          let loadedMenuItems: MenuItem[] = (parsed.menuItems && Array.isArray(parsed.menuItems))
+            ? parsed.menuItems.filter((m: any) => m && typeof m === 'object' && m.id)
+            : [];
+          try {
+            const sepMenu = localStorage.getItem('POS_MENU_ITEMS_DATA');
+            if (sepMenu) {
+              const parsedSep = JSON.parse(sepMenu);
+              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                const menuMap = new Map<string, MenuItem>();
+                loadedMenuItems.forEach(m => { if (m && m.id) menuMap.set(m.id, m); });
+                parsedSep.forEach((m: any) => { if (m && m.id) menuMap.set(m.id, m); });
+                loadedMenuItems = Array.from(menuMap.values());
+              }
+            }
+          } catch (e) {
+            console.warn('[POS Storage Sync] Failed to merge separate POS_MENU_ITEMS_DATA', e);
+          }
+          if (loadedMenuItems.length > 0) {
+            setMenuItems(loadedMenuItems);
+            loadedItems = loadedMenuItems;
+            loadedMenuItemsCount = loadedMenuItems.length;
           }
 
           // Always heal categories so no custom or imported category is ever lost
@@ -1067,7 +1190,26 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setIngredientUnits(parsed.ingredientUnits);
           }
           if (parsed.addOns && Array.isArray(parsed.addOns)) setAddOns(parsed.addOns);
-          if (parsed.ingredients && Array.isArray(parsed.ingredients)) setIngredients(parsed.ingredients);
+
+          // Ingredients loading with resilient backup
+          let loadedIngredients: Ingredient[] = (parsed.ingredients && Array.isArray(parsed.ingredients)) ? parsed.ingredients : [];
+          try {
+            const sepIng = localStorage.getItem('POS_INGREDIENTS_DATA');
+            if (sepIng) {
+              const parsedSep = JSON.parse(sepIng);
+              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                const ingMap = new Map<string, Ingredient>();
+                loadedIngredients.forEach(i => { if (i && i.id) ingMap.set(i.id, i); });
+                parsedSep.forEach((i: any) => { if (i && i.id) ingMap.set(i.id, i); });
+                loadedIngredients = Array.from(ingMap.values());
+              }
+            }
+          } catch (e) {
+            console.warn('[POS Storage Sync] Failed to merge separate POS_INGREDIENTS_DATA', e);
+          }
+          if (loadedIngredients.length > 0) {
+            setIngredients(loadedIngredients);
+          }
           if (parsed.stockLots && Array.isArray(parsed.stockLots)) setStockLots(parsed.stockLots);
           if (parsed.wasteLogs && Array.isArray(parsed.wasteLogs)) setWasteLogs(parsed.wasteLogs);
           if (parsed.stockAdjustmentLogs && Array.isArray(parsed.stockAdjustmentLogs)) setStockAdjustmentLogs(parsed.stockAdjustmentLogs);
@@ -1173,6 +1315,26 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         } catch (e) {
           console.warn('[POS Storage Sync] Failed to recover POS_ORDERS_DATA on empty session', e);
         }
+        try {
+          const sepIng = localStorage.getItem('POS_INGREDIENTS_DATA');
+          if (sepIng) {
+            const parsedSep = JSON.parse(sepIng);
+            if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+              setIngredients(parsedSep);
+              console.log(`[POS Storage Sync] 🛡️ Recovered ${parsedSep.length} ingredients from resilient POS_INGREDIENTS_DATA backup.`);
+            }
+          }
+        } catch (e) {}
+        try {
+          const sepMenu = localStorage.getItem('POS_MENU_ITEMS_DATA');
+          if (sepMenu) {
+            const parsedSep = JSON.parse(sepMenu);
+            if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+              setMenuItems(parsedSep);
+              console.log(`[POS Storage Sync] 🛡️ Recovered ${parsedSep.length} menu items from resilient POS_MENU_ITEMS_DATA backup.`);
+            }
+          }
+        } catch (e) {}
       }
     } catch (err) {
       console.error('[POS Storage Sync] ❌ Failed to load state from LocalStorage:', err);
@@ -1180,6 +1342,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setIsStorageLoaded(true);
     }
   }, []);
+
+  // Auto-pull all central data on app startup to ensure all real ingredients, orders and menu items are loaded from Cloud
+  useEffect(() => {
+    if (!isStorageLoaded) return;
+    console.log('[POS Startup] ☁️ Triggering automatic cloud sync to recover any saved ingredients and orders from Firestore...');
+    pullCloudAllData();
+  }, [isStorageLoaded, pullCloudAllData]);
 
   // Synchronize users state with staffMembers automatically so PIN screen and login reflect latest staff edits
   useEffect(() => {
@@ -1325,6 +1494,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       } catch (backupErr) {
         console.warn('[POS Storage Sync] ⚠️ Failed to save POS_ORDERS_DATA backup:', backupErr);
       }
+      try {
+        localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(ingredients));
+      } catch (backupErr) {}
+      try {
+        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(menuItems));
+      } catch (backupErr) {}
+      try {
+        localStorage.setItem('POS_BRANCHES_DATA', JSON.stringify(branches));
+      } catch (backupErr) {}
       const pendingSync = orders.filter(o => o.isOfflineOrder && !o.isSynced).length;
       console.log(`[POS Storage Sync] 💾 Persisted state & order draft (${cart.length} items) to LocalStorage at ${stateToSave.savedAt}. Orders: ${orders.length} (${pendingSync} pending sync), Cash Shifts: ${cashShifts.length}.`);
     } catch (err) {
@@ -1444,20 +1622,36 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: `menu-${Date.now()}`
     };
     setMenuItems(prev => [...prev, newItem]);
+    syncSingleMenuItemToFirestore(newItem).catch(err => {
+      console.warn('[POS Menu Sync] Failed to sync new menu item to Cloud:', err);
+    });
   };
 
   const updateMenuItem = (item: MenuItem) => {
     setMenuItems(prev => prev.map(m => (m.id === item.id ? item : m)));
+    syncSingleMenuItemToFirestore(item).catch(err => {
+      console.warn('[POS Menu Sync] Failed to sync updated menu item to Cloud:', err);
+    });
   };
 
   const deleteMenuItem = (itemId: string) => {
     setMenuItems(prev => prev.filter(m => m.id !== itemId));
+    deleteMenuItemFromFirestore(itemId).catch(err => {
+      console.warn('[POS Menu Sync] Failed to delete menu item from Cloud:', err);
+    });
   };
 
   const updateMenuItemRecipe = (menuItemId: string, recipe: RecipeIngredient[], costPrice: number) => {
-    setMenuItems(prev =>
-      prev.map(m => (m.id === menuItemId ? { ...m, recipe, costPrice } : m))
-    );
+    setMenuItems(prev => {
+      const updatedList = prev.map(m => (m.id === menuItemId ? { ...m, recipe, costPrice } : m));
+      const target = updatedList.find(m => m.id === menuItemId);
+      if (target) {
+        syncSingleMenuItemToFirestore(target).catch(err => {
+          console.warn('[POS Menu Sync] Failed to sync recipe to Cloud:', err);
+        });
+      }
+      return updatedList;
+    });
   };
 
   const toggleMenuItemAddOns = (menuItemId: string, allow?: boolean) => {
@@ -1976,6 +2170,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: `ing-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
     };
     setIngredients(prev => [...prev, newIng]);
+    syncIngredientToFirestore(newIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
+      console.warn('[POS Inventory Sync] Failed to sync added ingredient to Cloud:', err);
+    });
     return newIng;
   };
 
@@ -1983,23 +2180,49 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIngredients(prev =>
       prev.map(ing => (ing.id === updatedIng.id ? updatedIng : ing))
     );
+    syncIngredientToFirestore(updatedIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
+      console.warn('[POS Inventory Sync] Failed to sync updated ingredient to Cloud:', err);
+    });
   };
 
   const deleteIngredients = (ingredientIds: string[]) => {
     const idSet = new Set(ingredientIds);
     setIngredients(prev => prev.filter(ing => !idSet.has(ing.id)));
+    ingredientIds.forEach(id => {
+      deleteIngredientFromFirestore(id, currentBranch?.id || 'branch-1786349847821').catch(err => {
+        console.warn('[POS Inventory Sync] Failed to delete ingredient from Cloud:', err);
+      });
+    });
   };
 
   const bulkUpdateIngredients = (ingredientIds: string[], updates: Partial<Omit<Ingredient, 'id'>>) => {
     const idSet = new Set(ingredientIds);
     setIngredients(prev =>
-      prev.map(ing => (idSet.has(ing.id) ? { ...ing, ...updates } : ing))
+      prev.map(ing => {
+        if (idSet.has(ing.id)) {
+          const updated = { ...ing, ...updates };
+          syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
+            console.warn('[POS Inventory Sync] Failed to sync bulk updated ingredient to Cloud:', err);
+          });
+          return updated;
+        }
+        return ing;
+      })
     );
   };
 
   const updateIngredientStock = (ingredientId: string, newStock: number) => {
     setIngredients(prev =>
-      prev.map(ing => (ing.id === ingredientId ? { ...ing, currentStock: Math.max(0, newStock) } : ing))
+      prev.map(ing => {
+        if (ing.id === ingredientId) {
+          const updated = { ...ing, currentStock: Math.max(0, newStock) };
+          syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
+            console.warn('[POS Inventory Sync] Failed to sync stock to Cloud:', err);
+          });
+          return updated;
+        }
+        return ing;
+      })
     );
   };
 
@@ -2010,7 +2233,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ) => {
     // 1. Update ingredient unit cost
     setIngredients(prev =>
-      prev.map(ing => (ing.id === ingredientId ? { ...ing, unitCost: newUnitCost } : ing))
+      prev.map(ing => {
+        if (ing.id === ingredientId) {
+          const updated = { ...ing, unitCost: newUnitCost };
+          syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
+            console.warn('[POS Inventory Sync] Failed to sync unit cost to Cloud:', err);
+          });
+          return updated;
+        }
+        return ing;
+      })
     );
 
     // Create lookup map for updated ingredient costs
@@ -2747,6 +2979,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         centralBranchesLive,
         pushAllBranchDataToCloud,
         pullCloudOrders,
+        pullCloudAllData,
         sendDailySummaryNotification
       }}
     >
