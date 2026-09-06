@@ -34,8 +34,11 @@ import {
   IngredientCategory,
   IngredientUnitItem,
   CentralBranchLiveStats,
-  FirebaseSyncState
+  FirebaseSyncState,
+  SyncConflictReport,
+  ConflictResolutionChoice
 } from '../types';
+import { detectSyncConflicts } from '../utils/conflictDetector';
 import {
   syncBranchToFirestore,
   syncOrderToFirestore,
@@ -311,6 +314,19 @@ interface POSContextType {
   pushAllBranchDataToCloud: () => Promise<boolean>;
   pullCloudOrders: () => Promise<{ count: number; success: boolean }>;
   pullCloudAllData: () => Promise<{ ordersCount: number; ingredientsCount: number; menuItemsCount: number; success: boolean }>;
+
+  // Conflict Resolution
+  conflictReport: SyncConflictReport | null;
+  isConflictResolverOpen: boolean;
+  isScanningConflicts: boolean;
+  isResolvingConflicts: boolean;
+  scanForSyncConflicts: () => Promise<SyncConflictReport>;
+  openConflictResolver: () => void;
+  closeConflictResolver: () => void;
+  applyConflictResolutions: (resolutions: {
+    menuChoices: Record<string, ConflictResolutionChoice>;
+    ingredientChoices: Record<string, ConflictResolutionChoice>;
+  }) => Promise<boolean>;
 
   // Real-Time Notification Service
   sendDailySummaryNotification: (channel?: 'telegram' | 'line' | 'both') => Promise<{ success: boolean; summary: string }>;
@@ -1027,13 +1043,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (cloudIngs && cloudIngs.length > 0) {
         setIngredients(prev => {
           const ingMap = new Map<string, Ingredient>();
-          // Cloud items take precedence
+          // Cloud items add any newly added cloud ingredients
           cloudIngs.forEach(ci => {
             if (ci && ci.id) ingMap.set(ci.id, ci);
           });
-          // Preserve any local ingredients not present in cloud
+          // Local items strictly OVERWRITE cloud items so user's edits are never lost
           prev.forEach(pi => {
-            if (pi && pi.id && !ingMap.has(pi.id)) {
+            if (pi && pi.id) {
               ingMap.set(pi.id, pi);
             }
           });
@@ -1053,11 +1069,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (cloudMenus && cloudMenus.length > 0) {
         setMenuItems(prev => {
           const menuMap = new Map<string, MenuItem>();
+          // Cloud items add any newly added cloud menu items
           cloudMenus.forEach(cm => {
             if (cm && cm.id) menuMap.set(cm.id, cm);
           });
+          // Local items strictly OVERWRITE cloud items so user's edits are never lost
           prev.forEach(pm => {
-            if (pm && pm.id && !menuMap.has(pm.id)) {
+            if (pm && pm.id) {
               menuMap.set(pm.id, pm);
             }
           });
@@ -1076,8 +1094,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (cloudBranches && cloudBranches.length > 0) {
         setBranches(prev => {
           const bMap = new Map<string, Branch>();
-          prev.forEach(b => bMap.set(b.id, b));
           cloudBranches.forEach(cb => bMap.set(cb.id, cb));
+          prev.forEach(b => bMap.set(b.id, b));
           const merged = Array.from(bMap.values());
           try {
             localStorage.setItem('POS_BRANCHES_DATA', JSON.stringify(merged));
@@ -1097,6 +1115,153 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { ordersCount: 0, ingredientsCount: 0, menuItemsCount: 0, success: false };
     }
   }, [effectiveOffline, currentBranch?.id, pullCloudOrders]);
+
+  // Conflict Resolver State & Handlers
+  const [conflictReport, setConflictReport] = useState<SyncConflictReport | null>(null);
+  const [isConflictResolverOpen, setIsConflictResolverOpen] = useState(false);
+  const [isScanningConflicts, setIsScanningConflicts] = useState(false);
+  const [isResolvingConflicts, setIsResolvingConflicts] = useState(false);
+
+  const scanForSyncConflicts = useCallback(async (): Promise<SyncConflictReport> => {
+    if (!isFirebaseAvailable() || effectiveOffline) {
+      const emptyReport: SyncConflictReport = {
+        hasConflicts: false,
+        totalConflicts: 0,
+        menuConflicts: [],
+        ingredientConflicts: [],
+        detectedAt: new Date().toISOString()
+      };
+      setConflictReport(emptyReport);
+      return emptyReport;
+    }
+
+    setIsScanningConflicts(true);
+    try {
+      console.log('[POS Conflict Scan] 🔍 Scanning Cloud Firestore vs Local State for conflicts...');
+      const [cloudMenus, cloudIngs] = await Promise.all([
+        fetchMenuItemsFromFirestore(),
+        fetchBranchInventoryFromFirestore(currentBranch?.id || 'branch-1786349847821')
+      ]);
+
+      const report = detectSyncConflicts(menuItems, cloudMenus || [], ingredients, cloudIngs || []);
+      console.log(`[POS Conflict Scan] Result: ${report.totalConflicts} conflicts found (${report.menuConflicts.length} menus, ${report.ingredientConflicts.length} ingredients).`);
+      setConflictReport(report);
+      return report;
+    } catch (err) {
+      console.error('[POS Conflict Scan] ❌ Error scanning for conflicts:', err);
+      const errReport: SyncConflictReport = {
+        hasConflicts: false,
+        totalConflicts: 0,
+        menuConflicts: [],
+        ingredientConflicts: [],
+        detectedAt: new Date().toISOString()
+      };
+      setConflictReport(errReport);
+      return errReport;
+    } finally {
+      setIsScanningConflicts(false);
+    }
+  }, [effectiveOffline, currentBranch?.id, menuItems, ingredients]);
+
+  const openConflictResolver = useCallback(() => {
+    setIsConflictResolverOpen(true);
+    scanForSyncConflicts();
+  }, [scanForSyncConflicts]);
+
+  const closeConflictResolver = useCallback(() => {
+    setIsConflictResolverOpen(false);
+  }, []);
+
+  const applyConflictResolutions = useCallback(async (resolutions: {
+    menuChoices: Record<string, ConflictResolutionChoice>;
+    ingredientChoices: Record<string, ConflictResolutionChoice>;
+  }): Promise<boolean> => {
+    if (!conflictReport) return false;
+    setIsResolvingConflicts(true);
+
+    try {
+      console.log('[POS Conflict Resolution] 🛠️ Applying user conflict choices...', resolutions);
+
+      // 1. Resolve Menu Conflicts
+      if (conflictReport.menuConflicts.length > 0) {
+        const menuMap = new Map<string, MenuItem>();
+        menuItems.forEach(m => menuMap.set(m.id, m));
+
+        for (const conflict of conflictReport.menuConflicts) {
+          const choice = resolutions.menuChoices[conflict.id] || 'local';
+
+          if (choice === 'local') {
+            if (conflict.localItem) {
+              await syncSingleMenuItemToFirestore(conflict.localItem).catch(e => {
+                console.warn(`Failed to push local menu ${conflict.id} to cloud:`, e);
+              });
+            }
+          } else if (choice === 'cloud') {
+            if (conflict.cloudItem) {
+              menuMap.set(conflict.id, conflict.cloudItem);
+            }
+          }
+        }
+
+        const updatedMenus = Array.from(menuMap.values());
+        setMenuItems(updatedMenus);
+        try {
+          localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(updatedMenus));
+        } catch (e) {}
+      }
+
+      // 2. Resolve Ingredient Conflicts
+      if (conflictReport.ingredientConflicts.length > 0) {
+        const branchTargetId = currentBranch?.id || 'branch-1786349847821';
+        const branchName = currentBranch?.name || 'ครัวกะเพรา ตลาด กกท';
+
+        const ingMap = new Map<string, Ingredient>();
+        ingredients.forEach(i => ingMap.set(i.id, i));
+
+        for (const conflict of conflictReport.ingredientConflicts) {
+          const choice = resolutions.ingredientChoices[conflict.id] || 'local';
+
+          if (choice === 'local') {
+            if (conflict.localIngredient) {
+              await syncIngredientToFirestore(conflict.localIngredient, branchTargetId, branchName).catch(e => {
+                console.warn(`Failed to push local ingredient ${conflict.id} to cloud:`, e);
+              });
+            }
+          } else if (choice === 'cloud') {
+            if (conflict.cloudIngredient) {
+              ingMap.set(conflict.id, conflict.cloudIngredient);
+            }
+          }
+        }
+
+        const updatedIngs = Array.from(ingMap.values());
+        setIngredients(updatedIngs);
+        try {
+          localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(updatedIngs));
+        } catch (e) {}
+      }
+
+      // 3. Log audit event
+      logSecurityEvent({
+        action: 'SYNC_CONFLICT_RESOLVED',
+        status: 'SUCCESS',
+        userName: currentUser?.name || 'ผู้จัดการ',
+        userRole: currentUser?.role || 'admin',
+        details: `Resolved ${conflictReport.totalConflicts} data conflicts between Local and Cloud`
+      });
+
+      // Clear report and close
+      setConflictReport(null);
+      setIsConflictResolverOpen(false);
+      console.log('[POS Conflict Resolution] ✅ All conflicts resolved successfully!');
+      return true;
+    } catch (err) {
+      console.error('[POS Conflict Resolution] ❌ Error applying resolutions:', err);
+      return false;
+    } finally {
+      setIsResolvingConflicts(false);
+    }
+  }, [conflictReport, menuItems, ingredients, currentBranch, logSecurityEvent, currentUser]);
 
   // Periodic Background Auto Sync Effect based on settings
   useEffect(() => {
@@ -1132,19 +1297,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           let loadedOrders: Order[] = (parsed.orders && Array.isArray(parsed.orders))
             ? parsed.orders.filter((o: any) => o && typeof o === 'object' && o.id)
             : [];
-          try {
-            const sepOrders = localStorage.getItem('POS_ORDERS_DATA');
-            if (sepOrders) {
-              const parsedSep = JSON.parse(sepOrders);
-              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
-                const ordMap = new Map<string, Order>();
-                loadedOrders.forEach(o => { if (o && o.id) ordMap.set(o.id, o); });
-                parsedSep.forEach((o: any) => { if (o && o.id) ordMap.set(o.id, o); });
-                loadedOrders = Array.from(ordMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          if (loadedOrders.length === 0) {
+            try {
+              const sepOrders = localStorage.getItem('POS_ORDERS_DATA');
+              if (sepOrders) {
+                const parsedSep = JSON.parse(sepOrders);
+                if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                  loadedOrders = parsedSep.filter((o: any) => o && typeof o === 'object' && o.id);
+                }
               }
+            } catch (e) {
+              console.warn('[POS Storage Sync] Failed to read backup POS_ORDERS_DATA', e);
             }
-          } catch (e) {
-            console.warn('[POS Storage Sync] Failed to merge separate POS_ORDERS_DATA', e);
           }
           setOrders(loadedOrders);
           loadedOrdersCount = loadedOrders.length;
@@ -1157,19 +1321,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           let loadedMenuItems: MenuItem[] = (parsed.menuItems && Array.isArray(parsed.menuItems))
             ? parsed.menuItems.filter((m: any) => m && typeof m === 'object' && m.id)
             : [];
-          try {
-            const sepMenu = localStorage.getItem('POS_MENU_ITEMS_DATA');
-            if (sepMenu) {
-              const parsedSep = JSON.parse(sepMenu);
-              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
-                const menuMap = new Map<string, MenuItem>();
-                loadedMenuItems.forEach(m => { if (m && m.id) menuMap.set(m.id, m); });
-                parsedSep.forEach((m: any) => { if (m && m.id) menuMap.set(m.id, m); });
-                loadedMenuItems = Array.from(menuMap.values());
+          // Fallback to separate key ONLY if main state was empty
+          if (loadedMenuItems.length === 0) {
+            try {
+              const sepMenu = localStorage.getItem('POS_MENU_ITEMS_DATA');
+              if (sepMenu) {
+                const parsedSep = JSON.parse(sepMenu);
+                if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                  loadedMenuItems = parsedSep.filter((m: any) => m && typeof m === 'object' && m.id);
+                }
               }
+            } catch (e) {
+              console.warn('[POS Storage Sync] Failed to read backup POS_MENU_ITEMS_DATA', e);
             }
-          } catch (e) {
-            console.warn('[POS Storage Sync] Failed to merge separate POS_MENU_ITEMS_DATA', e);
           }
           if (loadedMenuItems.length > 0) {
             setMenuItems(loadedMenuItems);
@@ -1191,21 +1355,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
           if (parsed.addOns && Array.isArray(parsed.addOns)) setAddOns(parsed.addOns);
 
-          // Ingredients loading with resilient backup
+          // Ingredients loading with resilient backup (main state strictly takes precedence)
           let loadedIngredients: Ingredient[] = (parsed.ingredients && Array.isArray(parsed.ingredients)) ? parsed.ingredients : [];
-          try {
-            const sepIng = localStorage.getItem('POS_INGREDIENTS_DATA');
-            if (sepIng) {
-              const parsedSep = JSON.parse(sepIng);
-              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
-                const ingMap = new Map<string, Ingredient>();
-                loadedIngredients.forEach(i => { if (i && i.id) ingMap.set(i.id, i); });
-                parsedSep.forEach((i: any) => { if (i && i.id) ingMap.set(i.id, i); });
-                loadedIngredients = Array.from(ingMap.values());
+          if (loadedIngredients.length === 0) {
+            try {
+              const sepIng = localStorage.getItem('POS_INGREDIENTS_DATA');
+              if (sepIng) {
+                const parsedSep = JSON.parse(sepIng);
+                if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                  loadedIngredients = parsedSep.filter((i: any) => i && typeof i === 'object' && i.id);
+                }
               }
+            } catch (e) {
+              console.warn('[POS Storage Sync] Failed to read backup POS_INGREDIENTS_DATA', e);
             }
-          } catch (e) {
-            console.warn('[POS Storage Sync] Failed to merge separate POS_INGREDIENTS_DATA', e);
           }
           if (loadedIngredients.length > 0) {
             setIngredients(loadedIngredients);
@@ -1221,36 +1384,34 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             loadedShiftsCount = parsed.cashShifts.length;
           }
           let loadedExpenses: Expense[] = (parsed.expenses && Array.isArray(parsed.expenses)) ? parsed.expenses : [];
-          try {
-            const sepExp = localStorage.getItem('POS_EXPENSES_DATA');
-            if (sepExp) {
-              const parsedSep = JSON.parse(sepExp);
-              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
-                const expMap = new Map<string, Expense>();
-                loadedExpenses.forEach(e => { if (e && e.id) expMap.set(e.id, e); });
-                parsedSep.forEach(e => { if (e && e.id) expMap.set(e.id, e); });
-                loadedExpenses = Array.from(expMap.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+          if (loadedExpenses.length === 0) {
+            try {
+              const sepExp = localStorage.getItem('POS_EXPENSES_DATA');
+              if (sepExp) {
+                const parsedSep = JSON.parse(sepExp);
+                if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                  loadedExpenses = parsedSep;
+                }
               }
+            } catch (e) {
+              console.warn('[POS Storage Sync] Failed to read backup POS_EXPENSES_DATA', e);
             }
-          } catch (e) {
-            console.warn('[POS Storage Sync] Failed to merge separate POS_EXPENSES_DATA', e);
           }
           setExpenses(loadedExpenses);
 
           let loadedIncomes: OtherIncome[] = (parsed.incomes && Array.isArray(parsed.incomes)) ? parsed.incomes : [];
-          try {
-            const sepInc = localStorage.getItem('POS_INCOMES_DATA');
-            if (sepInc) {
-              const parsedSep = JSON.parse(sepInc);
-              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
-                const incMap = new Map<string, OtherIncome>();
-                loadedIncomes.forEach(i => { if (i && i.id) incMap.set(i.id, i); });
-                parsedSep.forEach(i => { if (i && i.id) incMap.set(i.id, i); });
-                loadedIncomes = Array.from(incMap.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+          if (loadedIncomes.length === 0) {
+            try {
+              const sepInc = localStorage.getItem('POS_INCOMES_DATA');
+              if (sepInc) {
+                const parsedSep = JSON.parse(sepInc);
+                if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                  loadedIncomes = parsedSep;
+                }
               }
+            } catch (e) {
+              console.warn('[POS Storage Sync] Failed to read backup POS_INCOMES_DATA', e);
             }
-          } catch (e) {
-            console.warn('[POS Storage Sync] Failed to merge separate POS_INCOMES_DATA', e);
           }
           setIncomes(loadedIncomes);
           if (parsed.settings && typeof parsed.settings === 'object') {
@@ -1343,12 +1504,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, []);
 
-  // Auto-pull all central data on app startup to ensure all real ingredients, orders and menu items are loaded from Cloud
+  // Auto-pull incoming central orders on app startup (DO NOT auto-pull menus/inventory to protect local edits!)
   useEffect(() => {
     if (!isStorageLoaded) return;
-    console.log('[POS Startup] ☁️ Triggering automatic cloud sync to recover any saved ingredients and orders from Firestore...');
-    pullCloudAllData();
-  }, [isStorageLoaded, pullCloudAllData]);
+    console.log('[POS Startup] ☁️ Pulling central orders from Firestore...');
+    pullCloudOrders();
+  }, [isStorageLoaded, pullCloudOrders]);
 
   // Synchronize users state with staffMembers automatically so PIN screen and login reflect latest staff edits
   useEffect(() => {
@@ -1621,21 +1782,33 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ...itemData,
       id: `menu-${Date.now()}`
     };
-    setMenuItems(prev => [...prev, newItem]);
+    setMenuItems(prev => {
+      const next = [...prev, newItem];
+      try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
     syncSingleMenuItemToFirestore(newItem).catch(err => {
       console.warn('[POS Menu Sync] Failed to sync new menu item to Cloud:', err);
     });
   };
 
   const updateMenuItem = (item: MenuItem) => {
-    setMenuItems(prev => prev.map(m => (m.id === item.id ? item : m)));
+    setMenuItems(prev => {
+      const next = prev.map(m => (m.id === item.id ? item : m));
+      try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
     syncSingleMenuItemToFirestore(item).catch(err => {
       console.warn('[POS Menu Sync] Failed to sync updated menu item to Cloud:', err);
     });
   };
 
   const deleteMenuItem = (itemId: string) => {
-    setMenuItems(prev => prev.filter(m => m.id !== itemId));
+    setMenuItems(prev => {
+      const next = prev.filter(m => m.id !== itemId);
+      try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
     deleteMenuItemFromFirestore(itemId).catch(err => {
       console.warn('[POS Menu Sync] Failed to delete menu item from Cloud:', err);
     });
@@ -1644,6 +1817,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateMenuItemRecipe = (menuItemId: string, recipe: RecipeIngredient[], costPrice: number) => {
     setMenuItems(prev => {
       const updatedList = prev.map(m => (m.id === menuItemId ? { ...m, recipe, costPrice } : m));
+      try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(updatedList)); } catch (e) {}
       const target = updatedList.find(m => m.id === menuItemId);
       if (target) {
         syncSingleMenuItemToFirestore(target).catch(err => {
@@ -1655,16 +1829,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const toggleMenuItemAddOns = (menuItemId: string, allow?: boolean) => {
-    setMenuItems(prev =>
-      prev.map(m => {
+    setMenuItems(prev => {
+      const next = prev.map(m => {
         if (m.id === menuItemId) {
           const currentAllow = m.allowAddOns !== false;
           const nextAllow = allow !== undefined ? allow : !currentAllow;
           return { ...m, allowAddOns: nextAllow };
         }
         return m;
-      })
-    );
+      });
+      try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
   };
 
   // AddOn / Topping CRUD
@@ -2169,7 +2345,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ...ingData,
       id: `ing-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
     };
-    setIngredients(prev => [...prev, newIng]);
+    setIngredients(prev => {
+      const next = [...prev, newIng];
+      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
     syncIngredientToFirestore(newIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
       console.warn('[POS Inventory Sync] Failed to sync added ingredient to Cloud:', err);
     });
@@ -2177,9 +2357,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateIngredient = (updatedIng: Ingredient) => {
-    setIngredients(prev =>
-      prev.map(ing => (ing.id === updatedIng.id ? updatedIng : ing))
-    );
+    setIngredients(prev => {
+      const next = prev.map(ing => (ing.id === updatedIng.id ? updatedIng : ing));
+      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
     syncIngredientToFirestore(updatedIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
       console.warn('[POS Inventory Sync] Failed to sync updated ingredient to Cloud:', err);
     });
@@ -2187,7 +2369,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteIngredients = (ingredientIds: string[]) => {
     const idSet = new Set(ingredientIds);
-    setIngredients(prev => prev.filter(ing => !idSet.has(ing.id)));
+    setIngredients(prev => {
+      const next = prev.filter(ing => !idSet.has(ing.id));
+      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
     ingredientIds.forEach(id => {
       deleteIngredientFromFirestore(id, currentBranch?.id || 'branch-1786349847821').catch(err => {
         console.warn('[POS Inventory Sync] Failed to delete ingredient from Cloud:', err);
@@ -2197,8 +2383,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const bulkUpdateIngredients = (ingredientIds: string[], updates: Partial<Omit<Ingredient, 'id'>>) => {
     const idSet = new Set(ingredientIds);
-    setIngredients(prev =>
-      prev.map(ing => {
+    setIngredients(prev => {
+      const next = prev.map(ing => {
         if (idSet.has(ing.id)) {
           const updated = { ...ing, ...updates };
           syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
@@ -2207,13 +2393,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           return updated;
         }
         return ing;
-      })
-    );
+      });
+      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
   };
 
   const updateIngredientStock = (ingredientId: string, newStock: number) => {
-    setIngredients(prev =>
-      prev.map(ing => {
+    setIngredients(prev => {
+      const next = prev.map(ing => {
         if (ing.id === ingredientId) {
           const updated = { ...ing, currentStock: Math.max(0, newStock) };
           syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
@@ -2222,8 +2410,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           return updated;
         }
         return ing;
-      })
-    );
+      });
+      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
   };
 
   const updateIngredientPriceAndRecalculate = (
@@ -2232,8 +2422,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     updatedMenuPrices?: Record<string, number>
   ) => {
     // 1. Update ingredient unit cost
-    setIngredients(prev =>
-      prev.map(ing => {
+    setIngredients(prev => {
+      const next = prev.map(ing => {
         if (ing.id === ingredientId) {
           const updated = { ...ing, unitCost: newUnitCost };
           syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
@@ -2242,8 +2432,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           return updated;
         }
         return ing;
-      })
-    );
+      });
+      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
 
     // Create lookup map for updated ingredient costs
     const ingCostMap = new Map<string, number>();
@@ -2980,6 +3172,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         pushAllBranchDataToCloud,
         pullCloudOrders,
         pullCloudAllData,
+        conflictReport,
+        isConflictResolverOpen,
+        isScanningConflicts,
+        isResolvingConflicts,
+        scanForSyncConflicts,
+        openConflictResolver,
+        closeConflictResolver,
+        applyConflictResolutions,
         sendDailySummaryNotification
       }}
     >

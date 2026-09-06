@@ -23,6 +23,7 @@ import {
   WifiOff,
   RefreshCw
 } from 'lucide-react';
+import { SyncConflictResolverModal } from './components/SyncConflictResolverModal';
 
 const MainLayout: React.FC = () => {
   const {
@@ -33,7 +34,14 @@ const MainLayout: React.FC = () => {
     isOffline,
     forceOfflineMode,
     pendingOfflineCount,
-    syncOfflineQueue
+    syncOfflineQueue,
+    conflictReport,
+    isConflictResolverOpen,
+    closeConflictResolver,
+    applyConflictResolutions,
+    isResolvingConflicts,
+    scanForSyncConflicts,
+    isScanningConflicts
   } = usePOS();
   const effectiveOffline = isOffline || forceOfflineMode;
 
@@ -117,6 +125,17 @@ const MainLayout: React.FC = () => {
         {activeTab === 'analytics' && <AnalyticsView />}
         {activeTab === 'settings' && <SettingsView />}
       </main>
+
+      {/* Visual Conflict Resolver Modal for Local vs Cloud Mismatch */}
+      <SyncConflictResolverModal
+        isOpen={isConflictResolverOpen}
+        onClose={closeConflictResolver}
+        report={conflictReport}
+        onApplyResolution={applyConflictResolutions}
+        isApplying={isResolvingConflicts}
+        onRefreshScan={scanForSyncConflicts}
+        isScanning={isScanningConflicts}
+      />
     </div>
   );
 };

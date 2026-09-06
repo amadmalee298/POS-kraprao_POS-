@@ -559,5 +559,46 @@ export interface FirebaseSyncState {
   lastSyncedBranch?: string;
 }
 
+export type ConflictResolutionChoice = 'local' | 'cloud' | 'skip';
+
+export type ConflictType = 'mismatch' | 'local_only' | 'cloud_only';
+
+export interface DataFieldDiff {
+  fieldName: string;
+  fieldLabel: string;
+  localValue: any;
+  cloudValue: any;
+  formattedLocal: string;
+  formattedCloud: string;
+}
+
+export interface MenuConflictItem {
+  id: string;
+  type: ConflictType;
+  title: string;
+  localItem?: MenuItem;
+  cloudItem?: MenuItem;
+  diffs: DataFieldDiff[];
+  choice: ConflictResolutionChoice;
+}
+
+export interface IngredientConflictItem {
+  id: string;
+  type: ConflictType;
+  title: string;
+  localIngredient?: Ingredient;
+  cloudIngredient?: Ingredient;
+  diffs: DataFieldDiff[];
+  choice: ConflictResolutionChoice;
+}
+
+export interface SyncConflictReport {
+  hasConflicts: boolean;
+  totalConflicts: number;
+  menuConflicts: MenuConflictItem[];
+  ingredientConflicts: IngredientConflictItem[];
+  detectedAt: string;
+}
+
 
 

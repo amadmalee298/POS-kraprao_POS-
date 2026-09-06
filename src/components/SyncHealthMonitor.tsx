@@ -20,7 +20,8 @@ import {
   Sliders,
   Cloud,
   Layers,
-  Flame
+  Flame,
+  ArrowLeftRight
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 
@@ -48,7 +49,10 @@ export const SyncHealthMonitor: React.FC = () => {
     branches,
     firebaseSyncState,
     centralBranchesLive,
-    pushAllBranchDataToCloud
+    pushAllBranchDataToCloud,
+    openConflictResolver,
+    conflictReport,
+    isScanningConflicts
   } = usePOS();
 
   const [isOpen, setIsOpen] = useState(false);
@@ -425,6 +429,30 @@ export const SyncHealthMonitor: React.FC = () => {
                   <span>{isPushingCloud ? 'กำลังส่ง...' : 'ดันขึ้นคลาวด์'}</span>
                 </button>
               </div>
+
+              {/* Conflict Resolver Trigger Button */}
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  openConflictResolver();
+                }}
+                disabled={effectiveOffline}
+                className="w-full py-2 px-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 font-bold rounded-lg transition text-xs flex items-center justify-between disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+              >
+                <div className="flex items-center space-x-2">
+                  <ArrowLeftRight className={`w-3.5 h-3.5 text-amber-400 ${isScanningConflicts ? 'animate-spin' : ''}`} />
+                  <span>ตรวจสอบความขัดแย้งข้อมูล (Conflict Resolver)</span>
+                </div>
+                {conflictReport?.hasConflicts ? (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-mono text-[10px] font-extrabold shadow-sm">
+                    {conflictReport.totalConflicts} รายการ
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-amber-400/80 font-normal">
+                    เปรียบเทียบ Local vs Cloud
+                  </span>
+                )}
+              </button>
             </div>
 
             {/* Local Storage & Cache Summary */}

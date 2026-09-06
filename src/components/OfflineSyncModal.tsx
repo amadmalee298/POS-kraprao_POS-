@@ -15,7 +15,8 @@ import {
   ShieldCheck,
   Smartphone,
   Flame,
-  Cloud
+  Cloud,
+  ArrowLeftRight
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 
@@ -41,7 +42,10 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
     branches,
     firebaseSyncState,
     centralBranchesLive,
-    pushAllBranchDataToCloud
+    pushAllBranchDataToCloud,
+    openConflictResolver,
+    conflictReport,
+    isScanningConflicts
   } = usePOS();
 
   const [isSyncing, setIsSyncing] = useState(false);
@@ -287,6 +291,35 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
                 </span>
               </button>
             </div>
+
+            {/* Visual Conflict Resolver Button */}
+            <button
+              onClick={() => {
+                onClose();
+                openConflictResolver();
+              }}
+              disabled={effectiveOffline}
+              className="w-full mt-2 py-2.5 px-4 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 font-bold rounded-xl transition flex items-center justify-between text-xs disabled:opacity-40 shadow-sm"
+            >
+              <div className="flex items-center space-x-2.5 text-left">
+                <ArrowLeftRight className={`w-4 h-4 text-amber-400 shrink-0 ${isScanningConflicts ? 'animate-spin' : ''}`} />
+                <div>
+                  <span className="block font-bold">เครื่องมือตรวจสอบความขัดแย้ง (Visual Conflict Resolver)</span>
+                  <span className="block text-[10px] text-amber-400/80 font-normal">
+                    เปรียบเทียบความแตกต่างระหว่างข้อมูลในเครื่องกับ Cloud และเลือก Source of Truth
+                  </span>
+                </div>
+              </div>
+              {conflictReport?.hasConflicts ? (
+                <span className="px-2.5 py-1 rounded-full bg-amber-500 text-slate-950 font-mono text-xs font-black shadow-sm shrink-0">
+                  {conflictReport.totalConflicts} รายการขัดแย้ง
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-semibold shrink-0">
+                  เปิดเครื่องมือ
+                </span>
+              )}
+            </button>
           </div>
 
           {/* Cached Local Storage Statistics Grid */}

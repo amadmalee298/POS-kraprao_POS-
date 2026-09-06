@@ -28,7 +28,8 @@ import {
   Printer,
   Tag,
   Edit2,
-  Scale
+  Scale,
+  ArrowLeftRight
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot } from '../../types';
@@ -62,7 +63,9 @@ export const InventoryView: React.FC = () => {
     updateIngredientUnit,
     deleteIngredientUnit,
     resetIngredientUnits,
-    pullCloudAllData
+    pullCloudAllData,
+    openConflictResolver,
+    conflictReport
   } = usePOS();
 
   // Cloud Sync State
@@ -740,6 +743,20 @@ export const InventoryView: React.FC = () => {
           >
             <RefreshCw className={`w-4 h-4 text-indigo-400 ${isSyncingCloud ? 'animate-spin' : ''}`} />
             <span>{isSyncingCloud ? 'กำลังซิงค์...' : 'ดึงข้อมูลจาก Cloud'}</span>
+          </button>
+
+          <button
+            onClick={openConflictResolver}
+            className="px-3.5 py-2.5 bg-amber-950/80 hover:bg-amber-900 border border-amber-500/50 text-amber-300 font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
+            title="เปิดเครื่องมือตรวจสอบและเลือกแหล่งข้อมูลที่ถูกต้องเมื่อข้อมูลในเครื่องกับบน Cloud ไม่ตรงกัน"
+          >
+            <ArrowLeftRight className="w-4 h-4 text-amber-400" />
+            <span>ตรวจสอบความขัดแย้ง</span>
+            {conflictReport?.ingredientConflicts && conflictReport.ingredientConflicts.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black">
+                {conflictReport.ingredientConflicts.length}
+              </span>
+            )}
           </button>
 
           <button
