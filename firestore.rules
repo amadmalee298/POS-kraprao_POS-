@@ -18,6 +18,10 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /menu_items/{itemId} {
+      allow read, write: if true;
+    }
+
     match /inventory/{inventoryDoc} {
       allow read, write: if true;
     }

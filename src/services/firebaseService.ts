@@ -10,6 +10,7 @@ import {
   writeBatch,
   onSnapshot,
   query,
+  where,
   orderBy,
   limit,
   serverTimestamp,
@@ -17,7 +18,7 @@ import {
   DocumentData
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Order, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem } from '../types';
+import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem } from '../types';
 
 export interface CentralBranchLiveStats {
   branchId: string;
@@ -1109,14 +1110,72 @@ export async function syncMenuItemsBatchToFirestore(items: MenuItem[]): Promise<
 }
 
 /**
- * Delete a menu item from Firestore
+ * Update order status and completion/cancellation details directly in Firestore
  */
-export async function deleteMenuItemFromFirestore(itemId: string): Promise<boolean> {
+export async function updateOrderStatusInFirestore(
+  orderId: string,
+  status: OrderStatus,
+  extra?: {
+    completedAt?: string;
+    cancelledBy?: { userId?: string; userName: string; role: string; cancelledAt?: string };
+    cancelReason?: string;
+    cancelNote?: string;
+  }
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const orderRef = doc(dbInstance, 'orders', orderId);
+    const updatePayload: Record<string, any> = {
+      status,
+      updatedAt: serverTimestamp()
+    };
+    if (status === 'served') {
+      updatePayload.completedAt = extra?.completedAt || new Date().toISOString();
+    }
+    if (status === 'cancelled') {
+      if (extra?.cancelledBy) updatePayload.cancelledBy = extra.cancelledBy;
+      if (extra?.cancelReason) updatePayload.cancelReason = extra.cancelReason;
+      if (extra?.cancelNote) updatePayload.cancelNote = extra.cancelNote;
+    }
+
+    await setDoc(orderRef, updatePayload, { merge: true });
+    console.log(`[Firebase Service] ☁️ Order ${orderId} status successfully updated to '${status}' in Firestore.`);
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to update status for order ${orderId} in Firestore:`, err);
+    return false;
+  }
+}
+
+/**
+ * Delete a menu item from Firestore (with optional deletion of any documents matching the same name)
+ */
+export async function deleteMenuItemFromFirestore(itemId: string, itemName?: string): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
 
   try {
     const docRef = doc(dbInstance, 'menu_items', itemId);
     await deleteDoc(docRef);
+
+    // Also delete any document with matching name or ID in menu_items collection to remove duplicates
+    if (itemName && itemName.trim()) {
+      try {
+        const q = query(collection(dbInstance, 'menu_items'), where('name', '==', itemName.trim()));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const batch = writeBatch(dbInstance);
+          snap.forEach(d => {
+            batch.delete(d.ref);
+          });
+          await batch.commit();
+          console.log(`[Firebase Service] 🗑️ Deleted ${snap.size} Firestore menu doc(s) matching name "${itemName.trim()}".`);
+        }
+      } catch (subErr) {
+        console.warn(`[Firebase Service] Note on name-based deletion for "${itemName}":`, subErr);
+      }
+    }
+    console.log(`[Firebase Service] 🗑️ Successfully deleted menu item ${itemId} from Firestore.`);
     return true;
   } catch (err) {
     console.error(`[Firebase Service] ❌ Failed to delete menu item ${itemId}:`, err);

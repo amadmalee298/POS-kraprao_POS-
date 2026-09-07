@@ -63,6 +63,7 @@ import {
   syncSingleMenuItemToFirestore,
   syncMenuItemsBatchToFirestore,
   deleteMenuItemFromFirestore,
+  updateOrderStatusInFirestore,
   fetchBranchesFromFirestore
 } from '../services/firebaseService';
 import {
@@ -524,7 +525,25 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIngredientCategories(prev => syncAndHealIngredientCategories(prev, ingredients));
   };
 
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(INITIAL_MENU_ITEMS);
+  const [deletedMenuItemIds, setDeletedMenuItemIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('POS_DELETED_MENU_IDS');
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
+    try {
+      const storedDeleted = localStorage.getItem('POS_DELETED_MENU_IDS');
+      const delList: string[] = storedDeleted ? JSON.parse(storedDeleted) : [];
+      const delSet = new Set(delList.map(s => String(s).trim().toLowerCase()));
+      return INITIAL_MENU_ITEMS.filter(m => !delSet.has(m.id.toLowerCase()) && !delSet.has(m.name.trim().toLowerCase()));
+    } catch (e) {
+      return INITIAL_MENU_ITEMS;
+    }
+  });
   const [addOns, setAddOns] = useState<AddOnOption[]>(STANDARD_ADD_ONS);
   const [ingredients, setIngredients] = useState<Ingredient[]>(INITIAL_INGREDIENTS);
   const [stockLots, setStockLots] = useState<StockLot[]>(INITIAL_STOCK_LOTS);
@@ -719,7 +738,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Real-time listener for central orders, expenses, and incomes from Firestore
   useEffect(() => {
-    if (!isFirebaseAvailable() || effectiveOffline) return;
+    if (!isStorageLoaded || !isFirebaseAvailable() || effectiveOffline) return;
 
     const unsubOrders = subscribeToRecentCentralOrders(300, (centralOrderList) => {
       if (!centralOrderList || centralOrderList.length === 0) return;
@@ -733,7 +752,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             hasChanges = true;
           } else {
             const existing = localMap.get(co.id)!;
-            if (!existing.isSynced && co.isSynced) {
+            const isCloudNewer = Boolean(
+              co.updatedAt && existing.updatedAt &&
+              new Date(co.updatedAt).getTime() > new Date(existing.updatedAt).getTime()
+            );
+            if (isCloudNewer) {
+              localMap.set(co.id, { ...existing, ...co, isSynced: true });
+              hasChanges = true;
+            } else if (!existing.isSynced && co.isSynced) {
               localMap.set(co.id, { ...existing, ...co, isSynced: true });
               hasChanges = true;
             }
@@ -799,7 +825,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       unsubExpenses();
       unsubIncomes();
     };
-  }, [effectiveOffline]);
+  }, [isStorageLoaded, effectiveOffline]);
 
   // Automated Daily Sales Summary Notification at Scheduled Time (e.g. 22:00)
   useEffect(() => {
@@ -999,7 +1025,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             newOrUpdatedCount++;
           } else {
             const existing = orderMap.get(co.id)!;
-            if (!existing.isSynced && co.isSynced) {
+            const isCloudNewer = Boolean(
+              co.updatedAt && existing.updatedAt &&
+              new Date(co.updatedAt).getTime() > new Date(existing.updatedAt).getTime()
+            );
+            if (isCloudNewer) {
+              orderMap.set(co.id, { ...existing, ...co, isSynced: true });
+              newOrUpdatedCount++;
+            } else if (!existing.isSynced && co.isSynced) {
               orderMap.set(co.id, { ...existing, ...co, isSynced: true });
               newOrUpdatedCount++;
             }
@@ -1069,13 +1102,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (cloudMenus && cloudMenus.length > 0) {
         setMenuItems(prev => {
           const menuMap = new Map<string, MenuItem>();
-          // Cloud items add any newly added cloud menu items
+          const delSet = new Set(deletedMenuItemIds.map(s => String(s).trim().toLowerCase()));
+
+          // Cloud items add newly added cloud menu items (skipping any deleted items)
           cloudMenus.forEach(cm => {
-            if (cm && cm.id) menuMap.set(cm.id, cm);
+            if (cm && cm.id && !delSet.has(cm.id.toLowerCase()) && !delSet.has(cm.name.trim().toLowerCase())) {
+              menuMap.set(cm.id, cm);
+            }
           });
           // Local items strictly OVERWRITE cloud items so user's edits are never lost
           prev.forEach(pm => {
-            if (pm && pm.id) {
+            if (pm && pm.id && !delSet.has(pm.id.toLowerCase()) && !delSet.has(pm.name.trim().toLowerCase())) {
               menuMap.set(pm.id, pm);
             }
           });
@@ -1317,7 +1354,24 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             loadedCats = parsed.categories;
           }
 
-          let loadedItems = INITIAL_MENU_ITEMS;
+          let loadedDeletedMenuIds: string[] = (parsed.deletedMenuItemIds && Array.isArray(parsed.deletedMenuItemIds))
+            ? parsed.deletedMenuItemIds
+            : [];
+          try {
+            const sepDeleted = localStorage.getItem('POS_DELETED_MENU_IDS');
+            if (sepDeleted) {
+              const parsedSepDel = JSON.parse(sepDeleted);
+              if (Array.isArray(parsedSepDel)) {
+                loadedDeletedMenuIds = Array.from(new Set([...loadedDeletedMenuIds, ...parsedSepDel]));
+              }
+            }
+          } catch (e) {}
+          if (loadedDeletedMenuIds.length > 0) {
+            setDeletedMenuItemIds(loadedDeletedMenuIds);
+          }
+          const delFilterSet = new Set(loadedDeletedMenuIds.map(s => String(s).trim().toLowerCase()));
+
+          let loadedItems = INITIAL_MENU_ITEMS.filter(m => !delFilterSet.has(m.id.toLowerCase()) && !delFilterSet.has(m.name.trim().toLowerCase()));
           let loadedMenuItems: MenuItem[] = (parsed.menuItems && Array.isArray(parsed.menuItems))
             ? parsed.menuItems.filter((m: any) => m && typeof m === 'object' && m.id)
             : [];
@@ -1335,11 +1389,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               console.warn('[POS Storage Sync] Failed to read backup POS_MENU_ITEMS_DATA', e);
             }
           }
-          if (loadedMenuItems.length > 0) {
-            setMenuItems(loadedMenuItems);
-            loadedItems = loadedMenuItems;
-            loadedMenuItemsCount = loadedMenuItems.length;
-          }
+          const finalMenuItems = (loadedMenuItems.length > 0 ? loadedMenuItems : loadedItems)
+            .filter(m => !delFilterSet.has(m.id.toLowerCase()) && !delFilterSet.has(m.name.trim().toLowerCase()));
+
+          setMenuItems(finalMenuItems);
+          loadedItems = finalMenuItems;
+          loadedMenuItemsCount = finalMenuItems.length;
 
           // Always heal categories so no custom or imported category is ever lost
           const healedCategories = syncAndHealCategories(loadedCats, loadedItems);
@@ -1603,6 +1658,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ingredientCategories,
         ingredientUnits,
         menuItems,
+        deletedMenuItemIds,
         addOns,
         ingredients,
         stockLots,
@@ -1662,6 +1718,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(menuItems));
       } catch (backupErr) {}
       try {
+        localStorage.setItem('POS_DELETED_MENU_IDS', JSON.stringify(deletedMenuItemIds));
+      } catch (backupErr) {}
+      try {
         localStorage.setItem('POS_BRANCHES_DATA', JSON.stringify(branches));
       } catch (backupErr) {}
       const pendingSync = orders.filter(o => o.isOfflineOrder && !o.isSynced).length;
@@ -1677,6 +1736,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ingredientCategories,
     ingredientUnits,
     menuItems,
+    deletedMenuItemIds,
     addOns,
     ingredients,
     stockLots,
@@ -1804,13 +1864,49 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const deleteMenuItem = (itemId: string) => {
-    setMenuItems(prev => {
-      const next = prev.filter(m => m.id !== itemId);
-      try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next)); } catch (e) {}
+    // Find target item to get its name and identify any duplicate copies
+    const targetItem = menuItems.find(m => m.id === itemId);
+    const itemName = targetItem?.name;
+
+    const idsToDelete = [itemId];
+    if (itemName && itemName.trim()) {
+      menuItems.forEach(m => {
+        if (m.name.trim() === itemName.trim() && !idsToDelete.includes(m.id)) {
+          idsToDelete.push(m.id);
+        }
+      });
+    }
+
+    // Persist to deletedMenuItemIds state and storage
+    setDeletedMenuItemIds(prev => {
+      const next = Array.from(new Set([...prev, ...idsToDelete, ...(itemName ? [itemName.trim()] : [])]));
+      try {
+        localStorage.setItem('POS_DELETED_MENU_IDS', JSON.stringify(next));
+      } catch (e) {}
       return next;
     });
-    deleteMenuItemFromFirestore(itemId).catch(err => {
-      console.warn('[POS Menu Sync] Failed to delete menu item from Cloud:', err);
+
+    // Remove from local state and update local storage immediately
+    setMenuItems(prev => {
+      const next = prev.filter(m => !idsToDelete.includes(m.id) && !(itemName && m.name.trim() === itemName.trim()));
+      try {
+        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
+        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          parsed.menuItems = next;
+          parsed.deletedMenuItemIds = Array.from(new Set([...(parsed.deletedMenuItemIds || []), ...idsToDelete, ...(itemName ? [itemName.trim()] : [])]));
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+        }
+      } catch (e) {}
+      return next;
+    });
+
+    // Delete matching items from Firestore
+    idsToDelete.forEach(id => {
+      deleteMenuItemFromFirestore(id, itemName).catch(err => {
+        console.warn('[POS Menu Sync] Failed to delete menu item from Cloud:', err);
+      });
     });
   };
 
@@ -2248,27 +2344,64 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateOrderStatus = (orderId: string, status: OrderStatus) => {
-    setOrders(prev =>
-      prev.map(ord => {
+    const now = new Date().toISOString();
+    let updatedTarget: Order | undefined;
+
+    setOrders(prev => {
+      const next = prev.map(ord => {
         if (ord.id === orderId) {
-          const now = new Date().toISOString();
-          return {
+          const completedAt = status === 'served' ? (ord.completedAt || now) : ord.completedAt;
+          const cancelledBy = status === 'cancelled' && !ord.cancelledBy ? {
+            userId: currentUser?.id,
+            userName: currentUser?.name || 'ผู้จัดการ',
+            role: currentUser?.role || 'admin',
+            cancelledAt: now
+          } : ord.cancelledBy;
+          const cancelReason = status === 'cancelled' && !ord.cancelReason ? 'ยกเลิกรายการโดยพนักงาน' : ord.cancelReason;
+
+          const updated: Order = {
             ...ord,
             status,
             updatedAt: now,
-            completedAt: status === 'served' ? now : ord.completedAt,
-            cancelledBy: status === 'cancelled' && !ord.cancelledBy ? {
-              userId: currentUser?.id,
-              userName: currentUser?.name || 'ผู้จัดการ',
-              role: currentUser?.role || 'admin',
-              cancelledAt: now
-            } : ord.cancelledBy,
-            cancelReason: status === 'cancelled' && !ord.cancelReason ? 'ยกเลิกรายการโดยพนักงาน' : ord.cancelReason
+            completedAt,
+            cancelledBy,
+            cancelReason,
+            isSynced: !effectiveOffline
           };
+          updatedTarget = updated;
+          return updated;
         }
         return ord;
-      })
-    );
+      });
+
+      // Synchronously write to LocalStorage immediately so page refresh retains state
+      try {
+        localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(next));
+        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          parsed.orders = next;
+          parsed.savedAt = now;
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+        }
+      } catch (e) {
+        console.warn('[POS Order Sync] Error writing order status to LocalStorage:', e);
+      }
+
+      return next;
+    });
+
+    // Update Firestore in real-time
+    if (updatedTarget && !effectiveOffline && isFirebaseAvailable()) {
+      updateOrderStatusInFirestore(orderId, status, {
+        completedAt: updatedTarget.completedAt,
+        cancelledBy: updatedTarget.cancelledBy,
+        cancelReason: updatedTarget.cancelReason,
+        cancelNote: updatedTarget.cancelNote
+      }).catch(err => {
+        console.warn('[POS Order Sync] Failed to update order status in Firestore:', err);
+      });
+    }
   };
 
   const cancelOrder = (
@@ -2284,10 +2417,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       role: currentUser?.role || 'admin'
     };
 
-    setOrders(prev =>
-      prev.map(ord => {
+    let updatedTarget: Order | undefined;
+
+    setOrders(prev => {
+      const next = prev.map(ord => {
         if (ord.id === orderId) {
-          return {
+          const updated: Order = {
             ...ord,
             status: 'cancelled',
             cancelReason: reason,
@@ -2298,12 +2433,44 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               role: operator.role,
               cancelledAt: now
             },
-            updatedAt: now
+            updatedAt: now,
+            isSynced: !effectiveOffline
           };
+          updatedTarget = updated;
+          return updated;
         }
         return ord;
-      })
-    );
+      });
+
+      try {
+        localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(next));
+        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          parsed.orders = next;
+          parsed.savedAt = now;
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+        }
+      } catch (e) {}
+
+      return next;
+    });
+
+    // Real-time Push to Firestore
+    if (updatedTarget && !effectiveOffline && isFirebaseAvailable()) {
+      updateOrderStatusInFirestore(orderId, 'cancelled', {
+        cancelReason: reason,
+        cancelNote: note,
+        cancelledBy: {
+          userId: operator.userId,
+          userName: operator.userName,
+          role: operator.role,
+          cancelledAt: now
+        }
+      }).catch(err => {
+        console.warn('[POS Order Sync] Failed to update cancelled order status in Firestore:', err);
+      });
+    }
 
     // Real-Time Notification Trigger: Void Order Alert
     try {
