@@ -140,7 +140,9 @@ export const SettingsView: React.FC = () => {
     ingredients,
     expenses,
     logSecurityEvent,
-    cleanSlateForProduction
+    cleanSlateForProduction,
+    firebaseSyncState,
+    cleanAndSyncCloudNow
   } = usePOS();
 
   const [settingsTab, setSettingsTab] = useState<'general' | 'scheduling' | 'timeclock' | 'shifts' | 'sync' | 'pins' | 'security_logs' | 'backup'>('general');
@@ -633,7 +635,15 @@ export const SettingsView: React.FC = () => {
   // Sync Settings State
   const [autoSyncEnabled, setAutoSyncEnabled] = useState<boolean>(settings.autoSyncEnabled !== false);
   const [syncIntervalSeconds, setSyncIntervalSeconds] = useState<number>(settings.syncIntervalSeconds || 30);
+  const [realtimeCloudSync, setRealtimeCloudSync] = useState<boolean>(settings.realtimeCloudSync !== false);
+  const [cloudPurgeDeletions, setCloudPurgeDeletions] = useState<boolean>(settings.cloudPurgeDeletions !== false);
   const [isSyncingNow, setIsSyncingNow] = useState(false);
+  const [isCleaningCloud, setIsCleaningCloud] = useState(false);
+  const [cleanCloudResult, setCleanCloudResult] = useState<{
+    success: boolean;
+    message: string;
+    details?: any;
+  } | null>(null);
   const [syncSuccessToast, setSyncSuccessToast] = useState<string | null>(null);
 
   const [isSavedAlert, setIsSavedAlert] = useState(false);
@@ -643,7 +653,9 @@ export const SettingsView: React.FC = () => {
     e.preventDefault();
     updateSettings({
       autoSyncEnabled: autoSyncEnabled,
-      syncIntervalSeconds: Number(syncIntervalSeconds)
+      syncIntervalSeconds: Number(syncIntervalSeconds),
+      realtimeCloudSync: realtimeCloudSync,
+      cloudPurgeDeletions: cloudPurgeDeletions
     });
 
     setIsSavedAlert(true);
@@ -659,6 +671,27 @@ export const SettingsView: React.FC = () => {
       setSyncSuccessToast('ซิงค์ข้อมูลรายการสั่งซื้อออฟไลน์สำเร็จแล้ว!');
       setTimeout(() => setSyncSuccessToast(null), 3500);
     }, 800);
+  };
+
+  const handleCleanAndSyncCloudNow = async () => {
+    setIsCleaningCloud(true);
+    setCleanCloudResult(null);
+    setSyncSuccessToast(null);
+    try {
+      const res = await cleanAndSyncCloudNow({ purgeCloud: cloudPurgeDeletions });
+      setCleanCloudResult(res);
+      if (res.success) {
+        setSyncSuccessToast(res.message);
+        setTimeout(() => setSyncSuccessToast(null), 6000);
+      }
+    } catch (e: any) {
+      setCleanCloudResult({
+        success: false,
+        message: e?.message || 'เกิดข้อผิดพลาดในการทำความสะอาดและซิงค์คลาวด์'
+      });
+    } finally {
+      setIsCleaningCloud(false);
+    }
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -1320,7 +1353,119 @@ export const SettingsView: React.FC = () => {
         ) : settingsTab === 'sync' ? (
           <div className="max-w-4xl space-y-6">
             <form onSubmit={handleSaveSyncSettings} className="space-y-6">
-              {/* SECTION 1: AUTOMATIC BACKGROUND SYNC TOGGLE */}
+              {/* SECTION 1: REAL-TIME CLOUD SYNC & DELETION PURGE (แก้ปัญหาคลาวด์เป็นข้อมูลเก่า) */}
+              <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-5 shadow-xl space-y-4 ring-1 ring-emerald-500/20">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center space-x-2.5 text-emerald-400">
+                    <Radio className="w-5 h-5 text-emerald-400 animate-pulse" />
+                    <h3 className="font-bold text-slate-100 text-sm">การอัปเดตข้อมูลขึ้นคลาวด์แบบเรียลไทม์ & ล้างข้อมูลเก่า (Real-Time Cloud Sync & Purge)</h3>
+                  </div>
+                  <span
+                    className={`text-[11px] font-bold px-3 py-1 rounded-full border flex items-center space-x-1.5 ${
+                      realtimeCloudSync
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                        : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        realtimeCloudSync ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'
+                      }`}
+                    />
+                    <span>{realtimeCloudSync ? '⚡ เรียลไทม์ (Active)' : 'ธรรมดา (Manual)'}</span>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Toggle 1: Real-time Cloud Sync */}
+                  <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <label htmlFor="realtimeCloudSyncToggle" className="font-bold text-slate-200 block text-xs sm:text-sm cursor-pointer">
+                        ⚡ อัปเดตข้อมูลขึ้นคลาวด์แบบเรียลไทม์ทันที
+                      </label>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        เมื่อมีการเปลี่ยนแปลงใดๆ (เช่น เพิ่ม/แก้ไขเมนู, ปรับสต็อกวัตถุดิบ, แก้ไขโต๊ะ, หรือบันทึกออเดอร์) ระบบจะส่งข้อมูลขึ้นคลาวด์ทันทีโดยไม่ต้องรอรอบเวลา
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      id="realtimeCloudSyncToggle"
+                      checked={realtimeCloudSync}
+                      onChange={e => setRealtimeCloudSync(e.target.checked)}
+                      className="w-5 h-5 mt-1 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-500 cursor-pointer shrink-0"
+                    />
+                  </div>
+
+                  {/* Toggle 2: Cloud Purge on Delete */}
+                  <div className="p-4 bg-slate-950 border border-emerald-900/40 rounded-xl flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-1.5">
+                        <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                        <label htmlFor="cloudPurgeDeletionsToggle" className="font-bold text-slate-200 block text-xs sm:text-sm cursor-pointer">
+                          🧹 ลบข้อมูลที่ถูกลบออกจากคลาวด์อัตโนมัติ
+                        </label>
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        <strong className="text-emerald-400">แก้ปัญหาคลาวด์ค้างข้อมูลเก่า:</strong> เมื่อคุณลบเมนูอาหาร หรือวัตถุดิบในเครื่อง ระบบจะสั่งลบรายการที่ค้างบน Firebase Cloud ทันที เพื่อไม่ให้มีข้อมูลเก่าตกค้าง
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      id="cloudPurgeDeletionsToggle"
+                      checked={cloudPurgeDeletions}
+                      onChange={e => setCloudPurgeDeletions(e.target.checked)}
+                      className="w-5 h-5 mt-1 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-500 cursor-pointer shrink-0"
+                    />
+                  </div>
+                </div>
+
+                {/* ONE-CLICK ACTION: CLEAN & RECONCILE CLOUD NOW */}
+                <div className="p-4 bg-gradient-to-r from-emerald-950/40 via-slate-950 to-teal-950/40 border border-emerald-500/30 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Zap className="w-4 h-4 text-emerald-400" />
+                      <span className="font-bold text-xs sm:text-sm text-emerald-200">
+                        ทำความสะอาดและล้างข้อมูลเก่าบนคลาวด์ทันที (Clean & Reconcile Cloud Now)
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      ตรวจเช็คข้อมูลบนคลาวด์ทั้งหมด ส่งเมนูและสต็อกปัจจุบันขึ้นใหม่ พร้อมลบรายการขยะหรือเมนูที่เคยลบไปแล้วออกจากคลาวด์ให้หมดจด
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCleanAndSyncCloudNow}
+                    disabled={isCleaningCloud || isOffline}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center justify-center space-x-2 shrink-0 active:scale-95"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isCleaningCloud ? 'animate-spin' : ''}`} />
+                    <span>{isCleaningCloud ? 'กำลังล้างและซิงค์คลาวด์...' : 'ล้างข้อมูลเก่า & ซิงค์ทันที'}</span>
+                  </button>
+                </div>
+
+                {/* Last Clean Details Card if available */}
+                {(cleanCloudResult || firebaseSyncState.lastPurgedDetails) && (
+                  <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl text-xs space-y-2">
+                    <div className="flex items-center justify-between font-bold text-slate-300">
+                      <span className="flex items-center space-x-1.5 text-emerald-400">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>ผลการซิงค์และล้างข้อมูลคลาวด์ล่าสุด:</span>
+                      </span>
+                      <span className="text-[11px] text-slate-500 font-mono">
+                        {firebaseSyncState.lastPurgedDetails?.lastCleanedAt
+                          ? new Date(firebaseSyncState.lastPurgedDetails.lastCleanedAt).toLocaleTimeString('th-TH')
+                          : new Date().toLocaleTimeString('th-TH')}
+                      </span>
+                    </div>
+                    <p className="text-slate-300">
+                      {cleanCloudResult?.message ||
+                        `ซิงค์เมนู ${firebaseSyncState.lastPurgedDetails?.menuSynced || 0} รายการ, ลบเมนูเก่าบนคลาวด์ ${firebaseSyncState.lastPurgedDetails?.menuDeleted || 0} รายการ, อัปเดตสต็อก ${firebaseSyncState.lastPurgedDetails?.inventorySynced || 0} รายการ, ลบสต็อกเก่า ${firebaseSyncState.lastPurgedDetails?.inventoryDeleted || 0} รายการ`}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION 2: AUTOMATIC BACKGROUND SYNC TOGGLE */}
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <div className="flex items-center space-x-2.5 text-emerald-400">

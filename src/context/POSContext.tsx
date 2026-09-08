@@ -64,7 +64,17 @@ import {
   syncMenuItemsBatchToFirestore,
   deleteMenuItemFromFirestore,
   updateOrderStatusInFirestore,
-  fetchBranchesFromFirestore
+  fetchBranchesFromFirestore,
+  syncCategoriesToFirestore,
+  deleteCategoryFromFirestore,
+  syncTablesToFirestore,
+  syncAddOnsToFirestore,
+  syncSettingsToFirestore,
+  syncFullCatalogToFirestore,
+  purgeOutdatedCloudData,
+  subscribeToMenuItems,
+  subscribeToBranchInventory,
+  subscribeToDeletedRecords
 } from '../services/firebaseService';
 import {
   getStoredTriggers,
@@ -313,6 +323,19 @@ interface POSContextType {
   firebaseSyncState: FirebaseSyncState;
   centralBranchesLive: Record<string, CentralBranchLiveStats>;
   pushAllBranchDataToCloud: () => Promise<boolean>;
+  cleanAndSyncCloudNow: (options?: { purgeCloud?: boolean }) => Promise<{
+    success: boolean;
+    message: string;
+    details?: {
+      ordersSynced: number;
+      menuSynced: number;
+      menuDeleted: number;
+      inventorySynced: number;
+      inventoryDeleted: number;
+      categoriesSynced: number;
+      tablesSynced: number;
+    };
+  }>;
   pullCloudOrders: () => Promise<{ count: number; success: boolean }>;
   pullCloudAllData: () => Promise<{ ordersCount: number; ingredientsCount: number; menuItemsCount: number; success: boolean }>;
 
@@ -490,13 +513,29 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       name: trimmed,
       icon: icon || 'Tag'
     };
-    setCategories(prev => [...prev, newCat]);
+    setCategories(prev => {
+      const next = [...prev, newCat];
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        syncCategoriesToFirestore(next, currentBranch.id).catch(err => {
+          console.warn('[POS Category Sync] Failed to sync added category:', err);
+        });
+      }
+      return next;
+    });
   };
 
   const updateCategory = (id: string, name: string, icon?: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    setCategories(prev => prev.map(c => c.id === id ? { ...c, name: trimmed, icon: icon || c.icon } : c));
+    setCategories(prev => {
+      const next = prev.map(c => c.id === id ? { ...c, name: trimmed, icon: icon || c.icon } : c);
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        syncCategoriesToFirestore(next, currentBranch.id).catch(err => {
+          console.warn('[POS Category Sync] Failed to sync updated category:', err);
+        });
+      }
+      return next;
+    });
   };
 
   const deleteCategory = (id: string) => {
@@ -507,7 +546,23 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const remaining = categories.filter(c => c.id !== id);
     const fallbackCatId = remaining[0]?.id || 'kaprao';
     setCategories(remaining);
-    setMenuItems(prev => prev.map(m => m.category === id ? { ...m, category: fallbackCatId } : m));
+    setMenuItems(prev => {
+      const updatedMenus = prev.map(m => m.category === id ? { ...m, category: fallbackCatId } : m);
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        // Sync affected menu items
+        updatedMenus.filter(m => m.category === fallbackCatId).forEach(item => {
+          syncSingleMenuItemToFirestore(item).catch(console.warn);
+        });
+      }
+      return updatedMenus;
+    });
+
+    if (isFirebaseAvailable() && !effectiveOffline) {
+      deleteCategoryFromFirestore(id, currentBranch.id).catch(err => {
+        console.warn('[POS Category Sync] Failed to delete category from Cloud:', err);
+      });
+      syncCategoriesToFirestore(remaining, currentBranch.id).catch(console.warn);
+    }
   };
 
   const getCategoryName = (id: string): string => {
@@ -534,6 +589,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   });
 
+  const [deletedIngredientIds, setDeletedIngredientIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('POS_DELETED_ING_IDS');
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
     try {
       const storedDeleted = localStorage.getItem('POS_DELETED_MENU_IDS');
@@ -545,7 +609,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   });
   const [addOns, setAddOns] = useState<AddOnOption[]>(STANDARD_ADD_ONS);
-  const [ingredients, setIngredients] = useState<Ingredient[]>(INITIAL_INGREDIENTS);
+  const [ingredients, setIngredients] = useState<Ingredient[]>(() => {
+    try {
+      const storedDeleted = localStorage.getItem('POS_DELETED_ING_IDS');
+      const delList: string[] = storedDeleted ? JSON.parse(storedDeleted) : [];
+      const delSet = new Set(delList.map(s => String(s).trim().toLowerCase()));
+      return INITIAL_INGREDIENTS.filter(i => !delSet.has(i.id.toLowerCase()) && !delSet.has(i.name.trim().toLowerCase()));
+    } catch (e) {
+      return INITIAL_INGREDIENTS;
+    }
+  });
   const [stockLots, setStockLots] = useState<StockLot[]>(INITIAL_STOCK_LOTS);
   const [wasteLogs, setWasteLogs] = useState<WasteLog[]>(INITIAL_WASTE_LOGS);
   const [stockAdjustmentLogs, setStockAdjustmentLogs] = useState<StockAdjustmentLog[]>(INITIAL_STOCK_ADJUSTMENT_LOGS);
@@ -736,16 +809,31 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, [effectiveOffline]);
 
-  // Real-time listener for central orders, expenses, and incomes from Firestore
+  // Real-time listener for central orders, expenses, incomes, menu, inventory, and deletions from Firestore
   useEffect(() => {
     if (!isStorageLoaded || !isFirebaseAvailable() || effectiveOffline) return;
 
-    const unsubOrders = subscribeToRecentCentralOrders(300, (centralOrderList) => {
-      if (!centralOrderList || centralOrderList.length === 0) return;
+    const unsubOrders = subscribeToRecentCentralOrders(300, (centralOrderList, removedIds) => {
       setOrders(prev => {
-        const localMap = new Map<string, Order>();
-        prev.forEach(o => { if (o && o.id) localMap.set(o.id, o); });
+        let list = prev;
         let hasChanges = false;
+        if (removedIds && removedIds.length > 0) {
+          const removedSet = new Set(removedIds.map(id => id.replace(/^ord-/, '')));
+          const filtered = list.filter(o => !removedSet.has(o.id) && !removedIds.includes(o.id));
+          if (filtered.length !== list.length) {
+            list = filtered;
+            hasChanges = true;
+          }
+        }
+        if (!centralOrderList || centralOrderList.length === 0) {
+          if (hasChanges) {
+            try { localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(list)); } catch (e) {}
+            return list;
+          }
+          return prev;
+        }
+        const localMap = new Map<string, Order>();
+        list.forEach(o => { if (o && o.id) localMap.set(o.id, o); });
         centralOrderList.forEach(co => {
           if (!localMap.has(co.id)) {
             localMap.set(co.id, co);
@@ -756,7 +844,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               co.updatedAt && existing.updatedAt &&
               new Date(co.updatedAt).getTime() > new Date(existing.updatedAt).getTime()
             );
-            if (isCloudNewer) {
+            const statusChanged = co.status !== existing.status;
+            if (isCloudNewer || statusChanged) {
               localMap.set(co.id, { ...existing, ...co, isSynced: true });
               hasChanges = true;
             } else if (!existing.isSynced && co.isSynced) {
@@ -776,56 +865,243 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     });
 
-    const unsubExpenses = subscribeToCentralExpenses(100, (centralExpList) => {
-      if (!centralExpList || centralExpList.length === 0) return;
+    const unsubExpenses = subscribeToCentralExpenses(100, (centralExpList, removedIds) => {
       setExpenses(prev => {
-        const localMap = new Map(prev.map(e => [e.id, e]));
+        let list = prev;
         let hasNew = false;
-        centralExpList.forEach(ce => {
-          if (!localMap.has(ce.id)) {
-            localMap.set(ce.id, ce);
+        if (removedIds && removedIds.length > 0) {
+          const remSet = new Set(removedIds);
+          const filtered = list.filter(e => !remSet.has(e.id));
+          if (filtered.length !== list.length) {
+            list = filtered;
             hasNew = true;
           }
-        });
+        }
+        if (centralExpList && centralExpList.length > 0) {
+          const localMap = new Map(list.map(e => [e.id, e]));
+          centralExpList.forEach(ce => {
+            if (!localMap.has(ce.id)) {
+              localMap.set(ce.id, ce);
+              hasNew = true;
+            } else {
+              const existing = localMap.get(ce.id)!;
+              if (existing.amount !== ce.amount || existing.category !== ce.category || existing.title !== ce.title || existing.note !== ce.note) {
+                localMap.set(ce.id, { ...existing, ...ce });
+                hasNew = true;
+              }
+            }
+          });
+          if (hasNew) {
+            list = Array.from(localMap.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+          }
+        }
         if (!hasNew) return prev;
-        const merged = Array.from(localMap.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         try {
-          localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(merged));
+          localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(list));
         } catch (e) {
           console.warn('Failed to cache synced expenses', e);
         }
+        return list;
+      });
+    });
+
+    const unsubIncomes = subscribeToCentralIncomes(100, (centralIncList, removedIds) => {
+      setIncomes(prev => {
+        let list = prev;
+        let hasNew = false;
+        if (removedIds && removedIds.length > 0) {
+          const remSet = new Set(removedIds);
+          const filtered = list.filter(i => !remSet.has(i.id));
+          if (filtered.length !== list.length) {
+            list = filtered;
+            hasNew = true;
+          }
+        }
+        if (centralIncList && centralIncList.length > 0) {
+          const localMap = new Map(list.map(i => [i.id, i]));
+          centralIncList.forEach(ci => {
+            if (!localMap.has(ci.id)) {
+              localMap.set(ci.id, ci);
+              hasNew = true;
+            } else {
+              const existing = localMap.get(ci.id)!;
+              if (existing.amount !== ci.amount || existing.category !== ci.category || existing.title !== ci.title || existing.note !== ci.note) {
+                localMap.set(ci.id, { ...existing, ...ci });
+                hasNew = true;
+              }
+            }
+          });
+          if (hasNew) {
+            list = Array.from(localMap.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+          }
+        }
+        if (!hasNew) return prev;
+        try {
+          localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(list));
+        } catch (e) {
+          console.warn('Failed to cache synced incomes', e);
+        }
+        return list;
+      });
+    });
+
+    const unsubMenus = subscribeToMenuItems((cloudMenuList, removedIds) => {
+      setMenuItems(prev => {
+        let currentList = prev;
+        let changed = false;
+
+        if (removedIds && removedIds.length > 0) {
+          const remSet = new Set(removedIds.map(id => id.trim().toLowerCase()));
+          const filtered = currentList.filter(m => !remSet.has(m.id.toLowerCase()));
+          if (filtered.length !== currentList.length) {
+            currentList = filtered;
+            changed = true;
+          }
+        }
+
+        if (!cloudMenuList || cloudMenuList.length === 0) {
+          if (changed) {
+            try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(currentList)); } catch (e) {}
+            return currentList;
+          }
+          return prev;
+        }
+
+        const localMap = new Map<string, MenuItem>(currentList.map(m => [m.id, m]));
+        const deletedSet = new Set(deletedMenuItemIds.map(d => String(d).trim().toLowerCase()));
+
+        cloudMenuList.forEach(cm => {
+          if (deletedSet.has(cm.id.toLowerCase()) || deletedSet.has(cm.name.trim().toLowerCase())) return;
+
+          if (!localMap.has(cm.id)) {
+            localMap.set(cm.id, cm);
+            changed = true;
+          } else {
+            const existing = localMap.get(cm.id)!;
+            const isDifferent =
+              existing.price !== cm.price ||
+              existing.costPrice !== cm.costPrice ||
+              existing.name !== cm.name ||
+              existing.category !== cm.category ||
+              JSON.stringify(existing.recipe || []) !== JSON.stringify(cm.recipe || []);
+            if (isDifferent) {
+              localMap.set(cm.id, { ...existing, ...cm });
+              changed = true;
+            }
+          }
+        });
+
+        if (!changed) return prev;
+        const merged = Array.from(localMap.values());
+        try {
+          localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(merged));
+        } catch (e) {}
         return merged;
       });
     });
 
-    const unsubIncomes = subscribeToCentralIncomes(100, (centralIncList) => {
-      if (!centralIncList || centralIncList.length === 0) return;
-      setIncomes(prev => {
-        const localMap = new Map(prev.map(i => [i.id, i]));
-        let hasNew = false;
-        centralIncList.forEach(ci => {
+    const branchTargetId = currentBranch?.id || 'branch-1786349847821';
+    const unsubInventory = subscribeToBranchInventory(branchTargetId, (cloudIngList, removedIds) => {
+      setIngredients(prev => {
+        let currentList = prev;
+        let changed = false;
+
+        if (removedIds && removedIds.length > 0) {
+          const remSet = new Set(removedIds.map(id => id.trim().toLowerCase()));
+          const filtered = currentList.filter(i => !remSet.has(i.id.toLowerCase()));
+          if (filtered.length !== currentList.length) {
+            currentList = filtered;
+            changed = true;
+          }
+        }
+
+        if (!cloudIngList || cloudIngList.length === 0) {
+          if (changed) {
+            try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(currentList)); } catch (e) {}
+            return currentList;
+          }
+          return prev;
+        }
+
+        const localMap = new Map<string, Ingredient>(currentList.map(i => [i.id, i]));
+        const deletedSet = new Set(deletedIngredientIds.map(d => String(d).trim().toLowerCase()));
+
+        cloudIngList.forEach(ci => {
+          if (deletedSet.has(ci.id.toLowerCase()) || deletedSet.has(ci.name.trim().toLowerCase())) return;
+
           if (!localMap.has(ci.id)) {
             localMap.set(ci.id, ci);
-            hasNew = true;
+            changed = true;
+          } else {
+            const existing = localMap.get(ci.id)!;
+            const isDifferent =
+              existing.currentStock !== ci.currentStock ||
+              existing.unitCost !== ci.unitCost ||
+              existing.minStockAlert !== ci.minStockAlert ||
+              existing.name !== ci.name;
+            if (isDifferent) {
+              localMap.set(ci.id, { ...existing, ...ci });
+              changed = true;
+            }
           }
         });
-        if (!hasNew) return prev;
-        const merged = Array.from(localMap.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+        if (!changed) return prev;
+        const merged = Array.from(localMap.values());
         try {
-          localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(merged));
-        } catch (e) {
-          console.warn('Failed to cache synced incomes', e);
-        }
+          localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(merged));
+        } catch (e) {}
         return merged;
       });
+    });
+
+    // Real-time listener for deleted record tombstones (tombstone sync across clients)
+    const unsubTombstones = subscribeToDeletedRecords((deletedSet) => {
+      if (deletedSet.menuIds.size > 0) {
+        setMenuItems(prev => {
+          const filtered = prev.filter(m => !deletedSet.menuIds.has(m.id));
+          if (filtered.length !== prev.length) {
+            try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(filtered)); } catch (e) {}
+            return filtered;
+          }
+          return prev;
+        });
+        setDeletedMenuItemIds(prev => Array.from(new Set([...prev, ...deletedSet.menuIds])));
+      }
+
+      if (deletedSet.ingredientIds.size > 0) {
+        setIngredients(prev => {
+          const filtered = prev.filter(i => !deletedSet.ingredientIds.has(i.id));
+          if (filtered.length !== prev.length) {
+            try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(filtered)); } catch (e) {}
+            return filtered;
+          }
+          return prev;
+        });
+        setDeletedIngredientIds(prev => Array.from(new Set([...prev, ...deletedSet.ingredientIds])));
+      }
+
+      if (deletedSet.orderIds.size > 0) {
+        setOrders(prev => {
+          const filtered = prev.filter(o => !deletedSet.orderIds.has(o.id) && !deletedSet.orderIds.has(`ord-${o.id}`));
+          if (filtered.length !== prev.length) {
+            try { localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(filtered)); } catch (e) {}
+            return filtered;
+          }
+          return prev;
+        });
+      }
     });
 
     return () => {
       unsubOrders();
       unsubExpenses();
       unsubIncomes();
+      unsubMenus();
+      unsubInventory();
+      unsubTombstones();
     };
-  }, [isStorageLoaded, effectiveOffline]);
+  }, [isStorageLoaded, effectiveOffline, currentBranch?.id, deletedMenuItemIds.length, deletedIngredientIds.length]);
 
   // Automated Daily Sales Summary Notification at Scheduled Time (e.g. 22:00)
   useEffect(() => {
@@ -979,16 +1255,48 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
   };
 
-  const pushAllBranchDataToCloud = async (): Promise<boolean> => {
+  const cleanAndSyncCloudNow = useCallback(async (options?: { purgeCloud?: boolean }): Promise<{
+    success: boolean;
+    message: string;
+    details?: {
+      ordersSynced: number;
+      menuSynced: number;
+      menuDeleted: number;
+      inventorySynced: number;
+      inventoryDeleted: number;
+      categoriesSynced: number;
+      tablesSynced: number;
+    };
+  }> => {
     if (!isFirebaseAvailable() || effectiveOffline) {
-      return false;
+      return {
+        success: false,
+        message: 'ไม่สามารถซิงค์ได้: ฐานข้อมูล Firebase ออฟไลน์ หรืออุปกรณ์ไม่ได้เชื่อมต่ออินเทอร์เน็ต'
+      };
     }
+
     setFirebaseSyncState(prev => ({ ...prev, status: 'syncing' }));
     try {
-      await syncBranchToFirestore(currentBranch);
-      await syncInventoryToFirestore(ingredients, currentBranch);
-      const branchOrders = orders.filter(o => o.branchId === currentBranch.id);
-      await syncOrdersBatchToFirestore(branchOrders, currentBranch);
+      const purge = options?.purgeCloud !== false && (settings.cloudPurgeDeletions !== false);
+      const res = await syncFullCatalogToFirestore({
+        menuItems,
+        deletedMenuItemIds,
+        ingredients,
+        deletedIngredientIds,
+        categories,
+        tables,
+        addOns,
+        branch: currentBranch,
+        settings,
+        orders,
+        purgeOrphanCloudData: purge
+      });
+
+      if (!res.success) {
+        setFirebaseSyncState(prev => ({ ...prev, status: 'error', errorMessage: res.error || 'ซิงค์ข้อมูลล้มเหลว' }));
+        return { success: false, message: res.error || 'การซิงค์ข้อมูลขึ้นคลาวด์ล้มเหลว' };
+      }
+
       const nowIso = new Date().toISOString();
       setLastSyncedAt(nowIso);
       setFirebaseSyncState(prev => ({
@@ -996,14 +1304,67 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         status: 'connected',
         lastSyncedAt: nowIso,
         lastSyncedBranch: currentBranch.name,
-        pendingSyncCount: 0
+        pendingSyncCount: 0,
+        realtimeSyncActive: true,
+        lastPurgedCount: res.menuDeleted + res.inventoryDeleted,
+        lastPurgedDetails: {
+          menuDeleted: res.menuDeleted,
+          inventoryDeleted: res.inventoryDeleted,
+          menuSynced: res.menuSynced,
+          inventorySynced: res.inventorySynced,
+          categoriesSynced: res.categoriesSynced,
+          tablesSynced: res.tablesSynced,
+          lastCleanedAt: nowIso
+        }
       }));
-      return true;
-    } catch (e) {
-      console.error('[Firebase Push] Error pushing full branch data:', e);
+
+      const msgParts: string[] = [];
+      if (res.menuSynced > 0) msgParts.push(`อัปเดตเมนู ${res.menuSynced} รายการ`);
+      if (res.menuDeleted > 0) msgParts.push(`ลบเมนูเก่าออกจากคลาวด์ ${res.menuDeleted} รายการ`);
+      if (res.inventorySynced > 0) msgParts.push(`อัปเดตสต็อก ${res.inventorySynced} รายการ`);
+      if (res.inventoryDeleted > 0) msgParts.push(`ลบสต็อกเก่าออกจากคลาวด์ ${res.inventoryDeleted} รายการ`);
+      if (res.categoriesSynced > 0) msgParts.push(`ซิงค์หมวดหมู่ ${res.categoriesSynced} รายการ`);
+      if (res.tablesSynced > 0) msgParts.push(`ซิงค์โต๊ะ ${res.tablesSynced} รายการ`);
+      if (res.ordersSynced > 0) msgParts.push(`ส่งออเดอร์ ${res.ordersSynced} รายการ`);
+
+      const summaryMsg = msgParts.length > 0
+        ? `ซิงค์และล้างข้อมูลเก่าบนคลาวด์สำเร็จ: ${msgParts.join(', ')}`
+        : 'ข้อมูลบนคลาวด์เป็นปัจจุบันแล้ว ไม่พบข้อมูลเก่าตกค้าง';
+
+      return {
+        success: true,
+        message: summaryMsg,
+        details: {
+          ordersSynced: res.ordersSynced,
+          menuSynced: res.menuSynced,
+          menuDeleted: res.menuDeleted,
+          inventorySynced: res.inventorySynced,
+          inventoryDeleted: res.inventoryDeleted,
+          categoriesSynced: res.categoriesSynced,
+          tablesSynced: res.tablesSynced
+        }
+      };
+    } catch (e: any) {
+      console.error('[Firebase Clean Sync] Exception during sync:', e);
       setFirebaseSyncState(prev => ({ ...prev, status: 'error', errorMessage: String(e) }));
-      return false;
+      return { success: false, message: `เกิดข้อผิดพลาด: ${e?.message || String(e)}` };
     }
+  }, [
+    effectiveOffline,
+    menuItems,
+    deletedMenuItemIds,
+    ingredients,
+    categories,
+    tables,
+    addOns,
+    currentBranch,
+    settings,
+    orders
+  ]);
+
+  const pushAllBranchDataToCloud = async (): Promise<boolean> => {
+    const res = await cleanAndSyncCloudNow({ purgeCloud: true });
+    return res.success;
   };
 
   const pullCloudOrders = useCallback(async (): Promise<{ count: number; success: boolean }> => {
@@ -1786,17 +2147,35 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addTable = (tableName: string) => {
     const trimmed = tableName.trim();
     if (!trimmed) return;
-    setTables(prev => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+    setTables(prev => {
+      const next = prev.includes(trimmed) ? prev : [...prev, trimmed];
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        syncTablesToFirestore(next, currentBranch.id).catch(console.warn);
+      }
+      return next;
+    });
   };
 
   const updateTable = (oldName: string, newName: string) => {
     const trimmed = newName.trim();
     if (!trimmed) return;
-    setTables(prev => prev.map(t => t === oldName ? trimmed : t));
+    setTables(prev => {
+      const next = prev.map(t => t === oldName ? trimmed : t);
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        syncTablesToFirestore(next, currentBranch.id).catch(console.warn);
+      }
+      return next;
+    });
   };
 
   const deleteTable = (tableName: string) => {
-    setTables(prev => prev.filter(t => t !== tableName));
+    setTables(prev => {
+      const next = prev.filter(t => t !== tableName);
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        syncTablesToFirestore(next, currentBranch.id).catch(console.warn);
+      }
+      return next;
+    });
   };
 
   const updateSettings = (newSettings: Partial<SystemSettings>) => {
@@ -1808,11 +2187,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
-    setSettings(prev => ({
-      ...prev,
+    const updatedSettings: SystemSettings = {
+      ...settings,
       ...newSettings,
       ...(newPromptPay ? { promptpayMobileOrTaxId: newPromptPay, promptPayId: newPromptPay } : {})
-    }));
+    };
+
+    setSettings(updatedSettings);
 
     const newTaxId = newSettings.taxId || newSettings.shopTaxId;
     const newShopName = newSettings.shopName;
@@ -1831,8 +2212,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           ...(newShopPhone ? { phone: newShopPhone } : {})
         };
         setBranches(prev => prev.map(b => b.id === updated.id ? updated : b));
+        if (isFirebaseAvailable() && !effectiveOffline) {
+          syncBranchToFirestore(updated).catch(console.warn);
+        }
         return updated;
       });
+    }
+
+    if (isFirebaseAvailable() && !effectiveOffline) {
+      syncSettingsToFirestore(updatedSettings, currentBranch.id).catch(console.warn);
     }
   };
 
@@ -1935,6 +2323,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return m;
       });
       try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next)); } catch (e) {}
+      const target = next.find(m => m.id === menuItemId);
+      if (target && isFirebaseAvailable() && !effectiveOffline) {
+        syncSingleMenuItemToFirestore(target).catch(console.warn);
+      }
       return next;
     });
   };
@@ -1945,15 +2337,33 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ...addonData,
       id: `addon-${Date.now()}`
     };
-    setAddOns(prev => [...prev, newAddon]);
+    setAddOns(prev => {
+      const next = [...prev, newAddon];
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        syncAddOnsToFirestore(next, currentBranch.id).catch(console.warn);
+      }
+      return next;
+    });
   };
 
   const updateAddOn = (addon: AddOnOption) => {
-    setAddOns(prev => prev.map(a => (a.id === addon.id ? addon : a)));
+    setAddOns(prev => {
+      const next = prev.map(a => (a.id === addon.id ? addon : a));
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        syncAddOnsToFirestore(next, currentBranch.id).catch(console.warn);
+      }
+      return next;
+    });
   };
 
   const deleteAddOn = (addonId: string) => {
-    setAddOns(prev => prev.filter(a => a.id !== addonId));
+    setAddOns(prev => {
+      const next = prev.filter(a => a.id !== addonId);
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        syncAddOnsToFirestore(next, currentBranch.id).catch(console.warn);
+      }
+      return next;
+    });
   };
 
   const playKitchenChime = () => {
@@ -2536,13 +2946,22 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteIngredients = (ingredientIds: string[]) => {
     const idSet = new Set(ingredientIds);
+    const itemsToDelete = ingredients.filter(ing => idSet.has(ing.id));
+
     setIngredients(prev => {
       const next = prev.filter(ing => !idSet.has(ing.id));
       try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
       return next;
     });
-    ingredientIds.forEach(id => {
-      deleteIngredientFromFirestore(id, currentBranch?.id || 'branch-1786349847821').catch(err => {
+
+    setDeletedIngredientIds(prev => {
+      const next = Array.from(new Set([...prev, ...ingredientIds, ...itemsToDelete.map(i => i.name.trim())]));
+      try { localStorage.setItem('POS_DELETED_ING_IDS', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+
+    itemsToDelete.forEach(item => {
+      deleteIngredientFromFirestore(item.id, currentBranch?.id || 'branch-1786349847821', item.name).catch(err => {
         console.warn('[POS Inventory Sync] Failed to delete ingredient from Cloud:', err);
       });
     });
@@ -3337,6 +3756,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         firebaseSyncState,
         centralBranchesLive,
         pushAllBranchDataToCloud,
+        cleanAndSyncCloudNow,
         pullCloudOrders,
         pullCloudAllData,
         conflictReport,

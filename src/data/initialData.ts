@@ -440,6 +440,8 @@ export const INITIAL_SETTINGS: SystemSettings = {
   enableVat: true,
   autoSyncEnabled: true,
   syncIntervalSeconds: 30,
+  realtimeCloudSync: true,
+  cloudPurgeDeletions: true,
   promptpayMobileOrTaxId: '0812345678',
   shopName: 'บริษัท กะเพรา เอ็นเตอร์ไพรส์ จำกัด (สำนักงานใหญ่)',
   shopLogoUrl: SHOP_LOGO_URL,

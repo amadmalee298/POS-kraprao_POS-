@@ -374,6 +374,8 @@ export interface SystemSettings {
   enableVat?: boolean; // toggle automatic tax calculations
   autoSyncEnabled?: boolean; // toggle automatic background sync for offline transactions
   syncIntervalSeconds?: number; // frequency of background sync interval in seconds
+  realtimeCloudSync?: boolean; // toggle instant real-time sync to Firebase Firestore for all modifications and deletions
+  cloudPurgeDeletions?: boolean; // automatically purge/delete obsolete and removed items from Firestore so cloud never has stale data
   promptpayMobileOrTaxId: string;
   shopName: string;
   shopLogoUrl?: string;
@@ -557,6 +559,17 @@ export interface FirebaseSyncState {
   totalSyncedOrders: number;
   errorMessage?: string;
   lastSyncedBranch?: string;
+  realtimeSyncActive?: boolean;
+  lastPurgedCount?: number;
+  lastPurgedDetails?: {
+    menuDeleted: number;
+    inventoryDeleted: number;
+    menuSynced: number;
+    inventorySynced: number;
+    categoriesSynced: number;
+    tablesSynced: number;
+    lastCleanedAt: string;
+  };
 }
 
 export type ConflictResolutionChoice = 'local' | 'cloud' | 'skip';

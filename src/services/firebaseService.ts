@@ -18,7 +18,7 @@ import {
   DocumentData
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem } from '../types';
+import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem, CategoryItem, AddOnOption, SystemSettings } from '../types';
 
 export interface CentralBranchLiveStats {
   branchId: string;
@@ -67,6 +67,32 @@ export const isFirebaseAvailable = (): boolean => {
 };
 
 export const getDb = () => dbInstance;
+
+/**
+ * Deep sanitization utility for Firestore payloads
+ * Strips unsupported `undefined` properties to prevent Firestore write crashes
+ */
+export function cleanForFirestore<T>(data: T): T {
+  if (data === null || data === undefined) return null as any;
+  if (data instanceof Date) return data.toISOString() as any;
+  if (Array.isArray(data)) {
+    return data.map(item => cleanForFirestore(item)) as any;
+  }
+  if (typeof data === 'object') {
+    // Preserve FieldValue (serverTimestamp, deleteField, etc.) or Timestamp
+    if ((data as any)?._methodName || typeof (data as any)?.toMillis === 'function') {
+      return data;
+    }
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) {
+        cleaned[key] = cleanForFirestore(value);
+      }
+    }
+    return cleaned as any;
+  }
+  return data;
+}
 
 /**
  * Register/Heartbeat a branch in central Firebase
@@ -268,13 +294,33 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
 /**
  * Push current branch inventory stock levels to central Firebase
  */
-export async function syncInventoryToFirestore(ingredients: Ingredient[], branch: Branch): Promise<boolean> {
+export async function syncInventoryToFirestore(
+  ingredients: Ingredient[],
+  branch: Branch,
+  options?: { purgeDeleted?: boolean }
+): Promise<boolean> {
   if (!dbInstance || !navigator.onLine || ingredients.length === 0) return false;
 
   try {
     const batch = writeBatch(dbInstance);
     const nowIso = new Date().toISOString();
     let lowStockCount = 0;
+
+    // If purgeDeleted is not disabled, remove deleted/orphan ingredients from Firestore
+    if (options?.purgeDeleted !== false) {
+      try {
+        const activeIds = new Set(ingredients.map(i => i.id));
+        const existingSnap = await getDocs(collection(dbInstance, 'branches', branch.id, 'inventory'));
+        existingSnap.forEach(d => {
+          if (!activeIds.has(d.id)) {
+            batch.delete(d.ref);
+            batch.delete(doc(dbInstance!, 'inventory', `${branch.id}_${d.id}`));
+          }
+        });
+      } catch (purgeErr) {
+        console.warn('[Firebase Service] Note during inventory purge check:', purgeErr);
+      }
+    }
 
     ingredients.forEach(ing => {
       if (ing.currentStock <= ing.minStockAlert) {
@@ -522,7 +568,7 @@ export function docToOrder(docId: string, data: any): Order {
  */
 export function subscribeToRecentCentralOrders(
   limitCount: number = 300,
-  onUpdate: (orders: Order[]) => void,
+  onUpdate: (orders: Order[], removedIds?: string[]) => void,
   onError?: (err: Error) => void
 ): () => void {
   if (!dbInstance) return () => {};
@@ -535,11 +581,22 @@ export function subscribeToRecentCentralOrders(
       q,
       snapshot => {
         const orderList: Order[] = [];
+        const removedIds: string[] = [];
+
+        snapshot.docChanges().forEach(change => {
+          if (change.type === 'removed') {
+            const rawId = change.doc.id;
+            const cleanId = rawId.startsWith('ord-') ? rawId.replace('ord-', '') : rawId;
+            removedIds.push(rawId);
+            removedIds.push(cleanId);
+          }
+        });
+
         snapshot.forEach(docSnap => {
           orderList.push(docToOrder(docSnap.id, docSnap.data()));
         });
         orderList.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-        onUpdate(orderList);
+        onUpdate(orderList, removedIds);
       },
       err => {
         console.warn('[Firebase Service] ⚠️ Snapshot error on orders collection:', err);
@@ -795,7 +852,7 @@ export async function deleteIncomeFromFirestore(incomeId: string): Promise<boole
  */
 export function subscribeToCentralExpenses(
   limitCount: number = 100,
-  onUpdate: (expenses: Expense[]) => void,
+  onUpdate: (expenses: Expense[], removedIds?: string[]) => void,
   onError?: (err: Error) => void
 ): () => void {
   if (!dbInstance) return () => {};
@@ -808,6 +865,17 @@ export function subscribeToCentralExpenses(
       q,
       snapshot => {
         const list: Expense[] = [];
+        const removedIds: string[] = [];
+
+        snapshot.docChanges().forEach(change => {
+          if (change.type === 'removed') {
+            const rawId = change.doc.id;
+            const cleanId = rawId.startsWith('exp-') ? rawId.replace('exp-', '') : rawId;
+            removedIds.push(rawId);
+            removedIds.push(cleanId);
+          }
+        });
+
         snapshot.forEach(docSnap => {
           const d = docSnap.data();
           list.push({
@@ -826,7 +894,7 @@ export function subscribeToCentralExpenses(
             receiptImageName: d.receiptImageName || undefined
           });
         });
-        onUpdate(list);
+        onUpdate(list, removedIds);
       },
       err => {
         console.warn('[Firebase Service] ⚠️ Snapshot error on expenses:', err);
@@ -845,7 +913,7 @@ export function subscribeToCentralExpenses(
  */
 export function subscribeToCentralIncomes(
   limitCount: number = 100,
-  onUpdate: (incomes: OtherIncome[]) => void,
+  onUpdate: (incomes: OtherIncome[], removedIds?: string[]) => void,
   onError?: (err: Error) => void
 ): () => void {
   if (!dbInstance) return () => {};
@@ -858,6 +926,17 @@ export function subscribeToCentralIncomes(
       q,
       snapshot => {
         const list: OtherIncome[] = [];
+        const removedIds: string[] = [];
+
+        snapshot.docChanges().forEach(change => {
+          if (change.type === 'removed') {
+            const rawId = change.doc.id;
+            const cleanId = rawId.startsWith('inc-') ? rawId.replace('inc-', '') : rawId;
+            removedIds.push(rawId);
+            removedIds.push(cleanId);
+          }
+        });
+
         snapshot.forEach(docSnap => {
           const d = docSnap.data();
           list.push({
@@ -876,7 +955,7 @@ export function subscribeToCentralIncomes(
             createdAt: d.syncedAt || d.createdAt || undefined
           });
         });
-        onUpdate(list);
+        onUpdate(list, removedIds);
       },
       err => {
         console.warn('[Firebase Service] ⚠️ Snapshot error on incomes:', err);
@@ -1006,11 +1085,12 @@ export async function syncIngredientToFirestore(
 }
 
 /**
- * Delete an ingredient from Firestore
+ * Delete an ingredient from Firestore (deletes from branch inventory, global inventory, and records tombstone)
  */
 export async function deleteIngredientFromFirestore(
   ingredientId: string,
-  branchId: string = 'branch-1786349847821'
+  branchId: string = 'branch-1786349847821',
+  ingredientName?: string
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
 
@@ -1018,12 +1098,86 @@ export async function deleteIngredientFromFirestore(
     const branchDocRef = doc(dbInstance, 'branches', branchId, 'inventory', ingredientId);
     await deleteDoc(branchDocRef);
 
-    const globalDocRef = doc(dbInstance, 'inventory', `${branchId}_${ingredientId}`);
-    await deleteDoc(globalDocRef);
+    const globalPrefixedRef = doc(dbInstance, 'inventory', `${branchId}_${ingredientId}`);
+    await deleteDoc(globalPrefixedRef);
 
+    const globalPlainRef = doc(dbInstance, 'inventory', ingredientId);
+    await deleteDoc(globalPlainRef).catch(() => {});
+
+    // Delete any duplicate document by name in branch inventory or global inventory
+    if (ingredientName && ingredientName.trim()) {
+      try {
+        const qBranch = query(collection(dbInstance, 'branches', branchId, 'inventory'), where('name', '==', ingredientName.trim()));
+        const snapBranch = await getDocs(qBranch);
+        if (!snapBranch.empty) {
+          const batch = writeBatch(dbInstance);
+          snapBranch.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+
+        const qGlobal = query(collection(dbInstance, 'inventory'), where('name', '==', ingredientName.trim()));
+        const snapGlobal = await getDocs(qGlobal);
+        if (!snapGlobal.empty) {
+          const batch2 = writeBatch(dbInstance);
+          snapGlobal.forEach(d => batch2.delete(d.ref));
+          await batch2.commit();
+        }
+      } catch (cleanErr) {
+        console.warn(`[Firebase Service] Note on duplicate cleanup for "${ingredientName}":`, cleanErr);
+      }
+    }
+
+    // Record tombstone in deleted_records so all branches and real-time listeners honor the deletion
+    const tombstoneRef = doc(dbInstance, 'deleted_records', `ing_${branchId}_${ingredientId}`);
+    await setDoc(
+      tombstoneRef,
+      {
+        type: 'ingredient',
+        recordId: ingredientId,
+        branchId,
+        name: ingredientName || '',
+        deletedAt: serverTimestamp(),
+        deletedAtIso: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
+    console.log(`[Firebase Service] 🗑️ Successfully deleted ingredient ${ingredientId} ("${ingredientName || ''}") from Firestore.`);
     return true;
   } catch (err) {
     console.error(`[Firebase Service] ❌ Failed to delete ingredient ${ingredientId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Delete a sales order from Firestore
+ */
+export async function deleteOrderFromFirestore(orderId: string): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const orderDocId = orderId.startsWith('ord-') ? orderId : `ord-${orderId}`;
+    const orderRef = doc(dbInstance, 'orders', orderDocId);
+    await deleteDoc(orderRef);
+
+    // Also record tombstone
+    const tombstoneRef = doc(dbInstance, 'deleted_records', `order_${orderDocId}`);
+    await setDoc(
+      tombstoneRef,
+      {
+        type: 'order',
+        recordId: orderId,
+        deletedAt: serverTimestamp(),
+        deletedAtIso: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
+    console.log(`[Firebase Service] 🗑️ Successfully deleted order ${orderDocId} from Firestore.`);
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to delete order ${orderId}:`, err);
     return false;
   }
 }
@@ -1074,10 +1228,11 @@ export async function syncSingleMenuItemToFirestore(item: MenuItem): Promise<boo
 
   try {
     const docRef = doc(dbInstance, 'menu_items', item.id);
-    await setDoc(docRef, {
+    const payload = cleanForFirestore({
       ...item,
       updatedAt: serverTimestamp()
-    }, { merge: true });
+    });
+    await setDoc(docRef, payload, { merge: true });
     return true;
   } catch (err) {
     console.error(`[Firebase Service] ❌ Failed to sync menu item ${item.id}:`, err);
@@ -1095,10 +1250,11 @@ export async function syncMenuItemsBatchToFirestore(items: MenuItem[]): Promise<
     const batch = writeBatch(dbInstance);
     items.forEach(item => {
       const ref = doc(dbInstance!, 'menu_items', item.id);
-      batch.set(ref, {
+      const payload = cleanForFirestore({
         ...item,
         updatedAt: serverTimestamp()
-      }, { merge: true });
+      });
+      batch.set(ref, payload, { merge: true });
     });
     await batch.commit();
     console.log(`[Firebase Service] 🍽️ Committed ${items.length} menu items to Firestore.`);
@@ -1126,18 +1282,16 @@ export async function updateOrderStatusInFirestore(
 
   try {
     const orderRef = doc(dbInstance, 'orders', orderId);
-    const updatePayload: Record<string, any> = {
+    const updatePayload: Record<string, any> = cleanForFirestore({
       status,
-      updatedAt: serverTimestamp()
-    };
-    if (status === 'served') {
-      updatePayload.completedAt = extra?.completedAt || new Date().toISOString();
-    }
-    if (status === 'cancelled') {
-      if (extra?.cancelledBy) updatePayload.cancelledBy = extra.cancelledBy;
-      if (extra?.cancelReason) updatePayload.cancelReason = extra.cancelReason;
-      if (extra?.cancelNote) updatePayload.cancelNote = extra.cancelNote;
-    }
+      updatedAt: serverTimestamp(),
+      ...(status === 'served' ? { completedAt: extra?.completedAt || new Date().toISOString() } : {}),
+      ...(status === 'cancelled' ? {
+        cancelledBy: extra?.cancelledBy,
+        cancelReason: extra?.cancelReason,
+        cancelNote: extra?.cancelNote
+      } : {})
+    });
 
     await setDoc(orderRef, updatePayload, { merge: true });
     console.log(`[Firebase Service] ☁️ Order ${orderId} status successfully updated to '${status}' in Firestore.`);
@@ -1149,7 +1303,7 @@ export async function updateOrderStatusInFirestore(
 }
 
 /**
- * Delete a menu item from Firestore (with optional deletion of any documents matching the same name)
+ * Delete a menu item from Firestore (with deletion of duplicate documents and tombstone recording)
  */
 export async function deleteMenuItemFromFirestore(itemId: string, itemName?: string): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
@@ -1175,10 +1329,50 @@ export async function deleteMenuItemFromFirestore(itemId: string, itemName?: str
         console.warn(`[Firebase Service] Note on name-based deletion for "${itemName}":`, subErr);
       }
     }
+
+    // Record tombstone in deleted_records
+    const tombstoneRef = doc(dbInstance, 'deleted_records', `menu_${itemId}`);
+    await setDoc(
+      tombstoneRef,
+      {
+        type: 'menu_item',
+        recordId: itemId,
+        name: itemName || '',
+        deletedAt: serverTimestamp(),
+        deletedAtIso: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
     console.log(`[Firebase Service] 🗑️ Successfully deleted menu item ${itemId} from Firestore.`);
     return true;
   } catch (err) {
     console.error(`[Firebase Service] ❌ Failed to delete menu item ${itemId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Delete an add-on option from Firestore
+ */
+export async function deleteAddOnFromFirestore(
+  addonId: string,
+  branchId: string = 'branch-1786349847821'
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const docRef = doc(dbInstance, 'branches', branchId, 'config', 'addons');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      const currentList: AddOnOption[] = data.addOns || [];
+      const updatedList = currentList.filter(a => a.id !== addonId);
+      await setDoc(docRef, cleanForFirestore({ addOns: updatedList, updatedAt: serverTimestamp() }), { merge: true });
+    }
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to delete add-on ${addonId}:`, err);
     return false;
   }
 }
@@ -1214,5 +1408,605 @@ export async function fetchBranchesFromFirestore(): Promise<Branch[]> {
     return [];
   }
 }
+
+/**
+ * Sync Categories to Firestore
+ */
+export async function syncCategoriesToFirestore(
+  categories: CategoryItem[],
+  branchId: string = 'branch-1786349847821'
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const docRef = doc(dbInstance, 'branches', branchId, 'config', 'categories');
+    await setDoc(
+      docRef,
+      {
+        categories,
+        updatedAt: serverTimestamp(),
+        lastUpdatedIso: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
+    // Also persist in global categories collection doc for central access
+    const globalCatRef = doc(dbInstance, 'categories', 'active_list');
+    await setDoc(
+      globalCatRef,
+      {
+        categories,
+        updatedAt: serverTimestamp(),
+        lastUpdatedIso: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
+    console.log(`[Firebase Service] 🏷️ Synced ${categories.length} categories to Firestore.`);
+    return true;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to sync categories to Firestore:', err);
+    return false;
+  }
+}
+
+/**
+ * Delete a category from Firestore
+ */
+export async function deleteCategoryFromFirestore(
+  categoryId: string,
+  branchId: string = 'branch-1786349847821'
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const docRef = doc(dbInstance, 'branches', branchId, 'config', 'categories');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      const currentList: CategoryItem[] = data.categories || [];
+      const updatedList = currentList.filter(c => c.id !== categoryId);
+      await setDoc(docRef, { categories: updatedList, updatedAt: serverTimestamp() }, { merge: true });
+    }
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to delete category ${categoryId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Fetch Categories from Firestore
+ */
+export async function fetchCategoriesFromFirestore(
+  branchId: string = 'branch-1786349847821'
+): Promise<CategoryItem[] | null> {
+  if (!dbInstance) return null;
+
+  try {
+    const docRef = doc(dbInstance, 'branches', branchId, 'config', 'categories');
+    const snap = await getDoc(docRef);
+    if (snap.exists() && snap.data().categories) {
+      return snap.data().categories as CategoryItem[];
+    }
+    const globalSnap = await getDoc(doc(dbInstance, 'categories', 'active_list'));
+    if (globalSnap.exists() && globalSnap.data().categories) {
+      return globalSnap.data().categories as CategoryItem[];
+    }
+    return null;
+  } catch (err) {
+    console.warn('[Firebase Service] Could not fetch categories from Firestore:', err);
+    return null;
+  }
+}
+
+/**
+ * Sync Tables list to Firestore
+ */
+export async function syncTablesToFirestore(
+  tables: string[],
+  branchId: string = 'branch-1786349847821'
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const docRef = doc(dbInstance, 'branches', branchId, 'config', 'tables');
+    await setDoc(
+      docRef,
+      {
+        tables,
+        updatedAt: serverTimestamp(),
+        lastUpdatedIso: new Date().toISOString()
+      },
+      { merge: true }
+    );
+    return true;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to sync tables to Firestore:', err);
+    return false;
+  }
+}
+
+/**
+ * Sync Add-on Options to Firestore
+ */
+export async function syncAddOnsToFirestore(
+  addOns: AddOnOption[],
+  branchId: string = 'branch-1786349847821'
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    const docRef = doc(dbInstance, 'branches', branchId, 'config', 'addons');
+    await setDoc(
+      docRef,
+      {
+        addOns,
+        updatedAt: serverTimestamp(),
+        lastUpdatedIso: new Date().toISOString()
+      },
+      { merge: true }
+    );
+    return true;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to sync add-ons to Firestore:', err);
+    return false;
+  }
+}
+
+/**
+ * Sync System Settings to Firestore
+ */
+export async function syncSettingsToFirestore(
+  settings: SystemSettings,
+  branchId: string = 'branch-1786349847821'
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+
+  try {
+    // Sanitize pins before uploading
+    const { adminPin, managerPin, ...safeSettings } = settings;
+    const docRef = doc(dbInstance, 'branches', branchId, 'config', 'settings');
+    await setDoc(
+      docRef,
+      {
+        ...safeSettings,
+        updatedAt: serverTimestamp(),
+        lastUpdatedIso: new Date().toISOString()
+      },
+      { merge: true }
+    );
+    return true;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to sync settings to Firestore:', err);
+    return false;
+  }
+}
+
+/**
+ * Purge Outdated or Deleted Documents from Firestore Cloud
+ * Deletes any menu items and inventory documents that were removed locally.
+ */
+export async function purgeOutdatedCloudData(
+  branchId: string,
+  activeMenuIds: string[],
+  activeIngredientIds: string[],
+  deletedMenuIds: string[] = [],
+  deletedIngredientIds: string[] = []
+): Promise<{ menuDeleted: number; inventoryDeleted: number }> {
+  if (!dbInstance || !navigator.onLine) return { menuDeleted: 0, inventoryDeleted: 0 };
+
+  let menuDeleted = 0;
+  let inventoryDeleted = 0;
+
+  try {
+    // 1. Purge Deleted / Orphan Menu Items from /menu_items
+    const menuColRef = collection(dbInstance, 'menu_items');
+    const menuSnap = await getDocs(menuColRef);
+    const activeMenuSet = new Set(activeMenuIds.map(id => String(id).trim().toLowerCase()));
+    const deletedMenuSet = new Set(deletedMenuIds.map(id => String(id).trim().toLowerCase()));
+
+    const menuBatch = writeBatch(dbInstance);
+    let menuBatchCount = 0;
+
+    menuSnap.forEach(d => {
+      const docIdLower = d.id.trim().toLowerCase();
+      const docName = String(d.data().name || '').trim().toLowerCase();
+      const shouldDelete =
+        deletedMenuSet.has(docIdLower) ||
+        deletedMenuSet.has(docName) ||
+        (!activeMenuSet.has(docIdLower) && activeMenuSet.size > 0);
+
+      if (shouldDelete) {
+        menuBatch.delete(d.ref);
+        menuDeleted++;
+        menuBatchCount++;
+      }
+    });
+
+    if (menuBatchCount > 0) {
+      await menuBatch.commit();
+      console.log(`[Firebase Service] 🧹 Purged ${menuBatchCount} obsolete menu doc(s) from Firestore.`);
+    }
+
+    // 2. Purge Deleted / Orphan Ingredients from branches/{branchId}/inventory AND /inventory
+    const branchInvColRef = collection(dbInstance, 'branches', branchId, 'inventory');
+    const invSnap = await getDocs(branchInvColRef);
+    const activeIngSet = new Set(activeIngredientIds.map(id => String(id).trim().toLowerCase()));
+    const deletedIngSet = new Set(deletedIngredientIds.map(id => String(id).trim().toLowerCase()));
+
+    const invBatch = writeBatch(dbInstance);
+    let invBatchCount = 0;
+
+    invSnap.forEach(d => {
+      const docIdLower = d.id.trim().toLowerCase();
+      const docName = String(d.data().name || '').trim().toLowerCase();
+      const shouldDelete =
+        deletedIngSet.has(docIdLower) ||
+        deletedIngSet.has(docName) ||
+        (!activeIngSet.has(docIdLower) && activeIngSet.size > 0);
+
+      if (shouldDelete) {
+        invBatch.delete(d.ref);
+        invBatch.delete(doc(dbInstance!, 'inventory', `${branchId}_${d.id}`));
+        inventoryDeleted++;
+        invBatchCount++;
+      }
+    });
+
+    // Also scan top-level /inventory to prune any orphaned or duplicate documents
+    try {
+      const globalInvColRef = collection(dbInstance, 'inventory');
+      const globalInvSnap = await getDocs(globalInvColRef);
+      globalInvSnap.forEach(d => {
+        const rawId = d.id.trim().toLowerCase();
+        const ingIdPart = rawId.startsWith(`${branchId.toLowerCase()}_`)
+          ? rawId.replace(`${branchId.toLowerCase()}_`, '')
+          : rawId;
+        const docName = String(d.data().name || '').trim().toLowerCase();
+
+        const isBranchDoc = rawId.startsWith(`${branchId.toLowerCase()}_`);
+        const shouldDeleteGlobal =
+          (isBranchDoc && !activeIngSet.has(ingIdPart) && activeIngSet.size > 0) ||
+          deletedIngSet.has(ingIdPart) ||
+          deletedIngSet.has(docName);
+
+        if (shouldDeleteGlobal) {
+          invBatch.delete(d.ref);
+          invBatchCount++;
+          inventoryDeleted++;
+        }
+      });
+    } catch (globalPurgeErr) {
+      console.warn('[Firebase Service] Note on global inventory purge scan:', globalPurgeErr);
+    }
+
+    if (invBatchCount > 0) {
+      await invBatch.commit();
+      console.log(`[Firebase Service] 🧹 Purged ${invBatchCount} obsolete inventory doc(s) from Firestore.`);
+    }
+
+    return { menuDeleted, inventoryDeleted };
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Error during cloud data purge:', err);
+    return { menuDeleted, inventoryDeleted };
+  }
+}
+
+export interface SyncFullCatalogParams {
+  menuItems: MenuItem[];
+  deletedMenuItemIds: string[];
+  ingredients: Ingredient[];
+  deletedIngredientIds?: string[];
+  categories: CategoryItem[];
+  tables: string[];
+  addOns?: AddOnOption[];
+  branch: Branch;
+  settings?: SystemSettings;
+  orders?: Order[];
+  purgeOrphanCloudData?: boolean;
+}
+
+export interface SyncFullCatalogResult {
+  success: boolean;
+  menuSynced: number;
+  menuDeleted: number;
+  inventorySynced: number;
+  inventoryDeleted: number;
+  categoriesSynced: number;
+  tablesSynced: number;
+  ordersSynced: number;
+  error?: string;
+}
+
+/**
+ * Comprehensively sync all current POS data to Firebase Firestore
+ * AND purge all obsolete / deleted items so the cloud is 100% up-to-date.
+ */
+export async function syncFullCatalogToFirestore(
+  params: SyncFullCatalogParams
+): Promise<SyncFullCatalogResult> {
+  if (!dbInstance || !navigator.onLine) {
+    return {
+      success: false,
+      menuSynced: 0,
+      menuDeleted: 0,
+      inventorySynced: 0,
+      inventoryDeleted: 0,
+      categoriesSynced: 0,
+      tablesSynced: 0,
+      ordersSynced: 0,
+      error: 'ฐานข้อมูล Firebase ออฟไลน์หรือไม่พร้อมใช้งาน'
+    };
+  }
+
+  const {
+    menuItems,
+    deletedMenuItemIds,
+    ingredients,
+    deletedIngredientIds = [],
+    categories,
+    tables,
+    addOns = [],
+    branch,
+    settings,
+    orders = [],
+    purgeOrphanCloudData = true
+  } = params;
+
+  try {
+    console.log(`[Firebase Service] 🚀 Starting Full Real-Time Cloud Synchronization & Data Reconciliation for Branch: ${branch.name}...`);
+
+    let menuDeleted = 0;
+    let inventoryDeleted = 0;
+
+    // 1. Purge obsolete / deleted cloud items if requested
+    if (purgeOrphanCloudData) {
+      const purgeRes = await purgeOutdatedCloudData(
+        branch.id,
+        menuItems.map(m => m.id),
+        ingredients.map(i => i.id),
+        deletedMenuItemIds,
+        deletedIngredientIds
+      );
+      menuDeleted = purgeRes.menuDeleted;
+      inventoryDeleted = purgeRes.inventoryDeleted;
+    }
+
+    // 2. Sync Active Menu Items to Firestore
+    let menuSynced = 0;
+    if (menuItems.length > 0) {
+      const menuBatch = writeBatch(dbInstance);
+      const nowIso = new Date().toISOString();
+
+      menuItems.forEach(item => {
+        const docRef = doc(dbInstance!, 'menu_items', item.id);
+        const payload = cleanForFirestore({
+          ...item,
+          branchId: branch.id,
+          branchName: branch.name,
+          lastSyncedAt: nowIso,
+          updatedAt: serverTimestamp()
+        });
+        menuBatch.set(docRef, payload, { merge: true });
+        menuSynced++;
+      });
+      await menuBatch.commit();
+      console.log(`[Firebase Service] 🍽️ Synced ${menuSynced} menu item(s) to Firestore.`);
+    }
+
+    // 3. Sync Active Inventory to Firestore
+    let inventorySynced = 0;
+    if (ingredients.length > 0) {
+      await syncInventoryToFirestore(ingredients, branch, { purgeDeleted: purgeOrphanCloudData });
+      inventorySynced = ingredients.length;
+    }
+
+    // 4. Sync Categories, Tables, Add-ons, and Settings
+    let categoriesSynced = 0;
+    if (categories.length > 0) {
+      await syncCategoriesToFirestore(categories, branch.id);
+      categoriesSynced = categories.length;
+    }
+
+    let tablesSynced = 0;
+    if (tables.length > 0) {
+      await syncTablesToFirestore(tables, branch.id);
+      tablesSynced = tables.length;
+    }
+
+    if (addOns.length > 0) {
+      await syncAddOnsToFirestore(addOns, branch.id);
+    }
+
+    if (settings) {
+      await syncSettingsToFirestore(settings, branch.id);
+    }
+
+    // 5. Sync Pending Orders (if any)
+    let ordersSynced = 0;
+    const pendingOrders = orders.filter(o => o.branchId === branch.id && (o.isOfflineOrder || !o.isSynced));
+    if (pendingOrders.length > 0) {
+      const batchOrderRes = await syncOrdersBatchToFirestore(pendingOrders, branch);
+      ordersSynced = batchOrderRes.success;
+    }
+
+    // 6. Heartbeat & Branch Metadata
+    await syncBranchToFirestore(branch, {
+      lowStockCount: ingredients.filter(i => i.currentStock <= i.minStockAlert).length
+    });
+
+    console.log(`[Firebase Service] ✅ Full Cloud Synchronization Complete: ${menuSynced} menus synced, ${menuDeleted} menus purged, ${inventorySynced} inventory synced, ${inventoryDeleted} inventory purged.`);
+
+    return {
+      success: true,
+      menuSynced,
+      menuDeleted,
+      inventorySynced,
+      inventoryDeleted,
+      categoriesSynced,
+      tablesSynced,
+      ordersSynced
+    };
+  } catch (err: any) {
+    console.error('[Firebase Service] ❌ Full Catalog Cloud Sync failed:', err);
+    return {
+      success: false,
+      menuSynced: 0,
+      menuDeleted: 0,
+      inventorySynced: 0,
+      inventoryDeleted: 0,
+      categoriesSynced: 0,
+      tablesSynced: 0,
+      ordersSynced: 0,
+      error: err?.message || String(err)
+    };
+  }
+}
+
+/**
+ * Real-time Listener for Menu Items in Firestore
+ */
+export function subscribeToMenuItems(
+  onUpdate: (items: MenuItem[], removedIds?: string[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  if (!dbInstance) return () => {};
+
+  const colRef = collection(dbInstance, 'menu_items');
+  const unsubscribe = onSnapshot(
+    colRef,
+    (snapshot) => {
+      const items: MenuItem[] = [];
+      const removedIds: string[] = [];
+
+      snapshot.docChanges().forEach(change => {
+        if (change.type === 'removed') {
+          removedIds.push(change.doc.id);
+        }
+      });
+
+      snapshot.forEach(d => {
+        const data = d.data();
+        items.push({
+          id: d.id,
+          name: data.name || '',
+          nameEn: data.nameEn || '',
+          category: data.category || 'kaprao',
+          price: Number(data.price) || 0,
+          costPrice: Number(data.costPrice) || 0,
+          description: data.description || '',
+          image: data.image || '',
+          isPopular: !!data.isPopular,
+          recipe: Array.isArray(data.recipe) ? data.recipe : [],
+          availableSpiceLevels: data.availableSpiceLevels,
+          availableProteins: data.availableProteins,
+          allowAddOns: data.allowAddOns !== undefined ? data.allowAddOns : true,
+          allowedAddOnIds: data.allowedAddOnIds
+        });
+      });
+      onUpdate(items, removedIds);
+    },
+    (err) => {
+      console.warn('[Firebase Service] Real-time subscription error on menu_items:', err);
+      if (onError) onError(err);
+    }
+  );
+
+  return unsubscribe;
+}
+
+/**
+ * Real-time Listener for Branch Inventory in Firestore
+ */
+export function subscribeToBranchInventory(
+  branchId: string,
+  onUpdate: (ingredients: Ingredient[], removedIds?: string[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  if (!dbInstance) return () => {};
+
+  const colRef = collection(dbInstance, 'branches', branchId, 'inventory');
+  const unsubscribe = onSnapshot(
+    colRef,
+    (snapshot) => {
+      const ings: Ingredient[] = [];
+      const removedIds: string[] = [];
+
+      snapshot.docChanges().forEach(change => {
+        if (change.type === 'removed') {
+          removedIds.push(change.doc.id);
+        }
+      });
+
+      snapshot.forEach(d => {
+        const data = d.data();
+        ings.push({
+          id: data.ingredientId || d.id,
+          name: data.name || '',
+          currentStock: Number(data.currentStock) || 0,
+          minStockAlert: Number(data.minStockAlert) || 0,
+          unit: data.unit || 'pcs',
+          unitCost: Number(data.unitCost) || 0,
+          category: data.category || 'dry_good',
+          barcode: data.barcode || ''
+        });
+      });
+      onUpdate(ings, removedIds);
+    },
+    (err) => {
+      console.warn(`[Firebase Service] Real-time subscription error on branch inventory (${branchId}):`, err);
+      if (onError) onError(err);
+    }
+  );
+
+  return unsubscribe;
+}
+
+/**
+ * Real-time Listener for Deleted Records (Tombstones) in Firestore
+ * Informs all connected clients when an item was deleted centrally.
+ */
+export function subscribeToDeletedRecords(
+  onUpdate: (deletedSet: { menuIds: Set<string>; ingredientIds: Set<string>; orderIds: Set<string> }) => void,
+  onError?: (err: Error) => void
+): () => void {
+  if (!dbInstance) return () => {};
+
+  try {
+    const colRef = collection(dbInstance, 'deleted_records');
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snapshot) => {
+        const menuIds = new Set<string>();
+        const ingredientIds = new Set<string>();
+        const orderIds = new Set<string>();
+
+        snapshot.forEach(d => {
+          const data = d.data();
+          if (data.type === 'menu_item' && data.recordId) {
+            menuIds.add(data.recordId);
+          } else if (data.type === 'ingredient' && data.recordId) {
+            ingredientIds.add(data.recordId);
+          } else if (data.type === 'order' && data.recordId) {
+            orderIds.add(data.recordId);
+          }
+        });
+
+        onUpdate({ menuIds, ingredientIds, orderIds });
+      },
+      (err) => {
+        console.warn('[Firebase Service] Real-time subscription error on deleted_records:', err);
+        if (onError) onError(err);
+      }
+    );
+
+    return unsubscribe;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to subscribe to deleted_records:', err);
+    return () => {};
+  }
+}
+
 
 
