@@ -154,7 +154,7 @@ export async function syncOrderToFirestore(order: Order, branch: Branch): Promis
     const orderRef = doc(dbInstance, 'orders', orderDocId);
     const nowIso = new Date().toISOString();
 
-    const orderPayload = {
+    const orderPayload = cleanForFirestore({
       id: order.id,
       orderNumber: order.orderNumber,
       branchId: branch.id,
@@ -164,8 +164,8 @@ export async function syncOrderToFirestore(order: Order, branch: Branch): Promis
       itemsCount: order.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0,
       items: order.items.map(item => ({
         cartItemId: item.cartItemId,
-        menuItemId: item.menuItem.id,
-        name: item.menuItem.name,
+        menuItemId: item.menuItem?.id || '',
+        name: item.menuItem?.name || '',
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         totalPrice: item.totalPrice,
@@ -176,17 +176,31 @@ export async function syncOrderToFirestore(order: Order, branch: Branch): Promis
       })),
       subtotal: order.subtotal,
       discountAmount: order.discountAmount || 0,
+      discountType: order.discountType || 'fixed',
+      discountNote: order.discountNote || '',
       vatAmount: order.vatAmount || 0,
       grandTotal: order.grandTotal,
       paymentMethod: order.paymentMethod,
+      tenderedAmount: order.tenderedAmount ?? order.grandTotal,
+      changeAmount: order.changeAmount ?? 0,
       status: order.status,
       createdAt: order.createdAt,
+      completedAt: order.completedAt || (order.status === 'served' ? (order.updatedAt || nowIso) : null),
+      customerTaxInfo: order.customerTaxInfo || null,
+      customerName: order.customerTaxInfo?.companyName || '',
+      customerPhone: order.customerTaxInfo?.phone || '',
+      isFullTaxInvoiceRequested: Boolean(order.isFullTaxInvoiceRequested),
+      isQrOrder: Boolean(order.isQrOrder),
+      orderSource: order.orderSource || (order.isQrOrder ? 'qr' : 'pos'),
+      cancelledBy: order.cancelledBy || null,
+      cancelReason: order.cancelReason || null,
+      cancelNote: order.cancelNote || null,
       syncedAt: nowIso,
       isOfflineOrder: false,
       isSynced: true,
       updatedAt: serverTimestamp(),
       checksum: order.checksum || ''
-    };
+    });
 
     await setDoc(orderRef, orderPayload, { merge: true });
 
@@ -234,7 +248,7 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
       const orderDocId = order.id.startsWith('ord-') ? order.id : `ord-${order.id}`;
       const orderRef = doc(dbInstance!, 'orders', orderDocId);
 
-      const orderPayload = {
+      const orderPayload = cleanForFirestore({
         id: order.id,
         orderNumber: order.orderNumber,
         branchId: branch.id,
@@ -244,8 +258,8 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
         itemsCount: order.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0,
         items: order.items.map(item => ({
           cartItemId: item.cartItemId,
-          menuItemId: item.menuItem.id,
-          name: item.menuItem.name,
+          menuItemId: item.menuItem?.id || '',
+          name: item.menuItem?.name || '',
           quantity: item.quantity,
           unitPrice: item.unitPrice,
           totalPrice: item.totalPrice,
@@ -256,17 +270,31 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
         })),
         subtotal: order.subtotal,
         discountAmount: order.discountAmount || 0,
+        discountType: order.discountType || 'fixed',
+        discountNote: order.discountNote || '',
         vatAmount: order.vatAmount || 0,
         grandTotal: order.grandTotal,
         paymentMethod: order.paymentMethod,
+        tenderedAmount: order.tenderedAmount ?? order.grandTotal,
+        changeAmount: order.changeAmount ?? 0,
         status: order.status,
         createdAt: order.createdAt,
+        completedAt: order.completedAt || (order.status === 'served' ? (order.updatedAt || nowIso) : null),
+        customerTaxInfo: order.customerTaxInfo || null,
+        customerName: order.customerTaxInfo?.companyName || '',
+        customerPhone: order.customerTaxInfo?.phone || '',
+        isFullTaxInvoiceRequested: Boolean(order.isFullTaxInvoiceRequested),
+        isQrOrder: Boolean(order.isQrOrder),
+        orderSource: order.orderSource || (order.isQrOrder ? 'qr' : 'pos'),
+        cancelledBy: order.cancelledBy || null,
+        cancelReason: order.cancelReason || null,
+        cancelNote: order.cancelNote || null,
         syncedAt: nowIso,
         isOfflineOrder: false,
         isSynced: true,
         updatedAt: serverTimestamp(),
         checksum: order.checksum || ''
-      };
+      });
 
       batch.set(orderRef, orderPayload, { merge: true });
     });
@@ -630,6 +658,8 @@ export async function fetchCentralOrdersFromFirestore(limitCount: number = 500):
     return [];
   }
 }
+
+export const fetchRecentOrdersFromFirestore = fetchCentralOrdersFromFirestore;
 
 /**
  * Push a single expense entry to central Firebase

@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { SHOP_LOGO_URL } from '../../assets/logo';
+import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../../assets/logo';
 import {
   X,
   Printer,
@@ -389,7 +389,16 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
             <div className="receipt-header text-center space-y-1 pb-2.5 border-b border-slate-300">
               {showLogo && (
                 <div className="receipt-logo flex items-center justify-center space-x-2 font-bold text-base text-slate-900">
-                  <img src={settings.shopLogoUrl || SHOP_LOGO_URL} alt="Logo" className="w-8 h-8 object-contain shrink-0" />
+                  <img
+                    src={settings.shopLogoUrl || SHOP_LOGO_URL}
+                    alt="Logo"
+                    className="w-8 h-8 object-contain shrink-0"
+                    onError={(e) => {
+                      if (e.currentTarget.src !== FALLBACK_SVG_LOGO) {
+                        e.currentTarget.src = FALLBACK_SVG_LOGO;
+                      }
+                    }}
+                  />
                   <span>{settings.shopName}</span>
                 </div>
               )}

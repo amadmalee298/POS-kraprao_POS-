@@ -49,19 +49,21 @@ import {
   Search,
   Eye,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  History
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { MenuItem, Order } from '../../types';
 import { getLocalDateStr } from '../../utils/dateUtils';
 import { exportToPDF } from '../../utils/exportDocument';
 import { printReceiptViaWindow } from '../../utils/printReceipt';
+import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../../assets/logo';
 
 interface EnterpriseExecutiveDashboardProps {
   onNavigateToTab?: (tab: string) => void;
 }
 
-export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboardProps> = () => {
+export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboardProps> = ({ onNavigateToTab }) => {
   const {
     orders,
     expenses,
@@ -2000,6 +2002,17 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               )}
             </div>
 
+            {onNavigateToTab && (
+              <button
+                onClick={() => onNavigateToTab('order_history')}
+                className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-sm active:scale-95"
+                title="เปิดหน้าประวัติออเดอร์และใบเสร็จฉบับเต็ม"
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>เปิดหน้าประวัติเต็ม</span>
+              </button>
+            )}
+
             <button
               onClick={handleExportOrdersCSV}
               disabled={filteredOrderHistory.length === 0}
@@ -2313,6 +2326,18 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             {/* Thermal Receipt Style Box */}
             <div className="bg-white text-slate-900 p-5 rounded-2xl shadow-inner font-mono text-xs space-y-3">
               <div className="text-center border-b border-dashed border-slate-300 pb-3 space-y-1">
+                <div className="flex justify-center mb-2">
+                  <img
+                    src={settings?.shopLogoUrl || SHOP_LOGO_URL}
+                    alt="Store Logo"
+                    className="w-12 h-12 object-contain rounded-xl"
+                    onError={(e) => {
+                      if (e.currentTarget.src !== FALLBACK_SVG_LOGO) {
+                        e.currentTarget.src = FALLBACK_SVG_LOGO;
+                      }
+                    }}
+                  />
+                </div>
                 <p className="font-extrabold text-sm">{settings?.shopName || 'กะเพราซิ่ง (Kaprow Zing)'}</p>
                 <p className="text-[11px] text-slate-600">
                   {branches.find(b => b.id === selectedOrderForDetail.branchId)?.name || currentBranch.name}
@@ -2344,11 +2369,6 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
                       {item.selectedAddOns && item.selectedAddOns.length > 0 && (
                         <div className="text-[9px] text-slate-500">
                           +{item.selectedAddOns.map(a => a.name).join(', ')}
-                        </div>
-                      )}
-                      {item.spiceLevel && (
-                        <div className="text-[9px] text-slate-500">
-                          ระดับเผ็ด: {item.spiceLevel}
                         </div>
                       )}
                     </div>

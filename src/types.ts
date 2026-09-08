@@ -329,6 +329,7 @@ export type ActiveTab =
   | 'accounting'
   | 'quotation'
   | 'tax_receipt'
+  | 'order_history'
   | 'crm'
   | 'line_notify'
   | 'analytics'

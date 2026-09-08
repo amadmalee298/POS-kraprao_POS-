@@ -113,7 +113,8 @@ import { EnterpriseExecutiveDashboard } from './executive/EnterpriseExecutiveDas
 
 // 1. Executive Dashboard View (แดชบอร์ดสรุปผู้บริหาร)
 export const ExecutiveDashboardView: React.FC = () => {
-  return <EnterpriseExecutiveDashboard />;
+  const { setActiveTab } = usePOS();
+  return <EnterpriseExecutiveDashboard onNavigateToTab={setActiveTab} />;
 };
 
 // Helper functions for real scannable QR generation

@@ -8,6 +8,7 @@ import { KDSView } from './components/kds/KDSView';
 import { InventoryView } from './components/inventory/InventoryView';
 import { AccountingView } from './components/accounting/AccountingView';
 import { SettingsView } from './components/settings/SettingsView';
+import { OrderHistoryView } from './components/orders/OrderHistoryView';
 import {
   ExecutiveDashboardView,
   QrOrderingView,
@@ -120,6 +121,7 @@ const MainLayout: React.FC = () => {
         {activeTab === 'accounting' && <AccountingView />}
         {activeTab === 'quotation' && <QuotationView />}
         {activeTab === 'tax_receipt' && <TaxReceiptView />}
+        {activeTab === 'order_history' && <OrderHistoryView />}
         {activeTab === 'crm' && <CRMView />}
         {activeTab === 'line_notify' && <LineNotifyView />}
         {activeTab === 'analytics' && <AnalyticsView />}

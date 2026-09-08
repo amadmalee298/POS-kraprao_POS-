@@ -16,11 +16,12 @@ import {
   BarChart3,
   Settings,
   Database,
+  History,
   Flame as FlameIcon
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { ActiveTab } from '../types';
-import { SHOP_LOGO_URL } from '../assets/logo';
+import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
 import { GoogleSheetsModal } from './common/GoogleSheetsModal';
 
 export const SidebarDrawer: React.FC = () => {
@@ -67,6 +68,7 @@ export const SidebarDrawer: React.FC = () => {
     { id: 'accounting', label: 'การเงินและสมุดบัญชี', icon: FileText },
     { id: 'quotation', label: 'ใบเสนอราคา', icon: FileSpreadsheet },
     { id: 'tax_receipt', label: 'ใบเสร็จรับเงินและใบกำกับภาษี', icon: Receipt },
+    { id: 'order_history', label: 'ประวัติออเดอร์และใบเสร็จ (Order History)', icon: History },
     { id: 'crm', label: 'สมาชิก CRM & คูปอง', icon: Users },
     { id: 'line_notify', label: 'แจ้งเตือน Line/Telegram', icon: BellRing },
     { id: 'settings', label: 'ตั้งค่าร้านและสาขาพ่วง', icon: Settings }
@@ -92,8 +94,8 @@ export const SidebarDrawer: React.FC = () => {
                 alt="ครัวกะเพรา Logo"
                 className="w-full h-full object-contain"
                 onError={(e) => {
-                  if (e.currentTarget.src !== SHOP_LOGO_URL) {
-                    e.currentTarget.src = SHOP_LOGO_URL;
+                  if (e.currentTarget.src !== FALLBACK_SVG_LOGO) {
+                    e.currentTarget.src = FALLBACK_SVG_LOGO;
                   }
                 }}
               />

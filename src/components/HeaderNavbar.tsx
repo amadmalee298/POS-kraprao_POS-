@@ -23,7 +23,7 @@ import { OfflineSyncModal } from './OfflineSyncModal';
 import { SyncHealthMonitor } from './SyncHealthMonitor';
 import { MerchantConnectionModal } from './common/MerchantConnectionModal';
 import { GoogleSheetsModal } from './common/GoogleSheetsModal';
-import { SHOP_LOGO_URL } from '../assets/logo';
+import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
 
 export const HeaderNavbar: React.FC = () => {
   const {
@@ -103,8 +103,8 @@ export const HeaderNavbar: React.FC = () => {
                     alt="ครัวกะเพรา Logo"
                     className="w-full h-full object-contain"
                     onError={(e) => {
-                      if (e.currentTarget.src !== SHOP_LOGO_URL) {
-                        e.currentTarget.src = SHOP_LOGO_URL;
+                      if (e.currentTarget.src !== FALLBACK_SVG_LOGO) {
+                        e.currentTarget.src = FALLBACK_SVG_LOGO;
                       }
                     }}
                   />

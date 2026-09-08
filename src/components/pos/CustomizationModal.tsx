@@ -128,35 +128,6 @@ export const CustomizationModal: React.FC<CustomizationModalProps> = ({
 
         {/* Scrollable Body Options */}
         <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1 text-amber-50 no-scrollbar">
-          
-          {/* Spice Level Selection (if applicable) */}
-          {menuItem.availableSpiceLevels && menuItem.availableSpiceLevels.length > 0 && (
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-orange-400 uppercase tracking-wider flex items-center space-x-1.5">
-                <Flame className="w-3.5 h-3.5 fill-orange-500 text-orange-500" />
-                <span>ระดับความเผ็ด (Spice Level)</span>
-              </label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {menuItem.availableSpiceLevels.map(level => {
-                  const isSelected = selectedSpiceLevel === level;
-                  return (
-                    <button
-                      key={level}
-                      type="button"
-                      onClick={() => setSelectedSpiceLevel(level)}
-                      className={`py-2 px-2.5 rounded-xl border text-xs font-bold transition flex items-center justify-center space-x-1 cursor-pointer ${
-                        isSelected
-                          ? 'bg-[#ff6600] text-black border-orange-400 shadow-sm'
-                          : 'bg-[#180f0a] border-[#26160e] text-stone-300 hover:text-white hover:bg-[#20120a]'
-                      }`}
-                    >
-                      <span>{level}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           {/* Protein Selection (if applicable) */}
           {menuItem.availableProteins && menuItem.availableProteins.length > 0 && (
