@@ -813,7 +813,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     if (!isStorageLoaded || !isFirebaseAvailable() || effectiveOffline) return;
 
-    const unsubOrders = subscribeToRecentCentralOrders(300, (centralOrderList, removedIds) => {
+    const unsubOrders = subscribeToRecentCentralOrders(1000, (centralOrderList, removedIds) => {
       setOrders(prev => {
         let list = prev;
         let hasChanges = false;
@@ -1372,7 +1372,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { count: 0, success: false };
     }
     try {
-      const cloudOrders = await fetchCentralOrdersFromFirestore(500);
+      const cloudOrders = await fetchCentralOrdersFromFirestore(1000);
       if (!cloudOrders || cloudOrders.length === 0) {
         return { count: 0, success: true };
       }
@@ -1692,22 +1692,30 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           let loadedMenuItemsCount = 0;
           let loadedShiftsCount = 0;
 
-          let loadedOrders: Order[] = (parsed.orders && Array.isArray(parsed.orders))
-            ? parsed.orders.filter((o: any) => o && typeof o === 'object' && o.id)
-            : [];
-          if (loadedOrders.length === 0) {
-            try {
-              const sepOrders = localStorage.getItem('POS_ORDERS_DATA');
-              if (sepOrders) {
-                const parsedSep = JSON.parse(sepOrders);
-                if (Array.isArray(parsedSep) && parsedSep.length > 0) {
-                  loadedOrders = parsedSep.filter((o: any) => o && typeof o === 'object' && o.id);
-                }
-              }
-            } catch (e) {
-              console.warn('[POS Storage Sync] Failed to read backup POS_ORDERS_DATA', e);
-            }
+          const orderMap = new Map<string, Order>();
+          if (parsed.orders && Array.isArray(parsed.orders)) {
+            parsed.orders.forEach((o: any) => {
+              if (o && typeof o === 'object' && o.id) orderMap.set(o.id, o);
+            });
           }
+          try {
+            const sepOrders = localStorage.getItem('POS_ORDERS_DATA');
+            if (sepOrders) {
+              const parsedSep = JSON.parse(sepOrders);
+              if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+                parsedSep.forEach((o: any) => {
+                  if (o && typeof o === 'object' && o.id && !orderMap.has(o.id)) {
+                    orderMap.set(o.id, o);
+                  }
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('[POS Storage Sync] Failed to read backup POS_ORDERS_DATA', e);
+          }
+          const loadedOrders = Array.from(orderMap.values()).sort(
+            (a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')
+          );
           setOrders(loadedOrders);
           loadedOrdersCount = loadedOrders.length;
           let loadedCats = DEFAULT_CATEGORIES;

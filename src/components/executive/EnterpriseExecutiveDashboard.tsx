@@ -43,12 +43,19 @@ import {
   Trash2,
   Users,
   PieChart as PieChartIcon,
-  CloudDownload
+  CloudDownload,
+  Printer,
+  Receipt,
+  Search,
+  Eye,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { MenuItem } from '../../types';
+import { MenuItem, Order } from '../../types';
 import { getLocalDateStr } from '../../utils/dateUtils';
 import { exportToPDF } from '../../utils/exportDocument';
+import { printReceiptViaWindow } from '../../utils/printReceipt';
 
 interface EnterpriseExecutiveDashboardProps {
   onNavigateToTab?: (tab: string) => void;
@@ -62,6 +69,8 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     branches,
     menuItems,
     currentBranch,
+    settings,
+    currentUser,
     updateMenuItem,
     sendDailySummaryNotification,
     pullCloudOrders,
@@ -100,6 +109,14 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   const [isPullingCloud, setIsPullingCloud] = useState<boolean>(false);
   const [liveLastUpdated, setLiveLastUpdated] = useState<string>(new Date().toLocaleTimeString('th-TH'));
 
+  // Section 14: Historical Orders & Receipts Log States
+  const [orderSearchQuery, setOrderSearchQuery] = useState<string>('');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'served' | 'cancelled'>('all');
+  const [orderPaymentFilter, setOrderPaymentFilter] = useState<'all' | 'cash' | 'promptpay' | 'credit' | 'transfer'>('all');
+  const [orderPage, setOrderPage] = useState<number>(1);
+  const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<Order | null>(null);
+  const orderPageSize = 15;
+
   // Refresh with Cloud Sync
   const handleRefresh = async () => {
     setLiveLastUpdated(new Date().toLocaleTimeString('th-TH'));
@@ -127,6 +144,50 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         setIsPullingCloud(false);
         setTimeout(() => setActionNotification(null), 3500);
       }
+    }
+  };
+
+  // Export Order History to CSV
+  const handleExportOrdersCSV = () => {
+    if (filteredOrderHistory.length === 0) return;
+    const headers = ['วันที่', 'เวลา', 'เลขที่บิล', 'สาขา', 'โต๊ะ/ประเภท', 'รายการอาหาร', 'ช่องทางชำระ', 'สถานะ', 'ยอดรวมสุทธิ'];
+    const rows = filteredOrderHistory.map(o => {
+      const d = o.createdAt ? new Date(o.createdAt) : new Date();
+      const dateStr = d.toLocaleDateString('th-TH');
+      const timeStr = d.toLocaleTimeString('th-TH');
+      const branchName = branches.find(b => b.id === o.branchId)?.name || currentBranch.name;
+      const tableStr = o.tableNumber ? `โต๊ะ ${o.tableNumber}` : 'สั่งกลับบ้าน';
+      const itemsStr = (o.items || []).map(i => `${i.menuItem?.name || ''} x${i.quantity}`).join('; ');
+      const payStr = o.paymentMethod === 'cash' ? 'เงินสด' : o.paymentMethod === 'promptpay' ? 'QR Code' : o.paymentMethod;
+      const statusStr = o.status === 'served' ? 'สำเร็จ' : 'ยกเลิก';
+      const total = o.grandTotal || 0;
+      return [dateStr, timeStr, o.orderNumber || '', branchName, tableStr, `"${itemsStr.replace(/"/g, '""')}"`, payStr, statusStr, total];
+    });
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Order_History_${todayStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Print Order Receipt
+  const handlePrintOrder = async (order: Order) => {
+    try {
+      const branchObj = branches.find(b => b.id === order.branchId) || currentBranch;
+      await printReceiptViaWindow(order, branchObj, settings, {
+        cashierName: currentUser?.name || 'Cashier / Executive',
+        documentTitle: 'ใบเสร็จรับเงิน (พิมพ์ซ้ำ)'
+      });
+      setActionNotification(`สั่งพิมพ์ใบเสร็จ #${order.orderNumber || order.id} เรียบร้อย`);
+    } catch (err) {
+      console.warn('Print order failed:', err);
+      setActionNotification('เกิดข้อผิดพลาดในการพิมพ์ใบเสร็จ');
+    } finally {
+      setTimeout(() => setActionNotification(null), 3000);
     }
   };
 
@@ -287,6 +348,121 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
   const periodGrossProfit = periodTotalSales - periodFoodCost;
   const periodNetProfit = periodGrossProfit - periodExpenses;
+
+  const periodFoodCostPct = useMemo(() => {
+    if (periodTotalSales === 0) return 0;
+    return Math.round((periodFoodCost / periodTotalSales) * 1000) / 10;
+  }, [periodTotalSales, periodFoodCost]);
+
+  const periodBillCount = filteredOrders.length;
+  const periodAvgBill = periodBillCount > 0 ? Math.round((periodTotalSales / periodBillCount) * 100) / 100 : 0;
+
+  // Period label & previous period comparison
+  const periodLabel = useMemo(() => {
+    switch (datePreset) {
+      case 'today': return 'วันนี้';
+      case '7days': return '7 วันล่าสุด';
+      case '30days': return '30 วันล่าสุด';
+      case 'this_month': return 'เดือนนี้';
+      case 'this_year': return 'ปีนี้';
+      case 'custom':
+        return startDate === endDate ? (startDate || 'วันนี้') : `${startDate} ถึง ${endDate}`;
+      default: return 'ช่วงที่เลือก';
+    }
+  }, [datePreset, startDate, endDate]);
+
+  const prevPeriodLabel = useMemo(() => {
+    switch (datePreset) {
+      case 'today': return 'เมื่อวาน';
+      case '7days': return '7 วันก่อนหน้า';
+      case '30days': return '30 วันก่อนหน้า';
+      case 'this_month': return 'เดือนที่แล้ว';
+      case 'this_year': return 'ปีที่แล้ว';
+      default: return 'ช่วงก่อนหน้า';
+    }
+  }, [datePreset]);
+
+  // Previous Period Calculation for Comparison Growth %
+  const prevPeriodOrders = useMemo(() => {
+    if (!startDate || !endDate) return [];
+    const sDate = new Date(startDate);
+    const eDate = new Date(endDate);
+    const diffDays = Math.max(1, Math.round((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+
+    const prevEnd = new Date(sDate);
+    prevEnd.setDate(prevEnd.getDate() - 1);
+    const prevStart = new Date(prevEnd);
+    prevStart.setDate(prevStart.getDate() - diffDays + 1);
+
+    const pStartStr = getLocalDateStr(prevStart);
+    const pEndStr = getLocalDateStr(prevEnd);
+
+    return orders.filter(o => {
+      const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
+      if (pStartStr && oDate && oDate < pStartStr) return false;
+      if (pEndStr && oDate && oDate > pEndStr) return false;
+      if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
+      return o.status !== 'cancelled';
+    });
+  }, [orders, startDate, endDate, selectedBranchId]);
+
+  const prevPeriodSales = useMemo(() => {
+    return prevPeriodOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+  }, [prevPeriodOrders]);
+
+  const periodGrowthPct = useMemo(() => {
+    if (datePreset === 'today') return salesGrowthTodayPct;
+    if (prevPeriodSales === 0 && periodTotalSales > 0) return 100;
+    if (prevPeriodSales === 0) return 0;
+    return Math.round(((periodTotalSales - prevPeriodSales) / prevPeriodSales) * 100);
+  }, [datePreset, salesGrowthTodayPct, periodTotalSales, prevPeriodSales]);
+
+  const periodBreakEvenPct = useMemo(() => {
+    let days = 1;
+    if (datePreset === 'today') days = 1;
+    else if (datePreset === '7days') days = 7;
+    else if (datePreset === '30days') days = 30;
+    else if (datePreset === 'this_month') {
+      const now = new Date();
+      days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    } else if (datePreset === 'this_year') {
+      days = 365;
+    } else if (startDate && endDate) {
+      const s = new Date(startDate);
+      const e = new Date(endDate);
+      days = Math.max(1, Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+    }
+    const target = 5000 * days;
+    if (periodTotalSales === 0) return 0;
+    return Math.min(100, Math.round((periodTotalSales / target) * 100));
+  }, [datePreset, startDate, endDate, periodTotalSales]);
+
+  // Section 14 Filtered Orders
+  const filteredOrderHistory = useMemo(() => {
+    return orders.filter(o => {
+      const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
+      if (startDate && oDate && oDate < startDate) return false;
+      if (endDate && oDate && oDate > endDate) return false;
+      if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
+      if (orderStatusFilter !== 'all' && o.status !== orderStatusFilter) return false;
+      if (orderPaymentFilter !== 'all' && o.paymentMethod !== orderPaymentFilter) return false;
+      if (orderSearchQuery.trim()) {
+        const q = orderSearchQuery.toLowerCase().trim();
+        const matchNum = (o.orderNumber || '').toLowerCase().includes(q);
+        const matchCustomer = (o.customerTaxInfo?.companyName || '').toLowerCase().includes(q);
+        const matchTable = (o.tableNumber || '').toLowerCase().includes(q);
+        const matchItems = o.items?.some(i => (i.menuItem?.name || '').toLowerCase().includes(q));
+        if (!matchNum && !matchCustomer && !matchTable && !matchItems) return false;
+      }
+      return true;
+    }).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }, [orders, startDate, endDate, selectedBranchId, orderStatusFilter, orderPaymentFilter, orderSearchQuery]);
+
+  const totalOrderHistoryPages = Math.max(1, Math.ceil(filteredOrderHistory.length / orderPageSize));
+  const paginatedOrders = useMemo(() => {
+    const startIndex = (orderPage - 1) * orderPageSize;
+    return filteredOrderHistory.slice(startIndex, startIndex + orderPageSize);
+  }, [filteredOrderHistory, orderPage, orderPageSize]);
 
   // -------------------------------------------------------------
   // 2. Sales Overview Chart Data (Real Aggregation)
@@ -1044,25 +1220,25 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         </h2>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {/* Card 1: ยอดขายวันนี้ */}
+          {/* Card 1: ยอดขาย */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1.5 shadow-md hover:border-amber-500/50 transition">
             <div className="text-[11px] text-slate-400 font-semibold flex items-center justify-between">
-              <span>ยอดขายวันนี้</span>
+              <span>{datePreset === 'today' ? 'ยอดขายวันนี้' : `ยอดขาย (${periodLabel})`}</span>
               <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
             </div>
             <div className="text-xl font-black text-amber-400 font-mono">
-              ฿{todaySales.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+              ฿{periodTotalSales.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
             </div>
             <div className="text-[10px] text-emerald-400 font-bold flex items-center space-x-1 font-mono">
-              {salesGrowthTodayPct >= 0 ? (
+              {periodGrowthPct >= 0 ? (
                 <>
                   <ArrowUpRight className="w-3 h-3" />
-                  <span>▲ +{salesGrowthTodayPct}% vs เมื่อวาน</span>
+                  <span>▲ +{periodGrowthPct}% vs {prevPeriodLabel}</span>
                 </>
               ) : (
                 <span className="text-rose-400 flex items-center space-x-1">
                   <ArrowDownRight className="w-3 h-3" />
-                  <span>▼ {salesGrowthTodayPct}% vs เมื่อวาน</span>
+                  <span>▼ {periodGrowthPct}% vs {prevPeriodLabel}</span>
                 </span>
               )}
             </div>
@@ -1071,31 +1247,31 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           {/* Card 2: กำไรสุทธิ */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1.5 shadow-md hover:border-emerald-500/50 transition">
             <div className="text-[11px] text-slate-400 font-semibold flex items-center justify-between">
-              <span>กำไรสุทธิ</span>
+              <span>{datePreset === 'today' ? 'กำไรสุทธิวันนี้' : `กำไรสุทธิ (${periodLabel})`}</span>
               <Wallet className="w-3.5 h-3.5 text-emerald-400" />
             </div>
-            <div className={`text-xl font-black font-mono ${todayProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              ฿{todayProfit.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+            <div className={`text-xl font-black font-mono ${periodNetProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              ฿{periodNetProfit.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
             </div>
             <div className="text-[10px] text-slate-400 font-bold flex items-center space-x-1 font-mono">
-              <span>{todaySales > 0 ? `${Math.round((todayProfit / todaySales) * 100)}% Net Margin` : 'ไม่มีรายการ'}</span>
+              <span>{periodTotalSales > 0 ? `${Math.round((periodNetProfit / periodTotalSales) * 100)}% Net Margin` : 'ไม่มีรายการ'}</span>
             </div>
           </div>
 
           {/* Card 3: Food Cost */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1.5 shadow-md hover:border-orange-500/50 transition">
             <div className="text-[11px] text-slate-400 font-semibold flex items-center justify-between">
-              <span>Food Cost</span>
+              <span>{datePreset === 'today' ? 'Food Cost วันนี้' : `Food Cost (${periodLabel})`}</span>
               <Utensils className="w-3.5 h-3.5 text-orange-400" />
             </div>
             <div className="text-xl font-black text-orange-400 font-mono">
-              {todayFoodCostPct}%
+              {periodFoodCostPct}%
             </div>
             <div className="text-[10px] font-bold flex items-center space-x-1">
-              {todayFoodCostPct <= 35 ? (
+              {periodFoodCostPct <= 35 ? (
                 <span className="text-emerald-400 flex items-center space-x-1">
                   <CheckCircle2 className="w-3 h-3" />
-                  <span>✓ อยู่ในเกณฑ์</span>
+                  <span>✓ อยู่ในเกณฑ์ (&lt;=35%)</span>
                 </span>
               ) : (
                 <span className="text-rose-400 flex items-center space-x-1">
@@ -1109,25 +1285,25 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           {/* Card 4: จำนวนบิล */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1.5 shadow-md hover:border-sky-500/50 transition">
             <div className="text-[11px] text-slate-400 font-semibold flex items-center justify-between">
-              <span>จำนวนบิล</span>
+              <span>{datePreset === 'today' ? 'จำนวนบิลวันนี้' : `จำนวนบิล (${periodLabel})`}</span>
               <ShoppingBag className="w-3.5 h-3.5 text-sky-400" />
             </div>
             <div className="text-xl font-black text-sky-400 font-mono">
-              {todayBillCount}
+              {periodBillCount}
             </div>
             <div className="text-[10px] text-slate-400 font-mono">
-              บิลสั่งซื้อประจำวัน
+              {datePreset === 'today' ? 'บิลสั่งซื้อประจำวัน' : `บิลสั่งซื้อที่สำเร็จ`}
             </div>
           </div>
 
           {/* Card 5: Average Bill */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1.5 shadow-md hover:border-purple-500/50 transition">
             <div className="text-[11px] text-slate-400 font-semibold flex items-center justify-between">
-              <span>Average Bill</span>
+              <span>{datePreset === 'today' ? 'Average Bill วันนี้' : `Average Bill (${periodLabel})`}</span>
               <Tag className="w-3.5 h-3.5 text-purple-400" />
             </div>
             <div className="text-xl font-black text-purple-400 font-mono">
-              ฿{todayAvgBill.toFixed(2)}
+              ฿{periodAvgBill.toFixed(2)}
             </div>
             <div className="text-[10px] text-slate-400 font-mono">
               ยอดใช้จ่ายเฉลี่ย/บิล
@@ -1137,14 +1313,14 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           {/* Card 6: Break-even */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1.5 shadow-md hover:border-amber-500/50 transition">
             <div className="text-[11px] text-slate-400 font-semibold flex items-center justify-between">
-              <span>Break-even</span>
+              <span>{datePreset === 'today' ? 'Break-even วันนี้' : `เป้าหมายยอดขาย (${periodLabel})`}</span>
               <Target className="w-3.5 h-3.5 text-amber-400" />
             </div>
             <div className="text-xl font-black text-amber-400 font-mono">
-              {todayBreakEvenPct}%
+              {periodBreakEvenPct}%
             </div>
             <div className="text-[10px] text-amber-400 font-mono">
-              {todayBreakEvenPct >= 100 ? '✓ ถึงจุดคุ้มทุนแล้ว' : `เป้าหมาย ${todayBreakEvenPct}%`}
+              {periodBreakEvenPct >= 100 ? '✓ ถึงจุดคุ้มทุนแล้ว' : `เป้าหมาย ${periodBreakEvenPct}%`}
             </div>
           </div>
         </div>
@@ -1791,6 +1967,463 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           </div>
         </div>
       </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* SECTION 14: HISTORICAL ORDERS & RECEIPTS LOG */}
+      {/* ------------------------------------------------------------- */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-xl">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+              <FileText className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h3 className="text-base font-black text-slate-100">14. ประวัติรายการบิลและออเดอร์ย้อนหลัง (Historical Orders & Receipts Log)</h3>
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold">
+                  {periodLabel}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">
+                สืบค้นประวัติการขาย ใบเสร็จย้อนหลัง เมนูที่สั่ง และสั่งพิมพ์ใบเสร็จซ้ำได้ทันที
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300">
+              พบ <span className="text-amber-400 font-bold">{filteredOrderHistory.length}</span> รายการ
+              {filteredOrderHistory.length > 0 && (
+                <span className="ml-2 pl-2 border-l border-slate-700 text-emerald-400 font-bold">
+                  รวม ฿{filteredOrderHistory.reduce((s, o) => s + (o.grandTotal || 0), 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                </span>
+              )}
+            </div>
+
+            <button
+              onClick={handleExportOrdersCSV}
+              disabled={filteredOrderHistory.length === 0}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 text-slate-200 rounded-xl text-xs font-bold transition flex items-center space-x-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>ส่งออก CSV</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Filters & Search Toolbar */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+          {/* Search Input */}
+          <div className="md:col-span-5 relative">
+            <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={orderSearchQuery}
+              onChange={e => {
+                setOrderSearchQuery(e.target.value);
+                setOrderPage(1);
+              }}
+              placeholder="ค้นหาเลขที่บิล (#KAP-...), ลูกค้า, โต๊ะ หรือชื่อเมนู..."
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-9 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition"
+            />
+            {orderSearchQuery && (
+              <button
+                onClick={() => setOrderSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Status Filter */}
+          <div className="md:col-span-4 flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+            <span className="text-[11px] text-slate-400 px-2 font-medium">สถานะ:</span>
+            <button
+              onClick={() => { setOrderStatusFilter('all'); setOrderPage(1); }}
+              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition ${
+                orderStatusFilter === 'all'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              ทั้งหมด
+            </button>
+            <button
+              onClick={() => { setOrderStatusFilter('served'); setOrderPage(1); }}
+              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition ${
+                orderStatusFilter === 'served'
+                  ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              🟢 สำเร็จ
+            </button>
+            <button
+              onClick={() => { setOrderStatusFilter('cancelled'); setOrderPage(1); }}
+              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition ${
+                orderStatusFilter === 'cancelled'
+                  ? 'bg-rose-500 text-slate-950 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              🔴 ยกเลิก
+            </button>
+          </div>
+
+          {/* Payment Method Filter */}
+          <div className="md:col-span-3 flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+            <span className="text-[11px] text-slate-400 px-2 font-medium">ชำระ:</span>
+            <select
+              value={orderPaymentFilter}
+              onChange={e => {
+                setOrderPaymentFilter(e.target.value as any);
+                setOrderPage(1);
+              }}
+              className="w-full bg-transparent text-slate-200 text-xs font-semibold focus:outline-none cursor-pointer py-1"
+            >
+              <option value="all" className="bg-slate-900 text-slate-200">ทุกช่องทางชำระ</option>
+              <option value="cash" className="bg-slate-900 text-slate-200">💵 เงินสด</option>
+              <option value="promptpay" className="bg-slate-900 text-slate-200">📱 พร้อมเพย์ QR</option>
+              <option value="credit" className="bg-slate-900 text-slate-200">💳 บัตรเครดิต</option>
+              <option value="transfer" className="bg-slate-900 text-slate-200">🏦 โอนเงิน</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Orders Table */}
+        <div className="overflow-x-auto rounded-2xl border border-slate-800">
+          <table className="w-full text-left text-xs text-slate-300">
+            <thead className="bg-slate-950 text-slate-400 uppercase font-semibold border-b border-slate-800 text-[10px] tracking-wider">
+              <tr>
+                <th className="py-3 px-3">วันที่ - เวลา</th>
+                <th className="py-3 px-3">เลขที่บิล</th>
+                <th className="py-3 px-3">สาขา</th>
+                <th className="py-3 px-3">โต๊ะ/ประเภท</th>
+                <th className="py-3 px-3">รายการอาหาร</th>
+                <th className="py-3 px-3">ช่องทางชำระ</th>
+                <th className="py-3 px-3">สถานะ</th>
+                <th className="py-3 px-3 text-right">ยอดสุทธิ</th>
+                <th className="py-3 px-3 text-center">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60 font-mono">
+              {paginatedOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="py-12 text-center text-slate-500 font-sans">
+                    <Receipt className="w-8 h-8 mx-auto text-slate-600 mb-2 opacity-50" />
+                    <p className="font-semibold text-slate-400">ไม่พบบันทึกประวัติบิลในช่วงเวลานี้</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      ลองเปลี่ยนช่วงวันที่ที่ตัวกรองด้านบน หรือกดปุ่ม "ดึงข้อมูลยอดขายจาก Cloud" เพื่อรีเฟรชข้อมูล
+                    </p>
+                  </td>
+                </tr>
+              ) : (
+                paginatedOrders.map(order => {
+                  const orderDate = order.createdAt ? new Date(order.createdAt) : new Date();
+                  const branchObj = branches.find(b => b.id === order.branchId) || currentBranch;
+                  const isCancelled = order.status === 'cancelled';
+
+                  return (
+                    <tr
+                      key={order.id}
+                      className={`hover:bg-slate-800/40 transition group ${
+                        isCancelled ? 'opacity-60 bg-rose-950/10' : ''
+                      }`}
+                    >
+                      {/* Date & Time */}
+                      <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap">
+                        <div className="font-sans font-bold text-slate-200">
+                          {orderDate.toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' })}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          {orderDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
+                        </div>
+                      </td>
+
+                      {/* Order Number */}
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <span className="font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                          #{order.orderNumber || order.id.slice(-6)}
+                        </span>
+                      </td>
+
+                      {/* Branch */}
+                      <td className="py-2.5 px-3 whitespace-nowrap font-sans text-slate-300 text-[11px]">
+                        {branchObj?.name || 'สาขาหลัก'}
+                      </td>
+
+                      {/* Table / Order Type */}
+                      <td className="py-2.5 px-3 whitespace-nowrap font-sans">
+                        {order.tableNumber ? (
+                          <span className="px-2 py-0.5 rounded bg-sky-500/10 text-sky-300 text-[11px] font-bold border border-sky-500/20">
+                            โต๊ะ {order.tableNumber}
+                          </span>
+                        ) : order.orderType === 'takeaway' ? (
+                          <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 text-[11px] font-bold border border-purple-500/20">
+                            สั่งกลับบ้าน
+                          </span>
+                        ) : order.orderType === 'delivery' ? (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 text-[11px] font-bold border border-emerald-500/20">
+                            เดลิเวอรี
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[11px]">ทั่วไป</span>
+                        )}
+                      </td>
+
+                      {/* Items */}
+                      <td className="py-2.5 px-3 max-w-xs font-sans">
+                        <div className="truncate text-slate-300 text-[11px]" title={order.items?.map(i => `${i.menuItem?.name || 'รายการ'} x${i.quantity}`).join(', ')}>
+                          {order.items?.map(i => `${i.menuItem?.name || 'รายการ'} x${i.quantity}`).join(', ') || '-'}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {order.items?.reduce((sum, i) => sum + i.quantity, 0) || 0} ชิ้น
+                        </div>
+                      </td>
+
+                      {/* Payment Method */}
+                      <td className="py-2.5 px-3 whitespace-nowrap font-sans">
+                        {order.paymentMethod === 'cash' ? (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 text-[11px] font-bold border border-emerald-500/20">
+                            💵 เงินสด
+                          </span>
+                        ) : order.paymentMethod === 'promptpay' ? (
+                          <span className="px-2 py-0.5 rounded bg-sky-500/10 text-sky-300 text-[11px] font-bold border border-sky-500/20">
+                            📱 พร้อมเพย์ QR
+                          </span>
+                        ) : order.paymentMethod === 'credit' ? (
+                          <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 text-[11px] font-bold border border-indigo-500/20">
+                            💳 บัตรเครดิต
+                          </span>
+                        ) : order.paymentMethod === 'transfer' ? (
+                          <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 text-[11px] font-bold border border-amber-500/20">
+                            🏦 โอนเงิน
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[11px]">
+                            {order.paymentMethod || 'ไม่ระบุ'}
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Status */}
+                      <td className="py-2.5 px-3 whitespace-nowrap font-sans">
+                        {isCancelled ? (
+                          <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-bold border border-rose-500/30">
+                            ยกเลิก
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/30">
+                            สำเร็จ
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Grand Total */}
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        <span className={`font-black text-sm ${isCancelled ? 'line-through text-slate-500' : 'text-emerald-400 font-mono'}`}>
+                          ฿{(order.grandTotal || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                        </span>
+                      </td>
+
+                      {/* Actions */}
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center space-x-1.5 font-sans">
+                          <button
+                            onClick={() => setSelectedOrderForDetail(order)}
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition"
+                            title="ดูรายละเอียดบิล"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            onClick={() => handlePrintOrder(order)}
+                            className="p-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 transition"
+                            title="พิมพ์ใบเสร็จซ้ำ (Reprint)"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination Controls */}
+        {filteredOrderHistory.length > orderPageSize && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs text-slate-400">
+            <div>
+              แสดง <strong className="text-slate-200">{(orderPage - 1) * orderPageSize + 1}</strong> ถึง{' '}
+              <strong className="text-slate-200">{Math.min(orderPage * orderPageSize, filteredOrderHistory.length)}</strong> จาก{' '}
+              <strong className="text-slate-200">{filteredOrderHistory.length}</strong> รายการ
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setOrderPage(p => Math.max(1, p - 1))}
+                disabled={orderPage === 1}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800 text-slate-200 transition"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              <div className="px-3 py-1 bg-slate-950 rounded-lg border border-slate-800 font-mono text-slate-200 text-xs">
+                {orderPage} / {totalOrderHistoryPages}
+              </div>
+
+              <button
+                onClick={() => setOrderPage(p => Math.min(totalOrderHistoryPages, p + 1))}
+                disabled={orderPage === totalOrderHistoryPages}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800 text-slate-200 transition"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* ORDER DETAIL & RECEIPT MODAL */}
+      {/* ------------------------------------------------------------- */}
+      {selectedOrderForDetail && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <Receipt className="w-5 h-5 text-amber-400" />
+                <h3 className="font-bold text-slate-100 text-sm">
+                  รายละเอียดใบเสร็จ #{selectedOrderForDetail.orderNumber || selectedOrderForDetail.id}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSelectedOrderForDetail(null)}
+                className="p-1 text-slate-400 hover:text-slate-100 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Thermal Receipt Style Box */}
+            <div className="bg-white text-slate-900 p-5 rounded-2xl shadow-inner font-mono text-xs space-y-3">
+              <div className="text-center border-b border-dashed border-slate-300 pb-3 space-y-1">
+                <p className="font-extrabold text-sm">{settings?.shopName || 'กะเพราซิ่ง (Kaprow Zing)'}</p>
+                <p className="text-[11px] text-slate-600">
+                  {branches.find(b => b.id === selectedOrderForDetail.branchId)?.name || currentBranch.name}
+                </p>
+                {branches.find(b => b.id === selectedOrderForDetail.branchId)?.address && (
+                  <p className="text-[10px] text-slate-500">
+                    {branches.find(b => b.id === selectedOrderForDetail.branchId)?.address}
+                  </p>
+                )}
+                <p className="text-[10px] text-slate-500">
+                  {selectedOrderForDetail.createdAt ? new Date(selectedOrderForDetail.createdAt).toLocaleString('th-TH') : '-'}
+                </p>
+                <p className="text-[10px] font-bold text-slate-700">
+                  เลขที่บิล: #{selectedOrderForDetail.orderNumber || selectedOrderForDetail.id}
+                </p>
+                {selectedOrderForDetail.tableNumber && (
+                  <p className="text-[11px] font-bold text-slate-800">
+                    โต๊ะ: {selectedOrderForDetail.tableNumber}
+                  </p>
+                )}
+              </div>
+
+              {/* Items List */}
+              <div className="space-y-1.5 border-b border-dashed border-slate-300 pb-3">
+                {selectedOrderForDetail.items?.map((item, idx) => (
+                  <div key={idx} className="flex justify-between items-start text-[11px]">
+                    <div className="flex-1 pr-2">
+                      <span>{item.menuItem?.name || 'รายการ'}</span>
+                      {item.selectedAddOns && item.selectedAddOns.length > 0 && (
+                        <div className="text-[9px] text-slate-500">
+                          +{item.selectedAddOns.map(a => a.name).join(', ')}
+                        </div>
+                      )}
+                      {item.spiceLevel && (
+                        <div className="text-[9px] text-slate-500">
+                          ระดับเผ็ด: {item.spiceLevel}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-slate-600 whitespace-nowrap px-2">x{item.quantity}</div>
+                    <div className="font-bold whitespace-nowrap">
+                      ฿{(item.totalPrice || (item.menuItem?.price || 0) * item.quantity).toFixed(2)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Totals */}
+              <div className="space-y-1 text-[11px]">
+                <div className="flex justify-between text-slate-600">
+                  <span>ยอดรวม (Subtotal)</span>
+                  <span>฿{(selectedOrderForDetail.subtotal || selectedOrderForDetail.grandTotal || 0).toFixed(2)}</span>
+                </div>
+                {Boolean(selectedOrderForDetail.discountAmount) && (
+                  <div className="flex justify-between text-rose-600">
+                    <span>ส่วนลด (Discount)</span>
+                    <span>-฿{(selectedOrderForDetail.discountAmount || 0).toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-slate-900 font-extrabold text-sm pt-1 border-t border-slate-200">
+                  <span>ยอดสุทธิ (Grand Total)</span>
+                  <span>฿{(selectedOrderForDetail.grandTotal || 0).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-slate-600 text-[10px] pt-1">
+                  <span>ช่องทางชำระเงิน</span>
+                  <span className="font-bold">
+                    {selectedOrderForDetail.paymentMethod === 'cash'
+                      ? 'เงินสด'
+                      : selectedOrderForDetail.paymentMethod === 'promptpay'
+                      ? 'พร้อมเพย์ QR'
+                      : selectedOrderForDetail.paymentMethod === 'credit'
+                      ? 'บัตรเครดิต'
+                      : selectedOrderForDetail.paymentMethod === 'transfer'
+                      ? 'โอนเงิน'
+                      : selectedOrderForDetail.paymentMethod || 'เงินสด'}
+                  </span>
+                </div>
+                {Boolean(selectedOrderForDetail.tenderedAmount) && (
+                  <div className="flex justify-between text-slate-500 text-[10px]">
+                    <span>รับเงินมา / เงินทอน</span>
+                    <span>
+                      ฿{(selectedOrderForDetail.tenderedAmount || 0).toFixed(2)} / ฿{(selectedOrderForDetail.changeAmount || 0).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="text-center text-[9px] text-slate-400 pt-2 border-t border-dashed border-slate-300">
+                ขอบคุณที่ใช้บริการ / Thank you!
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center space-x-2 pt-2">
+              <button
+                onClick={() => handlePrintOrder(selectedOrderForDetail)}
+                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold rounded-xl text-xs transition flex items-center justify-center space-x-2 active:scale-95"
+              >
+                <Printer className="w-4 h-4" />
+                <span>พิมพ์ใบเสร็จ (Reprint)</span>
+              </button>
+              <button
+                onClick={() => setSelectedOrderForDetail(null)}
+                className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition"
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ------------------------------------------------------------- */}
       {/* DISCOUNT MODAL FOR SLOW MOVING ITEMS */}
