@@ -833,29 +833,101 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           return prev;
         }
         const localMap = new Map<string, Order>();
-        list.forEach(o => { if (o && o.id) localMap.set(o.id, o); });
+        const orderNumberToId = new Map<string, string>();
+        list.forEach(o => {
+          if (o && o.id) {
+            localMap.set(o.id, o);
+            const normId = o.id.replace(/^ord-/, '');
+            if (normId !== o.id && !localMap.has(normId)) {
+              localMap.set(normId, o);
+            }
+            if (o.orderNumber) {
+              orderNumberToId.set(o.orderNumber, o.id);
+            }
+          }
+        });
+
         centralOrderList.forEach(co => {
-          if (!localMap.has(co.id)) {
+          const coNormId = co.id.replace(/^ord-/, '');
+          let matchedId: string | null = null;
+          if (localMap.has(co.id)) {
+            matchedId = co.id;
+          } else if (localMap.has(coNormId)) {
+            matchedId = coNormId;
+          } else if (co.orderNumber && orderNumberToId.has(co.orderNumber)) {
+            matchedId = orderNumberToId.get(co.orderNumber)!;
+          }
+
+          if (!matchedId) {
             localMap.set(co.id, co);
+            if (co.orderNumber) orderNumberToId.set(co.orderNumber, co.id);
             hasChanges = true;
           } else {
-            const existing = localMap.get(co.id)!;
-            const isCloudNewer = Boolean(
-              co.updatedAt && existing.updatedAt &&
-              new Date(co.updatedAt).getTime() > new Date(existing.updatedAt).getTime()
-            );
-            const statusChanged = co.status !== existing.status;
-            if (isCloudNewer || statusChanged) {
-              localMap.set(co.id, { ...existing, ...co, isSynced: true });
+            const existing = localMap.get(matchedId)!;
+            const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : (existing.createdAt ? new Date(existing.createdAt).getTime() : 0);
+            const cloudTime = co.updatedAt ? new Date(co.updatedAt).getTime() : (co.createdAt ? new Date(co.createdAt).getTime() : 0);
+
+            // Guard against reverting a 'served' order back to pending/cooking/ready upon page refresh
+            if (existing.status === 'served' && co.status !== 'served') {
+              if (existingTime >= cloudTime) {
+                // Keep local 'served' and push update to Firestore so cloud catches up
+                if (!effectiveOffline && isFirebaseAvailable()) {
+                  updateOrderStatusInFirestore(existing.id, 'served', { completedAt: existing.completedAt });
+                }
+                return;
+              }
+            }
+
+            // Guard against reverting a 'cancelled' order if local is newer
+            if (existing.status === 'cancelled' && co.status !== 'cancelled' && existingTime >= cloudTime) {
+              if (!effectiveOffline && isFirebaseAvailable()) {
+                updateOrderStatusInFirestore(existing.id, 'cancelled', {
+                  cancelReason: existing.cancelReason,
+                  cancelNote: existing.cancelNote,
+                  cancelledBy: existing.cancelledBy
+                });
+              }
+              return;
+            }
+
+            const isCloudNewer = cloudTime > existingTime;
+            if (isCloudNewer) {
+              const mergedOrder: Order = { ...existing, ...co, isSynced: true };
+              localMap.set(existing.id, mergedOrder);
+              localMap.set(co.id, mergedOrder);
+              if (matchedId !== existing.id) localMap.set(matchedId, mergedOrder);
               hasChanges = true;
             } else if (!existing.isSynced && co.isSynced) {
-              localMap.set(co.id, { ...existing, ...co, isSynced: true });
+              const mergedOrder: Order = { ...existing, isSynced: true };
+              localMap.set(existing.id, mergedOrder);
+              localMap.set(co.id, mergedOrder);
+              if (matchedId !== existing.id) localMap.set(matchedId, mergedOrder);
               hasChanges = true;
             }
           }
         });
         if (!hasChanges) return prev;
-        const merged = Array.from(localMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+        // Deduplicate merged items by orderNumber / clean ID to guarantee no duplicate cards
+        const uniqueOrdersMap = new Map<string, Order>();
+        Array.from(localMap.values()).forEach(ord => {
+          if (!ord || !ord.id) return;
+          const key = ord.orderNumber || ord.id.replace(/^ord-/, '');
+          if (!uniqueOrdersMap.has(key)) {
+            uniqueOrdersMap.set(key, ord);
+          } else {
+            const current = uniqueOrdersMap.get(key)!;
+            const curTime = current.updatedAt ? new Date(current.updatedAt).getTime() : 0;
+            const ordTime = ord.updatedAt ? new Date(ord.updatedAt).getTime() : 0;
+            if (ord.status === 'served' && current.status !== 'served') {
+              uniqueOrdersMap.set(key, ord);
+            } else if (ordTime > curTime && current.status !== 'served') {
+              uniqueOrdersMap.set(key, ord);
+            }
+          }
+        });
+
+        const merged = Array.from(uniqueOrdersMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
         try {
           localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(merged));
         } catch (e) {
@@ -1379,27 +1451,65 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       let newOrUpdatedCount = 0;
       setOrders(prev => {
         const orderMap = new Map<string, Order>();
-        prev.forEach(o => { if (o && o.id) orderMap.set(o.id, o); });
+        const orderNumberToId = new Map<string, string>();
+        prev.forEach(o => {
+          if (o && o.id) {
+            orderMap.set(o.id, o);
+            const normId = o.id.replace(/^ord-/, '');
+            if (normId !== o.id && !orderMap.has(normId)) orderMap.set(normId, o);
+            if (o.orderNumber) orderNumberToId.set(o.orderNumber, o.id);
+          }
+        });
+
         cloudOrders.forEach(co => {
-          if (!orderMap.has(co.id)) {
+          const coNormId = co.id.replace(/^ord-/, '');
+          let matchedId: string | null = null;
+          if (orderMap.has(co.id)) matchedId = co.id;
+          else if (orderMap.has(coNormId)) matchedId = coNormId;
+          else if (co.orderNumber && orderNumberToId.has(co.orderNumber)) matchedId = orderNumberToId.get(co.orderNumber)!;
+
+          if (!matchedId) {
             orderMap.set(co.id, co);
+            if (co.orderNumber) orderNumberToId.set(co.orderNumber, co.id);
             newOrUpdatedCount++;
           } else {
-            const existing = orderMap.get(co.id)!;
-            const isCloudNewer = Boolean(
-              co.updatedAt && existing.updatedAt &&
-              new Date(co.updatedAt).getTime() > new Date(existing.updatedAt).getTime()
-            );
+            const existing = orderMap.get(matchedId)!;
+            const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+            const cloudTime = co.updatedAt ? new Date(co.updatedAt).getTime() : 0;
+
+            if (existing.status === 'served' && co.status !== 'served' && existingTime >= cloudTime) {
+              return;
+            }
+
+            const isCloudNewer = cloudTime > existingTime;
             if (isCloudNewer) {
-              orderMap.set(co.id, { ...existing, ...co, isSynced: true });
+              const mergedOrder: Order = { ...existing, ...co, isSynced: true };
+              orderMap.set(existing.id, mergedOrder);
+              orderMap.set(co.id, mergedOrder);
               newOrUpdatedCount++;
             } else if (!existing.isSynced && co.isSynced) {
-              orderMap.set(co.id, { ...existing, ...co, isSynced: true });
+              const mergedOrder: Order = { ...existing, ...co, isSynced: true };
+              orderMap.set(existing.id, mergedOrder);
+              orderMap.set(co.id, mergedOrder);
               newOrUpdatedCount++;
             }
           }
         });
-        const merged = Array.from(orderMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+        const uniqueOrders = new Map<string, Order>();
+        Array.from(orderMap.values()).forEach(ord => {
+          if (!ord || !ord.id) return;
+          const key = ord.orderNumber || ord.id.replace(/^ord-/, '');
+          if (!uniqueOrders.has(key)) {
+            uniqueOrders.set(key, ord);
+          } else {
+            const curr = uniqueOrders.get(key)!;
+            if (ord.status === 'served' && curr.status !== 'served') {
+              uniqueOrders.set(key, ord);
+            }
+          }
+        });
+        const merged = Array.from(uniqueOrders.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
         try {
           localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(merged));
         } catch (e) {
@@ -1704,8 +1814,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const parsedSep = JSON.parse(sepOrders);
               if (Array.isArray(parsedSep) && parsedSep.length > 0) {
                 parsedSep.forEach((o: any) => {
-                  if (o && typeof o === 'object' && o.id && !orderMap.has(o.id)) {
-                    orderMap.set(o.id, o);
+                  if (o && typeof o === 'object' && o.id) {
+                    if (!orderMap.has(o.id)) {
+                      orderMap.set(o.id, o);
+                    } else {
+                      const existing = orderMap.get(o.id)!;
+                      const exTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+                      const sepTime = o.updatedAt ? new Date(o.updatedAt).getTime() : 0;
+                      if (o.status === 'served' && existing.status !== 'served') {
+                        orderMap.set(o.id, o);
+                      } else if (sepTime >= exTime && existing.status !== 'served') {
+                        orderMap.set(o.id, o);
+                      }
+                    }
                   }
                 });
               }
@@ -2767,7 +2888,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setOrders(prev => {
       const next = prev.map(ord => {
-        if (ord.id === orderId) {
+        const isMatch = ord.id === orderId ||
+          ord.id === `ord-${orderId}` ||
+          ord.id.replace(/^ord-/, '') === orderId.replace(/^ord-/, '') ||
+          ord.orderNumber === orderId;
+
+        if (isMatch) {
           const completedAt = status === 'served' ? (ord.completedAt || now) : ord.completedAt;
           const cancelledBy = status === 'cancelled' && !ord.cancelledBy ? {
             userId: currentUser?.id,
@@ -2811,7 +2937,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Update Firestore in real-time
     if (updatedTarget && !effectiveOffline && isFirebaseAvailable()) {
-      updateOrderStatusInFirestore(orderId, status, {
+      const targetId = updatedTarget.id || orderId;
+      updateOrderStatusInFirestore(targetId, status, {
         completedAt: updatedTarget.completedAt,
         cancelledBy: updatedTarget.cancelledBy,
         cancelReason: updatedTarget.cancelReason,

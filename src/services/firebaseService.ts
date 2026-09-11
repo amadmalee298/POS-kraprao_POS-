@@ -1311,11 +1311,16 @@ export async function updateOrderStatusInFirestore(
   if (!dbInstance || !navigator.onLine) return false;
 
   try {
-    const orderRef = doc(dbInstance, 'orders', orderId);
+    const primaryDocId = orderId.startsWith('ord-') ? orderId : `ord-${orderId}`;
+    const rawDocId = orderId.replace(/^ord-/, '');
+    const nowIso = new Date().toISOString();
+
     const updatePayload: Record<string, any> = cleanForFirestore({
       status,
       updatedAt: serverTimestamp(),
-      ...(status === 'served' ? { completedAt: extra?.completedAt || new Date().toISOString() } : {}),
+      updatedAtIso: nowIso,
+      isSynced: true,
+      ...(status === 'served' ? { completedAt: extra?.completedAt || nowIso } : {}),
       ...(status === 'cancelled' ? {
         cancelledBy: extra?.cancelledBy,
         cancelReason: extra?.cancelReason,
@@ -1323,8 +1328,21 @@ export async function updateOrderStatusInFirestore(
       } : {})
     });
 
-    await setDoc(orderRef, updatePayload, { merge: true });
-    console.log(`[Firebase Service] ☁️ Order ${orderId} status successfully updated to '${status}' in Firestore.`);
+    // Write to primaryDocId (ord-...)
+    const primaryRef = doc(dbInstance, 'orders', primaryDocId);
+    await setDoc(primaryRef, updatePayload, { merge: true });
+
+    // Also update rawDocId if distinct, ensuring any legacy document without ord- prefix is kept in sync
+    if (rawDocId && rawDocId !== primaryDocId) {
+      try {
+        const rawRef = doc(dbInstance, 'orders', rawDocId);
+        await setDoc(rawRef, updatePayload, { merge: true });
+      } catch {
+        // Silently ignore secondary doc update
+      }
+    }
+
+    console.log(`[Firebase Service] ☁️ Order ${orderId} (${primaryDocId}) status successfully updated to '${status}' in Firestore.`);
     return true;
   } catch (err) {
     console.error(`[Firebase Service] ❌ Failed to update status for order ${orderId} in Firestore:`, err);
