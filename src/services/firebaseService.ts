@@ -1263,6 +1263,15 @@ export async function syncSingleMenuItemToFirestore(item: MenuItem): Promise<boo
       updatedAt: serverTimestamp()
     });
     await setDoc(docRef, payload, { merge: true });
+
+    // Remove any tombstone in deleted_records for this menu item so it is active again
+    try {
+      const tombstoneRef = doc(dbInstance, 'deleted_records', `menu_${item.id}`);
+      await deleteDoc(tombstoneRef);
+    } catch {
+      // ignore
+    }
+
     return true;
   } catch (err) {
     console.error(`[Firebase Service] ❌ Failed to sync menu item ${item.id}:`, err);
@@ -1351,7 +1360,7 @@ export async function updateOrderStatusInFirestore(
 }
 
 /**
- * Delete a menu item from Firestore (with deletion of duplicate documents and tombstone recording)
+ * Delete a menu item from Firestore (by item ID with tombstone recording)
  */
 export async function deleteMenuItemFromFirestore(itemId: string, itemName?: string): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
@@ -1360,25 +1369,7 @@ export async function deleteMenuItemFromFirestore(itemId: string, itemName?: str
     const docRef = doc(dbInstance, 'menu_items', itemId);
     await deleteDoc(docRef);
 
-    // Also delete any document with matching name or ID in menu_items collection to remove duplicates
-    if (itemName && itemName.trim()) {
-      try {
-        const q = query(collection(dbInstance, 'menu_items'), where('name', '==', itemName.trim()));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const batch = writeBatch(dbInstance);
-          snap.forEach(d => {
-            batch.delete(d.ref);
-          });
-          await batch.commit();
-          console.log(`[Firebase Service] 🗑️ Deleted ${snap.size} Firestore menu doc(s) matching name "${itemName.trim()}".`);
-        }
-      } catch (subErr) {
-        console.warn(`[Firebase Service] Note on name-based deletion for "${itemName}":`, subErr);
-      }
-    }
-
-    // Record tombstone in deleted_records
+    // Record tombstone in deleted_records by ID
     const tombstoneRef = doc(dbInstance, 'deleted_records', `menu_${itemId}`);
     await setDoc(
       tombstoneRef,
@@ -1659,11 +1650,8 @@ export async function purgeOutdatedCloudData(
 
     menuSnap.forEach(d => {
       const docIdLower = d.id.trim().toLowerCase();
-      const docName = String(d.data().name || '').trim().toLowerCase();
-      const shouldDelete =
-        deletedMenuSet.has(docIdLower) ||
-        deletedMenuSet.has(docName) ||
-        (!activeMenuSet.has(docIdLower) && activeMenuSet.size > 0);
+      // Only delete if explicitly requested in deletedMenuSet by ID
+      const shouldDelete = deletedMenuSet.has(docIdLower);
 
       if (shouldDelete) {
         menuBatch.delete(d.ref);

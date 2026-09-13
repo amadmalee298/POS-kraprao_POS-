@@ -27,11 +27,13 @@ import {
   PackagePlus,
   PlusCircle,
   Wand2,
-  Boxes
+  Boxes,
+  Star
 } from 'lucide-react';
 import { ExpenseCategory } from '../../types';
 import { usePOS } from '../../context/POSContext';
 import { compressBase64Image } from '../../utils/imageCompressor';
+import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 
 interface StockEntryItem {
   id: string;
@@ -94,7 +96,21 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   onClose,
   onSaveExpense
 }) => {
-  const { ingredients, addStockLot, addIngredient, updateIngredient, ingredientCategories, ingredientUnits } = usePOS();
+  const { ingredients, addStockLot, addIngredient, updateIngredient, ingredientCategories, ingredientUnits, menuItems = [], stockLots = [] } = usePOS();
+
+  const {
+    sortedIngredients,
+    frequentIngredients,
+    otherIngredients,
+    isPinned: isIngPinned,
+    togglePin: toggleIngPin,
+    recordUsage: recordIngUsage,
+    sortFrequentFirst
+  } = useFrequentIngredients({
+    ingredients,
+    menuItems,
+    stockLots
+  });
 
   // Multi-image Queue State
   const [queue, setQueue] = useState<ReceiptQueueItem[]>([]);
@@ -1920,24 +1936,88 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                                         </span>
                                       )}
                                     </div>
-                                    <select
-                                      value={entry.ingredientId}
-                                      onChange={e => handleUpdateStockEntry(entry.id, { ingredientId: e.target.value })}
-                                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-100 text-xs font-bold focus:border-emerald-500 focus:outline-none"
-                                    >
-                                      <option value="__CREATE_NEW__" className="text-amber-300 font-bold bg-slate-900">
-                                        ✨ + สร้างรายการวัตถุดิบใหม่เข้าระบบ...
-                                      </option>
-                                      {ingredients.length === 0 ? (
-                                        <option value="">ไม่มีวัตถุดิบในคลัง (แตะเพื่อสร้างใหม่)</option>
-                                      ) : (
-                                        ingredients.map(ing => (
-                                          <option key={ing.id} value={ing.id}>
-                                            {ing.name} ({ing.category} | คงเหลือ: {ing.currentStock} {ing.unit})
-                                          </option>
-                                        ))
+                                    {/* Quick Select Chips for Frequent Items */}
+                                    {frequentIngredients.length > 0 && (
+                                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mb-1.5 scrollbar-thin">
+                                        <span className="text-[10px] font-bold text-amber-400 flex items-center gap-0.5 shrink-0">
+                                          <Star className="w-2.5 h-2.5 fill-amber-400" />
+                                          <span>ใช้บ่อย:</span>
+                                        </span>
+                                        {frequentIngredients.map(ing => {
+                                          const isSelected = entry.ingredientId === ing.id;
+                                          return (
+                                            <button
+                                              key={ing.id}
+                                              type="button"
+                                              onClick={() => handleUpdateStockEntry(entry.id, { ingredientId: ing.id })}
+                                              className={`px-2 py-0.5 rounded text-[11px] font-bold transition shrink-0 flex items-center space-x-1 ${
+                                                isSelected
+                                                  ? 'bg-emerald-500 text-slate-950 font-black'
+                                                  : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700/80'
+                                              }`}
+                                            >
+                                              {isIngPinned(ing.id) && <Star className="w-2 h-2 fill-amber-400 text-amber-400" />}
+                                              <span className="truncate max-w-[100px]">{ing.name}</span>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    <div className="flex items-center gap-1.5">
+                                      <select
+                                        value={entry.ingredientId}
+                                        onChange={e => handleUpdateStockEntry(entry.id, { ingredientId: e.target.value })}
+                                        className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-100 text-xs font-bold focus:border-emerald-500 focus:outline-none"
+                                      >
+                                        <option value="__CREATE_NEW__" className="text-amber-300 font-bold bg-slate-900">
+                                          ✨ + สร้างรายการวัตถุดิบใหม่เข้าระบบ...
+                                        </option>
+                                        {ingredients.length === 0 ? (
+                                          <option value="">ไม่มีวัตถุดิบในคลัง (แตะเพื่อสร้างใหม่)</option>
+                                        ) : sortFrequentFirst ? (
+                                          <>
+                                            {frequentIngredients.length > 0 && (
+                                              <optgroup label="⭐ รายการที่ใช้บ่อย (บ่อยที่สุด)">
+                                                {frequentIngredients.map(ing => (
+                                                  <option key={`fav-${ing.id}`} value={ing.id}>
+                                                    ⭐ {ing.name} ({ing.category} | คงเหลือ: {ing.currentStock} {ing.unit})
+                                                  </option>
+                                                ))}
+                                              </optgroup>
+                                            )}
+                                            <optgroup label={frequentIngredients.length > 0 ? "📦 วัตถุดิบอื่นๆ ทั้งหมด" : "📋 รายการวัตถุดิบทั้งหมด"}>
+                                              {otherIngredients.map(ing => (
+                                                <option key={ing.id} value={ing.id}>
+                                                  {ing.name} ({ing.category} | คงเหลือ: {ing.currentStock} {ing.unit})
+                                                </option>
+                                              ))}
+                                            </optgroup>
+                                          </>
+                                        ) : (
+                                          sortedIngredients.map(ing => (
+                                            <option key={ing.id} value={ing.id}>
+                                              {isIngPinned(ing.id) ? '⭐ ' : ''}{ing.name} ({ing.category} | คงเหลือ: {ing.currentStock} {ing.unit})
+                                            </option>
+                                          ))
+                                        )}
+                                      </select>
+
+                                      {entry.ingredientId && entry.ingredientId !== '__CREATE_NEW__' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleIngPin(entry.ingredientId)}
+                                          className={`p-1.5 rounded-lg border transition shrink-0 ${
+                                            isIngPinned(entry.ingredientId)
+                                              ? 'bg-amber-500/20 text-amber-400 border-amber-500/50 hover:bg-amber-500/30'
+                                              : 'bg-slate-800 text-slate-500 border-slate-700 hover:text-amber-300'
+                                          }`}
+                                          title={isIngPinned(entry.ingredientId) ? 'ยกเลิกการปักหมุด' : 'ปักหมุดเป็นรายการใช้บ่อย'}
+                                        >
+                                          <Star className={`w-3.5 h-3.5 ${isIngPinned(entry.ingredientId) ? 'fill-amber-400 text-amber-400' : ''}`} />
+                                        </button>
                                       )}
-                                    </select>
+                                    </div>
                                   </div>
 
                                   {stockEntries.length > 1 && (

@@ -53,6 +53,7 @@ import {
   Upload,
   Camera,
   Download,
+  Star,
   Image as ImageIcon
 } from 'lucide-react';
 import {
@@ -80,6 +81,7 @@ import {
   PaymentRecord
 } from '../../types';
 import { AIReceiptScannerModal } from './AIReceiptScannerModal';
+import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 
 type TimeHorizon = 'selected' | '6months' | 'year';
 type ViewTab = 'overview' | 'statement' | 'balance_sheet' | 'cash_flow' | 'ar_ap' | 'expenses' | 'incomes' | 'details';
@@ -330,7 +332,23 @@ const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boo
 };
 
 export const AccountingView: React.FC = () => {
-  const { orders, expenses, incomes = [], addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient } = usePOS();
+  const { orders, expenses, incomes = [], addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [] } = usePOS();
+
+  const {
+    sortedIngredients,
+    frequentIngredients,
+    otherIngredients,
+    isPinned: isIngPinned,
+    togglePin: toggleIngPin,
+    recordUsage: recordIngUsage,
+    sortFrequentFirst,
+    setSortFrequentFirst
+  } = useFrequentIngredients({
+    ingredients,
+    menuItems,
+    stockLots,
+    maxFrequentCount: 8
+  });
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     try {
@@ -656,7 +674,7 @@ export const AccountingView: React.FC = () => {
 
   const handleAddExpStockEntry = () => {
     if (ingredients.length === 0) return;
-    const targetIng = ingredients[0];
+    const targetIng = sortedIngredients[0] || ingredients[0];
     const isLiquid = targetIng?.unit === 'ml';
     const isWeight = targetIng?.unit === 'g';
     const hasDefaultPkg = !!(targetIng?.packageSize && targetIng.packageSize > 0);
@@ -1392,6 +1410,7 @@ export const AccountingView: React.FC = () => {
       const validEntries = expStockEntries.filter(e => e.ingredientId && e.quantity > 0);
       if (validEntries.length > 0) {
         validEntries.forEach((entry, idx) => {
+          recordIngUsage(entry.ingredientId, 1);
           const matchedIng = ingredients.find(i => i.id === entry.ingredientId);
           if (matchedIng) {
             const qty = entry.quantity > 0 ? entry.quantity : 1;
@@ -5059,7 +5078,7 @@ export const AccountingView: React.FC = () => {
                       onChange={e => {
                         setExpAutoUpdateStock(e.target.checked);
                         if (e.target.checked && expStockEntries.length === 0 && ingredients.length > 0) {
-                          const targetIng = ingredients[0];
+                          const targetIng = sortedIngredients[0] || ingredients[0];
                           const isLiquid = targetIng?.unit === 'ml';
                           const isWeight = targetIng?.unit === 'g';
                           const hasDefaultPkg = !!(targetIng?.packageSize && targetIng.packageSize > 0);
@@ -5086,18 +5105,33 @@ export const AccountingView: React.FC = () => {
 
                 {expAutoUpdateStock && (
                   <div className="space-y-2 pt-2 border-t border-emerald-900/60">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
                       <span className="text-[10px] font-bold text-slate-400">
-                        รายการวัตถุดิบที่ต้องการรับเข้าคลัง (เพิ่มได้หลายรายการ):
+                        รายการวัตถุดิบที่ต้องการรับเข้าคลัง:
                       </span>
-                      <button
-                        type="button"
-                        onClick={handleAddExpStockEntry}
-                        className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>+ เพิ่มรายการวัตถุดิบ</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSortFrequentFirst(!sortFrequentFirst)}
+                          className={`text-[10px] px-2 py-0.5 rounded-lg font-bold transition flex items-center gap-1 border ${
+                            sortFrequentFirst
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
+                              : 'bg-slate-800 text-slate-400 border-slate-700'
+                          }`}
+                          title="สลับโหมดเรียงลำดับรายการวัตถุดิบ"
+                        >
+                          <Star className={`w-3 h-3 ${sortFrequentFirst ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
+                          <span>{sortFrequentFirst ? 'เรียงใช้บ่อยขึ้นก่อน' : 'เรียงตามปกติ'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleAddExpStockEntry}
+                          className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ เพิ่มรายการ</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="space-y-2.5">
@@ -5113,6 +5147,44 @@ export const AccountingView: React.FC = () => {
                             key={entry.id}
                             className="bg-slate-900/90 p-2.5 rounded-xl border border-emerald-900/50 space-y-2 transition shadow-sm"
                           >
+                            {/* Quick Select Chips for Frequent Items */}
+                            {frequentIngredients.length > 0 && (
+                              <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
+                                <div className="flex items-center justify-between mb-1.5">
+                                  <span className="text-[10px] font-bold text-amber-400 flex items-center gap-1">
+                                    <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                                    <span>แตะเลือกด่วน (รายการใช้บ่อย):</span>
+                                  </span>
+                                  {isIngPinned(entry.ingredientId) && (
+                                    <span className="text-[9px] font-bold text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded border border-amber-500/30">
+                                      ⭐ ปักหมุดรายการโปรด
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+                                  {frequentIngredients.map(ing => {
+                                    const isSelected = entry.ingredientId === ing.id;
+                                    return (
+                                      <button
+                                        key={ing.id}
+                                        type="button"
+                                        onClick={() => handleUpdateExpStockEntry(entry.id, { ingredientId: ing.id })}
+                                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition shrink-0 flex items-center space-x-1 ${
+                                          isSelected
+                                            ? 'bg-emerald-500 text-slate-950 shadow-sm ring-1 ring-emerald-300 font-black'
+                                            : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 active:scale-95'
+                                        }`}
+                                      >
+                                        {isIngPinned(ing.id) && <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400 shrink-0" />}
+                                        <span className="truncate max-w-[120px]">{ing.name}</span>
+                                        {isSelected && <Check className="w-3 h-3 stroke-[3] text-slate-950 ml-0.5 shrink-0" />}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center justify-between mb-1">
@@ -5125,21 +5197,55 @@ export const AccountingView: React.FC = () => {
                                     </span>
                                   )}
                                 </div>
-                                <select
-                                  value={entry.ingredientId}
-                                  onChange={e => handleUpdateExpStockEntry(entry.id, { ingredientId: e.target.value })}
-                                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-100 text-xs font-bold focus:border-emerald-500 focus:outline-none"
-                                >
-                                  {ingredients.length === 0 ? (
-                                    <option value="">ไม่มีวัตถุดิบในคลัง</option>
-                                  ) : (
-                                    ingredients.map(ing => (
-                                      <option key={ing.id} value={ing.id}>
-                                        {ing.name} ({ing.category} | คงเหลือ: {ing.currentStock} {ing.unit})
-                                      </option>
-                                    ))
-                                  )}
-                                </select>
+                                <div className="flex items-center gap-1.5">
+                                  <select
+                                    value={entry.ingredientId}
+                                    onChange={e => handleUpdateExpStockEntry(entry.id, { ingredientId: e.target.value })}
+                                    className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-100 text-xs font-bold focus:border-emerald-500 focus:outline-none"
+                                  >
+                                    {ingredients.length === 0 ? (
+                                      <option value="">ไม่มีวัตถุดิบในคลัง</option>
+                                    ) : sortFrequentFirst ? (
+                                      <>
+                                        {frequentIngredients.length > 0 && (
+                                          <optgroup label="⭐ รายการที่ใช้บ่อย (บ่อยที่สุด)">
+                                            {frequentIngredients.map(ing => (
+                                              <option key={`fav-${ing.id}`} value={ing.id}>
+                                                ⭐ {ing.name} ({ing.category} | คงเหลือ: {ing.currentStock} {ing.unit})
+                                              </option>
+                                            ))}
+                                          </optgroup>
+                                        )}
+                                        <optgroup label={frequentIngredients.length > 0 ? "📦 วัตถุดิบอื่นๆ ทั้งหมด" : "📋 รายการวัตถุดิบทั้งหมด"}>
+                                          {otherIngredients.map(ing => (
+                                            <option key={ing.id} value={ing.id}>
+                                              {ing.name} ({ing.category} | คงเหลือ: {ing.currentStock} {ing.unit})
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      </>
+                                    ) : (
+                                      sortedIngredients.map(ing => (
+                                        <option key={ing.id} value={ing.id}>
+                                          {isIngPinned(ing.id) ? '⭐ ' : ''}{ing.name} ({ing.category} | คงเหลือ: {ing.currentStock} {ing.unit})
+                                        </option>
+                                      ))
+                                    )}
+                                  </select>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleIngPin(entry.ingredientId)}
+                                    className={`p-1.5 rounded-lg border transition shrink-0 ${
+                                      isIngPinned(entry.ingredientId)
+                                        ? 'bg-amber-500/20 text-amber-400 border-amber-500/50 hover:bg-amber-500/30 shadow-sm'
+                                        : 'bg-slate-800 text-slate-500 border-slate-700 hover:text-amber-300 hover:bg-slate-700'
+                                    }`}
+                                    title={isIngPinned(entry.ingredientId) ? 'คลิกเพื่อยกเลิกการปักหมุด' : 'คลิกเพื่อปักหมุดเป็นรายการใช้บ่อย (ให้ขึ้นด้านบนเสมอ)'}
+                                  >
+                                    <Star className={`w-4 h-4 ${isIngPinned(entry.ingredientId) ? 'fill-amber-400 text-amber-400' : ''}`} />
+                                  </button>
+                                </div>
                               </div>
 
                               {expStockEntries.length > 1 && (

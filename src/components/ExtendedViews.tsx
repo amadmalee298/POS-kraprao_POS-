@@ -63,6 +63,7 @@ import {
   Settings,
   Sliders,
   Play,
+  RefreshCw,
   Building2,
   Building,
   CreditCard,
@@ -85,9 +86,11 @@ import {
   Scale,
   Image as ImageIcon,
   Wallet,
-  Landmark
+  Landmark,
+  Star
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
+import { useFrequentIngredients } from '../utils/useFrequentIngredients';
 import {
   getStoredCredentials,
   saveStoredCredentials,
@@ -1879,10 +1882,24 @@ export const RecipeCostingView: React.FC = () => {
     deleteMenuItem,
     updateMenuItemRecipe,
     toggleMenuItemAddOns,
+    restoreDefaultMenuItems,
     addAddOn,
     updateAddOn,
-    deleteAddOn
+    deleteAddOn,
+    stockLots = []
   } = usePOS();
+
+  const {
+    sortedIngredients,
+    frequentIngredients,
+    otherIngredients
+  } = useFrequentIngredients({
+    ingredients,
+    menuItems,
+    stockLots
+  });
+
+  const [saveSuccessToast, setSaveSuccessToast] = useState<string | null>(null);
 
   const [activeSubTab, setActiveSubTab] = useState<'menu' | 'toppings' | 'recipes' | 'bulk_edit' | 'ai_engineering'>('bulk_edit');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
@@ -1924,6 +1941,14 @@ export const RecipeCostingView: React.FC = () => {
   );
   const [editableRecipe, setEditableRecipe] = useState<RecipeIngredient[]>([]);
 
+  // Copy Recipe Modal State
+  const [isCopyRecipeModalOpen, setIsCopyRecipeModalOpen] = useState<boolean>(false);
+  const [copyRecipeMode, setCopyRecipeMode] = useState<'from' | 'to'>('from');
+  const [copySourceMenuItemId, setCopySourceMenuItemId] = useState<string>('');
+  const [copyTargetMenuItemIds, setCopyTargetMenuItemIds] = useState<string[]>([]);
+  const [copyStrategy, setCopyStrategy] = useState<'replace' | 'merge'>('replace');
+  const [copySelectedIngIds, setCopySelectedIngIds] = useState<string[]>([]);
+
   // Selected Menu Item for Recipe view
   const currentRecipeMenuItem = menuItems.find(m => m.id === selectedRecipeMenuItemId) || menuItems[0];
 
@@ -1964,17 +1989,19 @@ export const RecipeCostingView: React.FC = () => {
     if (editingMenuItem) {
       updateMenuItem({
         ...editingMenuItem,
-        name: menuFormName,
+        name: menuFormName.trim(),
         category: menuFormCategory,
         price: Number(menuFormPrice),
         image: menuFormImage || 'https://images.unsplash.com/photo-1562967914-608f82629710?w=600&auto=format&fit=crop',
         description: menuFormDescription,
         allowAddOns: menuFormAllowAddOns
       });
+      setSaveSuccessToast(`บันทึกเมนู "${menuFormName.trim()}" เรียบร้อยแล้ว`);
+      setTimeout(() => setSaveSuccessToast(null), 3500);
     } else {
       addMenuItem({
-        name: menuFormName,
-        nameEn: menuFormName,
+        name: menuFormName.trim(),
+        nameEn: menuFormName.trim(),
         category: menuFormCategory,
         price: Number(menuFormPrice),
         costPrice: 20,
@@ -1985,6 +2012,8 @@ export const RecipeCostingView: React.FC = () => {
           { ingredientId: ingredients[0]?.id || 'ing-pork-minced', amountNeeded: 100 }
         ]
       });
+      setSaveSuccessToast(`เพิ่มเมนูใหม่ "${menuFormName.trim()}" เรียบร้อยแล้ว`);
+      setTimeout(() => setSaveSuccessToast(null), 3500);
     }
     setIsMenuModalOpen(false);
   };
@@ -2157,7 +2186,34 @@ export const RecipeCostingView: React.FC = () => {
   };
 
   const handleRemoveRecipeIngredient = (ingredientId: string) => {
-    setEditableRecipe(prev => prev.filter(r => r.ingredientId !== ingredientId));
+    const nextRecipe = editableRecipe.filter(r => r.ingredientId !== ingredientId);
+    setEditableRecipe(nextRecipe);
+
+    // Calculate updated recipe cost immediately
+    let calculatedCost = 0;
+    nextRecipe.forEach(r => {
+      const ing = ingredients.find(i => i.id === r.ingredientId);
+      if (ing) {
+        calculatedCost += calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).lineCost;
+      }
+    });
+
+    if (currentRecipeMenuItem) {
+      updateMenuItemRecipe(currentRecipeMenuItem.id, nextRecipe, calculatedCost);
+      const targetIng = ingredients.find(i => i.id === ingredientId);
+      setSaveSuccessToast(`ลบวัตถุดิบ "${targetIng?.name || ingredientId}" ออกจากสูตรของ "${currentRecipeMenuItem.name}" เรียบร้อยแล้ว`);
+      setTimeout(() => setSaveSuccessToast(null), 3500);
+    }
+  };
+
+  const handleClearAllRecipeIngredients = () => {
+    if (!currentRecipeMenuItem) return;
+    if (confirm(`คุณต้องการลบวัตถุดิบทั้งหมดออกจากสูตรของ "${currentRecipeMenuItem.name}" หรือไม่?`)) {
+      setEditableRecipe([]);
+      updateMenuItemRecipe(currentRecipeMenuItem.id, [], 0);
+      setSaveSuccessToast(`ล้างวัตถุดิบทั้งหมดในสูตรของ "${currentRecipeMenuItem.name}" เรียบร้อยแล้ว`);
+      setTimeout(() => setSaveSuccessToast(null), 3500);
+    }
   };
 
   const handleSaveRecipe = () => {
@@ -2171,7 +2227,146 @@ export const RecipeCostingView: React.FC = () => {
     });
 
     updateMenuItemRecipe(currentRecipeMenuItem.id, editableRecipe, calculatedCost);
-    alert(`บันทึกสูตรอาหารสำหรับ "${currentRecipeMenuItem.name}" เรียบร้อยแล้ว (ต้นทุนวัตถุดิบคำนวณ ฿${calculatedCost.toFixed(2)})`);
+    setSaveSuccessToast(`บันทึกสูตรอาหาร "${currentRecipeMenuItem.name}" เรียบร้อยแล้ว (คำนวณต้นทุน ฿${calculatedCost.toFixed(2)})`);
+    setTimeout(() => setSaveSuccessToast(null), 4000);
+  };
+
+  // Handlers for Copying Recipe between Menu Items
+  const handleOpenCopyRecipeModal = (mode: 'from' | 'to' = 'from', defaultSourceId?: string) => {
+    setCopyRecipeMode(mode);
+    setCopyStrategy('replace');
+
+    if (mode === 'from') {
+      const availableSource = defaultSourceId 
+        || menuItems.find(m => m.id !== currentRecipeMenuItem?.id && m.recipe && m.recipe.length > 0)?.id
+        || menuItems.find(m => m.id !== currentRecipeMenuItem?.id)?.id
+        || '';
+      setCopySourceMenuItemId(availableSource);
+      const srcItem = menuItems.find(m => m.id === availableSource);
+      setCopySelectedIngIds(srcItem?.recipe ? srcItem.recipe.map(r => r.ingredientId) : []);
+    } else {
+      setCopyTargetMenuItemIds([]);
+      setCopySelectedIngIds(editableRecipe.map(r => r.ingredientId));
+    }
+    setIsCopyRecipeModalOpen(true);
+  };
+
+  const handleSelectCopySource = (sourceId: string) => {
+    setCopySourceMenuItemId(sourceId);
+    const src = menuItems.find(m => m.id === sourceId);
+    setCopySelectedIngIds(src?.recipe ? src.recipe.map(r => r.ingredientId) : []);
+  };
+
+  const handleToggleSelectAllCopyIngs = (allIngIds: string[]) => {
+    if (copySelectedIngIds.length === allIngIds.length) {
+      setCopySelectedIngIds([]);
+    } else {
+      setCopySelectedIngIds([...allIngIds]);
+    }
+  };
+
+  const handleToggleCopyTarget = (targetId: string) => {
+    setCopyTargetMenuItemIds(prev =>
+      prev.includes(targetId) ? prev.filter(id => id !== targetId) : [...prev, targetId]
+    );
+  };
+
+  const handleSelectAllTargetsInCategory = (catId?: string) => {
+    const candidates = menuItems.filter(m => {
+      if (m.id === currentRecipeMenuItem?.id) return false;
+      if (!catId || catId === 'all') return true;
+      return isItemInCategory(m, catId, categories);
+    }).map(m => m.id);
+
+    const allSelected = candidates.every(id => copyTargetMenuItemIds.includes(id));
+    if (allSelected) {
+      setCopyTargetMenuItemIds(prev => prev.filter(id => !candidates.includes(id)));
+    } else {
+      setCopyTargetMenuItemIds(prev => Array.from(new Set([...prev, ...candidates])));
+    }
+  };
+
+  const handleConfirmCopyRecipe = () => {
+    if (copyRecipeMode === 'from') {
+      if (!currentRecipeMenuItem) return;
+      const srcItem = menuItems.find(m => m.id === copySourceMenuItemId);
+      if (!srcItem || !srcItem.recipe || srcItem.recipe.length === 0) {
+        alert('เมนูต้นทางที่เลือกยังไม่มีสูตรวัตถุดิบ');
+        return;
+      }
+
+      const ingredientsToImport = srcItem.recipe.filter(r => copySelectedIngIds.includes(r.ingredientId));
+      if (ingredientsToImport.length === 0) {
+        alert('กรุณาเลือกวัตถุดิบที่ต้องการคัดลอกอย่างน้อย 1 รายการ');
+        return;
+      }
+
+      let newRecipeList: RecipeIngredient[] = [];
+      if (copyStrategy === 'replace') {
+        newRecipeList = ingredientsToImport.map(r => ({ ...r }));
+      } else {
+        const existingMap = new Map(editableRecipe.map(r => [r.ingredientId, r]));
+        ingredientsToImport.forEach(r => {
+          existingMap.set(r.ingredientId, { ...r });
+        });
+        newRecipeList = Array.from(existingMap.values());
+      }
+
+      let calculatedCost = 0;
+      newRecipeList.forEach(r => {
+        const ing = ingredients.find(i => i.id === r.ingredientId);
+        if (ing) {
+          calculatedCost += calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).lineCost;
+        }
+      });
+
+      setEditableRecipe(newRecipeList);
+      updateMenuItemRecipe(currentRecipeMenuItem.id, newRecipeList, calculatedCost);
+      setIsCopyRecipeModalOpen(false);
+      setSaveSuccessToast(`คัดลอกสูตรจาก "${srcItem.name}" มาใส่ "${currentRecipeMenuItem.name}" สำเร็จ (${newRecipeList.length} วัตถุดิบ, ต้นทุน ฿${calculatedCost.toFixed(2)})`);
+      setTimeout(() => setSaveSuccessToast(null), 4000);
+    } else {
+      if (copyTargetMenuItemIds.length === 0) {
+        alert('กรุณาเลือกเมนูปลายทางอย่างน้อย 1 เมนู');
+        return;
+      }
+
+      const ingredientsToExport = editableRecipe.filter(r => copySelectedIngIds.includes(r.ingredientId));
+      if (ingredientsToExport.length === 0) {
+        alert('กรุณาเลือกวัตถุดิบที่ต้องการคัดลอกอย่างน้อย 1 รายการ');
+        return;
+      }
+
+      copyTargetMenuItemIds.forEach(targetId => {
+        const targetItem = menuItems.find(m => m.id === targetId);
+        if (!targetItem) return;
+
+        let finalRecipe: RecipeIngredient[] = [];
+        if (copyStrategy === 'replace') {
+          finalRecipe = ingredientsToExport.map(r => ({ ...r }));
+        } else {
+          const map = new Map((targetItem.recipe || []).map(r => [r.ingredientId, r]));
+          ingredientsToExport.forEach(r => {
+            map.set(r.ingredientId, { ...r });
+          });
+          finalRecipe = Array.from(map.values());
+        }
+
+        let calculatedCost = 0;
+        finalRecipe.forEach(r => {
+          const ing = ingredients.find(i => i.id === r.ingredientId);
+          if (ing) {
+            calculatedCost += calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).lineCost;
+          }
+        });
+
+        updateMenuItemRecipe(targetId, finalRecipe, calculatedCost);
+      });
+
+      setIsCopyRecipeModalOpen(false);
+      setSaveSuccessToast(`คัดลอกสูตรจาก "${currentRecipeMenuItem?.name}" ไปยัง ${copyTargetMenuItemIds.length} เมนูเรียบร้อยแล้ว`);
+      setTimeout(() => setSaveSuccessToast(null), 4000);
+    }
   };
 
   // Category labels helper
@@ -2217,6 +2412,20 @@ export const RecipeCostingView: React.FC = () => {
           {activeSubTab === 'menu' && (
             <div className="flex items-center space-x-2">
               <button
+                onClick={() => {
+                  if (confirm('คุณต้องการกู้คืนเมนูมาตรฐาน (เช่น กะเพราทะเล, กะเพราเนื้อโคขุน ฯลฯ) ที่อาจจะขาดหายไปกลับมาใช่หรือไม่?')) {
+                    restoreDefaultMenuItems();
+                    setSaveSuccessToast('กู้คืนเมนูมาตรฐานเรียบร้อยแล้ว');
+                    setTimeout(() => setSaveSuccessToast(null), 3500);
+                  }
+                }}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition shadow-sm active:scale-95"
+                title="กู้คืนเมนูมาตรฐานของระบบที่อาจขาดหายไป"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+                <span>กู้คืนเมนูเริ่มต้น</span>
+              </button>
+              <button
                 onClick={() => setIsCategoryModalOpen(true)}
                 className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition shadow-sm active:scale-95"
               >
@@ -2243,6 +2452,19 @@ export const RecipeCostingView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Save Success Toast Banner */}
+      {saveSuccessToast && (
+        <div className="p-3 bg-emerald-500/15 border border-emerald-500/40 rounded-xl text-emerald-400 text-xs font-bold flex items-center justify-between shadow-lg">
+          <div className="flex items-center space-x-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            <span>{saveSuccessToast}</span>
+          </div>
+          <button onClick={() => setSaveSuccessToast(null)} className="text-emerald-400/60 hover:text-emerald-300 ml-3">
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Sub-Tab Navigation Bar */}
       <div className="flex bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800 gap-2">
@@ -2353,6 +2575,18 @@ export const RecipeCostingView: React.FC = () => {
                           {getCategoryName(item.category)}
                         </span>
                         <div className="flex items-center space-x-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecipeMenuItemId(item.id);
+                              setActiveSubTab('recipes');
+                              handleOpenCopyRecipeModal('from', item.id);
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-cyan-400 bg-slate-800/80 hover:bg-slate-800 rounded-lg transition"
+                            title="คัดลอกสูตรอาหารสำหรับเมนูนี้"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
                           <button
                             onClick={() => handleOpenEditMenu(item)}
                             className="p-1.5 text-slate-400 hover:text-amber-400 bg-slate-800/80 hover:bg-slate-800 rounded-lg transition"
@@ -2509,21 +2743,33 @@ export const RecipeCostingView: React.FC = () => {
           {/* Dish Selector & Cost Card */}
           <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold text-amber-400 uppercase tracking-wider block">
                   เลือกเมนูที่ต้องการปรับสูตรวัตถุดิบ:
                 </label>
-                <select
-                  value={selectedRecipeMenuItemId}
-                  onChange={e => setSelectedRecipeMenuItemId(e.target.value)}
-                  className="bg-slate-950 border border-slate-700 text-slate-100 rounded-xl px-4 py-2 text-sm font-bold focus:outline-none focus:border-amber-500 transition min-w-[280px]"
-                >
-                  {menuItems.map(item => (
-                    <option key={item.id} value={item.id}>
-                      {item.name} (ราคา ฿{item.price})
-                    </option>
-                  ))}
-                </select>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={selectedRecipeMenuItemId}
+                    onChange={e => setSelectedRecipeMenuItemId(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 text-slate-100 rounded-xl px-4 py-2 text-sm font-bold focus:outline-none focus:border-amber-500 transition min-w-[260px]"
+                  >
+                    {menuItems.map(item => (
+                      <option key={item.id} value={item.id}>
+                        {item.name} (ราคา ฿{item.price})
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCopyRecipeModal('from')}
+                    className="px-3 py-2 bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-600/40 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition active:scale-95 shadow-sm"
+                    title="คัดลอกสูตรจากเมนูอื่นมาใส่เมนูนี้"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>คัดลอกจากเมนูอื่น</span>
+                  </button>
+                </div>
               </div>
 
               {currentRecipeMenuItem && (
@@ -2550,22 +2796,159 @@ export const RecipeCostingView: React.FC = () => {
           {/* Recipe Ingredients Table & Controls */}
           {currentRecipeMenuItem && (
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
                   <FlaskConical className="w-4 h-4 text-amber-400" />
                   <span>วัตถุดิบในสูตรของ "{currentRecipeMenuItem.name}"</span>
                 </h3>
-                <button
-                  onClick={handleSaveRecipe}
-                  className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-black text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-emerald-950/50 transition"
-                >
-                  <Save className="w-4 h-4 stroke-[3]" />
-                  <span>บันทึกสูตรอาหาร</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCopyRecipeModal('from')}
+                    className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition active:scale-95 shadow-sm"
+                    title="คัดลอกสูตรจากเมนูอื่นมาใส่เมนูนี้"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>คัดลอกจากเมนูอื่น</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCopyRecipeModal('to')}
+                    className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition active:scale-95 shadow-sm"
+                    title="ส่งสูตรนี้ไปใช้กับเมนูอื่น"
+                  >
+                    <Share2 className="w-3.5 h-3.5 text-amber-400" />
+                    <span>ใช้กับเมนูอื่น...</span>
+                  </button>
+
+                  {editableRecipe.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearAllRecipeIngredients}
+                      className="px-3 py-2 bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition active:scale-95"
+                      title="ลบวัตถุดิบทั้งหมดในสูตรนี้"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                      <span>ล้างสูตร</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSaveRecipe}
+                    className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-black text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-emerald-950/50 transition active:scale-95"
+                  >
+                    <Save className="w-4 h-4 stroke-[3]" />
+                    <span>บันทึกสูตรอาหาร</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Ingredients List */}
-              <div className="overflow-x-auto">
+              {/* Mobile View (Cards) - Optimized for Phones so Delete Button is Never Hidden */}
+              <div className="space-y-3 sm:hidden">
+                {editableRecipe.length === 0 ? (
+                  <div className="p-6 text-center text-slate-500 bg-slate-950 rounded-xl border border-slate-800">
+                    ยังไม่ได้กำหนดวัตถุดิบในสูตรเมนูนี้
+                  </div>
+                ) : (
+                  editableRecipe.map(rec => {
+                    const ing = ingredients.find(i => i.id === rec.ingredientId);
+                    const calc = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit);
+                    const availableUnits = ing ? getAvailableRecipeUnits(ing.unit) : [];
+                    const isAbnormalCost = calc.lineCost > 500;
+
+                    return (
+                      <div
+                        key={rec.ingredientId}
+                        className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-3 shadow-md"
+                      >
+                        {/* Header: Name + Stock Price + Prominent Red Delete Button */}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-slate-100 text-sm truncate">
+                              {ing ? ing.name : rec.ingredientId}
+                            </div>
+                            <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                              ต้นทุนสต๊อก: <span className="text-amber-300 font-semibold">{ing ? `฿${ing.unitCost} / ${ing.unit}` : '-'}</span>
+                            </div>
+                          </div>
+
+                          {/* Accessible Red Delete Button - Easy to tap on Mobile */}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveRecipeIngredient(rec.ingredientId)}
+                            className="px-3 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/40 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition active:scale-95 shrink-0 shadow-sm"
+                            title="ลบวัตถุดิบนี้ออกจากสูตร"
+                          >
+                            <Trash2 className="w-4 h-4 text-rose-400" />
+                            <span>ลบรายการ</span>
+                          </button>
+                        </div>
+
+                        {/* Amount & Unit Selector */}
+                        <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs text-slate-300 font-semibold shrink-0">ปริมาณต่อจาน:</span>
+                            <div className="flex items-center space-x-1.5 flex-1 max-w-[210px] justify-end">
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={rec.amountNeeded}
+                                onChange={e => handleUpdateRecipeAmount(rec.ingredientId, parseFloat(e.target.value) || 0)}
+                                className="w-20 bg-slate-950 border border-slate-700 text-amber-300 font-mono font-bold text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-500 text-center"
+                              />
+                              {availableUnits.length > 1 ? (
+                                <select
+                                  value={rec.recipeUnit || (availableUnits.some(u => u.val === ing?.unit) ? ing?.unit : availableUnits[0]?.val)}
+                                  onChange={e => handleUpdateRecipeUnit(rec.ingredientId, e.target.value)}
+                                  className="bg-slate-950 border border-slate-700 text-amber-300 font-bold text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-500"
+                                >
+                                  {availableUnits.map(u => (
+                                    <option key={u.val} value={u.val}>{u.label}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="text-slate-400 text-xs font-semibold px-2">{ing?.unit}</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Subtotal Cost for this ingredient */}
+                          <div className="flex items-center justify-between pt-1.5 border-t border-slate-800/80 text-xs">
+                            <span className="text-slate-400">ต้นทุนต่อจานนี้:</span>
+                            <span className={`font-mono font-extrabold ${isAbnormalCost ? 'text-rose-400 text-sm' : 'text-emerald-400'}`}>
+                              ฿{calc.lineCost.toFixed(2)}
+                            </span>
+                          </div>
+
+                          {/* Warning helper if user accidentally used kg instead of grams */}
+                          {isAbnormalCost && (
+                            <div className="bg-rose-950/60 border border-rose-800/80 rounded-lg p-2.5 text-[11px] text-rose-200 space-y-1.5">
+                              <div className="font-bold flex items-center space-x-1">
+                                <span>⚠️ ต้นทุนสูงผิดปกติ (฿{calc.lineCost.toLocaleString()})</span>
+                              </div>
+                              <div className="text-slate-300 text-[11px]">
+                                ต้องการเปลี่ยนหน่วยเป็น <strong>กรัม (g)</strong> หรือไม่?
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateRecipeUnit(rec.ingredientId, 'g')}
+                                className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[11px] font-bold transition active:scale-95"
+                              >
+                                เปลี่ยนเป็นหน่วย "กรัม (g)" ทันที
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Desktop View (Table) */}
+              <div className="hidden sm:block overflow-x-auto">
                 <table className="w-full text-left text-xs text-slate-200">
                   <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800">
                     <tr>
@@ -2588,9 +2971,10 @@ export const RecipeCostingView: React.FC = () => {
                         const ing = ingredients.find(i => i.id === rec.ingredientId);
                         const calc = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit);
                         const availableUnits = ing ? getAvailableRecipeUnits(ing.unit) : [];
+                        const isAbnormalCost = calc.lineCost > 500;
 
                         return (
-                          <tr key={rec.ingredientId} className="hover:bg-slate-800/40">
+                          <tr key={rec.ingredientId} className="hover:bg-slate-800/40 transition">
                             <td className="p-3 font-semibold text-slate-100">
                               {ing ? ing.name : rec.ingredientId}
                             </td>
@@ -2620,6 +3004,16 @@ export const RecipeCostingView: React.FC = () => {
                                 ) : (
                                   <span className="text-slate-400 font-medium">{ing?.unit}</span>
                                 )}
+                                {isAbnormalCost && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateRecipeUnit(rec.ingredientId, 'g')}
+                                    className="px-2 py-0.5 bg-rose-500/20 text-rose-400 border border-rose-500/40 rounded text-[10px] font-bold hover:bg-rose-500/30"
+                                    title="เปลี่ยนเป็นกรัม"
+                                  >
+                                    เปลี่ยนเป็น (g)
+                                  </button>
+                                )}
                               </div>
                             </td>
                             <td className="p-3 font-mono font-bold text-rose-400">
@@ -2627,11 +3021,13 @@ export const RecipeCostingView: React.FC = () => {
                             </td>
                             <td className="p-3 text-right">
                               <button
+                                type="button"
                                 onClick={() => handleRemoveRecipeIngredient(rec.ingredientId)}
-                                className="p-1.5 text-slate-400 hover:text-rose-400 bg-slate-800 hover:bg-slate-700 rounded-lg transition"
+                                className="px-2.5 py-1.5 text-rose-400 hover:text-white bg-rose-500/15 hover:bg-rose-600 border border-rose-500/30 rounded-lg transition text-xs font-bold flex items-center space-x-1 ml-auto active:scale-95"
                                 title="ลบออกจากสูตร"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
+                                <span>ลบ</span>
                               </button>
                             </td>
                           </tr>
@@ -2643,27 +3039,68 @@ export const RecipeCostingView: React.FC = () => {
               </div>
 
               {/* Add Ingredient Selector Row */}
-              <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row items-center gap-3">
-                <span className="text-xs text-slate-400 font-bold">เพิ่มวัตถุดิบลงในสูตร:</span>
-                <select
-                  onChange={e => {
-                    if (e.target.value) {
-                      handleAddIngredientToRecipe(e.target.value);
-                      e.target.value = '';
-                    }
-                  }}
-                  defaultValue=""
-                  className="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-amber-500"
-                >
-                  <option value="" disabled>-- เลือกวัตถุดิบจากคลัง --</option>
-                  {ingredients
-                    .filter(i => !editableRecipe.some(r => r.ingredientId === i.id))
-                    .map(i => (
-                      <option key={i.id} value={i.id}>
-                        {i.name} ({i.unitCost} ฿/{i.unit})
-                      </option>
-                    ))}
-                </select>
+              <div className="pt-3 border-t border-slate-800 space-y-2">
+                {/* Quick Add Chips for frequent items */}
+                {frequentIngredients.filter(i => !editableRecipe.some(r => r.ingredientId === i.id)).length > 0 && (
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+                    <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1 shrink-0">
+                      <Star className="w-3 h-3 fill-amber-400" />
+                      <span>เพิ่มด่วน (ใช้บ่อย):</span>
+                    </span>
+                    {frequentIngredients
+                      .filter(i => !editableRecipe.some(r => r.ingredientId === i.id))
+                      .slice(0, 5)
+                      .map(ing => (
+                        <button
+                          key={ing.id}
+                          type="button"
+                          onClick={() => handleAddIngredientToRecipe(ing.id)}
+                          className="px-2.5 py-1 bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-slate-200 border border-slate-700/80 rounded-lg text-xs font-bold transition shrink-0 flex items-center space-x-1 active:scale-95"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>{ing.name}</span>
+                        </button>
+                      ))}
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <span className="text-xs text-slate-400 font-bold shrink-0">เพิ่มวัตถุดิบลงในสูตร:</span>
+                  <select
+                    onChange={e => {
+                      if (e.target.value) {
+                        handleAddIngredientToRecipe(e.target.value);
+                        e.target.value = '';
+                      }
+                    }}
+                    defaultValue=""
+                    className="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-amber-500 flex-1 min-w-0"
+                  >
+                    <option value="" disabled>-- เลือกวัตถุดิบจากคลัง (รายการใช้บ่อยอยู่ด้านบน) --</option>
+                    {/* Frequently used optgroup */}
+                    {frequentIngredients.filter(i => !editableRecipe.some(r => r.ingredientId === i.id)).length > 0 && (
+                      <optgroup label="⭐ วัตถุดิบที่ใช้บ่อย (บ่อยที่สุด)">
+                        {frequentIngredients
+                          .filter(i => !editableRecipe.some(r => r.ingredientId === i.id))
+                          .map(i => (
+                            <option key={`fav-${i.id}`} value={i.id}>
+                              ⭐ {i.name} ({i.unitCost} ฿/{i.unit})
+                            </option>
+                          ))}
+                      </optgroup>
+                    )}
+                    {/* Remaining ingredients optgroup */}
+                    <optgroup label="📦 วัตถุดิบอื่นๆ ทั้งหมด">
+                      {otherIngredients
+                        .filter(i => !editableRecipe.some(r => r.ingredientId === i.id))
+                        .map(i => (
+                          <option key={i.id} value={i.id}>
+                            {i.name} ({i.unitCost} ฿/{i.unit})
+                          </option>
+                        ))}
+                    </optgroup>
+                  </select>
+                </div>
               </div>
             </div>
           )}
@@ -3250,16 +3687,449 @@ export const RecipeCostingView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  const deletedName = deleteConfirmItem.name;
                   if (deleteConfirmItem.type === 'menu') {
                     deleteMenuItem(deleteConfirmItem.id);
                   } else {
                     deleteAddOn(deleteConfirmItem.id);
                   }
                   setDeleteConfirmItem(null);
+                  setSaveSuccessToast(`ลบ "${deletedName}" ออกจากระบบเรียบร้อยแล้ว`);
+                  setTimeout(() => setSaveSuccessToast(null), 3500);
                 }}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl shadow-md transition"
               >
                 ยืนยันลบรายการ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: COPY RECIPE BETWEEN DISHES */}
+      {isCopyRecipeModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-cyan-400">
+                  <Copy className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-100 text-sm">
+                    คัดลอกและแชร์สูตรอาหาร (Copy Recipe)
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    นำสูตรและสัดส่วนวัตถุดิบจากเมนูอื่นมาใช้ หรือส่งสูตรนี้ไปให้เมนูอื่น
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCopyRecipeModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Mode Toggle Tabs */}
+            <div className="p-3 bg-slate-950/60 border-b border-slate-800 grid grid-cols-2 gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleOpenCopyRecipeModal('from')}
+                className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 ${
+                  copyRecipeMode === 'from'
+                    ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                    : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <ArrowLeft className="w-3.5 h-3.5 rotate-180" />
+                <span>คัดลอกจากเมนูอื่นมาใส่เมนูนี้</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleOpenCopyRecipeModal('to')}
+                className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 ${
+                  copyRecipeMode === 'to'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>ส่งสูตรนี้ไปใช้กับเมนูอื่น</span>
+              </button>
+            </div>
+
+            {/* Modal Body: Scrollable */}
+            <div className="p-4 space-y-4 overflow-y-auto flex-1 text-xs text-slate-200">
+              {copyRecipeMode === 'from' ? (
+                <>
+                  {/* Target reminder */}
+                  <div className="p-2.5 bg-cyan-950/40 border border-cyan-800/50 rounded-xl text-xs text-cyan-200 flex items-center justify-between">
+                    <div>
+                      เมนูที่จะรับสูตร: <strong className="text-white font-bold text-sm">"{currentRecipeMenuItem?.name}"</strong>
+                    </div>
+                    <span className="text-[11px] text-cyan-300 bg-cyan-900/60 px-2 py-0.5 rounded-md font-mono font-bold">
+                      ราคา ฿{currentRecipeMenuItem?.price}
+                    </span>
+                  </div>
+
+                  {/* Select Source Dish */}
+                  <div className="space-y-1.5">
+                    <label className="block text-slate-300 font-bold">
+                      เลือกเมนูต้นทางที่ต้องการคัดลอกสูตร: *
+                    </label>
+                    <select
+                      value={copySourceMenuItemId}
+                      onChange={e => handleSelectCopySource(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-xl px-3 py-2.5 text-xs sm:text-sm font-semibold focus:outline-none focus:border-cyan-500"
+                    >
+                      <option value="" disabled>-- เลือกเมนูต้นทาง --</option>
+                      {menuItems
+                        .filter(m => m.id !== currentRecipeMenuItem?.id)
+                        .map(item => {
+                          const count = item.recipe ? item.recipe.length : 0;
+                          return (
+                            <option key={item.id} value={item.id}>
+                              {item.name} {count > 0 ? `(มี ${count} วัตถุดิบ, ต้นทุน ฿${item.costPrice?.toFixed(2) || '0.00'})` : '(ยังไม่มีสูตร)'}
+                            </option>
+                          );
+                        })}
+                    </select>
+                  </div>
+
+                  {/* Preview of ingredients from source */}
+                  {(() => {
+                    const srcItem = menuItems.find(m => m.id === copySourceMenuItemId);
+                    const srcRecipe = srcItem?.recipe || [];
+
+                    if (!srcItem) {
+                      return (
+                        <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 text-center text-slate-500">
+                          กรุณาเลือกเมนูต้นทางเพื่อดูวัตถุดิบ
+                        </div>
+                      );
+                    }
+
+                    if (srcRecipe.length === 0) {
+                      return (
+                        <div className="p-4 bg-amber-950/30 border border-amber-800/40 rounded-xl text-center text-amber-300">
+                          เมนู "{srcItem.name}" ยังไม่ได้กำหนดสูตรวัตถุดิบ
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-300">
+                            เลือกวัตถุดิบที่ต้องการคัดลอก ({copySelectedIngIds.length}/{srcRecipe.length}):
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSelectAllCopyIngs(srcRecipe.map(r => r.ingredientId))}
+                            className="text-cyan-400 hover:text-cyan-300 text-xs font-semibold underline"
+                          >
+                            {copySelectedIngIds.length === srcRecipe.length ? 'ยกเลิกการเลือกทั้งหมด' : 'เลือกทั้งหมด'}
+                          </button>
+                        </div>
+
+                        <div className="space-y-1.5 max-h-56 overflow-y-auto bg-slate-950 p-2 rounded-xl border border-slate-800">
+                          {srcRecipe.map(rec => {
+                            const ing = ingredients.find(i => i.id === rec.ingredientId);
+                            const isChecked = copySelectedIngIds.includes(rec.ingredientId);
+                            const calc = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit);
+
+                            return (
+                              <label
+                                key={rec.ingredientId}
+                                className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition border ${
+                                  isChecked
+                                    ? 'bg-cyan-950/30 border-cyan-800/60 text-slate-100'
+                                    : 'bg-slate-900/40 border-transparent text-slate-400 hover:bg-slate-900'
+                                }`}
+                              >
+                                <div className="flex items-center space-x-2.5 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => {
+                                      setCopySelectedIngIds(prev =>
+                                        prev.includes(rec.ingredientId)
+                                          ? prev.filter(id => id !== rec.ingredientId)
+                                          : [...prev, rec.ingredientId]
+                                      );
+                                    }}
+                                    className="w-4 h-4 rounded text-cyan-500 bg-slate-900 border-slate-700 focus:ring-0 focus:ring-offset-0"
+                                  />
+                                  <span className="font-bold truncate text-xs">
+                                    {ing ? ing.name : rec.ingredientId}
+                                  </span>
+                                </div>
+                                <div className="flex items-center space-x-2.5 shrink-0 text-right font-mono text-xs">
+                                  <span className="text-amber-300 font-semibold">
+                                    {rec.amountNeeded} {rec.recipeUnit || ing?.unit}
+                                  </span>
+                                  <span className="text-emerald-400 font-bold">
+                                    ฿{calc.lineCost.toFixed(2)}
+                                  </span>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Copy Strategy Options */}
+                  <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
+                    <span className="block font-bold text-slate-300 text-xs">รูปแบบการแทนที่สูตร:</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <label className={`flex items-center space-x-2.5 p-2.5 rounded-lg border cursor-pointer transition ${
+                        copyStrategy === 'replace' ? 'bg-cyan-950/40 border-cyan-600 text-cyan-200' : 'bg-slate-900/50 border-slate-800 text-slate-400'
+                      }`}>
+                        <input
+                          type="radio"
+                          name="copyStrategy"
+                          checked={copyStrategy === 'replace'}
+                          onChange={() => setCopyStrategy('replace')}
+                          className="text-cyan-500 focus:ring-0"
+                        />
+                        <div>
+                          <div className="font-bold text-xs text-white">แทนที่สูตรปัจจุบันทั้งหมด</div>
+                          <div className="text-[10px] text-slate-400">ล้างสูตรเดิมและใช้สูตรที่คัดลอกมาแทน</div>
+                        </div>
+                      </label>
+
+                      <label className={`flex items-center space-x-2.5 p-2.5 rounded-lg border cursor-pointer transition ${
+                        copyStrategy === 'merge' ? 'bg-cyan-950/40 border-cyan-600 text-cyan-200' : 'bg-slate-900/50 border-slate-800 text-slate-400'
+                      }`}>
+                        <input
+                          type="radio"
+                          name="copyStrategy"
+                          checked={copyStrategy === 'merge'}
+                          onChange={() => setCopyStrategy('merge')}
+                          className="text-cyan-500 focus:ring-0"
+                        />
+                        <div>
+                          <div className="font-bold text-xs text-white">รวมเข้ากับสูตรปัจจุบัน</div>
+                          <div className="text-[10px] text-slate-400">เก็บวัตถุดิบเดิมไว้และเพิ่มรายการนี้เข้าไป</div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Mode TO: Copy this dish's recipe to other dishes */}
+                  <div className="p-2.5 bg-amber-950/40 border border-amber-800/50 rounded-xl text-xs text-amber-200 flex items-center justify-between">
+                    <div>
+                      เมนูต้นทางที่จะแชร์สูตร: <strong className="text-white font-bold text-sm">"{currentRecipeMenuItem?.name}"</strong>
+                    </div>
+                    <span className="text-[11px] text-amber-300 bg-amber-900/60 px-2 py-0.5 rounded-md font-mono font-bold">
+                      {editableRecipe.length} วัตถุดิบ
+                    </span>
+                  </div>
+
+                  {editableRecipe.length === 0 ? (
+                    <div className="p-4 bg-rose-950/30 border border-rose-800/40 rounded-xl text-center text-rose-300">
+                      เมนู "{currentRecipeMenuItem?.name}" ยังไม่มีสูตรวัตถุดิบ กรุณากำหนดสูตรก่อนส่งต่อ
+                    </div>
+                  ) : (
+                    <>
+                      {/* Ingredient checklist from current menu */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-300">
+                            วัตถุดิบที่จะส่งไป ({copySelectedIngIds.length}/{editableRecipe.length}):
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSelectAllCopyIngs(editableRecipe.map(r => r.ingredientId))}
+                            className="text-amber-400 hover:text-amber-300 text-xs font-semibold underline"
+                          >
+                            {copySelectedIngIds.length === editableRecipe.length ? 'ยกเลิกการเลือก' : 'เลือกทั้งหมด'}
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 p-2 bg-slate-950 rounded-xl border border-slate-800 max-h-32 overflow-y-auto">
+                          {editableRecipe.map(r => {
+                            const ing = ingredients.find(i => i.id === r.ingredientId);
+                            const isChecked = copySelectedIngIds.includes(r.ingredientId);
+                            return (
+                              <button
+                                key={r.ingredientId}
+                                type="button"
+                                onClick={() => {
+                                  setCopySelectedIngIds(prev =>
+                                    prev.includes(r.ingredientId)
+                                      ? prev.filter(id => id !== r.ingredientId)
+                                      : [...prev, r.ingredientId]
+                                  );
+                                }}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-semibold border flex items-center space-x-1.5 transition ${
+                                  isChecked
+                                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                                    : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-700'
+                                }`}
+                              >
+                                <span>{ing ? ing.name : r.ingredientId}</span>
+                                <span className="font-mono text-[10px] text-slate-400">({r.amountNeeded} {r.recipeUnit || ing?.unit})</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Target dishes selection */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-300">
+                            เลือกเมนูปลายทางที่จะนำสูตรนี้ไปใช้ ({copyTargetMenuItemIds.length} เมนู):
+                          </span>
+                          <div className="flex items-center space-x-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleSelectAllTargetsInCategory('all')}
+                              className="text-[11px] text-cyan-400 hover:text-cyan-300 font-bold px-2 py-0.5 bg-slate-800 rounded-lg hover:bg-slate-700 transition"
+                            >
+                              เลือกทุกเมนู
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSelectAllTargetsInCategory(currentRecipeMenuItem?.category)}
+                              className="text-[11px] text-amber-400 hover:text-amber-300 font-bold px-2 py-0.5 bg-slate-800 rounded-lg hover:bg-slate-700 transition"
+                            >
+                              เฉพาะหมวดเดียวกัน
+                            </button>
+                            {copyTargetMenuItemIds.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setCopyTargetMenuItemIds([])}
+                                className="text-[11px] text-rose-400 hover:text-rose-300 font-bold px-2 py-0.5 bg-slate-800 rounded-lg hover:bg-slate-700 transition"
+                              >
+                                ล้าง
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto bg-slate-950 p-2 rounded-xl border border-slate-800">
+                          {menuItems
+                            .filter(m => m.id !== currentRecipeMenuItem?.id)
+                            .map(item => {
+                              const isSelected = copyTargetMenuItemIds.includes(item.id);
+                              const hasRecipe = item.recipe && item.recipe.length > 0;
+
+                              return (
+                                <label
+                                  key={item.id}
+                                  className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition border ${
+                                    isSelected
+                                      ? 'bg-amber-950/30 border-amber-800/60 text-slate-100'
+                                      : 'bg-slate-900/40 border-transparent text-slate-400 hover:bg-slate-900'
+                                  }`}
+                                >
+                                  <div className="flex items-center space-x-2 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => handleToggleCopyTarget(item.id)}
+                                      className="w-4 h-4 rounded text-amber-500 bg-slate-900 border-slate-700 focus:ring-0"
+                                    />
+                                    <div className="min-w-0">
+                                      <div className="font-bold text-xs truncate">{item.name}</div>
+                                      <div className="text-[10px] text-slate-500">
+                                        {hasRecipe ? `มีสูตรเดิม ${item.recipe?.length} วัตถุดิบ` : 'ยังไม่มีสูตร'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <span className="font-mono text-emerald-400 text-xs font-bold shrink-0">
+                                    ฿{item.price}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                        </div>
+                      </div>
+
+                      {/* Strategy for target items */}
+                      <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
+                        <span className="block font-bold text-slate-300 text-xs">รูปแบบการคัดลอก:</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <label className={`flex items-center space-x-2.5 p-2.5 rounded-lg border cursor-pointer transition ${
+                            copyStrategy === 'replace' ? 'bg-amber-950/40 border-amber-600 text-amber-200' : 'bg-slate-900/50 border-slate-800 text-slate-400'
+                          }`}>
+                            <input
+                              type="radio"
+                              name="copyStrategyTo"
+                              checked={copyStrategy === 'replace'}
+                              onChange={() => setCopyStrategy('replace')}
+                              className="text-amber-500 focus:ring-0"
+                            />
+                            <div>
+                              <div className="font-bold text-xs text-white">แทนที่สูตรเดิมของเมนูปลายทาง</div>
+                              <div className="text-[10px] text-slate-400">ล้างสูตรเดิมของเมนูปลายทางทั้งหมด</div>
+                            </div>
+                          </label>
+
+                          <label className={`flex items-center space-x-2.5 p-2.5 rounded-lg border cursor-pointer transition ${
+                            copyStrategy === 'merge' ? 'bg-amber-950/40 border-amber-600 text-amber-200' : 'bg-slate-900/50 border-slate-800 text-slate-400'
+                          }`}>
+                            <input
+                              type="radio"
+                              name="copyStrategyTo"
+                              checked={copyStrategy === 'merge'}
+                              onChange={() => setCopyStrategy('merge')}
+                              className="text-amber-500 focus:ring-0"
+                            />
+                            <div>
+                              <div className="font-bold text-xs text-white">เพิ่มต่อท้ายสูตรเดิม</div>
+                              <div className="text-[10px] text-slate-400">เก็บสูตรเดิมไว้และเพิ่มวัตถุดิบเข้าไป</div>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsCopyRecipeModalOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition"
+              >
+                ยกเลิก
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmCopyRecipe}
+                disabled={
+                  copyRecipeMode === 'from'
+                    ? !copySourceMenuItemId || copySelectedIngIds.length === 0
+                    : copyTargetMenuItemIds.length === 0 || copySelectedIngIds.length === 0
+                }
+                className={`px-5 py-2.5 font-black text-xs rounded-xl flex items-center space-x-2 transition active:scale-95 shadow-md ${
+                  (copyRecipeMode === 'from' ? !copySourceMenuItemId || copySelectedIngIds.length === 0 : copyTargetMenuItemIds.length === 0 || copySelectedIngIds.length === 0)
+                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    : copyRecipeMode === 'from'
+                      ? 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-slate-950 shadow-cyan-950/50'
+                      : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 shadow-amber-950/50'
+                }`}
+              >
+                <Check className="w-4 h-4 stroke-[3]" />
+                <span>
+                  {copyRecipeMode === 'from'
+                    ? 'ยืนยันคัดลอกสูตรมาใช้'
+                    : `ยืนยันส่งสูตรไปยัง (${copyTargetMenuItemIds.length}) เมนู`}
+                </span>
               </button>
             </div>
           </div>
