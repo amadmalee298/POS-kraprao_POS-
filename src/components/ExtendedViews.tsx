@@ -1881,6 +1881,8 @@ export const RecipeCostingView: React.FC = () => {
     updateMenuItem,
     deleteMenuItem,
     updateMenuItemRecipe,
+    batchUpdateMenuItemRecipes,
+    toggleMenuItemFrequent,
     toggleMenuItemAddOns,
     restoreDefaultMenuItems,
     addAddOn,
@@ -2337,6 +2339,7 @@ export const RecipeCostingView: React.FC = () => {
         return;
       }
 
+      const batchUpdates: { menuItemId: string; recipe: RecipeIngredient[]; costPrice: number }[] = [];
       copyTargetMenuItemIds.forEach(targetId => {
         const targetItem = menuItems.find(m => m.id === targetId);
         if (!targetItem) return;
@@ -2360,8 +2363,12 @@ export const RecipeCostingView: React.FC = () => {
           }
         });
 
-        updateMenuItemRecipe(targetId, finalRecipe, calculatedCost);
+        batchUpdates.push({ menuItemId: targetId, recipe: finalRecipe, costPrice: calculatedCost });
       });
+
+      if (batchUpdates.length > 0) {
+        batchUpdateMenuItemRecipes(batchUpdates);
+      }
 
       setIsCopyRecipeModalOpen(false);
       setSaveSuccessToast(`คัดลอกสูตรจาก "${currentRecipeMenuItem?.name}" ไปยัง ${copyTargetMenuItemIds.length} เมนูเรียบร้อยแล้ว`);
@@ -2575,6 +2582,18 @@ export const RecipeCostingView: React.FC = () => {
                           {getCategoryName(item.category)}
                         </span>
                         <div className="flex items-center space-x-1">
+                          <button
+                            type="button"
+                            onClick={() => toggleMenuItemFrequent(item.id)}
+                            className={`p-1.5 rounded-lg transition ${
+                              item.isFrequent
+                                ? 'text-amber-400 bg-amber-500/20 hover:bg-amber-500/30'
+                                : 'text-slate-400 hover:text-amber-400 bg-slate-800/80 hover:bg-slate-800'
+                            }`}
+                            title={item.isFrequent ? 'เลิกปักหมุดเมนูใช้บ่อย' : 'ปักหมุดเมนูใช้บ่อย (แสดงบนสุดใน POS)'}
+                          >
+                            <Star className={`w-3.5 h-3.5 ${item.isFrequent ? 'fill-amber-400 text-amber-400' : ''}`} />
+                          </button>
                           <button
                             type="button"
                             onClick={() => {

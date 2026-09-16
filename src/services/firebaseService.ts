@@ -1026,7 +1026,10 @@ export async function fetchBranchInventoryFromFirestore(branchId: string = 'bran
             minStockAlert: typeof data.minStockAlert === 'number' ? data.minStockAlert : 0.01,
             unitCost: typeof data.unitCost === 'number' ? data.unitCost : 0,
             category: data.category || 'meat',
-            barcode: data.barcode || ''
+            barcode: data.barcode || '',
+            packageUnit: data.packageUnit || undefined,
+            packageSize: typeof data.packageSize === 'number' ? data.packageSize : undefined,
+            isFrequent: !!data.isFrequent
           });
         }
       });
@@ -1053,7 +1056,10 @@ export async function fetchBranchInventoryFromFirestore(branchId: string = 'bran
               minStockAlert: typeof data.minStockAlert === 'number' ? data.minStockAlert : 0.01,
               unitCost: typeof data.unitCost === 'number' ? data.unitCost : 0,
               category: data.category || 'meat',
-              barcode: data.barcode || ''
+              barcode: data.barcode || '',
+              packageUnit: data.packageUnit || undefined,
+              packageSize: typeof data.packageSize === 'number' ? data.packageSize : undefined,
+              isFrequent: !!data.isFrequent
             });
           }
         });
@@ -1082,19 +1088,35 @@ export async function syncIngredientToFirestore(
 
   try {
     const nowIso = new Date().toISOString();
+    const sanitizedUnitCost = typeof ingredient.unitCost === 'number' && !isNaN(ingredient.unitCost)
+      ? ingredient.unitCost
+      : parseFloat(String(ingredient.unitCost)) || 0;
+    const sanitizedCurrentStock = typeof ingredient.currentStock === 'number' && !isNaN(ingredient.currentStock)
+      ? ingredient.currentStock
+      : parseFloat(String(ingredient.currentStock)) || 0;
+    const sanitizedMinAlert = typeof ingredient.minStockAlert === 'number' && !isNaN(ingredient.minStockAlert)
+      ? ingredient.minStockAlert
+      : parseFloat(String(ingredient.minStockAlert)) || 0;
+    const sanitizedPkgSize = typeof ingredient.packageSize === 'number' && !isNaN(ingredient.packageSize) && ingredient.packageSize > 0
+      ? ingredient.packageSize
+      : (typeof ingredient.packageSize === 'string' && !isNaN(parseFloat(ingredient.packageSize)) ? parseFloat(ingredient.packageSize) : null);
+
     const payload = {
       ingredientId: ingredient.id,
       id: ingredient.id,
-      name: ingredient.name,
-      currentStock: ingredient.currentStock,
-      minStockAlert: ingredient.minStockAlert,
-      unit: ingredient.unit,
-      unitCost: ingredient.unitCost,
-      category: ingredient.category,
+      name: ingredient.name || '',
+      currentStock: sanitizedCurrentStock,
+      minStockAlert: sanitizedMinAlert,
+      unit: ingredient.unit || 'pcs',
+      unitCost: sanitizedUnitCost,
+      category: ingredient.category || 'dry_good',
       barcode: ingredient.barcode || '',
+      packageUnit: ingredient.packageUnit || null,
+      packageSize: sanitizedPkgSize,
+      isFrequent: !!ingredient.isFrequent,
       branchId,
       branchName,
-      isLowStock: ingredient.currentStock <= ingredient.minStockAlert,
+      isLowStock: sanitizedCurrentStock <= sanitizedMinAlert,
       lastUpdated: nowIso,
       updatedAt: serverTimestamp()
     };
@@ -1106,6 +1128,16 @@ export async function syncIngredientToFirestore(
     // Save to global lookup collection
     const globalDocRef = doc(dbInstance, 'inventory', `${branchId}_${ingredient.id}`);
     await setDoc(globalDocRef, payload, { merge: true });
+
+    // Clean up any tombstone in deleted_records so this ingredient is recognized as active
+    try {
+      const tombstoneRef = doc(dbInstance, 'deleted_records', `ing_${branchId}_${ingredient.id}`);
+      await deleteDoc(tombstoneRef);
+    } catch {}
+    try {
+      const tombstoneRef2 = doc(dbInstance, 'deleted_records', `ing_${ingredient.id}`);
+      await deleteDoc(tombstoneRef2);
+    } catch {}
 
     return true;
   } catch (err) {
@@ -1129,33 +1161,10 @@ export async function deleteIngredientFromFirestore(
     await deleteDoc(branchDocRef);
 
     const globalPrefixedRef = doc(dbInstance, 'inventory', `${branchId}_${ingredientId}`);
-    await deleteDoc(globalPrefixedRef);
+    await deleteDoc(globalPrefixedRef).catch(() => {});
 
     const globalPlainRef = doc(dbInstance, 'inventory', ingredientId);
     await deleteDoc(globalPlainRef).catch(() => {});
-
-    // Delete any duplicate document by name in branch inventory or global inventory
-    if (ingredientName && ingredientName.trim()) {
-      try {
-        const qBranch = query(collection(dbInstance, 'branches', branchId, 'inventory'), where('name', '==', ingredientName.trim()));
-        const snapBranch = await getDocs(qBranch);
-        if (!snapBranch.empty) {
-          const batch = writeBatch(dbInstance);
-          snapBranch.forEach(d => batch.delete(d.ref));
-          await batch.commit();
-        }
-
-        const qGlobal = query(collection(dbInstance, 'inventory'), where('name', '==', ingredientName.trim()));
-        const snapGlobal = await getDocs(qGlobal);
-        if (!snapGlobal.empty) {
-          const batch2 = writeBatch(dbInstance);
-          snapGlobal.forEach(d => batch2.delete(d.ref));
-          await batch2.commit();
-        }
-      } catch (cleanErr) {
-        console.warn(`[Firebase Service] Note on duplicate cleanup for "${ingredientName}":`, cleanErr);
-      }
-    }
 
     // Record tombstone in deleted_records so all branches and real-time listeners honor the deletion
     const tombstoneRef = doc(dbInstance, 'deleted_records', `ing_${branchId}_${ingredientId}`);
@@ -1234,6 +1243,7 @@ export async function fetchMenuItemsFromFirestore(): Promise<MenuItem[]> {
         description: data.description || '',
         image: data.image || '',
         isPopular: !!data.isPopular,
+        isFrequent: !!data.isFrequent,
         recipe: Array.isArray(data.recipe) ? data.recipe : [],
         availableSpiceLevels: Array.isArray(data.availableSpiceLevels) ? data.availableSpiceLevels : undefined,
         availableProteins: Array.isArray(data.availableProteins) ? data.availableProteins : undefined,
@@ -1934,6 +1944,7 @@ export function subscribeToMenuItems(
           description: data.description || '',
           image: data.image || '',
           isPopular: !!data.isPopular,
+          isFrequent: !!data.isFrequent,
           recipe: Array.isArray(data.recipe) ? data.recipe : [],
           availableSpiceLevels: data.availableSpiceLevels,
           availableProteins: data.availableProteins,
@@ -1985,7 +1996,10 @@ export function subscribeToBranchInventory(
           unit: data.unit || 'pcs',
           unitCost: Number(data.unitCost) || 0,
           category: data.category || 'dry_good',
-          barcode: data.barcode || ''
+          barcode: data.barcode || '',
+          packageUnit: data.packageUnit || undefined,
+          packageSize: typeof data.packageSize === 'number' ? data.packageSize : undefined,
+          isFrequent: !!data.isFrequent
         });
       });
       onUpdate(ings, removedIds);

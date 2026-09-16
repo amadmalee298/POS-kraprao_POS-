@@ -137,8 +137,8 @@ export function useFrequentIngredients({
     ingredients.forEach(ing => {
       let score = 0;
       // High weight for pinned items
-      if (pinnedIds.includes(ing.id)) {
-        const pinRank = pinnedIds.indexOf(ing.id);
+      if (pinnedIds.includes(ing.id) || ing.isFrequent) {
+        const pinRank = pinnedIds.includes(ing.id) ? pinnedIds.indexOf(ing.id) : 0;
         score += 10000 - pinRank * 10;
       }
       // User manual / expense usage count
@@ -177,7 +177,7 @@ export function useFrequentIngredients({
     // Include all pinned items + top items with score > 0, up to maxFrequentCount
     const list = sortedIngredients.filter(ing => {
       const score = ingredientScores[ing.id] || 0;
-      return pinnedIds.includes(ing.id) || score > 0;
+      return pinnedIds.includes(ing.id) || ing.isFrequent || score > 0;
     });
 
     // If none have positive score, take the first min(maxFrequentCount, ingredients.length)

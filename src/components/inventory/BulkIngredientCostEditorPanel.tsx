@@ -33,6 +33,9 @@ export const BulkIngredientCostEditorPanel: React.FC = () => {
   const selectedIng = ingredients.find(i => i.id === selectedIngredientId) || ingredients[0];
 
   // 2. New Price & Target Margin Config
+  const [newUnitCostInput, setNewUnitCostInput] = useState<string>(
+    selectedIng?.unitCost !== undefined ? selectedIng.unitCost.toString() : '0'
+  );
   const [newUnitCost, setNewUnitCost] = useState<number>(selectedIng?.unitCost || 0);
   const [targetFoodCostPercent, setTargetFoodCostPercent] = useState<number>(30); // Target Food Cost % (default 30%)
   const [roundingOption, setRoundingOption] = useState<'nearest_5' | 'none' | 'ceil_10'>('nearest_5');
@@ -41,8 +44,9 @@ export const BulkIngredientCostEditorPanel: React.FC = () => {
   useEffect(() => {
     if (selectedIng) {
       setNewUnitCost(selectedIng.unitCost);
+      setNewUnitCostInput(selectedIng.unitCost.toString());
     }
-  }, [selectedIngredientId]);
+  }, [selectedIngredientId, selectedIng?.unitCost]);
 
   // 3. Affected Menu Items
   const affectedMenuItems = menuItems.filter(m =>
@@ -106,7 +110,9 @@ export const BulkIngredientCostEditorPanel: React.FC = () => {
   const handleApplyPercentage = (pct: number) => {
     if (!selectedIng) return;
     const updated = Number((selectedIng.unitCost * (1 + pct / 100)).toFixed(4));
-    setNewUnitCost(Math.max(0.001, updated));
+    const cleanVal = Math.max(0.001, updated);
+    setNewUnitCost(cleanVal);
+    setNewUnitCostInput(cleanVal.toString());
   };
 
   // Toggle all select
@@ -248,10 +254,17 @@ export const BulkIngredientCostEditorPanel: React.FC = () => {
                 <div className="relative">
                   <input
                     type="number"
-                    step="0.001"
+                    step="any"
                     min="0"
-                    value={newUnitCost}
-                    onChange={e => setNewUnitCost(parseFloat(e.target.value) || 0)}
+                    value={newUnitCostInput}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setNewUnitCostInput(val);
+                      const parsed = parseFloat(val);
+                      if (!isNaN(parsed)) {
+                        setNewUnitCost(parsed);
+                      }
+                    }}
                     className="w-full bg-slate-900 border border-amber-500/50 text-amber-300 text-base font-extrabold font-mono rounded-xl px-4 py-2.5 focus:outline-none focus:border-amber-400 pr-16"
                   />
                   <span className="absolute right-3 top-3 text-xs text-slate-400 font-bold">

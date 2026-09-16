@@ -28,8 +28,11 @@ import {
   Printer,
   Tag,
   Edit2,
+  Check,
+  Save,
   Scale,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Star
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot } from '../../types';
@@ -47,11 +50,13 @@ export const InventoryView: React.FC = () => {
     addIngredient,
     updateIngredient,
     deleteIngredients,
+    toggleIngredientFrequent,
     bulkUpdateIngredients,
     updateIngredientStock,
     updateIngredientPriceAndRecalculate,
     addStockLot,
     recordStockAdjustment,
+    addStockAdjustmentLog,
     stockAdjustmentLogs,
     currentUser,
     ingredientCategories,
@@ -99,10 +104,17 @@ export const InventoryView: React.FC = () => {
   const [editIngStock, setEditIngStock] = useState<number>(0);
   const [editIngMinAlert, setEditIngMinAlert] = useState<number>(0);
   const [editIngUnitCost, setEditIngUnitCost] = useState<number>(0);
+  const [editIngUnitCostInput, setEditIngUnitCostInput] = useState<string>('0');
+  const [editIngPackCostInput, setEditIngPackCostInput] = useState<string>('');
   const [editIngCat, setEditIngCat] = useState<string>('meat');
   const [editIngBarcode, setEditIngBarcode] = useState('');
   const [editIngPackageUnit, setEditIngPackageUnit] = useState('');
   const [editIngPackageSize, setEditIngPackageSize] = useState<string>('');
+
+  // Inline Price Editing in Table
+  const [inlineCostInputs, setInlineCostInputs] = useState<Record<string, string>>({});
+  const [editingCostId, setEditingCostId] = useState<string | null>(null);
+  const [savedCostIngId, setSavedCostIngId] = useState<string | null>(null);
 
   // Tab State
   const [activeTab, setActiveTab] = useState<'smart_audit' | 'forecast' | 'waste' | 'current' | 'usage' | 'stockcard'>('smart_audit');
@@ -286,6 +298,31 @@ export const InventoryView: React.FC = () => {
     }
   };
 
+  const handleStartEditInlineCost = (ing: Ingredient) => {
+    setEditingCostId(ing.id);
+    setInlineCostInputs(prev => ({
+      ...prev,
+      [ing.id]: ing.unitCost.toString()
+    }));
+  };
+
+  const handleCancelEditInlineCost = () => {
+    setEditingCostId(null);
+  };
+
+  const handleSaveInlineCost = (ingredientId: string) => {
+    const ing = ingredients.find(i => i.id === ingredientId);
+    if (!ing) return;
+    const rawVal = inlineCostInputs[ingredientId];
+    const parsedVal = rawVal !== undefined ? parseFloat(rawVal) : ing.unitCost;
+    if (!isNaN(parsedVal) && parsedVal >= 0) {
+      updateIngredientPriceAndRecalculate(ingredientId, parsedVal);
+      setSavedCostIngId(ingredientId);
+      setTimeout(() => setSavedCostIngId(null), 2500);
+      setEditingCostId(null);
+    }
+  };
+
   // New Ingredient Form
   const [ingName, setIngName] = useState('');
   const [ingUnit, setIngUnit] = useState<string>('kg');
@@ -309,12 +346,19 @@ export const InventoryView: React.FC = () => {
   // Filtering for Tab 1
   const lowStockCount = ingredients.filter(i => i.currentStock <= i.minStockAlert).length;
 
-  const filteredIngredients = ingredients.filter(ing => {
-    const matchesSearch = ing.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCat = categoryFilter === 'all' || ing.category === categoryFilter;
-    const matchesLow = !onlyLowStock || ing.currentStock <= ing.minStockAlert;
-    return matchesSearch && matchesCat && matchesLow;
-  });
+  const filteredIngredients = ingredients
+    .filter(ing => {
+      const matchesSearch = ing.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesCat = categoryFilter === 'all' || ing.category === categoryFilter;
+      const matchesLow = !onlyLowStock || ing.currentStock <= ing.minStockAlert;
+      return matchesSearch && matchesCat && matchesLow;
+    })
+    .sort((a, b) => {
+      // Frequent / pinned ingredients first
+      if (a.isFrequent && !b.isFrequent) return -1;
+      if (!a.isFrequent && b.isFrequent) return 1;
+      return 0;
+    });
 
   // Bulk Selection Helper Logic
   const isAllSelected =
@@ -588,14 +632,59 @@ export const InventoryView: React.FC = () => {
     }
     setEditIngStock(ing.currentStock);
     setEditIngMinAlert(ing.minStockAlert);
-    setEditIngUnitCost(ing.unitCost);
+    const initialCost = typeof ing.unitCost === 'number' && !isNaN(ing.unitCost) ? ing.unitCost : 0;
+    setEditIngUnitCost(initialCost);
+    setEditIngUnitCostInput(initialCost.toString());
     setEditIngCat(ing.category);
     setEditIngBarcode(ing.barcode || '');
     const isLiquid = ing.unit === 'ml';
     const isWeight = ing.unit === 'g';
-    setEditIngPackageUnit(ing.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : ''));
-    setEditIngPackageSize(ing.packageSize ? ing.packageSize.toString() : (isLiquid ? '680' : isWeight ? '1000' : ''));
+    const pkgUnit = ing.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : '');
+    const pkgSizeStr = ing.packageSize ? ing.packageSize.toString() : (isLiquid ? '680' : isWeight ? '1000' : '');
+    setEditIngPackageUnit(pkgUnit);
+    setEditIngPackageSize(pkgSizeStr);
+
+    const parsedPkg = parseFloat(pkgSizeStr);
+    if (!isNaN(parsedPkg) && parsedPkg > 0) {
+      setEditIngPackCostInput((initialCost * parsedPkg).toFixed(2).replace(/\.00$/, ''));
+    } else {
+      setEditIngPackCostInput('');
+    }
+
     setIsEditIngOpen(true);
+  };
+
+  const handleEditUnitCostChange = (val: string) => {
+    setEditIngUnitCostInput(val);
+    const parsed = parseFloat(val);
+    if (!isNaN(parsed) && parsed >= 0) {
+      setEditIngUnitCost(parsed);
+      const pkgSize = parseFloat(editIngPackageSize);
+      if (!isNaN(pkgSize) && pkgSize > 0) {
+        setEditIngPackCostInput((parsed * pkgSize).toFixed(2).replace(/\.00$/, ''));
+      }
+    } else {
+      setEditIngUnitCost(0);
+    }
+  };
+
+  const handleEditPackCostChange = (val: string) => {
+    setEditIngPackCostInput(val);
+    const parsedPack = parseFloat(val);
+    const pkgSize = parseFloat(editIngPackageSize);
+    if (!isNaN(parsedPack) && parsedPack >= 0 && !isNaN(pkgSize) && pkgSize > 0) {
+      const computedUnitCost = parsedPack / pkgSize;
+      setEditIngUnitCost(computedUnitCost);
+      setEditIngUnitCostInput(computedUnitCost.toFixed(4).replace(/0+$/, '').replace(/\.$/, ''));
+    }
+  };
+
+  const handleEditPackageSizeChange = (val: string) => {
+    setEditIngPackageSize(val);
+    const pkgSize = parseFloat(val);
+    if (!isNaN(pkgSize) && pkgSize > 0 && editIngUnitCost > 0) {
+      setEditIngPackCostInput((editIngUnitCost * pkgSize).toFixed(2).replace(/\.00$/, ''));
+    }
   };
 
   const handleSaveEditIngredient = (e: React.FormEvent) => {
@@ -603,16 +692,25 @@ export const InventoryView: React.FC = () => {
     if (!editingIng || !editIngName.trim()) return;
     const finalUnit = editIngUnit === 'custom' ? (editIngCustomUnit.trim() || 'ชิ้น') : editIngUnit;
 
+    const parsedCost = parseFloat(editIngUnitCostInput);
+    const finalUnitCost = !isNaN(parsedCost) && parsedCost >= 0 ? parsedCost : editIngUnitCost;
+
     if (editIngStock !== editingIng.currentStock) {
       const diff = editIngStock - editingIng.currentStock;
-      recordStockAdjustment(
-        editingIng.id,
-        editIngStock,
-        diff > 0 ? 'restock' : 'manual_adjustment',
-        'แก้ไขยอดสต็อกจากหน้าต่างแก้ไขข้อมูลวัตถุดิบ',
-        currentUser?.name || 'ผู้จัดการ',
-        currentUser?.role || 'manager'
-      );
+      const performer = currentUser?.name || 'ผู้จัดการ';
+      const performerRole = currentUser?.role || 'manager';
+      addStockAdjustmentLog({
+        ingredientId: editingIng.id,
+        ingredientName: editIngName.trim(),
+        previousStock: editingIng.currentStock,
+        newStock: Math.max(0, editIngStock),
+        changeQty: parseFloat((editIngStock - editingIng.currentStock).toFixed(3)),
+        unit: finalUnit,
+        reason: diff > 0 ? 'restock' : 'manual_adjustment',
+        notes: 'แก้ไขยอดสต็อกจากหน้าต่างแก้ไขข้อมูลวัตถุดิบ',
+        userName: performer,
+        userRole: performerRole
+      });
     }
 
     const pkgSizeNum = parseFloat(editIngPackageSize);
@@ -622,7 +720,7 @@ export const InventoryView: React.FC = () => {
       unit: finalUnit,
       currentStock: editIngStock,
       minStockAlert: editIngMinAlert,
-      unitCost: editIngUnitCost,
+      unitCost: finalUnitCost,
       category: editIngCat,
       barcode: editIngBarcode.trim() || undefined,
       packageUnit: editIngPackageUnit.trim() || undefined,
@@ -1115,17 +1213,30 @@ export const InventoryView: React.FC = () => {
                         >
                           {/* Checkbox Column */}
                           <td className="py-3.5 px-3 text-center whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleSelectRow(ing.id)}
-                              className="p-1 text-slate-400 hover:text-amber-400 transition"
-                            >
-                              {isSelected ? (
-                                <CheckSquare className="w-4 h-4 text-amber-400" />
-                              ) : (
-                                <Square className="w-4 h-4 text-slate-600" />
-                              )}
-                            </button>
+                            <div className="flex items-center justify-center space-x-1">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleSelectRow(ing.id)}
+                                className="p-1 text-slate-400 hover:text-amber-400 transition"
+                                title={isSelected ? 'ยกเลิกเลือก' : 'เลือกรายการนี้'}
+                              >
+                                {isSelected ? (
+                                  <CheckSquare className="w-4 h-4 text-amber-400" />
+                                ) : (
+                                  <Square className="w-4 h-4 text-slate-600" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleIngredientFrequent(ing.id)}
+                                className={`p-1 rounded transition hover:bg-slate-800 ${
+                                  ing.isFrequent ? 'text-amber-400' : 'text-slate-600 hover:text-amber-400'
+                                }`}
+                                title={ing.isFrequent ? 'เลิกปักหมุดวัตถุดิบใช้บ่อย' : 'ปักหมุดวัตถุดิบใช้บ่อย (แสดงบนสุด)'}
+                              >
+                                <Star className={`w-3.5 h-3.5 ${ing.isFrequent ? 'fill-amber-400' : ''}`} />
+                              </button>
+                            </div>
                           </td>
                           {/* รายการวัตถุดิบ */}
                           <td className="py-3.5 px-4 font-bold text-slate-100 whitespace-nowrap">
@@ -1155,10 +1266,68 @@ export const InventoryView: React.FC = () => {
 
                           {/* ราคาทุนเฉลี่ย */}
                           <td className="py-3.5 px-4 font-mono font-bold text-emerald-400 whitespace-nowrap">
-                            <div>{ing.unitCost.toLocaleString('th-TH')} ฿ / {ing.unit}</div>
-                            {ing.packageUnit && ing.packageSize && ing.packageSize > 0 && (
-                              <div className="text-[10px] text-slate-400 font-mono">
-                                ≈ {(ing.unitCost * ing.packageSize).toLocaleString('th-TH', { maximumFractionDigits: 1 })} ฿ / {ing.packageUnit}
+                            {editingCostId === ing.id ? (
+                              <div className="flex flex-col gap-1.5 min-w-[150px]">
+                                <div className="relative flex items-center">
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    min="0"
+                                    value={inlineCostInputs[ing.id] !== undefined ? inlineCostInputs[ing.id] : ing.unitCost}
+                                    onChange={e => setInlineCostInputs(prev => ({ ...prev, [ing.id]: e.target.value }))}
+                                    className="w-24 bg-slate-900 border border-emerald-500/80 text-emerald-300 text-xs font-mono font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:border-emerald-400"
+                                    autoFocus
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') {
+                                        handleSaveInlineCost(ing.id);
+                                      } else if (e.key === 'Escape') {
+                                        handleCancelEditInlineCost();
+                                      }
+                                    }}
+                                  />
+                                  <span className="ml-1.5 text-[11px] text-slate-300 font-bold">฿/{ing.unit}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveInlineCost(ing.id)}
+                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 shadow transition active:scale-95"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    <span>บันทึก</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleCancelEditInlineCost}
+                                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] transition"
+                                  >
+                                    ยกเลิก
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="group/cost flex items-center justify-between gap-2">
+                                <div>
+                                  <div className="flex items-center gap-1.5">
+                                    <span>{ing.unitCost.toLocaleString('th-TH')} ฿ / {ing.unit}</span>
+                                    {savedCostIngId === ing.id && (
+                                      <span className="text-[10px] text-emerald-400 animate-pulse font-sans font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30">✓ บันทึกราคาแล้ว</span>
+                                    )}
+                                  </div>
+                                  {ing.packageUnit && ing.packageSize && ing.packageSize > 0 && (
+                                    <div className="text-[10px] text-slate-400 font-mono">
+                                      ≈ {(ing.unitCost * ing.packageSize).toLocaleString('th-TH', { maximumFractionDigits: 1 })} ฿ / {ing.packageUnit}
+                                    </div>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditInlineCost(ing)}
+                                  className="opacity-60 hover:opacity-100 p-1 hover:bg-slate-800 text-slate-400 hover:text-emerald-400 rounded-lg transition"
+                                  title="แก้ไขราคาวัตถุดิบด่วน"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                             )}
                           </td>
@@ -2841,14 +3010,20 @@ export const InventoryView: React.FC = () => {
 
                 <div>
                   <label className="block text-slate-300 font-bold mb-1">ราคาทุน/หน่วย (บาท)</label>
-                  <input
-                    type="number"
-                    step="any"
-                    required
-                    value={editIngUnitCost}
-                    onChange={e => setEditIngUnitCost(parseFloat(e.target.value) || 0)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-100 font-mono font-bold focus:outline-none focus:border-sky-500"
-                  />
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      required
+                      value={editIngUnitCostInput}
+                      onChange={e => handleEditUnitCostChange(e.target.value)}
+                      className="w-full bg-slate-950 border border-emerald-500/50 rounded-xl px-3 py-2 text-emerald-300 font-mono font-bold focus:outline-none focus:border-emerald-400 pr-12"
+                    />
+                    <span className="absolute right-2.5 top-2 text-xs text-slate-400 font-mono">
+                      ฿/{editIngUnit === 'custom' ? editIngCustomUnit || 'หน่วย' : editIngUnit}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -2864,7 +3039,7 @@ export const InventoryView: React.FC = () => {
               </div>
 
               {/* Packaging Unit Settings */}
-              <div className="bg-slate-950/80 p-3.5 rounded-xl border border-amber-500/20 space-y-2">
+              <div className="bg-slate-950/80 p-3.5 rounded-xl border border-amber-500/20 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="text-amber-300 font-bold block">
                     📦 ตั้งค่าหน่วยบรรจุสำหรับรับเข้า (Packaging Unit)
@@ -2901,7 +3076,7 @@ export const InventoryView: React.FC = () => {
                         step="any"
                         placeholder="เช่น 680"
                         value={editIngPackageSize}
-                        onChange={e => setEditIngPackageSize(e.target.value)}
+                        onChange={e => handleEditPackageSizeChange(e.target.value)}
                         className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-emerald-300 font-mono font-bold focus:outline-none focus:border-emerald-500"
                       />
                       <span className="text-xs text-slate-400 font-bold shrink-0">
@@ -2909,6 +3084,36 @@ export const InventoryView: React.FC = () => {
                       </span>
                     </div>
                   </div>
+
+                  {parseFloat(editIngPackageSize) > 0 && (
+                    <div className="col-span-2 bg-slate-900/90 border border-emerald-500/30 rounded-xl p-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs text-emerald-300 font-bold">
+                          💰 หรือ คิดราคาทุนตามบรรจุภัณฑ์ (ต่อ 1 {editIngPackageUnit || 'แพ็ค'})
+                        </label>
+                        <span className="text-[10px] text-slate-400">ระบบคำนวณราคาทุนต่อหน่วยย่อยให้อัตโนมัติ</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            placeholder={`เช่น 150 (ราคาซื้อต่อ 1 ${editIngPackageUnit || 'แพ็ค'})`}
+                            value={editIngPackCostInput}
+                            onChange={e => handleEditPackCostChange(e.target.value)}
+                            className="w-full bg-slate-950 border border-emerald-500/60 rounded-xl px-3 py-2 text-emerald-300 font-mono font-bold focus:outline-none focus:border-emerald-400 pr-10 text-sm"
+                          />
+                          <span className="absolute right-3 top-2 text-xs text-slate-400 font-mono">บาท</span>
+                        </div>
+                      </div>
+                      {parseFloat(editIngPackCostInput) > 0 && parseFloat(editIngPackageSize) > 0 && (
+                        <p className="text-[11px] text-emerald-400 mt-1.5 font-mono">
+                          ✓ เฉลี่ย {editIngUnitCost.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')} บาท / {editIngUnit === 'custom' ? editIngCustomUnit || 'หน่วย' : editIngUnit} ({editIngPackCostInput} บาท ÷ {editIngPackageSize} {editIngUnit === 'custom' ? editIngCustomUnit || 'หน่วย' : editIngUnit})
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {editIngPackageUnit && editIngPackageSize && (
                   <p className="text-[11px] text-amber-300/90 font-mono">

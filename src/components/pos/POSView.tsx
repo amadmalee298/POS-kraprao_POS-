@@ -22,7 +22,8 @@ import {
   Square,
   Zap,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Star
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { MenuCategory, MenuItem, CartItem, Order, PaymentMethod } from '../../types';
@@ -203,14 +204,21 @@ export const POSView: React.FC = () => {
   };
 
   // Filter menu items
-  const filteredMenuItems = menuItems.filter(item => {
-    const matchesCategory = isItemInCategory(item, selectedCategory, categories);
-    const matchesSearch =
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (item.nameEn && item.nameEn.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (item.description && item.description.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesCategory && matchesSearch;
-  });
+  const filteredMenuItems = menuItems
+    .filter(item => {
+      const matchesCategory = isItemInCategory(item, selectedCategory, categories);
+      const matchesSearch =
+        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (item.nameEn && item.nameEn.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (item.description && item.description.toLowerCase().includes(searchQuery.toLowerCase()));
+      return matchesCategory && matchesSearch;
+    })
+    .sort((a, b) => {
+      // Frequent / pinned items first
+      if (a.isFrequent && !b.isFrequent) return -1;
+      if (!a.isFrequent && b.isFrequent) return 1;
+      return 0;
+    });
 
   // Calculate cart totals & tax
   const rawSubtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -409,6 +417,12 @@ export const POSView: React.FC = () => {
                     <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-[#ff6600] text-black font-extrabold text-[9px] rounded-md shadow-md flex items-center space-x-0.5">
                       <Flame className="w-2.5 h-2.5 fill-black" />
                       <span>ขายดี</span>
+                    </span>
+                  )}
+                  {item.isFrequent && (
+                    <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-amber-400 text-stone-950 font-black text-[9px] rounded-md shadow-md flex items-center space-x-0.5 z-10">
+                      <Star className="w-2.5 h-2.5 fill-stone-950 text-stone-950" />
+                      <span>ใช้บ่อย</span>
                     </span>
                   )}
                 </div>

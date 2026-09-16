@@ -35,6 +35,7 @@ export interface MenuItem {
   description: string;
   image: string;
   isPopular?: boolean;
+  isFrequent?: boolean; // รายการใช้บ่อย (หมุดปักให้อยู่ด้านบน)
   recipe: RecipeIngredient[];
   availableSpiceLevels?: SpiceLevel[];
   availableProteins?: { name: ProteinChoice; extraPrice: number }[];
@@ -140,6 +141,7 @@ export interface Ingredient {
   barcode?: string;
   packageUnit?: string; // เช่น 'ขวด', 'ลัง', 'ถุง', 'แพ็ค', 'กล่อง', 'กระป๋อง'
   packageSize?: number; // เช่น 680 (1 packageUnit = 680 ของหน่วย unit หลัก เช่น 1 ขวด = 680 ml)
+  isFrequent?: boolean; // รายการใช้บ่อย (หมุดปักให้อยู่ด้านบน)
 }
 
 export interface SmartAuditItem {

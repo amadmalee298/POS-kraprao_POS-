@@ -50,6 +50,7 @@
         "unit": { "type": "string" },
         "unitCost": { "type": "number" },
         "category": { "type": "string" },
+        "isFrequent": { "type": "boolean" },
         "lastUpdated": { "type": "string" }
       },
       "required": ["id", "ingredientId", "name", "currentStock", "unit"]

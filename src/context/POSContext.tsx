@@ -181,6 +181,8 @@ interface POSContextType {
   updateMenuItem: (item: MenuItem) => void;
   deleteMenuItem: (itemId: string) => void;
   updateMenuItemRecipe: (menuItemId: string, recipe: RecipeIngredient[], costPrice: number) => void;
+  batchUpdateMenuItemRecipes: (updates: { menuItemId: string; recipe: RecipeIngredient[]; costPrice: number }[]) => void;
+  toggleMenuItemFrequent: (menuItemId: string) => void;
   toggleMenuItemAddOns: (menuItemId: string, allow?: boolean) => void;
   restoreDefaultMenuItems: () => void;
 
@@ -238,6 +240,7 @@ interface POSContextType {
   addIngredient: (ingredient: Omit<Ingredient, 'id'>) => Ingredient;
   updateIngredient: (ingredient: Ingredient) => void;
   deleteIngredients: (ingredientIds: string[]) => void;
+  toggleIngredientFrequent: (ingredientId: string) => void;
   bulkUpdateIngredients: (ingredientIds: string[], updates: Partial<Omit<Ingredient, 'id'>>) => void;
   updateIngredientStock: (ingredientId: string, newStock: number) => void;
   updateIngredientPriceAndRecalculate: (
@@ -364,6 +367,8 @@ const LOCAL_STORAGE_KEY = 'kaprao_pos_enterprise_v1';
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Track recently updated menu item IDs and timestamps to protect local saves from being overwritten by stale cloud snapshots
   const recentLocalMenuUpdatesRef = useRef<Map<string, number>>(new Map());
+  // Track recently updated ingredient IDs and timestamps to protect local saves from being overwritten by stale cloud snapshots
+  const recentLocalIngredientUpdatesRef = useRef<Map<string, number>>(new Map());
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('pos');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -587,7 +592,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [deletedMenuItemIds, setDeletedMenuItemIds] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem('POS_DELETED_MENU_IDS');
-      return stored ? JSON.parse(stored) : [];
+      const parsed: string[] = stored ? JSON.parse(stored) : [];
+      return parsed.filter(id => typeof id === 'string' && (id.startsWith('menu-') || id.startsWith('doc_') || /^[a-zA-Z0-9_-]+$/.test(id)));
     } catch (e) {
       return [];
     }
@@ -596,7 +602,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [deletedIngredientIds, setDeletedIngredientIds] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem('POS_DELETED_ING_IDS');
-      return stored ? JSON.parse(stored) : [];
+      const parsed: string[] = stored ? JSON.parse(stored) : [];
+      return parsed.filter(id => typeof id === 'string' && (id.startsWith('ing-') || id.startsWith('doc_') || /^[a-zA-Z0-9_-]+$/.test(id)));
     } catch (e) {
       return [];
     }
@@ -606,8 +613,31 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const storedDeleted = localStorage.getItem('POS_DELETED_MENU_IDS');
       const delList: string[] = storedDeleted ? JSON.parse(storedDeleted) : [];
-      const delSet = new Set(delList.map(s => String(s).trim().toLowerCase()));
-      return INITIAL_MENU_ITEMS.filter(m => !delSet.has(m.id.toLowerCase()) && !delSet.has(m.name.trim().toLowerCase()));
+      const delSet = new Set(delList.filter(id => typeof id === 'string' && (id.startsWith('menu-') || id.startsWith('doc_') || /^[a-zA-Z0-9_-]+$/.test(id))).map(s => String(s).trim().toLowerCase()));
+
+      let loaded: MenuItem[] = [];
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed.menuItems && Array.isArray(parsed.menuItems) && parsed.menuItems.length > 0) {
+            loaded = parsed.menuItems.filter((m: any) => m && typeof m === 'object' && m.id);
+          }
+        } catch (e) {}
+      }
+      if (loaded.length === 0) {
+        try {
+          const sep = localStorage.getItem('POS_MENU_ITEMS_DATA');
+          if (sep) {
+            const parsedSep = JSON.parse(sep);
+            if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+              loaded = parsedSep.filter((m: any) => m && typeof m === 'object' && m.id);
+            }
+          }
+        } catch (e) {}
+      }
+      const base = loaded.length > 0 ? loaded : INITIAL_MENU_ITEMS;
+      return base.filter(m => m && m.id && !delSet.has(m.id.toLowerCase()));
     } catch (e) {
       return INITIAL_MENU_ITEMS;
     }
@@ -617,8 +647,31 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const storedDeleted = localStorage.getItem('POS_DELETED_ING_IDS');
       const delList: string[] = storedDeleted ? JSON.parse(storedDeleted) : [];
-      const delSet = new Set(delList.map(s => String(s).trim().toLowerCase()));
-      return INITIAL_INGREDIENTS.filter(i => !delSet.has(i.id.toLowerCase()) && !delSet.has(i.name.trim().toLowerCase()));
+      const delSet = new Set(delList.filter(id => typeof id === 'string' && (id.startsWith('ing-') || id.startsWith('doc_') || /^[a-zA-Z0-9_-]+$/.test(id))).map(s => String(s).trim().toLowerCase()));
+
+      let loaded: Ingredient[] = [];
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed.ingredients && Array.isArray(parsed.ingredients) && parsed.ingredients.length > 0) {
+            loaded = parsed.ingredients.filter((i: any) => i && typeof i === 'object' && i.id);
+          }
+        } catch (e) {}
+      }
+      if (loaded.length === 0) {
+        try {
+          const sep = localStorage.getItem('POS_INGREDIENTS_DATA');
+          if (sep) {
+            const parsedSep = JSON.parse(sep);
+            if (Array.isArray(parsedSep) && parsedSep.length > 0) {
+              loaded = parsedSep.filter((i: any) => i && typeof i === 'object' && i.id);
+            }
+          }
+        } catch (e) {}
+      }
+      const base = loaded.length > 0 ? loaded : INITIAL_INGREDIENTS;
+      return base.filter(i => i && i.id && !delSet.has(i.id.toLowerCase()));
     } catch (e) {
       return INITIAL_INGREDIENTS;
     }
@@ -1104,6 +1157,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const merged = Array.from(localMap.values());
         try {
           localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(merged));
+          const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            parsed.menuItems = merged;
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          }
         } catch (e) {}
         return merged;
       });
@@ -1126,28 +1185,44 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         if (!cloudIngList || cloudIngList.length === 0) {
           if (changed) {
-            try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(currentList)); } catch (e) {}
+            try {
+              localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(currentList));
+              const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+              if (saved) {
+                const parsed = JSON.parse(saved);
+                parsed.ingredients = currentList;
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+              }
+            } catch (e) {}
             return currentList;
           }
           return prev;
         }
 
         const localMap = new Map<string, Ingredient>(currentList.map(i => [i.id, i]));
-        const deletedSet = new Set(deletedIngredientIds.map(d => String(d).trim().toLowerCase()));
+        const deletedSet = new Set(deletedIngredientIds.filter(id => id.startsWith('ing-') || /^[a-zA-Z0-9_-]+$/.test(id)).map(d => String(d).trim().toLowerCase()));
 
         cloudIngList.forEach(ci => {
-          if (deletedSet.has(ci.id.toLowerCase()) || deletedSet.has(ci.name.trim().toLowerCase())) return;
+          // Strictly filter by system ID only
+          if (deletedSet.has(ci.id.toLowerCase())) return;
+
+          // Check if this ingredient was recently modified locally (within 15 seconds) - protect fresh local saves from stale cloud snapshots
+          const lastLocalTime = recentLocalIngredientUpdatesRef.current.get(ci.id) || 0;
+          const isRecentlyEditedLocally = Date.now() - lastLocalTime < 15000;
 
           if (!localMap.has(ci.id)) {
             localMap.set(ci.id, ci);
             changed = true;
-          } else {
+          } else if (!isRecentlyEditedLocally) {
             const existing = localMap.get(ci.id)!;
             const isDifferent =
               existing.currentStock !== ci.currentStock ||
               existing.unitCost !== ci.unitCost ||
               existing.minStockAlert !== ci.minStockAlert ||
-              existing.name !== ci.name;
+              existing.name !== ci.name ||
+              existing.packageUnit !== ci.packageUnit ||
+              existing.packageSize !== ci.packageSize ||
+              existing.isFrequent !== ci.isFrequent;
             if (isDifferent) {
               localMap.set(ci.id, { ...existing, ...ci });
               changed = true;
@@ -1159,6 +1234,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const merged = Array.from(localMap.values());
         try {
           localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(merged));
+          const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            parsed.ingredients = merged;
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          }
         } catch (e) {}
         return merged;
       });
@@ -1584,19 +1665,26 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (cloudIngs && cloudIngs.length > 0) {
         setIngredients(prev => {
           const ingMap = new Map<string, Ingredient>();
-          // Cloud items add any newly added cloud ingredients
+          const delIngSet = new Set(deletedIngredientIds.filter(id => id.startsWith('ing-') || /^[a-zA-Z0-9_-]+$/.test(id)).map(d => String(d).trim().toLowerCase()));
+          // Cloud items add any newly added cloud ingredients (skipping deleted)
           cloudIngs.forEach(ci => {
-            if (ci && ci.id) ingMap.set(ci.id, ci);
+            if (ci && ci.id && !delIngSet.has(ci.id.toLowerCase())) ingMap.set(ci.id, ci);
           });
           // Local items strictly OVERWRITE cloud items so user's edits are never lost
           prev.forEach(pi => {
-            if (pi && pi.id) {
+            if (pi && pi.id && !delIngSet.has(pi.id.toLowerCase())) {
               ingMap.set(pi.id, pi);
             }
           });
           const merged = Array.from(ingMap.values());
           try {
             localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(merged));
+            const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              parsed.ingredients = merged;
+              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+            }
           } catch (e) {}
           ingCount = merged.length;
           console.log(`[POS Cloud Pull All] 📦 Ingredients synchronized: ${merged.length} items`);
@@ -1610,23 +1698,29 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (cloudMenus && cloudMenus.length > 0) {
         setMenuItems(prev => {
           const menuMap = new Map<string, MenuItem>();
-          const delSet = new Set(deletedMenuItemIds.map(s => String(s).trim().toLowerCase()));
+          const delSet = new Set(deletedMenuItemIds.filter(id => id.startsWith('menu-') || id.startsWith('doc_') || /^[a-zA-Z0-9_-]+$/.test(id)).map(s => String(s).trim().toLowerCase()));
 
           // Cloud items add newly added cloud menu items (skipping any deleted items)
           cloudMenus.forEach(cm => {
-            if (cm && cm.id && !delSet.has(cm.id.toLowerCase()) && !delSet.has(cm.name.trim().toLowerCase())) {
+            if (cm && cm.id && !delSet.has(cm.id.toLowerCase())) {
               menuMap.set(cm.id, cm);
             }
           });
           // Local items strictly OVERWRITE cloud items so user's edits are never lost
           prev.forEach(pm => {
-            if (pm && pm.id && !delSet.has(pm.id.toLowerCase()) && !delSet.has(pm.name.trim().toLowerCase())) {
+            if (pm && pm.id && !delSet.has(pm.id.toLowerCase())) {
               menuMap.set(pm.id, pm);
             }
           });
           const merged = Array.from(menuMap.values());
           try {
             localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(merged));
+            const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              parsed.menuItems = merged;
+              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+            }
           } catch (e) {}
           menuCount = merged.length;
           console.log(`[POS Cloud Pull All] 🍽️ Menu items synchronized: ${merged.length} items`);
@@ -2530,6 +2624,58 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
+  const batchUpdateMenuItemRecipes = (updates: { menuItemId: string; recipe: RecipeIngredient[]; costPrice: number }[]) => {
+    if (!updates || updates.length === 0) return;
+    const updateMap = new Map(updates.map(u => [u.menuItemId, u]));
+    const now = Date.now();
+    updates.forEach(u => recentLocalMenuUpdatesRef.current.set(u.menuItemId, now));
+
+    setDeletedMenuItemIds(prev => {
+      const updateIds = new Set(updates.map(u => u.menuItemId.toLowerCase()));
+      const next = prev.filter(id => !updateIds.has(id.toLowerCase()));
+      try { localStorage.setItem('POS_DELETED_MENU_IDS', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+
+    setMenuItems(prev => {
+      const next = prev.map(m => {
+        const u = updateMap.get(m.id);
+        if (u) {
+          return { ...m, recipe: u.recipe, costPrice: u.costPrice };
+        }
+        return m;
+      });
+      try {
+        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
+        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          parsed.menuItems = next;
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+        }
+      } catch (e) {}
+
+      // Sync each updated item to Firestore
+      updates.forEach(u => {
+        const target = next.find(m => m.id === u.menuItemId);
+        if (target) {
+          syncSingleMenuItemToFirestore(target).catch(err => {
+            console.warn('[POS Menu Sync] Failed to sync batch recipe to Cloud:', err);
+          });
+        }
+      });
+
+      return next;
+    });
+  };
+
+  const toggleMenuItemFrequent = (menuItemId: string) => {
+    const target = menuItems.find(m => m.id === menuItemId);
+    if (!target) return;
+    const updated = { ...target, isFrequent: !target.isFrequent };
+    updateMenuItem(updated);
+  };
+
   const restoreDefaultMenuItems = () => {
     setMenuItems(prev => {
       const currentMap = new Map<string, MenuItem>(prev.map(m => [m.id, m]));
@@ -3181,47 +3327,160 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setOrders(prev => [newOrder, ...prev]);
   };
 
+  // Helper to persist ingredients locally to both separate key and master state
+  const persistIngredientsLocally = (next: Ingredient[], delIdsToAdd?: string[], delIdsToRemove?: string[]) => {
+    try {
+      localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next));
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        parsed.ingredients = next;
+        if (delIdsToAdd && delIdsToAdd.length > 0) {
+          parsed.deletedIngredientIds = Array.from(new Set([...(parsed.deletedIngredientIds || []), ...delIdsToAdd]));
+        }
+        if (delIdsToRemove && delIdsToRemove.length > 0) {
+          const removeSet = new Set(delIdsToRemove.map(s => s.toLowerCase()));
+          parsed.deletedIngredientIds = (parsed.deletedIngredientIds || []).filter((id: string) => !removeSet.has(id.toLowerCase()));
+        }
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+      }
+    } catch (e) {
+      console.warn('[POSContext] Failed to persist ingredients locally:', e);
+    }
+  };
+
   // Inventory functions
   const addIngredient = (ingData: Omit<Ingredient, 'id'>): Ingredient => {
     const newIng: Ingredient = {
       ...ingData,
       id: `ing-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
     };
-    setIngredients(prev => {
-      const next = [...prev, newIng];
-      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+
+    setDeletedIngredientIds(prev => {
+      const next = prev.filter(id => id.toLowerCase() !== newIng.id.toLowerCase());
+      try { localStorage.setItem('POS_DELETED_ING_IDS', JSON.stringify(next)); } catch (e) {}
       return next;
     });
+
+    recentLocalIngredientUpdatesRef.current.set(newIng.id, Date.now());
+
+    setIngredients(prev => {
+      const next = [...prev, newIng];
+      persistIngredientsLocally(next, undefined, [newIng.id]);
+      return next;
+    });
+
     syncIngredientToFirestore(newIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
       console.warn('[POS Inventory Sync] Failed to sync added ingredient to Cloud:', err);
     });
+
     return newIng;
   };
 
   const updateIngredient = (updatedIng: Ingredient) => {
-    setIngredients(prev => {
-      const next = prev.map(ing => (ing.id === updatedIng.id ? updatedIng : ing));
-      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+    const sanitizedCost = typeof updatedIng.unitCost === 'number' && !isNaN(updatedIng.unitCost)
+      ? updatedIng.unitCost
+      : parseFloat(String(updatedIng.unitCost)) || 0;
+    const sanitizedStock = typeof updatedIng.currentStock === 'number' && !isNaN(updatedIng.currentStock)
+      ? updatedIng.currentStock
+      : parseFloat(String(updatedIng.currentStock)) || 0;
+    const sanitizedMinAlert = typeof updatedIng.minStockAlert === 'number' && !isNaN(updatedIng.minStockAlert)
+      ? updatedIng.minStockAlert
+      : parseFloat(String(updatedIng.minStockAlert)) || 0;
+
+    const cleanIng: Ingredient = {
+      ...updatedIng,
+      unitCost: sanitizedCost,
+      currentStock: sanitizedStock,
+      minStockAlert: sanitizedMinAlert
+    };
+
+    const prevIng = ingredients.find(i => i.id === cleanIng.id);
+    const unitCostChanged = prevIng !== undefined && Math.abs((prevIng.unitCost || 0) - sanitizedCost) > 0.0001;
+
+    setDeletedIngredientIds(prev => {
+      const next = prev.filter(id => id.toLowerCase() !== cleanIng.id.toLowerCase());
+      try { localStorage.setItem('POS_DELETED_ING_IDS', JSON.stringify(next)); } catch (e) {}
       return next;
     });
-    syncIngredientToFirestore(updatedIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
+
+    recentLocalIngredientUpdatesRef.current.set(cleanIng.id, Date.now());
+
+    setIngredients(prev => {
+      const next = prev.map(ing => (ing.id === cleanIng.id ? cleanIng : ing));
+      persistIngredientsLocally(next, undefined, [cleanIng.id]);
+      return next;
+    });
+
+    syncIngredientToFirestore(cleanIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
       console.warn('[POS Inventory Sync] Failed to sync updated ingredient to Cloud:', err);
     });
+
+    // If unit cost changed, recalculate recipe food costs for affected menu items automatically
+    if (unitCostChanged) {
+      setMenuItems(prev => {
+        const next = prev.map(item => {
+          if (!item.recipe || item.recipe.length === 0) return item;
+          const usesIngredient = item.recipe.some(r => r.ingredientId === cleanIng.id);
+          if (!usesIngredient) return item;
+
+          let recalculatedCost = 0;
+          item.recipe.forEach(r => {
+            const ingObj = ingredients.find(i => i.id === r.ingredientId);
+            const costPerUnit = r.ingredientId === cleanIng.id ? sanitizedCost : (ingObj?.unitCost ?? 0);
+            const lineCost = calcRecipeItemCostAndDeduction(
+              ingObj ? { ...ingObj, unitCost: costPerUnit } : { unit: 'pcs', unitCost: costPerUnit },
+              r.amountNeeded,
+              r.recipeUnit
+            ).lineCost;
+            recalculatedCost += lineCost;
+          });
+
+          return {
+            ...item,
+            costPrice: recalculatedCost
+          };
+        });
+
+        try {
+          localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
+          const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            parsed.menuItems = next;
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          }
+        } catch (e) {}
+
+        // Mark affected items and sync to Firestore
+        next.forEach(item => {
+          if (item.recipe && item.recipe.some(r => r.ingredientId === cleanIng.id)) {
+            recentLocalMenuUpdatesRef.current.set(item.id, Date.now());
+            syncSingleMenuItemToFirestore(item).catch(err => {
+              console.warn('[POS Menu Sync] Failed to sync recalculated item:', err);
+            });
+          }
+        });
+
+        return next;
+      });
+    }
   };
 
   const deleteIngredients = (ingredientIds: string[]) => {
     const idSet = new Set(ingredientIds);
     const itemsToDelete = ingredients.filter(ing => idSet.has(ing.id));
 
-    setIngredients(prev => {
-      const next = prev.filter(ing => !idSet.has(ing.id));
-      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+    // Tombstone ONLY valid system IDs (never Thai ingredient names)
+    setDeletedIngredientIds(prev => {
+      const next = Array.from(new Set([...prev, ...ingredientIds]));
+      try { localStorage.setItem('POS_DELETED_ING_IDS', JSON.stringify(next)); } catch (e) {}
       return next;
     });
 
-    setDeletedIngredientIds(prev => {
-      const next = Array.from(new Set([...prev, ...ingredientIds, ...itemsToDelete.map(i => i.name.trim())]));
-      try { localStorage.setItem('POS_DELETED_ING_IDS', JSON.stringify(next)); } catch (e) {}
+    setIngredients(prev => {
+      const next = prev.filter(ing => !idSet.has(ing.id));
+      persistIngredientsLocally(next, ingredientIds);
       return next;
     });
 
@@ -3232,8 +3491,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
+  const toggleIngredientFrequent = (ingredientId: string) => {
+    const target = ingredients.find(i => i.id === ingredientId);
+    if (!target) return;
+    const updated = { ...target, isFrequent: !target.isFrequent };
+    updateIngredient(updated);
+  };
+
   const bulkUpdateIngredients = (ingredientIds: string[], updates: Partial<Omit<Ingredient, 'id'>>) => {
     const idSet = new Set(ingredientIds);
+    const now = Date.now();
+    ingredientIds.forEach(id => recentLocalIngredientUpdatesRef.current.set(id, now));
+
     setIngredients(prev => {
       const next = prev.map(ing => {
         if (idSet.has(ing.id)) {
@@ -3245,12 +3514,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         return ing;
       });
-      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+      persistIngredientsLocally(next);
       return next;
     });
   };
 
   const updateIngredientStock = (ingredientId: string, newStock: number) => {
+    recentLocalIngredientUpdatesRef.current.set(ingredientId, Date.now());
+
     setIngredients(prev => {
       const next = prev.map(ing => {
         if (ing.id === ingredientId) {
@@ -3262,7 +3533,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         return ing;
       });
-      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+      persistIngredientsLocally(next);
       return next;
     });
   };
@@ -3272,11 +3543,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     newUnitCost: number,
     updatedMenuPrices?: Record<string, number>
   ) => {
+    const cleanUnitCost = typeof newUnitCost === 'number' && !isNaN(newUnitCost)
+      ? newUnitCost
+      : parseFloat(String(newUnitCost)) || 0;
+
+    recentLocalIngredientUpdatesRef.current.set(ingredientId, Date.now());
+
     // 1. Update ingredient unit cost
     setIngredients(prev => {
       const next = prev.map(ing => {
         if (ing.id === ingredientId) {
-          const updated = { ...ing, unitCost: newUnitCost };
+          const updated = { ...ing, unitCost: cleanUnitCost };
           syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
             console.warn('[POS Inventory Sync] Failed to sync unit cost to Cloud:', err);
           });
@@ -3284,13 +3561,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         return ing;
       });
-      try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next)); } catch (e) {}
+      persistIngredientsLocally(next);
       return next;
     });
 
     // Create lookup map for updated ingredient costs
     const ingCostMap = new Map<string, number>();
-    ingredients.forEach(i => ingCostMap.set(i.id, i.id === ingredientId ? newUnitCost : i.unitCost));
+    ingredients.forEach(i => ingCostMap.set(i.id, i.id === ingredientId ? cleanUnitCost : i.unitCost));
 
     // 2. Recalculate cost for affected menu items (and update retail price if provided)
     setMenuItems(prev => {
@@ -3304,7 +3581,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         let recalculatedCost = 0;
         item.recipe.forEach(r => {
           const ingObj = ingredients.find(i => i.id === r.ingredientId);
-          const costPerUnit = r.ingredientId === ingredientId ? newUnitCost : (ingCostMap.get(r.ingredientId) ?? 0);
+          const costPerUnit = r.ingredientId === ingredientId ? cleanUnitCost : (ingCostMap.get(r.ingredientId) ?? 0);
           const lineCost = calcRecipeItemCostAndDeduction(
             ingObj ? { ...ingObj, unitCost: costPerUnit } : { unit: 'pcs', unitCost: costPerUnit },
             r.amountNeeded,
@@ -3941,6 +4218,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateMenuItem,
         deleteMenuItem,
         updateMenuItemRecipe,
+        batchUpdateMenuItemRecipes,
+        toggleMenuItemFrequent,
         toggleMenuItemAddOns,
         restoreDefaultMenuItems,
         addAddOn,
@@ -3992,6 +4271,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addIngredient,
         updateIngredient,
         deleteIngredients,
+        toggleIngredientFrequent,
         bulkUpdateIngredients,
         updateIngredientStock,
         updateIngredientPriceAndRecalculate,
