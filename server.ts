@@ -45,7 +45,7 @@ async function startServer() {
   /**
    * Helper: Generate content with automatic model fallback for 503 / 429 high demand spikes
    */
-  const generateWithFallback = async (ai: GoogleGenAI, params: any, preferredModels = ['gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']) => {
+  const generateWithFallback = async (ai: GoogleGenAI, params: any, preferredModels = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-flash-latest']) => {
     let lastErr: any = null;
     for (const model of preferredModels) {
       try {
@@ -188,7 +188,7 @@ ${
         : 32.5;
 
       return res.json({
-        source: 'gemini-3.7-flash',
+        source: modelUsed || 'gemini-3.6-flash',
         overallSummary: {
           healthScore: parsedData.healthScore || 85,
           averageFoodCostPercent: avgFoodCost,
@@ -254,17 +254,17 @@ ${
       }
 
       const promptText = `
-คุณเป็นผู้เชี่ยวชาญการอ่านเอกสารบัญชีและการสกัดข้อมูลจากภาพถ่ายใบเสร็จรับเงิน ใบกำกับภาษี สลิปชำระเงิน หรือบิลร้านค้าในประเทศไทย (Multimodal Vision OCR Document AI)
-โปรดอ่านข้อความและตัวเลขทั้งหมดจากภาพใบเสร็จนี้อย่างละเอียดและตรงตามความเป็นจริง 100% (ห้ามแต่งหรือสุ่มข้อมูลขึ้นมาเองเด็ดขาด):
+คุณเป็นผู้เชี่ยวชาญการอ่านเอกสารบัญชีและการสกัดข้อมูลจากภาพถ่ายใบเสร็จรับเงิน ใบกำกับภาษี สลิปชำระเงิน และบิลเงินสด (Cash Sale) ทุกรูปแบบในประเทศไทย รวมถึงบิลเขียนมือ (Handwritten bills), บิลกระดาษคาร์บอน, สลิป 7-Eleven, Makro, Lotus, Big C, ตลาดสด และร้านค้าทั่วไป (Multimodal Vision OCR Document AI)
+โปรดอ่านข้อความและตัวเลขทั้งหมดจากภาพใบเสร็จนี้อย่างละเอียดและตรงตามความเป็นจริง:
 
-1. vendorName: อ่านชื่อร้านค้า/ซัพพลายเออร์/บริษัท/หน่วยงาน ที่พิมพ์อยู่บนหัวบิลหรือตราประทับจริง (เช่น 7-Eleven, Makro, Lotus, Big C, การไฟฟ้านครหลวง, การประปา, หรือชื่อร้านค้าตามที่ปรากฏ)
-2. title: หัวข้อสรุปค่าใช้จ่ายสั้นๆ เช่น "ซื้อวัตถุดิบ CP - แม็คโคร" หรือ "บิลค่าน้ำประปา" หรือ "ซื้อของสด - ตลาด"
-3. date: วันที่ที่ระบุในเอกสาร แปลงเป็นรูปแบบ YYYY-MM-DD (หากระบุปีเป็น พ.ศ. เช่น 2567, 2568, 2569 ให้แปลงเป็น ค.ศ. 2024, 2025, 2026 เสมอ หากไม่ระบุให้ใช้วันที่ปัจจุบัน)
+1. vendorName: อ่านชื่อร้านค้า/ซัพพลายเออร์/บริษัท/หน่วยงาน ที่พิมพ์อยู่บนหัวบิลหรือตราประทับจริง (เช่น 7-Eleven, Makro, Lotus, Big C, ตลาดสด) หากเป็นบิลเงินสดเขียนมือที่ไม่มีชื่อร้าน ให้ระบุ "บิลเงินสด/ร้านค้าทั่วไป"
+2. title: หัวข้อสรุปค่าใช้จ่ายสั้นๆ เช่น "ซื้อของสด/วัตถุดิบ (บิลเงินสด)", "ซื้อวัตถุดิบ CP - แม็คโคร" หรือ "บิลค่าน้ำประปา"
+3. date: วันที่ที่ระบุในเอกสาร แปลงเป็นรูปแบบ YYYY-MM-DD (หากระบุปีเป็น พ.ศ. เช่น 2567, 2568, 2569 ให้แปลงเป็น ค.ศ. เสมอ หากอ่านวันที่ไม่ออกให้ใช้วันที่ปัจจุบัน)
 4. category: เลือกหมวดหมู่ที่ตรงที่สุดจาก ['raw_material', 'supplies', 'rent', 'salary', 'utilities', 'marketing', 'other'] (อาหาร/เนื้อสัตว์/ผัก/เครื่องปรุง/ของสด = raw_material, ซัพพลายใช้สอย/อุปกรณ์สิ้นเปลือง/ของใช้ในร้าน/น้ำยาล้างจาน/ถุงขยะ/ถุงพลาสติก/กล่องอาหาร/ทิชชู่/ฟองน้ำ/อุปกรณ์ทำความสะอาด = supplies, ค่าน้ำ/ค่าไฟ/แก๊ส = utilities, ค่าแรง = salary, ค่าเช่า = rent, การตลาด/โฆษณา = marketing, อื่นๆ = other)
 5. amount: ยอดเงินรวมสุทธิ/ยอดรวมทั้งสิ้น/ยอดชำระจริง (Grand Total / Total / Net Paid / ยอดสุทธิ) เป็นตัวเลขทศนิยมแท้จริงจากภาพ
-6. includeVat: true หากระบุภาษีมูลค่าเพิ่ม VAT 7% หรือระบุว่าราคารวม VAT
-7. vatAmount: จำนวนเงินภาษีมูลค่าเพิ่ม VAT 7% (ถ้ามีระบุในบิล)
-8. refNumber: เลขที่ใบเสร็จ / Tax Invoice No. / Receipt No. / Doc No. / เลขที่เอกสารที่ปรากฏในภาพ
+6. includeVat: true หากระบุภาษีมูลค่าเพิ่ม VAT 7% ชัดเจน มิฉะนั้น false
+7. vatAmount: จำนวนเงินภาษีมูลค่าเพิ่ม VAT 7% (ถ้ามีระบุในบิล มิฉะนั้น 0)
+8. refNumber: เลขที่ใบเสร็จ / No. / Tax Invoice No. / Doc No. ที่ปรากฏในภาพ หากไม่มีให้ใส่ ""
 9. note: หมายเหตุสรุปสินค้า/บริการที่ซื้อจริงจากภาพ
 10. confidenceScore: ประเมินความชัดเจนของภาพและความมั่นใจในการอ่าน (0-100)
 11. lineItems: รายการสินค้าแต่ละแถวที่อ่านได้ พร้อมชื่อสินค้า (name) และราคา (amount)
@@ -455,7 +455,7 @@ ${JSON.stringify(menuItems, null, 2)}
       const forecastResults = parsed.insights || generateFallbackInventoryForecast(ingredients, orders || [], menuItems || [], forecastDays);
 
       return res.json({
-        source: 'gemini-3.7-flash',
+        source: modelUsed || 'gemini-3.6-flash',
         forecastDays,
         overallAlertCount: forecastResults.filter((r: any) => r.riskLevel === 'CRITICAL' || r.riskLevel === 'WARNING').length,
         criticalCount: forecastResults.filter((r: any) => r.riskLevel === 'CRITICAL').length,
@@ -585,7 +585,7 @@ ${JSON.stringify(ingredients, null, 2)}
       const parsedData = JSON.parse(response.text || '{}');
 
       return res.json({
-        source: 'gemini-3.7-flash',
+        source: modelUsed || 'gemini-3.6-flash',
         analysis: {
           totalLossAmount: parsedData.totalLossAmount || wasteLogs.reduce((a: number, b: any) => a + (b.totalCostLoss || 0), 0),
           totalWasteEntries: wasteLogs.length,
@@ -675,7 +675,7 @@ ${JSON.stringify(menuItems || [], null, 2)}
 
       const parsedData = JSON.parse(response.text || '{}');
       return res.json({
-        source: 'gemini-3.7-flash',
+        source: modelUsed || 'gemini-3.6-flash',
         result: {
           bundleTitle: parsedData.bundleTitle || '💡 บทพูดอัปเซลลูกค้า: "รับไข่ดาวเป็ดลาวาเยิ้มๆ หรือชามะนาวเย็นสดชื่นทานคู่กะเพราเพิ่มด้วยไหมครับ/คะ?"',
           scriptForCashier: parsedData.scriptForCashier || 'เสนอเมนูคู่กินเพื่อเพิ่มยอดขายเฉลี่ยต่อบิล (Ticket Size)',
