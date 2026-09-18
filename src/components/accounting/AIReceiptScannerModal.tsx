@@ -1469,7 +1469,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                 💡 <span className="underline">ทดลองใช้งานได้ทันทีโดยไม่ต้องใส่ Key:</span> คุณสามารถแตะเลือกรูปภาพใบเสร็จ หรือกดปุ่ม <strong>Demo Presets (บิ๊กซี / ตลาดสด / บิลไฟฟ้า)</strong> ด้านล่างเพื่อทดสอบระบบสแกนและบันทึกบัญชีได้ทันที!
               </p>
               <p className="text-slate-400 text-[10px]">
-                หากต้องการสแกนใบเสร็จจริงด้วยโมเดล Gemini 3.7 Flash สามารถวาง API Key ด้านล่างนี้ (ระบบจะบันทึกใน Browser เครื่องของคุณเท่านั้น ปลอดภัย 100%)
+                หากต้องการสแกนใบเสร็จจริงด้วยโมเดล Gemini Flash AI OCR สามารถวาง API Key ด้านล่างนี้ (ระบบจะบันทึกใน Browser เครื่องของคุณเท่านั้น ปลอดภัย 100%)
               </p>
             </div>
 
