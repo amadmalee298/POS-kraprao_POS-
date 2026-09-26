@@ -112,7 +112,7 @@ import {
   generateOrderNumber,
   computeSaleStockDeductions,
   applyStockDeductions,
-  roundMoney
+  computeCartTotals
 } from '../utils/orderUtils';
 import { crc16 } from '../utils/promptpay';
 import { SHOP_LOGO_URL, normalizeShopLogoUrl } from '../assets/logo';
@@ -2925,16 +2925,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     taxInvoiceCustomer?: CustomerTaxInfo,
     isFullTaxInvoiceRequested = false
   ): Order => {
-    const rawSubtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
-    let calculatedDiscount = 0;
-    const discountInput = Number.isFinite(discount.amount) ? Math.max(0, discount.amount) : 0;
-    if (discount.type === 'fixed') {
-      calculatedDiscount = Math.min(discountInput, rawSubtotal);
-    } else {
-      calculatedDiscount = roundMoney((rawSubtotal * Math.min(discountInput, 100)) / 100);
-    }
-
-    const { vatAmount, grandTotal } = calculateOrderTotals(rawSubtotal, calculatedDiscount, settings);
+    const {
+      rawSubtotal,
+      discountAmount: calculatedDiscount,
+      vatAmount,
+      grandTotal
+    } = computeCartTotals(cart, discount, settings);
     const changeAmount = paymentMethod === 'cash' ? Math.max(0, tenderedAmount - grandTotal) : 0;
 
     const orderNumber = generateOrderNumber(orders, currentBranch.id);

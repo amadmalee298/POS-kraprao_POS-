@@ -76,7 +76,7 @@ const MainLayout: React.FC = () => {
   }, [settings.autoLockMinutes, isLocked, setIsLocked]);
 
   return (
-    <div className="min-h-screen bg-[#0d0704] text-stone-100 flex flex-col font-sans antialiased selection:bg-orange-500 selection:text-white">
+    <div className="h-[100dvh] bg-[#0d0704] text-stone-100 flex flex-col font-sans antialiased selection:bg-orange-500 selection:text-white">
       {/* Fullscreen PIN Lock Screen */}
       {isLocked && <LoginScreen />}
 
@@ -114,7 +114,7 @@ const MainLayout: React.FC = () => {
       <SidebarDrawer />
 
       {/* Main Content Body */}
-      <main className="flex-1 overflow-x-hidden overflow-y-auto">
+      <main className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto">
         <React.Suspense
           fallback={
             <div className="flex items-center justify-center py-24 text-stone-400 text-sm">

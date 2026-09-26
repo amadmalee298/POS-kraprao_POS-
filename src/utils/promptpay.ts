@@ -1,4 +1,5 @@
 import QRCode from 'qrcode';
+import type { Branch, SystemSettings } from '../types';
 
 /**
  * CRC16 CCITT-FALSE calculation for EMVCo / PromptPay payload
@@ -82,4 +83,16 @@ export async function generateQRCodeDataURL(text: string, width = 300): Promise<
     console.error('Failed to generate QR Code:', err);
     return '';
   }
+}
+
+/** The shop's PromptPay ID: enabled QR payment method first, then the branch, then global settings. */
+export function resolvePromptPayId(settings: Partial<SystemSettings>, branch?: Partial<Branch> | null): string {
+  const method = settings.qrPaymentMethods?.find(m => m.type === 'promptpay' && m.enabled !== false);
+  return (
+    method?.accountNumber?.trim() ||
+    branch?.promptpayMobileOrTaxId ||
+    settings.promptpayMobileOrTaxId ||
+    (settings as { promptPayId?: string }).promptPayId ||
+    ''
+  );
 }

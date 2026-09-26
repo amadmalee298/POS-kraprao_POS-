@@ -1,5 +1,6 @@
-import { CartItem, Ingredient, Order } from '../types';
+import { CartItem, Ingredient, Order, SpiceLevel, SystemSettings, MenuItem } from '../types';
 import { calcRecipeItemCostAndDeduction } from './recipeUtils';
+import { calculateOrderTotals, TaxCalculationResult } from './tax';
 
 const randomSuffix = (length: number): string => {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O or 1/I, easy to read aloud
@@ -81,3 +82,45 @@ export const normalizeOrderId = (id: string): string => (id || '').replace(/^ord
 
 /** Round a money amount to satang (2 decimals). */
 export const roundMoney = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+
+export interface CartDiscount {
+  amount: number;
+  type: 'fixed' | 'percent';
+}
+
+/**
+ * Totals for a cart: the one place that applies the bill discount and VAT.
+ * Used by the POS screen, the payment dialogs and createOrder so they always agree.
+ */
+export function computeCartTotals(
+  cart: CartItem[],
+  discount: CartDiscount,
+  settings: Partial<SystemSettings>
+): TaxCalculationResult & { itemCount: number } {
+  const rawSubtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
+  const discountInput = Number.isFinite(discount.amount) ? Math.max(0, discount.amount) : 0;
+  const discountAmount =
+    discount.type === 'fixed'
+      ? Math.min(discountInput, rawSubtotal)
+      : roundMoney((rawSubtotal * Math.min(discountInput, 100)) / 100);
+  return {
+    ...calculateOrderTotals(rawSubtotal, discountAmount, settings),
+    itemCount: cart.reduce((sum, item) => sum + item.quantity, 0)
+  };
+}
+
+/** Spice level used when a dish is added with one tap (no options dialog). */
+export function defaultSpiceLevel(item: MenuItem): SpiceLevel | undefined {
+  const levels = item.availableSpiceLevels || [];
+  return levels.includes('เผ็ดปานกลาง') ? 'เผ็ดปานกลาง' : levels[0];
+}
+
+/** Cash amounts a customer is likely to hand over for this total (e.g. 145 -> 150, 200, 500, 1000). */
+export function suggestCashAmounts(total: number, max = 3): number[] {
+  const out: number[] = [];
+  for (const note of [20, 50, 100, 500, 1000]) {
+    const v = Math.ceil(total / note) * note;
+    if (v > total && !out.includes(v)) out.push(v);
+  }
+  return out.slice(0, max);
+}
