@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { SHOP_LOGO_URL } from '../assets/logo';
+import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
 import { UserRole } from '../types';
 import {
   Flame,
@@ -397,7 +397,8 @@ export const LoginScreen: React.FC = () => {
               alt="ครัวกะเพรา Logo"
               className="w-full h-full object-contain rounded-xl"
               onError={(e) => {
-                e.currentTarget.src = './logo.png';
+                // Inline SVG can never fail to load, so there is no retry loop
+                if (e.currentTarget.src !== FALLBACK_SVG_LOGO) e.currentTarget.src = FALLBACK_SVG_LOGO;
               }}
             />
           </div>

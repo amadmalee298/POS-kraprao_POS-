@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SHOP_LOGO_URL } from '../../assets/logo';
 import {
   Search,
   Flame,
@@ -412,10 +413,17 @@ export const POSView: React.FC = () => {
                 {/* Food Image */}
                 <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden bg-[#180f0a] border border-[#24150c] mb-2 shrink-0">
                   <img
-                    src={item.image}
+                    src={item.image || SHOP_LOGO_URL}
                     alt={item.name}
                     className="w-full h-full object-cover group-hover:scale-105 transition duration-300 brightness-95"
                     loading="lazy"
+                    onError={e => {
+                      // External menu photos can be offline/blocked: show the shop logo instead of a broken icon
+                      if (!e.currentTarget.src.endsWith(SHOP_LOGO_URL)) {
+                        e.currentTarget.src = SHOP_LOGO_URL;
+                        e.currentTarget.classList.add('object-contain', 'p-4');
+                      }
+                    }}
                   />
                   {item.isPopular && (
                     <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-[#ff6600] text-black font-extrabold text-[9px] rounded-md shadow-md flex items-center space-x-0.5">

@@ -115,7 +115,7 @@ import {
   roundMoney
 } from '../utils/orderUtils';
 import { crc16 } from '../utils/promptpay';
-import { SHOP_LOGO_URL } from '../assets/logo';
+import { SHOP_LOGO_URL, normalizeShopLogoUrl } from '../assets/logo';
 
 export function computeOrderChecksum(order: Order): string {
   const itemsCount = order.items ? order.items.length : 0;
@@ -2094,10 +2094,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setIncomes(loadedIncomes);
           if (parsed.settings && typeof parsed.settings === 'object') {
             const mergedSettings = { ...INITIAL_SETTINGS, ...parsed.settings };
-            // If previous shopLogoUrl was the older default SVG or empty, update to the new official brand logo
-            if (!parsed.settings.shopLogoUrl || parsed.settings.shopLogoUrl.startsWith('data:image/svg+xml')) {
-              mergedSettings.shopLogoUrl = SHOP_LOGO_URL;
-            }
+            // Replace empty, old-default or no-longer-existing logo URLs with the current brand logo
+            mergedSettings.shopLogoUrl = normalizeShopLogoUrl(parsed.settings.shopLogoUrl);
             setSettings(mergedSettings);
           }
           if (parsed.securityLogs && Array.isArray(parsed.securityLogs)) setSecurityLogs(parsed.securityLogs);
