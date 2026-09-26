@@ -8,7 +8,8 @@ import {
   getDocs,
   deleteDoc,
   writeBatch,
-  onSnapshot,
+  onSnapshot as firestoreOnSnapshot,
+  increment,
   query,
   where,
   orderBy,
@@ -17,6 +18,8 @@ import {
   Timestamp,
   DocumentData
 } from 'firebase/firestore';
+import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem, CategoryItem, AddOnOption, SystemSettings } from '../types';
 
@@ -47,9 +50,31 @@ export interface CentralBranchInventoryItem {
 let dbInstance: ReturnType<typeof getFirestore> | null = null;
 let isInitialized = false;
 
+// Firestore security rules require a signed-in Firebase user (anonymous is enough).
+// Every read/write/listener waits for this before touching Firestore.
+const AUTH_WAIT_TIMEOUT_MS = 10_000;
+let resolveAuthReady: () => void = () => {};
+const authReadyPromise = new Promise<void>(resolve => {
+  resolveAuthReady = resolve;
+});
+
 try {
   const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
   const cfg = firebaseConfig as any;
+
+  // Optional App Check (reCAPTCHA v3): only requests from this web app are accepted
+  // once App Check enforcement is switched on in the Firebase console.
+  if (cfg.recaptchaSiteKey) {
+    try {
+      initializeAppCheck(app, {
+        provider: new ReCaptchaV3Provider(cfg.recaptchaSiteKey),
+        isTokenAutoRefreshEnabled: true
+      });
+    } catch (appCheckErr) {
+      console.warn('[Firebase Service] ⚠️ App Check initialization failed:', appCheckErr);
+    }
+  }
+
   // If named firestoreDatabaseId is provided in config, use it; otherwise fallback to default
   if (cfg.firestoreDatabaseId) {
     dbInstance = getFirestore(app, cfg.firestoreDatabaseId);
@@ -58,9 +83,50 @@ try {
   }
   isInitialized = true;
   console.log(`[Firebase Service] 🔥 Connected to Firebase Project: ${firebaseConfig.projectId} (DB: ${cfg.firestoreDatabaseId || 'default'})`);
+
+  const auth = getAuth(app);
+  onAuthStateChanged(auth, user => {
+    if (user) {
+      resolveAuthReady();
+      return;
+    }
+    signInAnonymously(auth).catch(err => {
+      console.error(
+        '[Firebase Service] ❌ Anonymous sign-in failed. Enable the "Anonymous" provider in Firebase Console → Authentication → Sign-in method.',
+        err
+      );
+      resolveAuthReady();
+    });
+  });
 } catch (err) {
   console.warn('[Firebase Service] ⚠️ Firebase initialization warning:', err);
+  resolveAuthReady();
 }
+
+/**
+ * Resolves once a Firebase user is signed in (or after a timeout, so offline
+ * devices and misconfigured projects do not hang forever).
+ */
+export function waitForFirebaseAuth(): Promise<void> {
+  return Promise.race([
+    authReadyPromise,
+    new Promise<void>(resolve => setTimeout(resolve, AUTH_WAIT_TIMEOUT_MS))
+  ]);
+}
+
+// Listeners attached before sign-in would be rejected by the security rules and never recover,
+// so every snapshot listener is started only after auth is ready.
+const onSnapshot = ((...args: any[]) => {
+  let unsubscribe: (() => void) | null = null;
+  let cancelled = false;
+  waitForFirebaseAuth().then(() => {
+    if (!cancelled) unsubscribe = (firestoreOnSnapshot as any)(...args);
+  });
+  return () => {
+    cancelled = true;
+    unsubscribe?.();
+  };
+}) as typeof firestoreOnSnapshot;
 
 export const isFirebaseAvailable = (): boolean => {
   return isInitialized && dbInstance !== null && navigator.onLine;
@@ -99,6 +165,7 @@ export function cleanForFirestore<T>(data: T): T {
  */
 export async function syncBranchToFirestore(branch: Branch, additionalStats?: Partial<CentralBranchLiveStats>): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const branchRef = doc(dbInstance, 'branches', branch.id);
@@ -148,6 +215,7 @@ export async function syncBranchToFirestore(branch: Branch, additionalStats?: Pa
  */
 export async function syncOrderToFirestore(order: Order, branch: Branch): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const orderDocId = order.id.startsWith('ord-') ? order.id : `ord-${order.id}`;
@@ -233,6 +301,7 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
   if (!dbInstance || !navigator.onLine || orders.length === 0) {
     return { success: 0, failed: orders.length };
   }
+  await waitForFirebaseAuth();
 
   let successCount = 0;
   let failedCount = 0;
@@ -328,14 +397,16 @@ export async function syncInventoryToFirestore(
   options?: { purgeDeleted?: boolean }
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine || ingredients.length === 0) return false;
+  await waitForFirebaseAuth();
 
   try {
     const batch = writeBatch(dbInstance);
     const nowIso = new Date().toISOString();
     let lowStockCount = 0;
 
-    // If purgeDeleted is not disabled, remove deleted/orphan ingredients from Firestore
-    if (options?.purgeDeleted !== false) {
+    // Only purge when explicitly requested: a device with a stale or partial list must never
+    // delete other devices' ingredients from the shared branch inventory.
+    if (options?.purgeDeleted === true) {
       try {
         const activeIds = new Set(ingredients.map(i => i.id));
         const existingSnap = await getDocs(collection(dbInstance, 'branches', branch.id, 'inventory'));
@@ -423,10 +494,73 @@ export async function syncInventoryToFirestore(
 }
 
 /**
+ * Atomically deduct (or add back) stock in the shared branch inventory.
+ * Uses Firestore increment() so concurrent sales from several devices never overwrite
+ * each other the way a full-document write of a local snapshot would.
+ * `deltas` maps ingredientId -> amount to subtract (negative values add stock back).
+ */
+export async function applyStockDeltasToFirestore(
+  deltas: Map<string, number>,
+  ingredients: Ingredient[],
+  branch: Branch
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine || deltas.size === 0) return false;
+  await waitForFirebaseAuth();
+
+  try {
+    const batch = writeBatch(dbInstance);
+    const nowIso = new Date().toISOString();
+    const byId = new Map(ingredients.map(i => [i.id, i]));
+
+    deltas.forEach((amount, ingredientId) => {
+      if (!amount) return;
+      const ing = byId.get(ingredientId);
+      // Descriptive fields are included so a missing cloud document is created complete, not as a stub
+      const base = ing
+        ? {
+            ingredientId,
+            name: ing.name,
+            minStockAlert: ing.minStockAlert,
+            unit: ing.unit,
+            unitCost: ing.unitCost,
+            category: ing.category,
+            branchId: branch.id,
+            branchName: branch.name
+          }
+        : { ingredientId, branchId: branch.id, branchName: branch.name };
+
+      batch.set(
+        doc(dbInstance!, 'branches', branch.id, 'inventory', ingredientId),
+        { ...cleanForFirestore(base), currentStock: increment(-amount), lastUpdated: nowIso, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      batch.set(
+        doc(dbInstance!, 'inventory', `${branch.id}_${ingredientId}`),
+        {
+          ...cleanForFirestore(base),
+          id: `${branch.id}_${ingredientId}`,
+          currentStock: increment(-amount),
+          lastUpdated: nowIso,
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+    });
+
+    await batch.commit();
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to apply stock deltas for branch ${branch.id}:`, err);
+    return false;
+  }
+}
+
+/**
  * Push stock adjustment log to central Firebase
  */
 export async function syncStockAdjustmentToFirestore(adjustment: StockAdjustmentLog, branch: Branch): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const adjRef = doc(dbInstance, 'stock_adjustments', adjustment.id);
@@ -453,6 +587,7 @@ export async function syncStockAdjustmentToFirestore(adjustment: StockAdjustment
  */
 export async function syncWasteLogToFirestore(wasteLog: WasteLog, branch: Branch): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const wasteRef = doc(dbInstance, 'waste_logs', wasteLog.id);
@@ -643,6 +778,7 @@ export function subscribeToRecentCentralOrders(
  */
 export async function fetchCentralOrdersFromFirestore(limitCount: number = 500): Promise<Order[]> {
   if (!dbInstance || !navigator.onLine) return [];
+  await waitForFirebaseAuth();
   try {
     const ordersCol = collection(dbInstance, 'orders');
     const q = query(ordersCol, limit(limitCount));
@@ -666,6 +802,7 @@ export const fetchRecentOrdersFromFirestore = fetchCentralOrdersFromFirestore;
  */
 export async function syncExpenseToFirestore(expense: Expense, branch?: Branch): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const expenseDocId = expense.id.startsWith('exp-') ? expense.id : `exp-${expense.id}`;
@@ -735,6 +872,7 @@ export async function syncExpenseToFirestore(expense: Expense, branch?: Branch):
  */
 export async function deleteExpenseFromFirestore(expenseId: string): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const expenseDocId = expenseId.startsWith('exp-') ? expenseId : `exp-${expenseId}`;
@@ -752,6 +890,7 @@ export async function deleteExpenseFromFirestore(expenseId: string): Promise<boo
  */
 export async function syncExpensesBatchToFirestore(expenses: Expense[], branch?: Branch): Promise<boolean> {
   if (!dbInstance || !navigator.onLine || expenses.length === 0) return false;
+  await waitForFirebaseAuth();
 
   try {
     const batch = writeBatch(dbInstance);
@@ -798,6 +937,7 @@ export async function syncExpensesBatchToFirestore(expenses: Expense[], branch?:
  */
 export async function syncIncomeToFirestore(income: OtherIncome, branch?: Branch): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const incomeDocId = income.id.startsWith('inc-') ? income.id : `inc-${income.id}`;
@@ -865,6 +1005,7 @@ export async function syncIncomeToFirestore(income: OtherIncome, branch?: Branch
  */
 export async function deleteIncomeFromFirestore(incomeId: string): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const incomeDocId = incomeId.startsWith('inc-') ? incomeId : `inc-${incomeId}`;
@@ -1004,6 +1145,7 @@ export function subscribeToCentralIncomes(
  */
 export async function fetchBranchInventoryFromFirestore(branchId: string = 'branch-1786349847821'): Promise<Ingredient[]> {
   if (!dbInstance) return [];
+  await waitForFirebaseAuth();
 
   try {
     const list: Ingredient[] = [];
@@ -1085,6 +1227,7 @@ export async function syncIngredientToFirestore(
   branchName: string = 'ครัวกะเพรา ตลาด กกท'
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const nowIso = new Date().toISOString();
@@ -1155,6 +1298,7 @@ export async function deleteIngredientFromFirestore(
   ingredientName?: string
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const branchDocRef = doc(dbInstance, 'branches', branchId, 'inventory', ingredientId);
@@ -1194,6 +1338,7 @@ export async function deleteIngredientFromFirestore(
  */
 export async function deleteOrderFromFirestore(orderId: string): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const orderDocId = orderId.startsWith('ord-') ? orderId : `ord-${orderId}`;
@@ -1226,6 +1371,7 @@ export async function deleteOrderFromFirestore(orderId: string): Promise<boolean
  */
 export async function fetchMenuItemsFromFirestore(): Promise<MenuItem[]> {
   if (!dbInstance) return [];
+  await waitForFirebaseAuth();
 
   try {
     const colRef = collection(dbInstance, 'menu_items');
@@ -1265,6 +1411,7 @@ export async function fetchMenuItemsFromFirestore(): Promise<MenuItem[]> {
  */
 export async function syncSingleMenuItemToFirestore(item: MenuItem): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const docRef = doc(dbInstance, 'menu_items', item.id);
@@ -1294,6 +1441,7 @@ export async function syncSingleMenuItemToFirestore(item: MenuItem): Promise<boo
  */
 export async function syncMenuItemsBatchToFirestore(items: MenuItem[]): Promise<boolean> {
   if (!dbInstance || !navigator.onLine || items.length === 0) return false;
+  await waitForFirebaseAuth();
 
   try {
     const batch = writeBatch(dbInstance);
@@ -1328,6 +1476,7 @@ export async function updateOrderStatusInFirestore(
   }
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const primaryDocId = orderId.startsWith('ord-') ? orderId : `ord-${orderId}`;
@@ -1374,6 +1523,7 @@ export async function updateOrderStatusInFirestore(
  */
 export async function deleteMenuItemFromFirestore(itemId: string, itemName?: string): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const docRef = doc(dbInstance, 'menu_items', itemId);
@@ -1409,6 +1559,7 @@ export async function deleteAddOnFromFirestore(
   branchId: string = 'branch-1786349847821'
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const docRef = doc(dbInstance, 'branches', branchId, 'config', 'addons');
@@ -1431,6 +1582,7 @@ export async function deleteAddOnFromFirestore(
  */
 export async function fetchBranchesFromFirestore(): Promise<Branch[]> {
   if (!dbInstance) return [];
+  await waitForFirebaseAuth();
 
   try {
     const colRef = collection(dbInstance, 'branches');
@@ -1466,6 +1618,7 @@ export async function syncCategoriesToFirestore(
   branchId: string = 'branch-1786349847821'
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const docRef = doc(dbInstance, 'branches', branchId, 'config', 'categories');
@@ -1507,6 +1660,7 @@ export async function deleteCategoryFromFirestore(
   branchId: string = 'branch-1786349847821'
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const docRef = doc(dbInstance, 'branches', branchId, 'config', 'categories');
@@ -1531,6 +1685,7 @@ export async function fetchCategoriesFromFirestore(
   branchId: string = 'branch-1786349847821'
 ): Promise<CategoryItem[] | null> {
   if (!dbInstance) return null;
+  await waitForFirebaseAuth();
 
   try {
     const docRef = doc(dbInstance, 'branches', branchId, 'config', 'categories');
@@ -1557,6 +1712,7 @@ export async function syncTablesToFirestore(
   branchId: string = 'branch-1786349847821'
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const docRef = doc(dbInstance, 'branches', branchId, 'config', 'tables');
@@ -1584,6 +1740,7 @@ export async function syncAddOnsToFirestore(
   branchId: string = 'branch-1786349847821'
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     const docRef = doc(dbInstance, 'branches', branchId, 'config', 'addons');
@@ -1611,6 +1768,7 @@ export async function syncSettingsToFirestore(
   branchId: string = 'branch-1786349847821'
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
 
   try {
     // Sanitize pins before uploading
@@ -1644,6 +1802,7 @@ export async function purgeOutdatedCloudData(
   deletedIngredientIds: string[] = []
 ): Promise<{ menuDeleted: number; inventoryDeleted: number }> {
   if (!dbInstance || !navigator.onLine) return { menuDeleted: 0, inventoryDeleted: 0 };
+  await waitForFirebaseAuth();
 
   let menuDeleted = 0;
   let inventoryDeleted = 0;
@@ -1785,6 +1944,7 @@ export async function syncFullCatalogToFirestore(
       error: 'ฐานข้อมูล Firebase ออฟไลน์หรือไม่พร้อมใช้งาน'
     };
   }
+  await waitForFirebaseAuth();
 
   const {
     menuItems,

@@ -176,12 +176,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     || currentBranch.promptpayMobileOrTaxId
     || settings.promptpayMobileOrTaxId
     || settings.promptPayId
-    || '0812345678';
+    || '';
 
   const activeTrueMoneyNumber = activeTrueMoneyMethod?.accountNumber?.trim()
     || currentBranch.promptpayMobileOrTaxId
     || settings.promptpayMobileOrTaxId
-    || '081-234-5678';
+    || '';
 
   const promptpayPayloadStr = generatePromptPayPayload(
     activePromptPayId,

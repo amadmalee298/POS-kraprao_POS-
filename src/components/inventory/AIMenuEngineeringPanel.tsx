@@ -1,3 +1,4 @@
+import { apiUrl } from '../../utils/apiClient';
 import React, { useState, useEffect } from 'react';
 import { calcRecipeItemCostAndDeduction } from '../../utils/recipeUtils';
 import {
@@ -70,7 +71,7 @@ export const AIMenuEngineeringPanel: React.FC = () => {
   const fetchMenuEngineeringAnalysis = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/ai/menu-engineering', {
+      const response = await fetch(apiUrl('/api/ai/menu-engineering'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

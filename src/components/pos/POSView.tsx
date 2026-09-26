@@ -134,7 +134,11 @@ export const POSView: React.FC = () => {
   };
 
   // Current order number prediction
-  const nextOrderNum = (1650 + orders.length + 1).toString();
+  // Preview of today's running bill number (the saved number also gets a short random tag, see orderUtils)
+  const todayKey = new Date().toDateString();
+  const nextOrderNum = `KAP-${String(
+    orders.filter(o => o.branchId === currentBranch?.id && o.createdAt && new Date(o.createdAt).toDateString() === todayKey).length + 1
+  ).padStart(3, '0')}`;
 
   // Filtered orders for Recent Receipts modal
   const recentReceiptOrders = React.useMemo(() => {

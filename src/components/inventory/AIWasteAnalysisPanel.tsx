@@ -1,3 +1,4 @@
+import { apiUrl } from '../../utils/apiClient';
 import React, { useState, useEffect } from 'react';
 import {
   Trash2,
@@ -174,7 +175,7 @@ export const AIWasteAnalysisPanel: React.FC = () => {
   const runWasteAnalysis = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/ai/waste-analysis', {
+      const response = await fetch(apiUrl('/api/ai/waste-analysis'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

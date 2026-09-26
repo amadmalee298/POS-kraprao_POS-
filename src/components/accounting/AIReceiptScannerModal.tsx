@@ -5,6 +5,7 @@ import {
   Camera,
   FileText,
   CheckCircle2,
+  AlertTriangle,
   AlertCircle,
   RefreshCw,
   X,
@@ -34,6 +35,8 @@ import {
 import { ExpenseCategory } from '../../types';
 import { usePOS } from '../../context/POSContext';
 import { compressBase64Image } from '../../utils/imageCompressor';
+import { runReceiptOcr, FatalReceiptOcrError } from '../../utils/receiptOcr';
+import { apiUrl, hasBackend } from '../../utils/apiClient';
 import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 
 interface StockEntryItem {
@@ -60,6 +63,9 @@ interface ReceiptQueueItem {
 }
 
 interface ScannedReceiptData {
+  warnings?: string[];
+  verified?: boolean;
+  passes?: number;
   title: string;
   vendorName: string;
   date: string;
@@ -232,19 +238,17 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       reader.onload = (e) => {
         const img = new Image();
         img.onload = () => {
-          // Use 1600px constraint for fast mobile upload & sharp OCR of Thai handwritten/printed receipts
-          const MAX_SIZE = 1600;
+          // OCR accuracy depends on text pixel height. Long thermal receipts are tall and narrow,
+          // so cap the total pixel count (~4 MP) and the longest side instead of a fixed 1600px,
+          // which used to shrink a 58mm slip to ~300px wide and make small digits unreadable.
+          const MAX_SIDE = 3072;
+          const MAX_PIXELS = 4_200_000;
           let width = img.width;
           let height = img.height;
-
-          if (width > MAX_SIZE || height > MAX_SIZE) {
-            if (width > height) {
-              height = Math.round((height * MAX_SIZE) / width);
-              width = MAX_SIZE;
-            } else {
-              width = Math.round((width * MAX_SIZE) / height);
-              height = MAX_SIZE;
-            }
+          const scale = Math.min(1, MAX_SIDE / Math.max(width, height), Math.sqrt(MAX_PIXELS / (width * height)));
+          if (scale < 1) {
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
           }
 
           const canvas = document.createElement('canvas');
@@ -255,7 +259,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, width, height);
             ctx.drawImage(img, 0, 0, width, height);
-            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.92);
             resolve({ base64: compressedDataUrl, mimeType: 'image/jpeg' });
           } else {
             resolve({ base64: e.target?.result as string, mimeType: file.type || 'image/jpeg' });
@@ -437,175 +441,61 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     };
   };
 
-  // Helper to call Gemini Vision directly from browser on static hosting (GitHub Pages) or client-side
+  // Helper to call Gemini Vision directly from browser on static hosting (GitHub Pages) or client-side.
+  // Uses the same verified OCR pipeline as the backend (src/utils/receiptOcr.ts).
   const callDirectBrowserGemini = async (
     base64WithMime: string,
     mimeType: string,
     apiKey: string
   ): Promise<{ result?: ScannedReceiptData; error?: string }> => {
+    const pureBase64 = base64WithMime.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+    let rateLimited = false;
     try {
-      const pureBase64 = base64WithMime.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
-      const prompt = `คุณคือระบบ AI OCR อัจฉริยะ (Vision Document AI) ผู้เชี่ยวชาญการอ่านและวิเคราะห์ภาพถ่ายใบเสร็จรับเงิน ใบกำกับภาษี สลิปชำระเงิน และบิลเงินสด (Cash Sale) ทุกรูปแบบในประเทศไทย รวมถึงบิลเขียนมือ (Handwritten bills), บิลกระดาษคาร์บอน, บิลเล่มฉีก, สลิป 7-Eleven, Makro, Lotus, Big C, ตลาดสด และร้านค้าทั่วไป
-
-ภารกิจ: สกัดข้อมูลจริงจากภาพใบเสร็จนี้อย่างแม่นยำที่สุดตามข้อความและตัวเลขที่ปรากฏจริงในภาพ:
-1. หากเป็นบิลเงินสดเขียนมือ (Handwritten Cash Sale) ให้อ่านตัวเลขยอดเงินรวม (Grand Total) และวันที่เท่าที่อ่านได้ชัดเจนที่สุด หากไม่มีชื่อร้าน ให้ระบุ vendorName เป็น "บิลเงินสด/ร้านค้าทั่วไป"
-2. หากระบุปีเป็น พ.ศ. (เช่น 2567, 2568, 2569 หรือ 67, 68, 69) ให้แปลงเป็น ค.ศ. เสมอ (เช่น 2024, 2025, 2026) หากอ่านวันที่ไม่ออก ให้ใช้วันที่ปัจจุบัน
-3. สกัดยอดเงินรวมสุทธิ amount เป็นตัวเลขทศนิยมแท้จริง
-4. เลือกหมวดหมู่ category ที่ตรงที่สุด:
-   - 'raw_material': วัตถุดิบ, อาหาร, หมู, ไก่, ผัก, เครื่องปรุง, ไข่ไก่, ข้าวสาร, ของสด
-   - 'supplies': ของใช้สิ้นเปลืองในร้าน, น้ำยาล้างจาน, ถุงพลาสติก, กล่องอาหาร, ทิชชู่, ฟองน้ำ, ถุงขยะ
-   - 'utilities': ค่าน้ำ, ค่าไฟ, แก๊สหุงต้ม
-   - 'salary': ค่าจ้าง, ค่าแรง, เงินเดือน
-   - 'rent': ค่าเช่า
-   - 'marketing': การตลาด, ป้ายโฆษณา
-   - 'other': ค่าใช้จ่ายอื่นๆ
-
-โครงสร้าง JSON ที่ต้องการ:
-{
-  "title": "สรุปชื่อบิลสั้นๆ เช่น ซื้อของสด/วัตถุดิบ (บิลเงินสด), ซื้อของ Makro, บิล 7-Eleven",
-  "vendorName": "ชื่อร้านค้าหรือหัวบิล เช่น บิลเงินสด/ร้านค้าทั่วไป, สยามแม็คโคร, โลตัส, 7-Eleven",
-  "date": "YYYY-MM-DD",
-  "category": "raw_material",
-  "amount": 0.00,
-  "includeVat": false,
-  "vatAmount": 0.00,
-  "netAmount": 0.00,
-  "refNumber": "เลขที่ใบเสร็จ หรือเล่มที่/เลขที่ (หากไม่มีให้ใส่ว่าง)",
-  "note": "สรุปสินค้าหรือบริการที่ซื้อจากบิล",
-  "confidenceScore": 95,
-  "lineItems": [
-    { "name": "ชื่อสินค้าหรือรายการ", "amount": 0.00 }
-  ]
-}
-ตอบเฉพาะ JSON ที่ถูกต้องเท่านั้น ห้ามใส่คำอธิบายอื่นนอกเหนือจาก JSON`;
-
-      // Supported Gemini Multimodal Flash Models (gemini-3.6-flash is primary, fallback to gemini-3.8-flash)
-      const candidateModels = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
-      let lastErrorMessage = '';
-
-      for (const modelName of candidateModels) {
-        try {
-          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey.trim()}`;
+      const { data } = await runReceiptOcr(
+        async ({ model, prompt, systemInstruction, responseSchema, image }) => {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 20000);
-
-          const res = await fetch(endpoint, {
-            method: 'POST',
-            signal: controller.signal,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    { text: prompt },
-                    {
-                      inlineData: {
-                        mimeType: mimeType && mimeType.startsWith('image/') ? mimeType : 'image/jpeg',
-                        data: pureBase64
-                      }
-                    }
-                  ]
-                }
-              ],
-              generationConfig: {
-                responseMimeType: 'application/json'
+          // Pro models "think" before answering; give them time on slow mobile networks
+          const timer = setTimeout(() => controller.abort(), 90000);
+          try {
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+              method: 'POST',
+              signal: controller.signal,
+              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
+              body: JSON.stringify({
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+                contents: [{ parts: [{ inlineData: { mimeType: image.mimeType, data: image.data } }, { text: prompt }] }],
+                generationConfig: { responseMimeType: 'application/json', responseSchema }
+              })
+            });
+            if (!res.ok) {
+              const errData = await res.json().catch(() => null);
+              const details = errData?.error?.message || `HTTP ${res.status}`;
+              if (res.status === 400 && (details.includes('API key') || details.includes('API_KEY_INVALID'))) {
+                throw new FatalReceiptOcrError('Gemini API Key ไม่ถูกต้อง กรุณาตรวจสอบหรือขอคีย์ใหม่ที่ aistudio.google.com');
               }
-            })
-          });
-          clearTimeout(timer);
-
-          if (!res.ok) {
-            const errData = await res.json().catch(() => null);
-            const errDetails = errData?.error?.message || `HTTP ${res.status}`;
-            console.warn(`[Gemini OCR] Model ${modelName} error (${res.status}):`, errDetails);
-
-            if (res.status === 400 && (errDetails.includes('API key') || errDetails.includes('API_KEY_INVALID'))) {
-              return { error: 'Gemini API Key ไม่ถูกต้อง กรุณาตรวจสอบหรือขอคีย์ใหม่ที่ aistudio.google.com' };
+              if (res.status === 429 || details.includes('RESOURCE_EXHAUSTED')) rateLimited = true;
+              throw new Error(`${model}: ${details}`);
             }
-            if (res.status === 429 || errDetails.includes('RESOURCE_EXHAUSTED')) {
-              lastErrorMessage = 'โควตาการใช้งาน Gemini API เต็มชั่วคราว กรุณารอสักครู่แล้วลองใหม่';
-              continue;
-            }
-            if (res.status === 503 || errDetails.includes('demand') || errDetails.includes('UNAVAILABLE')) {
-              lastErrorMessage = 'ระบบ Gemini มีผู้ใช้งานหนาแน่นชั่วคราว กำลังลองโมเดลสำรอง...';
-              continue;
-            }
-            lastErrorMessage = `API แจ้งเตือน: ${errDetails}`;
-            continue;
+            const json = await res.json();
+            const parts = json?.candidates?.[0]?.content?.parts || [];
+            // Thinking models may return thought parts first; the answer is the last text part
+            const text = parts.filter((p: any) => typeof p?.text === 'string' && !p.thought).map((p: any) => p.text).pop();
+            if (!text) throw new Error(`${model}: empty response`);
+            return text;
+          } finally {
+            clearTimeout(timer);
           }
-
-          const json = await res.json();
-          const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (rawText) {
-            let clean = rawText.trim();
-            const jsonMatch = clean.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              clean = jsonMatch[0];
-            }
-
-            let parsed: any = null;
-            try {
-              parsed = JSON.parse(clean);
-            } catch (pErr) {
-              console.warn('Direct JSON parse failed, trying regex extraction on OCR text:', rawText);
-              // Regex fallback extraction
-              const amtMatch = rawText.match(/"amount"\s*:\s*([\d.]+)/);
-              const vendorMatch = rawText.match(/"vendorName"\s*:\s*"([^"]+)"/);
-              const dateMatch = rawText.match(/"date"\s*:\s*"([^"]+)"/);
-              const noteMatch = rawText.match(/"note"\s*:\s*"([^"]+)"/);
-              if (amtMatch || vendorMatch) {
-                parsed = {
-                  amount: amtMatch ? parseFloat(amtMatch[1]) : 0,
-                  vendorName: vendorMatch ? vendorMatch[1] : 'บิลเงินสด/ร้านค้าทั่วไป',
-                  date: dateMatch ? dateMatch[1] : new Date().toISOString().split('T')[0],
-                  note: noteMatch ? noteMatch[1] : 'สกัดจากบิลเงินสด'
-                };
-              }
-            }
-
-            if (parsed) {
-              const validCategories = ['raw_material', 'supplies', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'];
-              let cat = parsed.category || 'raw_material';
-              if (cat === 'equipment') cat = 'supplies';
-              if (!validCategories.includes(cat)) cat = 'raw_material';
-
-              const amt = typeof parsed.amount === 'number' ? parsed.amount : (parseFloat(parsed.amount) || 0);
-              const vat = typeof parsed.vatAmount === 'number' ? parsed.vatAmount : (parseFloat(parsed.vatAmount) || 0);
-              const net = typeof parsed.netAmount === 'number' ? parsed.netAmount : (amt > 0 ? (amt - vat) : 0);
-
-              return {
-                result: {
-                  title: parsed.title || (parsed.vendorName ? `บิล ${parsed.vendorName}` : 'ค่าใช้จ่ายจากการสแกนใบเสร็จ'),
-                  vendorName: parsed.vendorName || 'บิลเงินสด / ร้านค้าทั่วไป',
-                  date: parsed.date || new Date().toISOString().split('T')[0],
-                  category: cat,
-                  amount: amt,
-                  includeVat: Boolean(parsed.includeVat),
-                  vatAmount: vat,
-                  netAmount: net,
-                  refNumber: parsed.refNumber || '',
-                  note: parsed.note || '',
-                  confidenceScore: typeof parsed.confidenceScore === 'number' ? parsed.confidenceScore : 90,
-                  lineItems: Array.isArray(parsed.lineItems) ? parsed.lineItems.map((li: any) => ({
-                    name: li.name || 'รายการสินค้า',
-                    amount: typeof li.amount === 'number' ? li.amount : (parseFloat(li.amount) || 0)
-                  })) : []
-                }
-              };
-            }
-          }
-        } catch (modelErr: any) {
-          console.warn(`Browser Gemini error with model ${modelName}:`, modelErr?.message || modelErr);
-          lastErrorMessage = modelErr?.name === 'AbortError'
-            ? 'การเชื่อมต่อหมดเวลา (Timeout) กรุณาตรวจสอบสัญญาณอินเทอร์เน็ต'
-            : (modelErr?.message || 'ไม่สามารถติดต่อ Gemini API ได้');
-        }
-      }
-
-      return { error: lastErrorMessage || 'AI ไม่สามารถอ่านข้อความจากภาพนี้ได้ชัดเจน' };
+        },
+        { data: pureBase64, mimeType: mimeType && mimeType.startsWith('image/') ? mimeType : 'image/jpeg' },
+        { todayIso: new Date().toLocaleDateString('en-CA') }
+      );
+      return { result: data as ScannedReceiptData };
     } catch (e: any) {
       console.warn('Direct Browser Gemini Vision Error:', e);
-      return { error: e?.message || 'เกิดข้อผิดพลาดในการประมวลผลรูปภาพ' };
+      if (e instanceof FatalReceiptOcrError) return { error: e.message };
+      if (e?.name === 'AbortError') return { error: 'การเชื่อมต่อหมดเวลา (Timeout) กรุณาตรวจสอบสัญญาณอินเทอร์เน็ต' };
+      if (rateLimited) return { error: 'โควตาการใช้งาน Gemini API เต็มชั่วคราว กรุณารอสักครู่แล้วลองใหม่' };
+      return { error: e?.message || 'AI ไม่สามารถอ่านข้อความจากภาพนี้ได้ชัดเจน' };
     }
   };
 
@@ -628,10 +518,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
         ''
       ).trim() : '';
 
-      const isStaticHost = typeof window !== 'undefined' && (
-        window.location.hostname.includes('github.io') ||
-        window.location.protocol === 'file:'
-      );
+      const isStaticHost = !hasBackend();
 
       let scanErrorMessage: string | undefined = undefined;
 
@@ -639,9 +526,10 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       if (!isStaticHost) {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 6000);
+          // Accurate (Pro) models plus an optional re-check pass can take a while
+          const timer = setTimeout(() => controller.abort(), 120000);
 
-          const response = await fetch('/api/ai/scan-receipt', {
+          const response = await fetch(apiUrl('/api/ai/scan-receipt'), {
             method: 'POST',
             signal: controller.signal,
             headers: { 'Content-Type': 'application/json' },
@@ -649,7 +537,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
               image: finalBase64,
               mimeType: finalMime,
               apiKey: clientApiKey,
-              clientApiKey: clientApiKey
+              todayIso: new Date().toLocaleDateString('en-CA')
             })
           });
           clearTimeout(timer);
@@ -1469,7 +1357,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                 💡 <span className="underline">ทดลองใช้งานได้ทันทีโดยไม่ต้องใส่ Key:</span> คุณสามารถแตะเลือกรูปภาพใบเสร็จ หรือกดปุ่ม <strong>Demo Presets (บิ๊กซี / ตลาดสด / บิลไฟฟ้า)</strong> ด้านล่างเพื่อทดสอบระบบสแกนและบันทึกบัญชีได้ทันที!
               </p>
               <p className="text-slate-400 text-[10px]">
-                หากต้องการสแกนใบเสร็จจริงด้วยโมเดล Gemini Flash AI OCR สามารถวาง API Key ด้านล่างนี้ (ระบบจะบันทึกใน Browser เครื่องของคุณเท่านั้น ปลอดภัย 100%)
+                หากต้องการสแกนใบเสร็จจริงด้วยโมเดล Gemini Pro (ตรวจยอดอัตโนมัติ) สามารถวาง API Key ด้านล่างนี้ (คีย์จะถูกเก็บไว้ใน Browser ของเครื่องนี้ ห้ามใช้บนเครื่องสาธารณะ)
               </p>
             </div>
 
@@ -1771,7 +1659,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                   <Sparkles className="w-8 h-8" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-slate-100 text-sm">กำลังวิเคราะห์ภาพด้วย Gemini Flash OCR...</h4>
+                  <h4 className="font-bold text-slate-100 text-sm">กำลังอ่านและตรวจยอดด้วย Gemini Pro OCR...</h4>
                   <p className="text-xs text-slate-400 mt-1 max-w-sm">
                     ระบบ AI กำลังตรวจหาชื่อร้านค้า วันที่ ยอดเงินรวม ภาษี VAT และสกัดหมวดหมู่ค่าใช้จ่ายอัตโนมัติ
                   </p>
@@ -1835,6 +1723,29 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                     ความแม่นยำ {scannedResult.confidenceScore}%
                   </div>
                 </div>
+
+                {/* Arithmetic verification result from the OCR pipeline */}
+                {scannedResult.warnings && scannedResult.warnings.length > 0 ? (
+                  <div className="p-3 bg-amber-950/40 border border-amber-500/40 rounded-2xl text-[11px] text-amber-200 space-y-1">
+                    <div className="flex items-center space-x-1.5 font-bold text-amber-300">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>AI ตรวจพบจุดที่ควรตรวจสอบก่อนบันทึก</span>
+                    </div>
+                    <ul className="list-disc pl-5 space-y-0.5">
+                      {scannedResult.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : scannedResult.verified ? (
+                  <div className="p-2.5 bg-emerald-950/30 border border-emerald-500/30 rounded-2xl text-[11px] text-emerald-300 flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>
+                      ตรวจยอดแล้ว: ผลรวมรายการ, VAT และวันที่สอดคล้องกัน
+                      {scannedResult.passes === 2 ? ' (AI อ่านทวนซ้ำ 2 รอบ)' : ''}
+                    </span>
+                  </div>
+                ) : null}
 
                 {/* Parsed Form Fields */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3 text-xs">

@@ -3,7 +3,7 @@ import { calcRecipeItemCostAndDeduction, getAvailableRecipeUnits } from '../util
 import { isItemInCategory } from '../utils/categoryUtils';
 import { SHOP_LOGO_URL } from '../assets/logo';
 import { compressImageFile } from '../utils/imageCompressor';
-import { generatePromptPayPayload } from '../utils/promptpay';
+import { generatePromptPayPayload, generateQRCodeDataURL } from '../utils/promptpay';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -133,9 +133,32 @@ const getQrCodeImgSrc = (table: string, size = 300) => {
   return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(targetUrl)}&color=070b14&bgcolor=ffffff&margin=1`;
 };
 
-const getPromptPayQrCodeImgSrc = (amount: number, promptPayId = '0812345678', size = 220) => {
-  const payload = generatePromptPayPayload(promptPayId, amount);
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(payload)}&color=000000&bgcolor=ffffff&margin=1`;
+// PromptPay QR is rendered locally: the payment payload is never sent to a third-party QR service
+const PromptPayQrImage: React.FC<{ amount: number; promptPayId?: string; alt: string; className?: string }> = ({
+  amount,
+  promptPayId,
+  alt,
+  className
+}) => {
+  const payload = generatePromptPayPayload(promptPayId || '', amount);
+  const [src, setSrc] = React.useState('');
+  React.useEffect(() => {
+    let alive = true;
+    if (!payload) {
+      setSrc('');
+      return;
+    }
+    generateQRCodeDataURL(payload, 220).then(url => {
+      if (alive) setSrc(url);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [payload]);
+  if (!payload) {
+    return <div className="text-[10px] font-bold text-rose-600 p-2 max-w-[140px]">ยังไม่ได้ตั้งค่าเบอร์พร้อมเพย์ที่ถูกต้อง</div>;
+  }
+  return src ? <img src={src} alt={alt} className={className} /> : <div className={className} />;
 };
 
 const renderPaymentMethodBadge = (pm?: PaymentMethod) => {
@@ -1624,14 +1647,15 @@ export const QrOrderingView: React.FC = () => {
                         return (
                           <div className="bg-slate-900 border border-blue-900/50 p-2.5 rounded-2xl text-center space-y-1.5 animate-in fade-in duration-150">
                             <div className="bg-white p-2 rounded-xl inline-block shadow-sm">
-                              <img
-                                src={getPromptPayQrCodeImgSrc(simCart.reduce((s, i) => s + i.totalPrice, 0), currentOption.accountNumber || '0812345678')}
+                              <PromptPayQrImage
+                                amount={simCart.reduce((s, i) => s + i.totalPrice, 0)}
+                                promptPayId={currentOption.accountNumber}
                                 alt="PromptPay QR"
                                 className="w-28 h-28 object-contain mx-auto"
                               />
                             </div>
                             <div className="text-[10px] text-slate-300">
-                              <span className="font-bold text-blue-300">{currentOption.accountName || settings.shopName}</span> • พร้อมเพย์: <strong className="text-amber-400 font-mono">{currentOption.accountNumber || '081-234-5678'}</strong>
+                              <span className="font-bold text-blue-300">{currentOption.accountName || settings.shopName}</span> • พร้อมเพย์: <strong className="text-amber-400 font-mono">{currentOption.accountNumber || 'ยังไม่ได้ตั้งค่า'}</strong>
                             </div>
                             {currentOption.instructions && (
                               <div className="text-[9px] text-slate-400 italic">{currentOption.instructions}</div>
@@ -1644,13 +1668,14 @@ export const QrOrderingView: React.FC = () => {
                         return (
                           <div className="bg-slate-900 border border-orange-900/50 p-2.5 rounded-2xl text-[11px] text-slate-300 space-y-1.5 text-center animate-in fade-in duration-150">
                             <div className="bg-white p-2 rounded-xl inline-block shadow-sm">
-                              <img
-                                src={getPromptPayQrCodeImgSrc(simCart.reduce((s, i) => s + i.totalPrice, 0), currentOption.accountNumber || '0812345678')}
+                              <PromptPayQrImage
+                                amount={simCart.reduce((s, i) => s + i.totalPrice, 0)}
+                                promptPayId={currentOption.accountNumber}
                                 alt="TrueMoney QR"
                                 className="w-24 h-24 object-contain mx-auto"
                               />
                             </div>
-                            <div>โอนผ่าน TrueMoney Wallet: <strong className="text-amber-400 font-mono">{currentOption.accountNumber || '081-234-5678'}</strong></div>
+                            <div>โอนผ่าน TrueMoney Wallet: <strong className="text-amber-400 font-mono">{currentOption.accountNumber || 'ยังไม่ได้ตั้งค่า'}</strong></div>
                             {currentOption.accountName && <div className="text-[9px] text-slate-400">ชื่อบัญชี: {currentOption.accountName}</div>}
                             {currentOption.instructions && <div className="text-[9px] text-amber-300/90 italic">{currentOption.instructions}</div>}
                           </div>
@@ -8150,6 +8175,7 @@ export const LineNotifyView: React.FC = () => {
   // State for Tokens and Settings (Initialized from Persistent Storage)
   const initialCreds = getStoredCredentials();
   const [lineToken, setLineToken] = useState(initialCreds.lineToken);
+  const [lineTargetId, setLineTargetId] = useState(initialCreds.lineTargetId);
   const [telegramToken, setTelegramToken] = useState(initialCreds.telegramToken);
   const [telegramChatId, setTelegramChatId] = useState(initialCreds.telegramChatId);
   const [tokenSavedToast, setTokenSavedToast] = useState<string | null>(null);
@@ -8214,7 +8240,8 @@ export const LineNotifyView: React.FC = () => {
     saveStoredCredentials({
       telegramToken: telegramToken.trim(),
       telegramChatId: telegramChatId.trim(),
-      lineToken: lineToken.trim()
+      lineToken: lineToken.trim(),
+      lineTargetId: lineTargetId.trim()
     });
     setTokenSavedToast('บันทึกการตั้งค่า LINE Token & Telegram Bot เรียบร้อยแล้ว!');
     setTimeout(() => setTokenSavedToast(null), 3500);
@@ -8307,7 +8334,8 @@ export const LineNotifyView: React.FC = () => {
     saveStoredCredentials({
       telegramToken: telegramToken.trim(),
       telegramChatId: telegramChatId.trim(),
-      lineToken: lineToken.trim()
+      lineToken: lineToken.trim(),
+      lineTargetId: lineTargetId.trim()
     });
 
     const res = await dispatchNotification(titleText, msgContent, {
@@ -8401,21 +8429,33 @@ export const LineNotifyView: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2 text-emerald-400 font-bold">
                     <Send className="w-4 h-4" />
-                    <span>LINE Official / Notify Token</span>
+                    <span>LINE Official Account (Messaging API)</span>
                   </div>
                   <span className="text-[10px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 px-2 py-0.5 rounded-full font-bold">
                     LINE API v2
                   </span>
                 </div>
                 <div>
-                  <label className="block text-slate-400 font-medium mb-1 text-[11px]">Token สำหรับกลุ่มผู้บริหาร:</label>
+                  <label className="block text-slate-400 font-medium mb-1 text-[11px]">Channel Access Token (long-lived):</label>
                   <input
-                    type="text"
+                    type="password"
                     value={lineToken}
                     onChange={e => setLineToken(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-emerald-300 font-mono font-bold focus:border-emerald-500"
-                    placeholder="ป้อน LINE Notify Token..."
+                    placeholder="จาก LINE Developers Console → Messaging API"
+                    autoComplete="off"
                   />
+                </div>
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1 text-[11px]">User ID / Group ID ผู้รับ:</label>
+                  <input
+                    type="text"
+                    value={lineTargetId}
+                    onChange={e => setLineTargetId(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-emerald-300 font-mono font-bold focus:border-emerald-500"
+                    placeholder="U... (ผู้ใช้) หรือ C... (กลุ่มที่เชิญบอทเข้าแล้ว)"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">LINE Notify ปิดให้บริการแล้ว (31 มี.ค. 2025) ต้องใช้ LINE Official Account แทน</p>
                 </div>
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-[10px] text-slate-500">สำหรับส่งเตือนเข้ากลุ่ม Line</span>

@@ -11,6 +11,8 @@ export interface TaxCalculationResult {
   grandTotal: number;
 }
 
+const round2 = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+
 /**
  * Calculates net subtotal, VAT amount, and grand total based on system settings.
  */
@@ -19,7 +21,7 @@ export function calculateOrderTotals(
   discountAmount: number,
   settings: Partial<SystemSettings>
 ): TaxCalculationResult {
-  const netSubtotal = Math.max(0, rawSubtotal - discountAmount);
+  const netSubtotal = Math.max(0, rawSubtotal - Math.max(0, discountAmount || 0));
   const vatRate = typeof settings.vatRate === 'number' ? settings.vatRate : 7;
   const enableVat = settings.enableVat !== false; // default true
   const vatType = settings.vatType || 'inclusive';
@@ -42,14 +44,15 @@ export function calculateOrderTotals(
     grandTotal = netSubtotal;
   }
 
+  // Store money in satang precision so receipts, reports and exports add up exactly
   return {
     rawSubtotal,
     discountAmount,
-    netSubtotal,
+    netSubtotal: round2(netSubtotal),
     vatRate,
     vatType,
     enableVat,
-    vatAmount,
-    grandTotal
+    vatAmount: round2(vatAmount),
+    grandTotal: round2(grandTotal)
   };
 }

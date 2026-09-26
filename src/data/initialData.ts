@@ -45,7 +45,7 @@ export const INITIAL_BRANCHES: Branch[] = [
     address: '991 อาคารสยามพารากอน ชั้น G ถ.พระราม 1 ปทุมวัน กรุงเทพฯ 10330',
     phone: '02-123-4567',
     taxId: '0105562089123',
-    promptpayMobileOrTaxId: '0812345678',
+    promptpayMobileOrTaxId: '',
     isMainBranch: false,
   },
   {
@@ -55,7 +55,7 @@ export const INITIAL_BRANCHES: Branch[] = [
     address: '209 อาคารอโศกทาวเวอร์ ชั้น 1 ถ.สุขุมวิท 21 วัฒนา กรุงเทพฯ 10110',
     phone: '02-987-6543',
     taxId: '0105562089124',
-    promptpayMobileOrTaxId: '0812345678',
+    promptpayMobileOrTaxId: '',
   },
   {
     id: 'branch-nimman',
@@ -64,7 +64,7 @@ export const INITIAL_BRANCHES: Branch[] = [
     address: '12 ถนนนิมมานเหามินท์ ซอย 9 ต.สุเทพ อ.เมือง จ.เชียงใหม่ 50200',
     phone: '053-111-222',
     taxId: '0105562089125',
-    promptpayMobileOrTaxId: '0812345678',
+    promptpayMobileOrTaxId: '',
   },
 ];
 
@@ -442,7 +442,7 @@ export const INITIAL_SETTINGS: SystemSettings = {
   syncIntervalSeconds: 30,
   realtimeCloudSync: true,
   cloudPurgeDeletions: true,
-  promptpayMobileOrTaxId: '0812345678',
+  promptpayMobileOrTaxId: '',
   shopName: 'บริษัท กะเพรา เอ็นเตอร์ไพรส์ จำกัด (สำนักงานใหญ่)',
   shopLogoUrl: SHOP_LOGO_URL,
   shopTaxId: '0105562089123',

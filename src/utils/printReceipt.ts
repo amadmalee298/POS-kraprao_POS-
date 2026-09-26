@@ -1,6 +1,16 @@
 import { Order, Branch, SystemSettings } from '../types';
 import { SHOP_LOGO_URL } from '../assets/logo';
 
+// Every value interpolated into receipt HTML must be escaped: order notes, table names and
+// tax-invoice fields can come from customers (QR ordering) or from the shared cloud database.
+const esc = (value: unknown): string =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 export interface ThermalPrintOptions {
   paperWidth?: '80mm' | '58mm';
   fontSize?: 'sm' | 'md' | 'lg';
@@ -48,12 +58,12 @@ export function buildThermalReceiptHtml(
   const itemsHtml = order.items
     .map(item => {
       const details = [];
-      if (item.spiceLevel) details.push(`[${item.spiceLevel}]`);
-      if (item.proteinChoice) details.push(`[${item.proteinChoice.name}]`);
+      if (item.spiceLevel) details.push(`[${esc(item.spiceLevel)}]`);
+      if (item.proteinChoice) details.push(`[${esc(item.proteinChoice.name)}]`);
       if (item.selectedAddOns && item.selectedAddOns.length > 0) {
-        details.push(`+${item.selectedAddOns.map(a => a.name).join(', ')}`);
+        details.push(`+${esc(item.selectedAddOns.map(a => a.name).join(', '))}`);
       }
-      if (item.specialNotes) details.push(`(${item.specialNotes})`);
+      if (item.specialNotes) details.push(`(${esc(item.specialNotes)})`);
 
       const subtextHtml =
         showItemDetails && details.length > 0
@@ -63,7 +73,7 @@ export function buildThermalReceiptHtml(
       return `
         <tr class="receipt-row" style="border-bottom: 1px dotted #ccc;">
           <td style="padding: 3px 0; vertical-align: top; text-align: left;">
-            <div style="font-weight: bold; color: #000;">${item.menuItem.name}</div>
+            <div style="font-weight: bold; color: #000;">${esc(item.menuItem.name)}</div>
             ${subtextHtml}
           </td>
           <td style="padding: 3px 0; vertical-align: top; text-align: center; font-family: monospace; width: 30px;">
@@ -95,9 +105,9 @@ export function buildThermalReceiptHtml(
   const taxInfoHtml = showTaxId
     ? `
       <div class="receipt-tax-id" style="font-size: 9.5px; color: #222; margin-top: 2px; line-height: 1.3;">
-        <div>${branch.address || settings.shopAddress || ''}</div>
-        <div>โทร: ${branch.phone || settings.shopPhone || ''}</div>
-        <div style="font-family: monospace; font-weight: bold;">เลขประจำตัวผู้เสียภาษี: ${taxIdText}</div>
+        <div>${esc(branch.address || settings.shopAddress || '')}</div>
+        <div>โทร: ${esc(branch.phone || settings.shopPhone || '')}</div>
+        <div style="font-family: monospace; font-weight: bold;">เลขประจำตัวผู้เสียภาษี: ${esc(taxIdText)}</div>
       </div>
     `
     : '';
@@ -108,9 +118,9 @@ export function buildThermalReceiptHtml(
     customerTaxBoxHtml = `
       <div style="border: 1px solid #000; padding: 4px 6px; margin: 4px 0; font-size: 9.5px; text-align: left; background: #fafafa;">
         <div style="font-weight: bold; border-bottom: 1px solid #ddd; padding-bottom: 2px; margin-bottom: 2px;">ข้อมูลผู้ซื้อ / ผู้รับบริการ:</div>
-        <div><strong>ชื่อ:</strong> ${order.customerTaxInfo.companyName}</div>
-        <div><strong>เลขผู้เสียภาษี:</strong> ${order.customerTaxInfo.taxId} (สาขา: ${order.customerTaxInfo.branchCode})</div>
-        <div><strong>ที่อยู่:</strong> ${order.customerTaxInfo.address}</div>
+        <div><strong>ชื่อ:</strong> ${esc(order.customerTaxInfo.companyName)}</div>
+        <div><strong>เลขผู้เสียภาษี:</strong> ${esc(order.customerTaxInfo.taxId)} (สาขา: ${esc(order.customerTaxInfo.branchCode)})</div>
+        <div><strong>ที่อยู่:</strong> ${esc(order.customerTaxInfo.address)}</div>
       </div>
     `;
   }
@@ -121,8 +131,8 @@ export function buildThermalReceiptHtml(
     cancellationBanner = `
       <div style="border: 1px dashed #d00; background: #fff5f5; color: #900; padding: 4px; margin: 4px 0; text-align: center; font-size: 10px; font-weight: bold;">
         <div>สถานะ: ยกเลิกออเดอร์แล้ว</div>
-        <div>เหตุผล: ${order.cancelReason || 'ไม่ระบุเหตุผล'}</div>
-        ${order.cancelledBy ? `<div>ผู้อนุมัติ: ${order.cancelledBy.userName}</div>` : ''}
+        <div>เหตุผล: ${esc(order.cancelReason || 'ไม่ระบุเหตุผล')}</div>
+        ${order.cancelledBy ? `<div>ผู้อนุมัติ: ${esc(order.cancelledBy.userName)}</div>` : ''}
       </div>
     `;
   }
@@ -171,7 +181,7 @@ export function buildThermalReceiptHtml(
       <div style="font-size: 10.5px; margin-top: 4px;">
         <div style="display: flex; justify-content: space-between;">
           <span>ชำระด้วย:</span>
-          <strong>${paymentName}</strong>
+          <strong>${esc(paymentName)}</strong>
         </div>
         ${
           order.paymentMethod === 'cash'
@@ -193,7 +203,7 @@ export function buildThermalReceiptHtml(
 
   const orderTypeStr =
     order.orderType === 'dine-in'
-      ? `ทานที่ร้าน (${order.tableNumber || 'T-01'})`
+      ? `ทานที่ร้าน (${esc(order.tableNumber || 'T-01')})`
       : order.orderType === 'takeaway'
       ? 'ใส่กล่องกลับบ้าน'
       : 'เดลิเวอรี่';
@@ -217,13 +227,13 @@ export function buildThermalReceiptHtml(
           showLogo
             ? `
           <div class="receipt-logo" style="display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 2px;">
-            <img src="${logoUrl}" alt="Logo" style="width: 28px; height: 28px; object-fit: contain;" />
-            <span style="font-weight: bold; font-size: 14px; color: #000;">${settings.shopName || 'กะเพราแท้สูตรโบราณ'}</span>
+            <img src="${esc(logoUrl)}" alt="Logo" style="width: 28px; height: 28px; object-fit: contain;" />
+            <span style="font-weight: bold; font-size: 14px; color: #000;">${esc(settings.shopName || 'กะเพราแท้สูตรโบราณ')}</span>
           </div>
         `
-            : `<div style="font-weight: bold; font-size: 14px; color: #000;">${settings.shopName || 'กะเพราแท้สูตรโบราณ'}</div>`
+            : `<div style="font-weight: bold; font-size: 14px; color: #000;">${esc(settings.shopName || 'กะเพราแท้สูตรโบราณ')}</div>`
         }
-        <div style="font-size: 11px; font-weight: bold; color: #222;">${branch.name}</div>
+        <div style="font-size: 11px; font-weight: bold; color: #222;">${esc(branch.name)}</div>
         ${taxInfoHtml}
       </div>
 
@@ -247,7 +257,7 @@ export function buildThermalReceiptHtml(
       <div style="font-size: 10px; border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 4px;">
         <div style="display: flex; justify-content: space-between; font-family: monospace;">
           <span>${isPreBill ? 'เลขที่ใบแจ้ง:' : 'เลขที่ใบเสร็จ:'}</span>
-          <strong>#${order.orderNumber}</strong>
+          <strong>#${esc(String(order.orderNumber || '').replace(/^#/, ''))}</strong>
         </div>
         <div style="display: flex; justify-content: space-between;">
           <span>วันที่-เวลา:</span>
@@ -255,11 +265,11 @@ export function buildThermalReceiptHtml(
         </div>
         <div style="display: flex; justify-content: space-between;">
           <span>พนักงาน:</span>
-          <span>${cashierName}</span>
+          <span>${esc(cashierName)}</span>
         </div>
         <div style="display: flex; justify-content: space-between;">
           <span>ประเภท:</span>
-          <strong>${orderTypeStr}</strong>
+          <strong>${esc(orderTypeStr)}</strong>
         </div>
       </div>
 
@@ -288,7 +298,7 @@ export function buildThermalReceiptHtml(
           order.discountAmount > 0
             ? `
           <div style="display: flex; justify-content: space-between; font-size: 10.5px; color: #900; font-weight: bold;">
-            <span>ส่วนลด (${order.discountNote || 'ส่วนลดพิเศษ'}):</span>
+            <span>ส่วนลด (${esc(order.discountNote || 'ส่วนลดพิเศษ')}):</span>
             <span>-${formatMoney(order.discountAmount)} ฿</span>
           </div>
         `
@@ -315,7 +325,7 @@ export function buildThermalReceiptHtml(
 
       <!-- Footer -->
       <div class="receipt-footer" style="text-align: center; border-top: 1px solid #000; margin-top: 6px; padding-top: 4px; font-size: 10px;">
-        <div style="font-weight: bold; margin-bottom: 2px;">${footerNote}</div>
+        <div style="font-weight: bold; margin-bottom: 2px;">${esc(footerNote)}</div>
         <div style="font-size: 8.5px; color: #666; font-family: monospace;">Powered by Kaprao POS Enterprise</div>
       </div>
 

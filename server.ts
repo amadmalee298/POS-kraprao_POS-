@@ -3,6 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import { runReceiptOcr, FatalReceiptOcrError } from './src/utils/receiptOcr';
 
 dotenv.config();
 
@@ -10,8 +11,73 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '25mb' }));
-  app.use(express.urlencoded({ limit: '25mb', extended: true }));
+  // Behind Cloud Run / a reverse proxy: use the real client IP for rate limiting
+  app.set('trust proxy', 1);
+
+  // Receipt photos are sent as base64; 15 MB covers a ~4 MP JPEG with room to spare
+  app.use('/api', express.json({ limit: '15mb' }));
+  app.use('/api', express.urlencoded({ limit: '1mb', extended: true }));
+
+  // --- API protection -------------------------------------------------------
+  // Only this app's own pages may call the API. Other origins (e.g. the GitHub Pages build)
+  // must be listed in ALLOWED_ORIGINS (comma-separated), which also enables CORS for them.
+  const allowedOrigins = new Set(
+    (process.env.ALLOWED_ORIGINS || '')
+      .split(',')
+      .map(o => o.trim().replace(/\/+$/, ''))
+      .filter(Boolean)
+  );
+  app.use('/api', (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      let sameHost = false;
+      try {
+        sameHost = new URL(origin).host === req.headers.host;
+      } catch {
+        sameHost = false;
+      }
+      if (!sameHost && !allowedOrigins.has(origin)) {
+        return res.status(403).json({ error: 'Origin not allowed' });
+      }
+      if (!sameHost) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      }
+    }
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  });
+
+  // Simple in-memory fixed-window rate limiter (per client IP and route group)
+  const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+  const rateLimit = (group: string, maxPerWindow: number, windowMs = 60_000) =>
+    (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const key = `${group}:${req.ip}`;
+      const now = Date.now();
+      const bucket = rateBuckets.get(key);
+      if (!bucket || bucket.resetAt <= now) {
+        rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+        return next();
+      }
+      bucket.count++;
+      if (bucket.count > maxPerWindow) {
+        res.setHeader('Retry-After', String(Math.ceil((bucket.resetAt - now) / 1000)));
+        return res.status(429).json({ error: 'เรียกใช้งานถี่เกินไป กรุณารอสักครู่แล้วลองใหม่' });
+      }
+      next();
+    };
+  setInterval(() => {
+    const now = Date.now();
+    rateBuckets.forEach((bucket, key) => {
+      if (bucket.resetAt <= now) rateBuckets.delete(key);
+    });
+  }, 5 * 60_000).unref();
+
+  // AI calls spend the shop's Gemini quota; notifications relay to Telegram/LINE
+  app.use('/api/ai', rateLimit('ai', 20));
+  app.use('/api/notify', rateLimit('notify', 30));
 
   // API Route: Server Health & Connection Ping Endpoint
   app.get('/api/health', (req, res) => {
@@ -253,98 +319,33 @@ ${
         detectedMime = 'image/jpeg';
       }
 
-      const promptText = `
-คุณเป็นผู้เชี่ยวชาญการอ่านเอกสารบัญชีและการสกัดข้อมูลจากภาพถ่ายใบเสร็จรับเงิน ใบกำกับภาษี สลิปชำระเงิน และบิลเงินสด (Cash Sale) ทุกรูปแบบในประเทศไทย รวมถึงบิลเขียนมือ (Handwritten bills), บิลกระดาษคาร์บอน, สลิป 7-Eleven, Makro, Lotus, Big C, ตลาดสด และร้านค้าทั่วไป (Multimodal Vision OCR Document AI)
-โปรดอ่านข้อความและตัวเลขทั้งหมดจากภาพใบเสร็จนี้อย่างละเอียดและตรงตามความเป็นจริง:
-
-1. vendorName: อ่านชื่อร้านค้า/ซัพพลายเออร์/บริษัท/หน่วยงาน ที่พิมพ์อยู่บนหัวบิลหรือตราประทับจริง (เช่น 7-Eleven, Makro, Lotus, Big C, ตลาดสด) หากเป็นบิลเงินสดเขียนมือที่ไม่มีชื่อร้าน ให้ระบุ "บิลเงินสด/ร้านค้าทั่วไป"
-2. title: หัวข้อสรุปค่าใช้จ่ายสั้นๆ เช่น "ซื้อของสด/วัตถุดิบ (บิลเงินสด)", "ซื้อวัตถุดิบ CP - แม็คโคร" หรือ "บิลค่าน้ำประปา"
-3. date: วันที่ที่ระบุในเอกสาร แปลงเป็นรูปแบบ YYYY-MM-DD (หากระบุปีเป็น พ.ศ. เช่น 2567, 2568, 2569 ให้แปลงเป็น ค.ศ. เสมอ หากอ่านวันที่ไม่ออกให้ใช้วันที่ปัจจุบัน)
-4. category: เลือกหมวดหมู่ที่ตรงที่สุดจาก ['raw_material', 'supplies', 'rent', 'salary', 'utilities', 'marketing', 'other'] (อาหาร/เนื้อสัตว์/ผัก/เครื่องปรุง/ของสด = raw_material, ซัพพลายใช้สอย/อุปกรณ์สิ้นเปลือง/ของใช้ในร้าน/น้ำยาล้างจาน/ถุงขยะ/ถุงพลาสติก/กล่องอาหาร/ทิชชู่/ฟองน้ำ/อุปกรณ์ทำความสะอาด = supplies, ค่าน้ำ/ค่าไฟ/แก๊ส = utilities, ค่าแรง = salary, ค่าเช่า = rent, การตลาด/โฆษณา = marketing, อื่นๆ = other)
-5. amount: ยอดเงินรวมสุทธิ/ยอดรวมทั้งสิ้น/ยอดชำระจริง (Grand Total / Total / Net Paid / ยอดสุทธิ) เป็นตัวเลขทศนิยมแท้จริงจากภาพ
-6. includeVat: true หากระบุภาษีมูลค่าเพิ่ม VAT 7% ชัดเจน มิฉะนั้น false
-7. vatAmount: จำนวนเงินภาษีมูลค่าเพิ่ม VAT 7% (ถ้ามีระบุในบิล มิฉะนั้น 0)
-8. refNumber: เลขที่ใบเสร็จ / No. / Tax Invoice No. / Doc No. ที่ปรากฏในภาพ หากไม่มีให้ใส่ ""
-9. note: หมายเหตุสรุปสินค้า/บริการที่ซื้อจริงจากภาพ
-10. confidenceScore: ประเมินความชัดเจนของภาพและความมั่นใจในการอ่าน (0-100)
-11. lineItems: รายการสินค้าแต่ละแถวที่อ่านได้ พร้อมชื่อสินค้า (name) และราคา (amount)
-
-ตอบเฉพาะ JSON ตาม schema ที่กำหนดเท่านั้น
-`;
-
-      const { response, modelUsed } = await generateWithFallback(ai, {
-        contents: [
-          {
-            inlineData: {
-              data: cleanBase64,
-              mimeType: detectedMime
-            }
-          },
-          promptText
-        ],
-        config: {
-          systemInstruction: 'คุณเป็นระบบ OCR สกัดข้อมูลใบเสร็จรับเงินภาษาไทยและสากลที่มีความแม่นยำสูงสุด 100% สกัดข้อมูลจริงจากภาพลงในโครงสร้าง JSON ตามที่กำหนด ห้ามแต่งข้อมูลขึ้นมาเอง',
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              vendorName: { type: Type.STRING },
-              date: { type: Type.STRING },
-              category: { type: Type.STRING },
-              amount: { type: Type.NUMBER },
-              includeVat: { type: Type.BOOLEAN },
-              vatAmount: { type: Type.NUMBER },
-              refNumber: { type: Type.STRING },
-              note: { type: Type.STRING },
-              confidenceScore: { type: Type.NUMBER },
-              lineItems: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING },
-                    amount: { type: Type.NUMBER }
-                  },
-                  required: ['name', 'amount']
-                }
+      const { data: receiptData, modelUsed } = await runReceiptOcr(
+        async ({ model, prompt, systemInstruction, responseSchema, image: img }) => {
+          try {
+            const result = await ai.models.generateContent({
+              model,
+              contents: [{ inlineData: { data: img.data, mimeType: img.mimeType } }, prompt],
+              config: {
+                systemInstruction,
+                responseMimeType: 'application/json',
+                responseSchema: responseSchema as any
               }
-            },
-            required: ['title', 'vendorName', 'date', 'category', 'amount', 'includeVat', 'vatAmount', 'refNumber', 'note', 'confidenceScore']
+            });
+            return result.text || '';
+          } catch (err: any) {
+            const msg = String(err?.message || err || '');
+            if (msg.includes('API_KEY_INVALID') || msg.includes('API key not valid')) {
+              throw new FatalReceiptOcrError('Gemini API Key ไม่ถูกต้อง');
+            }
+            console.warn(`[AI OCR] Model ${model} failed:`, msg);
+            throw err;
           }
-        }
-      });
+        },
+        { data: cleanBase64, mimeType: detectedMime },
+        { todayIso: typeof req.body?.todayIso === 'string' ? req.body.todayIso : undefined }
+      );
 
-      const parsedData = JSON.parse(response.text || '{}');
-      const validCategories = ['raw_material', 'supplies', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'];
-      let cat = parsedData.category || 'raw_material';
-      if (cat === 'equipment') cat = 'supplies';
-      if (!validCategories.includes(cat)) cat = 'raw_material';
-
-      const amt = typeof parsedData.amount === 'number' ? parsedData.amount : (parseFloat(parsedData.amount) || 0);
-      const vat = typeof parsedData.vatAmount === 'number' ? parsedData.vatAmount : (parseFloat(parsedData.vatAmount) || 0);
-      const net = amt > 0 ? (amt - vat) : 0;
-
-      return res.json({
-        source: modelUsed,
-        receiptData: {
-          title: parsedData.title || (parsedData.vendorName ? `บิล ${parsedData.vendorName}` : 'ค่าใช้จ่ายจากการสแกนใบเสร็จ'),
-          vendorName: parsedData.vendorName || 'ไม่ระบุชื่อร้านค้า',
-          date: parsedData.date || new Date().toISOString().split('T')[0],
-          category: cat,
-          amount: amt,
-          includeVat: Boolean(parsedData.includeVat),
-          vatAmount: vat,
-          netAmount: net,
-          refNumber: parsedData.refNumber || '',
-          note: parsedData.note || '',
-          confidenceScore: typeof parsedData.confidenceScore === 'number' ? parsedData.confidenceScore : 92,
-          lineItems: Array.isArray(parsedData.lineItems) ? parsedData.lineItems.map((li: any) => ({
-            name: li.name || 'รายการสินค้า',
-            amount: typeof li.amount === 'number' ? li.amount : (parseFloat(li.amount) || 0)
-          })) : []
-        }
-      });
+      return res.json({ source: modelUsed, receiptData });
     } catch (err: any) {
       console.error('Error scanning receipt with Gemini:', err);
       let errMsg = err?.message || String(err || '');
@@ -698,21 +699,25 @@ ${JSON.stringify(menuItems || [], null, 2)}
   // API Route: Send Telegram Notification
   app.post('/api/notify/telegram', async (req, res) => {
     try {
-      const { botToken, chatId, message } = req.body;
-      if (!botToken || !chatId || !message) {
+      const { botToken, chatId, message } = req.body || {};
+      if (typeof botToken !== 'string' || !botToken || (typeof chatId !== 'string' && typeof chatId !== 'number') || typeof message !== 'string' || !message) {
         return res.status(400).json({ error: 'กรุณาระบุ Bot Token, Group Chat ID และข้อความ' });
       }
 
       // Clean token if user prefixed with "bot"
       const cleanToken = botToken.trim().startsWith('bot') ? botToken.trim().slice(3) : botToken.trim();
+      // Bot tokens look like 123456789:AA...; rejecting anything else keeps the URL path fixed
+      if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(cleanToken)) {
+        return res.status(400).json({ error: 'รูปแบบ Telegram Bot Token ไม่ถูกต้อง' });
+      }
       const telegramUrl = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
 
       const response = await fetch(telegramUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chat_id: chatId.trim(),
-          text: message
+          chat_id: String(chatId).trim(),
+          text: message.slice(0, 4096)
         })
       });
 
@@ -732,35 +737,40 @@ ${JSON.stringify(menuItems || [], null, 2)}
     }
   });
 
-  // API Route: Send LINE Notification
+  // API Route: Send LINE message via the LINE Messaging API (push message).
+  // LINE Notify was discontinued on 31 March 2025.
   app.post('/api/notify/line', async (req, res) => {
     try {
-      const { lineToken, message } = req.body;
-      if (!lineToken || !message) {
-        return res.status(400).json({ error: 'กรุณาระบุ LINE Token และข้อความ' });
+      const { lineToken, to, message } = req.body || {};
+      if (typeof lineToken !== 'string' || !lineToken.trim() || typeof to !== 'string' || !to.trim() || typeof message !== 'string' || !message) {
+        return res.status(400).json({ error: 'กรุณาระบุ Channel Access Token, User/Group ID และข้อความ' });
+      }
+      if (!/^[UCR][0-9a-f]{32}$/i.test(to.trim())) {
+        return res.status(400).json({ error: 'User/Group ID ไม่ถูกต้อง (ต้องขึ้นต้นด้วย U, C หรือ R ตามด้วยตัวอักษร 32 ตัว)' });
       }
 
-      const params = new URLSearchParams();
-      params.append('message', message);
-
-      const response = await fetch('https://notify-api.line.me/api/notify', {
+      const response = await fetch('https://api.line.me/v2/bot/message/push', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Authorization': `Bearer ${lineToken.trim()}`
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${lineToken.trim()}`
         },
-        body: params
+        body: JSON.stringify({
+          to: to.trim(),
+          // LINE text messages are limited to 5,000 characters
+          messages: [{ type: 'text', text: message.slice(0, 5000) }]
+        })
       });
 
-      const data = await response.json();
-      if (!response.ok || data.status !== 200) {
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         return res.status(400).json({
-          error: data.message || 'เกิดข้อผิดพลาดจาก LINE Notify API (โปรดตรวจสอบ Token)',
+          error: data.message || 'เกิดข้อผิดพลาดจาก LINE Messaging API (โปรดตรวจสอบ Token และ ID ผู้รับ)',
           details: data
         });
       }
 
-      return res.json({ success: true, result: data });
+      return res.json({ success: true });
     } catch (err: any) {
       console.error('LINE notification error:', err);
       return res.status(500).json({ error: err.message || 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ LINE ได้' });

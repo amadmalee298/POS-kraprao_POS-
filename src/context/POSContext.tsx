@@ -44,6 +44,7 @@ import {
   syncOrderToFirestore,
   syncOrdersBatchToFirestore,
   syncInventoryToFirestore,
+  applyStockDeltasToFirestore,
   syncStockAdjustmentToFirestore,
   syncWasteLogToFirestore,
   subscribeToCentralBranches,
@@ -106,6 +107,13 @@ import {
   DEFAULT_CATEGORIES
 } from '../data/initialData';
 import { calculateOrderTotals } from '../utils/tax';
+import {
+  generateOrderId,
+  generateOrderNumber,
+  computeSaleStockDeductions,
+  applyStockDeductions,
+  roundMoney
+} from '../utils/orderUtils';
 import { crc16 } from '../utils/promptpay';
 import { SHOP_LOGO_URL } from '../assets/logo';
 
@@ -890,16 +898,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           return prev;
         }
         const localMap = new Map<string, Order>();
-        const orderNumberToId = new Map<string, string>();
         list.forEach(o => {
           if (o && o.id) {
             localMap.set(o.id, o);
             const normId = o.id.replace(/^ord-/, '');
             if (normId !== o.id && !localMap.has(normId)) {
               localMap.set(normId, o);
-            }
-            if (o.orderNumber) {
-              orderNumberToId.set(o.orderNumber, o.id);
             }
           }
         });
@@ -911,13 +915,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             matchedId = co.id;
           } else if (localMap.has(coNormId)) {
             matchedId = coNormId;
-          } else if (co.orderNumber && orderNumberToId.has(co.orderNumber)) {
-            matchedId = orderNumberToId.get(co.orderNumber)!;
           }
 
           if (!matchedId) {
             localMap.set(co.id, co);
-            if (co.orderNumber) orderNumberToId.set(co.orderNumber, co.id);
             hasChanges = true;
           } else {
             const existing = localMap.get(matchedId)!;
@@ -965,11 +966,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
         if (!hasChanges) return prev;
 
-        // Deduplicate merged items by orderNumber / clean ID to guarantee no duplicate cards
+        // Deduplicate merged items by normalized order ID ("ord-123" and "123" are the same order)
         const uniqueOrdersMap = new Map<string, Order>();
         Array.from(localMap.values()).forEach(ord => {
           if (!ord || !ord.id) return;
-          const key = ord.orderNumber || ord.id.replace(/^ord-/, '');
+          // Identity is the order id only: bill numbers are for humans and may repeat
+          const key = ord.id.replace(/^ord-/, '');
           if (!uniqueOrdersMap.has(key)) {
             uniqueOrdersMap.set(key, ord);
           } else {
@@ -1569,13 +1571,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       let newOrUpdatedCount = 0;
       setOrders(prev => {
         const orderMap = new Map<string, Order>();
-        const orderNumberToId = new Map<string, string>();
         prev.forEach(o => {
           if (o && o.id) {
             orderMap.set(o.id, o);
             const normId = o.id.replace(/^ord-/, '');
             if (normId !== o.id && !orderMap.has(normId)) orderMap.set(normId, o);
-            if (o.orderNumber) orderNumberToId.set(o.orderNumber, o.id);
           }
         });
 
@@ -1584,11 +1584,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           let matchedId: string | null = null;
           if (orderMap.has(co.id)) matchedId = co.id;
           else if (orderMap.has(coNormId)) matchedId = coNormId;
-          else if (co.orderNumber && orderNumberToId.has(co.orderNumber)) matchedId = orderNumberToId.get(co.orderNumber)!;
 
           if (!matchedId) {
             orderMap.set(co.id, co);
-            if (co.orderNumber) orderNumberToId.set(co.orderNumber, co.id);
             newOrUpdatedCount++;
           } else {
             const existing = orderMap.get(matchedId)!;
@@ -1617,7 +1615,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const uniqueOrders = new Map<string, Order>();
         Array.from(orderMap.values()).forEach(ord => {
           if (!ord || !ord.id) return;
-          const key = ord.orderNumber || ord.id.replace(/^ord-/, '');
+          // Identity is the order id only: bill numbers are for humans and may repeat
+          const key = ord.id.replace(/^ord-/, '');
           if (!uniqueOrders.has(key)) {
             uniqueOrders.set(key, ord);
           } else {
@@ -2888,6 +2887,38 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Create order & automatic ingredient stock deduction
+  /**
+   * Deduct recipe ingredients for a sale. The local list is updated optimistically and the
+   * cloud copy is changed with atomic increments, so a stale snapshot can neither be pushed
+   * over other devices' stock nor bounce back and undo this deduction.
+   */
+  const deductStockForSale = (items: CartItem[]) => {
+    const deltas = computeSaleStockDeductions(items, ingredients);
+    if (deltas.size === 0) return;
+    const now = Date.now();
+    deltas.forEach((_, id) => recentLocalIngredientUpdatesRef.current.set(id, now));
+    setIngredients(prev => applyStockDeductions(prev, deltas));
+    if (!effectiveOffline && isFirebaseAvailable()) {
+      applyStockDeltasToFirestore(deltas, ingredients, currentBranch).catch(err =>
+        console.error('[POS] Failed to push stock deduction to cloud:', err)
+      );
+    }
+    // Offline: the reconnect sync (syncOfflineQueue) uploads the locally deducted stock levels.
+  };
+
+  /** Push a new order; if the write fails it is re-queued for the offline sync instead of being marked synced. */
+  const pushNewOrderToCloud = (newOrder: Order) => {
+    if (effectiveOffline || !isFirebaseAvailable()) return;
+    syncOrderToFirestore(newOrder, currentBranch)
+      .then(ok => {
+        if (ok) return;
+        setOrders(prev =>
+          prev.map(o => (o.id === newOrder.id ? { ...o, isSynced: false, isOfflineOrder: true, syncedAt: undefined } : o))
+        );
+      })
+      .catch(err => console.error('[POS] Failed to push order to cloud:', err));
+  };
+
   const createOrder = (
     paymentMethod: PaymentMethod,
     tenderedAmount: number,
@@ -2898,20 +2929,21 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ): Order => {
     const rawSubtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
     let calculatedDiscount = 0;
+    const discountInput = Number.isFinite(discount.amount) ? Math.max(0, discount.amount) : 0;
     if (discount.type === 'fixed') {
-      calculatedDiscount = Math.min(discount.amount, rawSubtotal);
+      calculatedDiscount = Math.min(discountInput, rawSubtotal);
     } else {
-      calculatedDiscount = (rawSubtotal * Math.min(discount.amount, 100)) / 100;
+      calculatedDiscount = roundMoney((rawSubtotal * Math.min(discountInput, 100)) / 100);
     }
 
     const { vatAmount, grandTotal } = calculateOrderTotals(rawSubtotal, calculatedDiscount, settings);
     const changeAmount = paymentMethod === 'cash' ? Math.max(0, tenderedAmount - grandTotal) : 0;
 
-    const orderNumber = `#KAP-${Math.floor(1000 + Math.random() * 9000)}`;
+    const orderNumber = generateOrderNumber(orders, currentBranch.id);
     const nowIso = new Date().toISOString();
 
     const newOrder: Order = {
-      id: `ord-${Date.now()}`,
+      id: generateOrderId(),
       orderNumber,
       branchId: currentBranch.id,
       orderType,
@@ -2939,65 +2971,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     newOrder.checksum = computeOrderChecksum(newOrder);
 
-    // Deduct raw ingredients from inventory automatically based on recipes
-    setIngredients(prevIngredients => {
-      const updated = [...prevIngredients];
-
-      cart.forEach(cartItem => {
-        const qty = cartItem.quantity;
-        // Deduct base menu recipe
-        cartItem.menuItem.recipe.forEach(rec => {
-          const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
-          if (ingIndex > -1) {
-            const ing = updated[ingIndex];
-            const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
-            updated[ingIndex] = {
-              ...ing,
-              currentStock: Math.max(0, ing.currentStock - needed)
-            };
-          }
-        });
-
-        // Deduct selected add-ons recipe
-        cartItem.selectedAddOns.forEach(addon => {
-          if (addon.recipe && addon.recipe.length > 0) {
-            addon.recipe.forEach(rec => {
-              const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
-              if (ingIndex > -1) {
-                const ing = updated[ingIndex];
-                const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
-                updated[ingIndex] = {
-                  ...ing,
-                  currentStock: Math.max(0, ing.currentStock - needed)
-                };
-              }
-            });
-          } else if (addon.ingredientId && addon.ingredientAmount) {
-            const ingIndex = updated.findIndex(ing => ing.id === addon.ingredientId);
-            if (ingIndex > -1) {
-              const ing = updated[ingIndex];
-              const needed = calcRecipeItemCostAndDeduction(ing, addon.ingredientAmount).stockDeduction * qty;
-              updated[ingIndex] = {
-                ...ing,
-                currentStock: Math.max(0, ing.currentStock - needed)
-              };
-            }
-          }
-        });
-      });
-
-      return updated;
-    });
-
+    deductStockForSale(cart);
     setOrders(prev => [newOrder, ...prev]);
     clearCart();
     playKitchenChime();
-
-    // Real-time Push to Firebase Firestore
-    if (!effectiveOffline && isFirebaseAvailable()) {
-      syncOrderToFirestore(newOrder, currentBranch);
-      syncInventoryToFirestore(ingredients, currentBranch);
-    }
+    pushNewOrderToCloud(newOrder);
 
     // Real-Time Notification Trigger: New Order & Low Stock
     try {
@@ -3049,7 +3027,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ): Order => {
     const rawSubtotal = items.reduce((sum, item) => sum + item.totalPrice, 0);
     const { vatAmount, grandTotal } = calculateOrderTotals(rawSubtotal, 0, settings);
-    const orderNumber = `#KAP-${Math.floor(1000 + Math.random() * 9000)}`;
+    const orderNumber = generateOrderNumber(orders, currentBranch.id);
     const nowIso = new Date().toISOString();
 
     const noteText = customerNickname
@@ -3057,7 +3035,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       : notes ? `QR Table Order: ${notes}` : 'QR Table Order';
 
     const newOrder: Order = {
-      id: `ord-${Date.now()}`,
+      id: generateOrderId(),
       orderNumber,
       branchId: currentBranch.id,
       orderType,
@@ -3083,65 +3061,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     newOrder.checksum = computeOrderChecksum(newOrder);
 
-    // Deduct raw ingredients from inventory automatically based on recipes
-    setIngredients(prevIngredients => {
-      const updated = [...prevIngredients];
-
-      items.forEach(cartItem => {
-        const qty = cartItem.quantity;
-
-        // Deduct menu item recipe
-        cartItem.menuItem.recipe.forEach(rec => {
-          const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
-          if (ingIndex > -1) {
-            const ing = updated[ingIndex];
-            const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
-            updated[ingIndex] = {
-              ...ing,
-              currentStock: Math.max(0, ing.currentStock - needed)
-            };
-          }
-        });
-
-        // Deduct selected add-ons recipe
-        cartItem.selectedAddOns.forEach(addon => {
-          if (addon.recipe && addon.recipe.length > 0) {
-            addon.recipe.forEach(rec => {
-              const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
-              if (ingIndex > -1) {
-                const ing = updated[ingIndex];
-                const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
-                updated[ingIndex] = {
-                  ...ing,
-                  currentStock: Math.max(0, ing.currentStock - needed)
-                };
-              }
-            });
-          } else if (addon.ingredientId && addon.ingredientAmount) {
-            const ingIndex = updated.findIndex(ing => ing.id === addon.ingredientId);
-            if (ingIndex > -1) {
-              const ing = updated[ingIndex];
-              const needed = calcRecipeItemCostAndDeduction(ing, addon.ingredientAmount).stockDeduction * qty;
-              updated[ingIndex] = {
-                ...ing,
-                currentStock: Math.max(0, ing.currentStock - needed)
-              };
-            }
-          }
-        });
-      });
-
-      return updated;
-    });
-
+    deductStockForSale(items);
     setOrders(prev => [newOrder, ...prev]);
     playKitchenChime();
-
-    // Real-time Push to Firebase Firestore
-    if (!effectiveOffline && isFirebaseAvailable()) {
-      syncOrderToFirestore(newOrder, currentBranch);
-      syncInventoryToFirestore(ingredients, currentBranch);
-    }
+    pushNewOrderToCloud(newOrder);
 
     // Real-Time Notification Trigger: QR / Direct Order
     try {
@@ -3166,8 +3089,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const next = prev.map(ord => {
         const isMatch = ord.id === orderId ||
           ord.id === `ord-${orderId}` ||
-          ord.id.replace(/^ord-/, '') === orderId.replace(/^ord-/, '') ||
-          ord.orderNumber === orderId;
+          ord.id.replace(/^ord-/, '') === orderId.replace(/^ord-/, '');
 
         if (isMatch) {
           const completedAt = status === 'served' ? (ord.completedAt || now) : ord.completedAt;

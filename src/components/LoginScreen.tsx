@@ -13,14 +13,18 @@ import {
   EyeOff,
   LogIn,
   KeyRound,
-  Mail,
   ShieldCheck,
   RefreshCw,
   X,
-  Send,
   AlertCircle
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
+
+const MAX_PIN_ATTEMPTS = 5;
+const LOCKOUT_BASE_MS = 30_000;
+const DEFAULT_PIN = '1234';
+// Factory/demo PINs and repeated digits (0000, 1111, …) are the first things anyone tries
+const isWeakPin = (pin: string | undefined): boolean => !pin || pin === DEFAULT_PIN || /^(\d)\1{3}$/.test(pin);
 
 export const LoginScreen: React.FC = () => {
   const { users, setCurrentUser, setIsLocked, currentUser, shifts, addShift, updateShift, updateUserPin, logSecurityEvent } = usePOS();
@@ -49,8 +53,7 @@ export const LoginScreen: React.FC = () => {
   const [selectedUserId, setSelectedUserId] = useState<string>(
     currentUser && !currentUser.name?.includes('สมศักดิ์') ? currentUser.id : defaultUser.id
   );
-  // Default PIN '1234' as requested by user
-  const [pin, setPin] = useState('1234');
+  const [pin, setPin] = useState('');
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -58,14 +61,38 @@ export const LoginScreen: React.FC = () => {
   const [clockInAction, setClockInAction] = useState<boolean>(true);
   const [successNotice, setSuccessNotice] = useState<string>('');
 
+  // Brute-force protection: lock the keypad after repeated wrong PINs
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState(0);
+  const [nowTick, setNowTick] = useState(Date.now());
+  const lockoutRemaining = Math.max(0, Math.ceil((lockoutUntil - nowTick) / 1000));
+  const isLockedOut = lockoutRemaining > 0;
+
+  useEffect(() => {
+    if (lockoutUntil <= Date.now()) return;
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [lockoutUntil]);
+
+  const registerFailedAttempt = useCallback(() => {
+    setFailedAttempts(prev => {
+      const next = prev + 1;
+      if (next >= MAX_PIN_ATTEMPTS) {
+        // Lockout grows with every additional round of failures
+        const rounds = Math.floor(next / MAX_PIN_ATTEMPTS);
+        const until = Date.now() + LOCKOUT_BASE_MS * rounds;
+        setLockoutUntil(until);
+        setNowTick(Date.now());
+      }
+      return next;
+    });
+  }, []);
+
+  // Users still on the factory default PIN must set a new one before using the POS
+  const [mustChangePin, setMustChangePin] = useState(false);
+
   // Forgot PIN Modal state
   const [showForgotModal, setShowForgotModal] = useState(false);
-  const [forgotResetMethod, setForgotResetMethod] = useState<'email' | 'manager'>('email');
-  const [emailAddress, setEmailAddress] = useState('');
-  const [emailSentCode, setEmailSentCode] = useState('');
-  const [emailInputCode, setEmailInputCode] = useState('');
-  const [isEmailCodeVerified, setIsEmailCodeVerified] = useState(false);
-  const [countdown, setCountdown] = useState(0);
 
   const [selectedManagerId, setSelectedManagerId] = useState('');
   const [managerAuthPin, setManagerAuthPin] = useState('');
@@ -88,25 +115,11 @@ export const LoginScreen: React.FC = () => {
     }
   }, [sanitizedUsers, selectedUserId, currentUser, defaultUser]);
 
-  // Countdown timer for resending email code
-  useEffect(() => {
-    if (countdown <= 0) return;
-    const timer = setInterval(() => {
-      setCountdown(prev => prev - 1);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [countdown]);
-
   // Open Forgot PIN modal
   const handleOpenForgotModal = () => {
     setShowForgotModal(true);
-    setForgotResetMethod('email');
-    const defaultEmail = `${selectedUser.name.split(' ')[0].toLowerCase()}@kapraopos.com`;
-    setEmailAddress(defaultEmail);
-    setEmailSentCode('');
-    setEmailInputCode('');
-    setIsEmailCodeVerified(false);
-    setSelectedManagerId(managerUsers[0]?.id || '');
+    setMustChangePin(false);
+    setSelectedManagerId(managerUsers.find(m => m.id !== selectedUser.id)?.id || managerUsers[0]?.id || '');
     setManagerAuthPin('');
     setIsManagerApproved(false);
     setNewPin('');
@@ -115,49 +128,46 @@ export const LoginScreen: React.FC = () => {
     setForgotSuccess('');
   };
 
-  // Send Email OTP Code
-  const handleSendEmailCode = () => {
-    if (!emailAddress || !emailAddress.includes('@')) {
-      setForgotError('กรุณากรอกอีเมลให้ถูกต้อง');
-      return;
-    }
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    setEmailSentCode(code);
-    setCountdown(60);
-    setForgotError('');
-    setForgotSuccess(`ส่งรหัสยืนยัน 6 หลักไปที่ ${emailAddress} เรียบร้อยแล้ว (รหัสสาธิต: ${code})`);
-  };
-
-  // Verify Email OTP Code
-  const handleVerifyEmailCode = (e: React.FormEvent) => {
-    e.preventDefault();
-    setForgotError('');
-    if (!emailSentCode) {
-      setForgotError('กรุณากดส่งรหัสยืนยันก่อน');
-      return;
-    }
-    if (emailInputCode.trim() === emailSentCode) {
-      setIsEmailCodeVerified(true);
-      setForgotSuccess('ยืนยันรหัสผ่านสำเร็จ! กรุณาตั้งค่า PIN ใหม่ 4 หลัก');
-    } else {
-      setForgotError('รหัสยืนยัน OTP ไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง');
-    }
-  };
-
-  // Verify Manager Approval
+  // Verify Manager Approval (the manager's own PIN is the only accepted credential)
   const handleVerifyManagerApproval = (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError('');
+    if (isLockedOut) {
+      setForgotError(`ใส่รหัสผิดหลายครั้ง กรุณารอ ${lockoutRemaining} วินาที`);
+      return;
+    }
     const manager = users.find(u => u.id === selectedManagerId);
     if (!manager) {
       setForgotError('กรุณาเลือกผู้จัดการ');
       return;
     }
-    if (managerAuthPin === manager.pin || managerAuthPin === 'admin' || managerAuthPin === '1234') {
+    if (manager.role !== 'admin' && manager.role !== 'manager') {
+      setForgotError('ผู้อนุมัติต้องเป็นผู้จัดการหรือเจ้าของร้านเท่านั้น');
+      return;
+    }
+    if (managerAuthPin && managerAuthPin === manager.pin) {
+      setFailedAttempts(0);
       setIsManagerApproved(true);
       setForgotSuccess(`ผู้จัดการ (${manager.name}) อนุมัติสำเร็จ! กรุณาตั้งค่า PIN ใหม่`);
+      logSecurityEvent?.({
+        userId: manager.id,
+        userName: manager.name,
+        userRole: manager.role,
+        action: 'PIN Reset Approval',
+        status: 'SUCCESS',
+        details: `อนุมัติการรีเซ็ต PIN ให้ ${selectedUser.name}`
+      });
     } else {
-      setForgotError('รหัสผ่านหรือ PIN ผู้จัดการไม่ถูกต้อง');
+      registerFailedAttempt();
+      logSecurityEvent?.({
+        userId: manager.id,
+        userName: manager.name,
+        userRole: manager.role,
+        action: 'PIN Reset Approval',
+        status: 'FAILED',
+        details: `PIN ผู้จัดการไม่ถูกต้องขณะรีเซ็ต PIN ให้ ${selectedUser.name}`
+      });
+      setForgotError('PIN ผู้จัดการไม่ถูกต้อง');
     }
   };
 
@@ -165,20 +175,35 @@ export const LoginScreen: React.FC = () => {
   const handleSaveNewPin = (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError('');
+    if (!isManagerApproved && !mustChangePin) {
+      setForgotError('ต้องได้รับการอนุมัติจากผู้จัดการก่อน');
+      return;
+    }
     if (newPin.length !== 4 || !/^\d{4}$/.test(newPin)) {
       setForgotError('กรุณากำหนด PIN ตัวเลข 4 หลักเท่านั้น');
+      return;
+    }
+    if (isWeakPin(newPin)) {
+      setForgotError('PIN นี้เดาง่ายเกินไป กรุณาเลือก PIN อื่น');
       return;
     }
     if (newPin !== confirmNewPin) {
       setForgotError('รหัส PIN ใหม่และยืนยัน PIN ไม่ตรงกัน');
       return;
     }
+    // PIN login auto-detects the user by PIN, so PINs must be unique
+    if (sanitizedUsers.some(u => u.id !== selectedUser.id && u.pin === newPin)) {
+      setForgotError('PIN นี้ถูกใช้โดยพนักงานคนอื่นแล้ว กรุณาเลือก PIN อื่น');
+      return;
+    }
 
     updateUserPin(selectedUser.id, newPin);
-    setForgotSuccess('เปลี่ยนรหัส PIN สำเร็จเรียบร้อยแล้ว!');
+    setForgotSuccess('เปลี่ยนรหัส PIN สำเร็จเรียบร้อยแล้ว! กรุณาเข้าสู่ระบบด้วย PIN ใหม่');
 
     setTimeout(() => {
       setShowForgotModal(false);
+      setMustChangePin(false);
+      setIsManagerApproved(false);
       setPin('');
       setError('');
       setSuccessNotice(`เปลี่ยน PIN ใหม่ของ ${selectedUser.name.split(' ')[0]} สำเร็จ`);
@@ -198,6 +223,11 @@ export const LoginScreen: React.FC = () => {
       setError('กรุณาใส่รหัสพนักงาน PIN 4 หลัก');
       return;
     }
+    if (isLockedOut) {
+      setError(`ใส่ PIN ผิดหลายครั้ง กรุณารอ ${lockoutRemaining} วินาที`);
+      setPin('');
+      return;
+    }
 
     // Priority 1: Check selected user
     let authenticatedUser = (selectedUser && selectedUser.pin === pinToTest) ? selectedUser : null;
@@ -211,7 +241,24 @@ export const LoginScreen: React.FC = () => {
       }
     }
 
+    if (authenticatedUser && isWeakPin(authenticatedUser.pin)) {
+      // Default or trivially guessable PIN: force the user to choose a new one before unlocking the POS
+      setFailedAttempts(0);
+      setSelectedUserId(authenticatedUser.id);
+      setPin('');
+      setError('');
+      setMustChangePin(true);
+      setIsManagerApproved(false);
+      setNewPin('');
+      setConfirmNewPin('');
+      setForgotError('');
+      setForgotSuccess('');
+      setShowForgotModal(true);
+      return;
+    }
+
     if (authenticatedUser) {
+      setFailedAttempts(0);
       logSecurityEvent?.({
         userId: authenticatedUser.id,
         userName: authenticatedUser.name,
@@ -266,10 +313,11 @@ export const LoginScreen: React.FC = () => {
         status: 'FAILED',
         details: `ป้อนรหัสพนักงาน (PIN) ไม่ถูกต้องสำหรับบัญชี ${selectedUser.name}`
       });
+      registerFailedAttempt();
       setError('รหัสพนักงาน (PIN) ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
       setTimeout(() => setPin(''), 450);
     }
-  }, [selectedUser, sanitizedUsers, clockInAction, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
+  }, [isLockedOut, lockoutRemaining, registerFailedAttempt, selectedUser, sanitizedUsers, clockInAction, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
 
   const handleNumClick = useCallback((num: string) => {
     setPin(prev => {
@@ -325,19 +373,13 @@ export const LoginScreen: React.FC = () => {
       setError('กรุณากรอกรหัสพนักงาน / รหัสผ่าน');
       return;
     }
-    // Strictly verify against user PIN or manager authorization
-    let matchedUser = (selectedUser.pin === password) ? selectedUser : null;
-    if (!matchedUser) {
-      matchedUser = users.find(u => u.pin === password) || null;
+    if (password.length !== 4) {
+      setError('กรุณาใส่รหัสพนักงาน PIN 4 หลัก');
+      return;
     }
-    if (matchedUser) {
-      setCurrentUser(matchedUser);
-      setIsLocked(false);
-      setPassword('');
-      setError('');
-    } else {
-      setError('รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง');
-    }
+    // Same verification path (lockout, audit log, forced PIN change) as the keypad
+    executePinLogin(password);
+    setPassword('');
   };
 
   return (
@@ -370,7 +412,7 @@ export const LoginScreen: React.FC = () => {
         {/* Security Badge */}
         <div className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-orange-950/40 border border-orange-500/30 text-orange-300 text-[10px] font-bold">
           <Lock className="w-3 h-3 text-[#ff6600]" />
-          <span>ค่าเริ่มต้น: อาห์มัด (PIN: 1234)</span>
+          <span>{isLockedOut ? `ล็อกชั่วคราว ${lockoutRemaining} วินาที` : 'กรุณาใส่ PIN ของคุณ'}</span>
         </div>
 
         {/* Tab Selector Buttons */}
@@ -420,7 +462,7 @@ export const LoginScreen: React.FC = () => {
                     type="button"
                     onClick={() => {
                       setSelectedUserId(u.id);
-                      setPin(u.name.includes('อาห์มัด') ? '1234' : '');
+                      setPin('');
                       setError('');
                     }}
                     className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition flex items-center space-x-2 shrink-0 ${
@@ -633,40 +675,10 @@ export const LoginScreen: React.FC = () => {
               </button>
             </div>
 
-            {/* Method Selection Tabs */}
-            {!isEmailCodeVerified && !isManagerApproved && (
-              <div className="grid grid-cols-2 gap-2 bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setForgotResetMethod('email');
-                    setForgotError('');
-                  }}
-                  className={`py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2 ${
-                    forgotResetMethod === 'email'
-                      ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <Mail className="w-4 h-4" />
-                  <span>1. รหัสผ่านทางอีเมล</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setForgotResetMethod('manager');
-                    setForgotError('');
-                  }}
-                  className={`py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2 ${
-                    forgotResetMethod === 'manager'
-                      ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>2. ผู้จัดการอนุมัติ</span>
-                </button>
+            {mustChangePin && (
+              <div className="p-3 bg-amber-950/40 border border-amber-500/30 rounded-2xl text-xs text-amber-200 flex items-center space-x-2">
+                <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>บัญชีนี้ยังใช้ PIN เริ่มต้นหรือ PIN ที่เดาง่าย (เช่น 1234, 0000) กรุณาตั้ง PIN ใหม่ก่อนเข้าใช้งาน</span>
               </div>
             )}
 
@@ -686,12 +698,12 @@ export const LoginScreen: React.FC = () => {
             )}
 
             {/* Form Content Steps */}
-            {isEmailCodeVerified || isManagerApproved ? (
+            {mustChangePin || isManagerApproved ? (
               /* STEP 2: ENTER NEW PIN */
               <form onSubmit={handleSaveNewPin} className="space-y-4 pt-2">
                 <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl text-xs text-emerald-300 flex items-center space-x-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>ยืนยันสิทธิ์สำเร็จ! กรุณากำหนดรหัส PIN 4 หลักใหม่สำหรับเข้างาน</span>
+                  <span>{mustChangePin ? 'กรุณากำหนดรหัส PIN 4 หลักใหม่สำหรับเข้างาน' : 'ยืนยันสิทธิ์สำเร็จ! กรุณากำหนดรหัส PIN 4 หลักใหม่สำหรับเข้างาน'}</span>
                 </div>
 
                 <div>
@@ -731,59 +743,6 @@ export const LoginScreen: React.FC = () => {
                   <span>บันทึกรหัส PIN ใหม่</span>
                 </button>
               </form>
-            ) : forgotResetMethod === 'email' ? (
-              /* METHOD 1: EMAIL OTP FLOW */
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="block text-xs font-medium text-slate-300">
-                    อีเมลของพนักงาน ({selectedUser.name})
-                  </label>
-                  <div className="flex space-x-2">
-                    <input
-                      type="email"
-                      value={emailAddress}
-                      onChange={e => setEmailAddress(e.target.value)}
-                      className="flex-1 px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-orange-500"
-                      placeholder="staff@kapraopos.com"
-                    />
-                    <button
-                      type="button"
-                      disabled={countdown > 0}
-                      onClick={handleSendEmailCode}
-                      className="px-4 py-2.5 bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/40 text-orange-300 rounded-xl text-xs font-bold transition disabled:opacity-50 flex items-center space-x-1.5 shrink-0"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>{countdown > 0 ? `${countdown}s` : 'ส่งรหัส OTP'}</span>
-                    </button>
-                  </div>
-                </div>
-
-                {emailSentCode && (
-                  <form onSubmit={handleVerifyEmailCode} className="space-y-3 pt-2">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1">
-                        กรอกรหัสยืนยัน 6 หลัก
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={6}
-                        value={emailInputCode}
-                        onChange={e => setEmailInputCode(e.target.value.replace(/\D/g, ''))}
-                        className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-center text-2xl font-mono tracking-widest text-orange-400 focus:outline-none focus:border-orange-500"
-                        placeholder="889900"
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      className="w-full py-3 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 text-slate-950 font-black text-sm rounded-xl shadow-lg transition active:scale-[0.98] flex items-center justify-center space-x-2"
-                    >
-                      <ShieldCheck className="w-5 h-5" />
-                      <span>ยืนยันรหัสผ่าน OTP</span>
-                    </button>
-                  </form>
-                )}
-              </div>
             ) : (
               /* METHOD 2: MANAGER APPROVAL FLOW */
               <form onSubmit={handleVerifyManagerApproval} className="space-y-4">
@@ -806,7 +765,7 @@ export const LoginScreen: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    รหัสผ่านหรือ PIN ของผู้จัดการ
+                    PIN ของผู้จัดการ
                   </label>
                   <input
                     type="password"

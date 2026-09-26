@@ -1,16 +1,22 @@
 /**
  * Notification Service for Kaprao POS Enterprise
- * Handles real-time Telegram Bot and LINE Notify alerts.
+ * Handles real-time Telegram Bot and LINE Messaging API alerts.
+ * (LINE Notify was shut down by LINE on 31 March 2025; a LINE Official Account channel
+ * access token plus a user/group ID is used instead.)
  * Supports dual-mode transport: Server API route or direct browser fallback for static GitHub Pages.
  * All messages extract 100% REAL data from store state (No fake fallback numbers).
  */
 
+import { apiUrl } from '../utils/apiClient';
 import { Order, Ingredient, Branch, SystemSettings } from '../types';
 
 export interface NotificationCredentials {
   telegramToken: string;
   telegramChatId: string;
+  /** LINE Messaging API channel access token (long-lived) */
   lineToken: string;
+  /** LINE userId (U...) or groupId (C...) that receives push messages */
+  lineTargetId: string;
 }
 
 export interface NotificationTriggers {
@@ -48,6 +54,7 @@ const STORAGE_KEYS = {
   TELEGRAM_TOKEN: 'kaprao_telegram_token',
   TELEGRAM_CHAT_ID: 'kaprao_telegram_chat_id',
   LINE_TOKEN: 'kaprao_line_token',
+  LINE_TARGET_ID: 'kaprao_line_target_id',
   TRIGGERS: 'kaprao_notification_triggers',
   RULES: 'kaprao_notification_rules',
   LOGS: 'kaprao_notification_logs',
@@ -83,6 +90,7 @@ export function getStoredCredentials(): NotificationCredentials {
     telegramToken: localStorage.getItem(STORAGE_KEYS.TELEGRAM_TOKEN) || '',
     telegramChatId: localStorage.getItem(STORAGE_KEYS.TELEGRAM_CHAT_ID) || '',
     lineToken: localStorage.getItem(STORAGE_KEYS.LINE_TOKEN) || '',
+    lineTargetId: localStorage.getItem(STORAGE_KEYS.LINE_TARGET_ID) || '',
   };
 }
 
@@ -95,6 +103,9 @@ export function saveStoredCredentials(creds: Partial<NotificationCredentials>) {
   }
   if (creds.lineToken !== undefined) {
     localStorage.setItem(STORAGE_KEYS.LINE_TOKEN, creds.lineToken.trim());
+  }
+  if (creds.lineTargetId !== undefined) {
+    localStorage.setItem(STORAGE_KEYS.LINE_TARGET_ID, creds.lineTargetId.trim());
   }
 }
 
@@ -186,7 +197,7 @@ export async function sendTelegramMessage(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2500);
 
-    const res = await fetch('/api/notify/telegram', {
+    const res = await fetch(apiUrl('/api/notify/telegram'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -242,24 +253,27 @@ export async function sendTelegramMessage(
 
 export async function sendLineMessage(
   token: string,
-  message: string
+  message: string,
+  targetId: string = ''
 ): Promise<SendResult> {
   const cleanToken = token.trim();
-  if (!cleanToken) {
+  const cleanTarget = targetId.trim();
+  if (!cleanToken || !cleanTarget) {
     return {
       success: false,
       channel: 'line',
       method: 'server',
-      error: 'กรุณาระบุ LINE Notify Token',
+      error: 'กรุณาระบุ Channel Access Token และ User/Group ID ของ LINE Official Account',
     };
   }
 
   try {
-    const res = await fetch('/api/notify/line', {
+    const res = await fetch(apiUrl('/api/notify/line'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         lineToken: cleanToken,
+        to: cleanTarget,
         message,
       }),
     });
@@ -273,14 +287,14 @@ export async function sendLineMessage(
       success: false,
       channel: 'line',
       method: 'server',
-      error: data.error || 'ส่ง LINE Notify ไม่สำเร็จ (LINE API ต้องการ Server Proxy)',
+      error: data.error || 'ส่ง LINE ไม่สำเร็จ (LINE Messaging API ต้องส่งผ่าน Server)',
     };
   } catch (err: any) {
     return {
       success: false,
       channel: 'line',
       method: 'server',
-      error: err.message || 'ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ LINE Notify ได้',
+      error: err.message || 'ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ LINE ได้',
     };
   }
 }
@@ -344,7 +358,7 @@ export async function dispatchNotification(
 
   // Send LINE
   if ((channel === 'both' || channel === 'line') && creds.lineToken) {
-    const lineRes = await sendLineMessage(creds.lineToken, fullMessage);
+    const lineRes = await sendLineMessage(creds.lineToken, fullMessage, creds.lineTargetId);
     results.push(lineRes);
 
     addStoredLog({
