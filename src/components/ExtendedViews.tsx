@@ -109,6 +109,7 @@ import {
   NotificationTriggers
 } from '../services/notificationService';
 import { MenuItem, AddOnOption, RecipeIngredient, MenuCategory, CartItem, SpiceLevel, ProteinChoice, Order, CustomerTaxInfo, PaymentMethod, QrPaymentOption } from '../types';
+import { orderVatBreakdown } from '../utils/orderUtils';
 import { exportToPDF, exportToPNG, printElement } from '../utils/exportDocument';
 import { AIMenuEngineeringPanel } from './inventory/AIMenuEngineeringPanel';
 import { BulkIngredientCostEditorPanel } from './inventory/BulkIngredientCostEditorPanel';
@@ -7063,7 +7064,7 @@ export const TaxReceiptView: React.FC = () => {
   const [formPhone, setFormPhone] = useState('');
   const [formTaxId, setFormTaxId] = useState('');
   const [formBranch, setFormBranch] = useState('สำนักงานใหญ่');
-  const [formDate, setFormDate] = useState('24 ก.ค. 2569');
+  const [formDate, setFormDate] = useState(() => new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }));
   const [formAddress, setFormAddress] = useState('');
 
   // Line items
@@ -7090,17 +7091,9 @@ export const TaxReceiptView: React.FC = () => {
   // Computed summary stats for top cards
   const totalReceiptsCount = orders.length;
   const totalRevenue = orders.reduce((sum, o) => sum + o.grandTotal, 0);
-  const totalVat = orders.reduce((sum, o) => {
-    const vat = o.vatAmount || (o.grandTotal - o.grandTotal / 1.07);
-    return sum + vat;
-  }, 0);
-  const totalWht = orders.reduce((sum, o) => {
-    if (o.customerTaxInfo) {
-      const base = o.grandTotal / 1.07;
-      return sum + base * 0.03;
-    }
-    return sum;
-  }, 336.45);
+  // VAT as recorded on each order at the time of sale (respects the shop's VAT settings)
+  const totalVat = orders.reduce((sum, o) => sum + orderVatBreakdown(o).vat, 0);
+  const totalWht = orders.reduce((sum, o) => (o.customerTaxInfo ? sum + orderVatBreakdown(o).base * 0.03 : sum), 0);
 
   // Computed totals for New Receipt Form
   const rawSubtotal = newItems.reduce((acc, it) => acc + it.quantity * it.unitPrice, 0);
@@ -7496,8 +7489,7 @@ export const TaxReceiptView: React.FC = () => {
             <tbody className="divide-y divide-slate-800/60">
               {filteredOrders.length > 0 ? (
                 filteredOrders.map(o => {
-                  const vatBase = o.grandTotal / 1.07;
-                  const vatAmount = o.grandTotal - vatBase;
+                  const { base: vatBase, vat: vatAmount } = orderVatBreakdown(o);
                   const isFull = !!o.customerTaxInfo;
 
                   return (
@@ -8139,15 +8131,14 @@ export const TaxReceiptView: React.FC = () => {
               </table>
 
               {(() => {
-                const vatBase = printingOrder.grandTotal / 1.07;
-                const vat = printingOrder.grandTotal - vatBase;
+                const { base: vatBase, vat } = orderVatBreakdown(printingOrder);
                 return (
                   <div className="border-t border-slate-300 pt-3 space-y-2">
                     <div className="flex justify-between font-mono text-xs text-slate-800">
                       <div className="text-slate-600 font-sans">วิธีชำระเงิน: {printingOrder.paymentMethod}</div>
                       <div className="space-y-1 text-right">
                         <div>มูลค่าสินค้า (ก่อน VAT): ฿{vatBase.toFixed(2)}</div>
-                        <div className="text-amber-700">ภาษีมูลค่าเพิ่ม (VAT 7%): ฿{vat.toFixed(2)}</div>
+                        <div className="text-amber-700">ภาษีมูลค่าเพิ่ม (VAT): ฿{vat.toFixed(2)}</div>
                         <div className="text-sm font-bold text-emerald-700 font-sans">ราคารวมทั้งสิ้น: ฿{printingOrder.grandTotal.toFixed(2)}</div>
                       </div>
                     </div>
@@ -8166,7 +8157,6 @@ export const TaxReceiptView: React.FC = () => {
 };
 
 // 9. Detailed Analytics View (วิเคราะห์ผลประกอบการ) - Unified with ExecutiveDashboardView
-export const AnalyticsView: React.FC = ExecutiveDashboardView;
 
 // 10. LINE / Telegram Notifications View (แจ้งเตือนไลน์และโทรเลขพร้อมรายละเอียดครบถ้วน)
 export const LineNotifyView: React.FC = () => {

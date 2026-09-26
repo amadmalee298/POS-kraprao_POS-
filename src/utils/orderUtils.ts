@@ -124,3 +124,83 @@ export function suggestCashAmounts(total: number, max = 3): number[] {
   }
   return out.slice(0, max);
 }
+
+const orderTime = (o: Order): number => {
+  const t = new Date(o.updatedAt || o.createdAt || 0).getTime();
+  return Number.isFinite(t) ? t : 0;
+};
+
+/**
+ * Merge orders from the cloud into the local list. The single rule set for both the live
+ * listener and a manual "pull from cloud":
+ * - identity is the normalized order id ("ord-123" and "123" are the same order)
+ * - the newer copy wins, except that a local served/cancelled order is never reverted by an
+ *   older cloud copy; those are returned in `pushBack` so the caller re-sends them to the cloud
+ * - `removedIds` (deleted in the cloud) are dropped locally
+ */
+export function mergeCloudOrders(
+  local: Order[],
+  cloud: Order[],
+  removedIds: string[] = []
+): { orders: Order[]; changed: boolean; newOrUpdated: number; pushBack: Order[] } {
+  let changed = false;
+  let newOrUpdated = 0;
+  const pushBack: Order[] = [];
+
+  const removed = new Set(removedIds.map(normalizeOrderId));
+  const byKey = new Map<string, Order>();
+  for (const o of local) {
+    if (!o || !o.id) continue;
+    if (removed.has(normalizeOrderId(o.id))) {
+      changed = true;
+      continue;
+    }
+    const key = normalizeOrderId(o.id);
+    const existing = byKey.get(key);
+    // Two local copies of one order: keep the served one, else the newer one
+    if (!existing || (o.status === 'served' && existing.status !== 'served') || orderTime(o) > orderTime(existing)) {
+      if (existing) changed = true;
+      byKey.set(key, o);
+    } else {
+      changed = true;
+    }
+  }
+
+  for (const co of cloud) {
+    if (!co || !co.id) continue;
+    const key = normalizeOrderId(co.id);
+    if (removed.has(key)) continue;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, co);
+      changed = true;
+      newOrUpdated++;
+      continue;
+    }
+    const localTime = orderTime(existing);
+    const cloudTime = orderTime(co);
+    const localIsFinal = existing.status === 'served' || existing.status === 'cancelled';
+    if (localIsFinal && co.status !== existing.status && localTime >= cloudTime) {
+      pushBack.push(existing);
+      continue;
+    }
+    if (cloudTime > localTime) {
+      byKey.set(key, { ...existing, ...co, id: existing.id, isSynced: true });
+      changed = true;
+      newOrUpdated++;
+    } else if (!existing.isSynced && co.isSynced) {
+      byKey.set(key, { ...existing, isSynced: true });
+      changed = true;
+      newOrUpdated++;
+    }
+  }
+
+  const orders = Array.from(byKey.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  return { orders, changed, newOrUpdated, pushBack };
+}
+
+/** VAT and pre-VAT amount of a saved order, as recorded at the time of sale. */
+export function orderVatBreakdown(order: Pick<Order, 'grandTotal' | 'vatAmount'>): { vat: number; base: number } {
+  const vat = roundMoney(Math.max(0, order.vatAmount || 0));
+  return { vat, base: roundMoney((order.grandTotal || 0) - vat) };
+}

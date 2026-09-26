@@ -112,7 +112,8 @@ import {
   generateOrderNumber,
   computeSaleStockDeductions,
   applyStockDeductions,
-  computeCartTotals
+  computeCartTotals,
+  mergeCloudOrders
 } from '../utils/orderUtils';
 import { crc16 } from '../utils/promptpay';
 import { SHOP_LOGO_URL, normalizeShopLogoUrl } from '../assets/logo';
@@ -377,6 +378,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const recentLocalMenuUpdatesRef = useRef<Map<string, number>>(new Map());
   // Track recently updated ingredient IDs and timestamps to protect local saves from being overwritten by stale cloud snapshots
   const recentLocalIngredientUpdatesRef = useRef<Map<string, number>>(new Map());
+  // Orders already re-sent to the cloud by the merge (avoids repeat writes)
+  const pushedBackRef = useRef<Set<string>>(new Set());
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('pos');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -879,120 +882,35 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!isStorageLoaded || !isFirebaseAvailable() || effectiveOffline) return;
 
     const unsubOrders = subscribeToRecentCentralOrders(1000, (centralOrderList, removedIds) => {
+      let pushBack: Order[] = [];
       setOrders(prev => {
-        let list = prev;
-        let hasChanges = false;
-        if (removedIds && removedIds.length > 0) {
-          const removedSet = new Set(removedIds.map(id => id.replace(/^ord-/, '')));
-          const filtered = list.filter(o => !removedSet.has(o.id) && !removedIds.includes(o.id));
-          if (filtered.length !== list.length) {
-            list = filtered;
-            hasChanges = true;
-          }
-        }
-        if (!centralOrderList || centralOrderList.length === 0) {
-          if (hasChanges) {
-            try { localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(list)); } catch (e) {}
-            return list;
-          }
-          return prev;
-        }
-        const localMap = new Map<string, Order>();
-        list.forEach(o => {
-          if (o && o.id) {
-            localMap.set(o.id, o);
-            const normId = o.id.replace(/^ord-/, '');
-            if (normId !== o.id && !localMap.has(normId)) {
-              localMap.set(normId, o);
-            }
-          }
-        });
-
-        centralOrderList.forEach(co => {
-          const coNormId = co.id.replace(/^ord-/, '');
-          let matchedId: string | null = null;
-          if (localMap.has(co.id)) {
-            matchedId = co.id;
-          } else if (localMap.has(coNormId)) {
-            matchedId = coNormId;
-          }
-
-          if (!matchedId) {
-            localMap.set(co.id, co);
-            hasChanges = true;
-          } else {
-            const existing = localMap.get(matchedId)!;
-            const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : (existing.createdAt ? new Date(existing.createdAt).getTime() : 0);
-            const cloudTime = co.updatedAt ? new Date(co.updatedAt).getTime() : (co.createdAt ? new Date(co.createdAt).getTime() : 0);
-
-            // Guard against reverting a 'served' order back to pending/cooking/ready upon page refresh
-            if (existing.status === 'served' && co.status !== 'served') {
-              if (existingTime >= cloudTime) {
-                // Keep local 'served' and push update to Firestore so cloud catches up
-                if (!effectiveOffline && isFirebaseAvailable()) {
-                  updateOrderStatusInFirestore(existing.id, 'served', { completedAt: existing.completedAt });
-                }
-                return;
-              }
-            }
-
-            // Guard against reverting a 'cancelled' order if local is newer
-            if (existing.status === 'cancelled' && co.status !== 'cancelled' && existingTime >= cloudTime) {
-              if (!effectiveOffline && isFirebaseAvailable()) {
-                updateOrderStatusInFirestore(existing.id, 'cancelled', {
-                  cancelReason: existing.cancelReason,
-                  cancelNote: existing.cancelNote,
-                  cancelledBy: existing.cancelledBy
-                });
-              }
-              return;
-            }
-
-            const isCloudNewer = cloudTime > existingTime;
-            if (isCloudNewer) {
-              const mergedOrder: Order = { ...existing, ...co, isSynced: true };
-              localMap.set(existing.id, mergedOrder);
-              localMap.set(co.id, mergedOrder);
-              if (matchedId !== existing.id) localMap.set(matchedId, mergedOrder);
-              hasChanges = true;
-            } else if (!existing.isSynced && co.isSynced) {
-              const mergedOrder: Order = { ...existing, isSynced: true };
-              localMap.set(existing.id, mergedOrder);
-              localMap.set(co.id, mergedOrder);
-              if (matchedId !== existing.id) localMap.set(matchedId, mergedOrder);
-              hasChanges = true;
-            }
-          }
-        });
-        if (!hasChanges) return prev;
-
-        // Deduplicate merged items by normalized order ID ("ord-123" and "123" are the same order)
-        const uniqueOrdersMap = new Map<string, Order>();
-        Array.from(localMap.values()).forEach(ord => {
-          if (!ord || !ord.id) return;
-          // Identity is the order id only: bill numbers are for humans and may repeat
-          const key = ord.id.replace(/^ord-/, '');
-          if (!uniqueOrdersMap.has(key)) {
-            uniqueOrdersMap.set(key, ord);
-          } else {
-            const current = uniqueOrdersMap.get(key)!;
-            const curTime = current.updatedAt ? new Date(current.updatedAt).getTime() : 0;
-            const ordTime = ord.updatedAt ? new Date(ord.updatedAt).getTime() : 0;
-            if (ord.status === 'served' && current.status !== 'served') {
-              uniqueOrdersMap.set(key, ord);
-            } else if (ordTime > curTime && current.status !== 'served') {
-              uniqueOrdersMap.set(key, ord);
-            }
-          }
-        });
-
-        const merged = Array.from(uniqueOrdersMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        const result = mergeCloudOrders(prev, centralOrderList || [], removedIds || []);
+        pushBack = result.pushBack;
+        if (!result.changed) return prev;
         try {
-          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(merged));
+          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
         } catch (e) {
           console.warn('[POS Real-Time Sync] Failed to cache synced orders', e);
         }
-        return merged;
+        return result.orders;
+      });
+      // Local served/cancelled orders the cloud has not caught up with: send them again
+      queueMicrotask(() => {
+        if (effectiveOffline || !isFirebaseAvailable()) return;
+        pushBack.forEach(o => {
+          const key = `${o.id}:${o.status}:${o.updatedAt || ''}`;
+          if (pushedBackRef.current.has(key)) return;
+          pushedBackRef.current.add(key);
+          if (o.status === 'served') {
+            updateOrderStatusInFirestore(o.id, 'served', { completedAt: o.completedAt });
+          } else if (o.status === 'cancelled') {
+            updateOrderStatusInFirestore(o.id, 'cancelled', {
+              cancelReason: o.cancelReason,
+              cancelNote: o.cancelNote,
+              cancelledBy: o.cancelledBy
+            });
+          }
+        });
       });
     });
 
@@ -1570,69 +1488,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       let newOrUpdatedCount = 0;
       setOrders(prev => {
-        const orderMap = new Map<string, Order>();
-        prev.forEach(o => {
-          if (o && o.id) {
-            orderMap.set(o.id, o);
-            const normId = o.id.replace(/^ord-/, '');
-            if (normId !== o.id && !orderMap.has(normId)) orderMap.set(normId, o);
-          }
-        });
-
-        cloudOrders.forEach(co => {
-          const coNormId = co.id.replace(/^ord-/, '');
-          let matchedId: string | null = null;
-          if (orderMap.has(co.id)) matchedId = co.id;
-          else if (orderMap.has(coNormId)) matchedId = coNormId;
-
-          if (!matchedId) {
-            orderMap.set(co.id, co);
-            newOrUpdatedCount++;
-          } else {
-            const existing = orderMap.get(matchedId)!;
-            const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
-            const cloudTime = co.updatedAt ? new Date(co.updatedAt).getTime() : 0;
-
-            if (existing.status === 'served' && co.status !== 'served' && existingTime >= cloudTime) {
-              return;
-            }
-
-            const isCloudNewer = cloudTime > existingTime;
-            if (isCloudNewer) {
-              const mergedOrder: Order = { ...existing, ...co, isSynced: true };
-              orderMap.set(existing.id, mergedOrder);
-              orderMap.set(co.id, mergedOrder);
-              newOrUpdatedCount++;
-            } else if (!existing.isSynced && co.isSynced) {
-              const mergedOrder: Order = { ...existing, ...co, isSynced: true };
-              orderMap.set(existing.id, mergedOrder);
-              orderMap.set(co.id, mergedOrder);
-              newOrUpdatedCount++;
-            }
-          }
-        });
-
-        const uniqueOrders = new Map<string, Order>();
-        Array.from(orderMap.values()).forEach(ord => {
-          if (!ord || !ord.id) return;
-          // Identity is the order id only: bill numbers are for humans and may repeat
-          const key = ord.id.replace(/^ord-/, '');
-          if (!uniqueOrders.has(key)) {
-            uniqueOrders.set(key, ord);
-          } else {
-            const curr = uniqueOrders.get(key)!;
-            if (ord.status === 'served' && curr.status !== 'served') {
-              uniqueOrders.set(key, ord);
-            }
-          }
-        });
-        const merged = Array.from(uniqueOrders.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        const result = mergeCloudOrders(prev, cloudOrders);
+        newOrUpdatedCount = result.newOrUpdated;
+        if (!result.changed) return prev;
         try {
-          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(merged));
+          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
         } catch (e) {
           console.warn('[POS Cloud Pull] Failed to cache POS_ORDERS_DATA', e);
         }
-        return merged;
+        return result.orders;
       });
       return { count: newOrUpdatedCount, success: true };
     } catch (err) {

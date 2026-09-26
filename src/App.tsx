@@ -22,7 +22,6 @@ const QuotationView = lazyNamed(loadExtendedViews, 'QuotationView');
 const TaxReceiptView = lazyNamed(loadExtendedViews, 'TaxReceiptView');
 const CRMView = lazyNamed(loadExtendedViews, 'CRMView');
 const LineNotifyView = lazyNamed(loadExtendedViews, 'LineNotifyView');
-const AnalyticsView = lazyNamed(loadExtendedViews, 'AnalyticsView');
 
 import {
   WifiOff,
@@ -123,7 +122,7 @@ const MainLayout: React.FC = () => {
             </div>
           }
         >
-        {activeTab === 'dashboard' && <ExecutiveDashboardView />}
+        {(activeTab === 'dashboard' || activeTab === 'analytics') && <ExecutiveDashboardView />}
         {activeTab === 'pos' && <POSView />}
         {activeTab === 'qr' && <QrOrderingView />}
         {activeTab === 'kds' && <KDSView />}
@@ -136,7 +135,6 @@ const MainLayout: React.FC = () => {
         {activeTab === 'order_history' && <OrderHistoryView />}
         {activeTab === 'crm' && <CRMView />}
         {activeTab === 'line_notify' && <LineNotifyView />}
-        {activeTab === 'analytics' && <AnalyticsView />}
         {activeTab === 'settings' && <SettingsView />}
         </React.Suspense>
       </main>
