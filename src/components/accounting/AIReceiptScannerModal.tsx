@@ -35,7 +35,7 @@ import {
 import { ExpenseCategory } from '../../types';
 import { usePOS } from '../../context/POSContext';
 import { compressBase64Image } from '../../utils/imageCompressor';
-import { runReceiptOcr, FatalReceiptOcrError } from '../../utils/receiptOcr';
+import { runReceiptOcr, FatalReceiptOcrError, RECEIPT_OCR_MODELS } from '../../utils/receiptOcr';
 import { apiUrl, hasBackend } from '../../utils/apiClient';
 import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 
@@ -134,6 +134,13 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   const [showApiKeySettings, setShowApiKeySettings] = useState<boolean>(false);
   const [apiKeyInput, setApiKeyInput] = useState<string>(() => {
     return typeof window !== 'undefined' ? (localStorage.getItem('user_gemini_api_key') || '') : '';
+  });
+  const [claudeKeyInput, setClaudeKeyInput] = useState<string>(() => {
+    try {
+      return typeof window !== 'undefined' ? (localStorage.getItem('user_anthropic_api_key') || '') : '';
+    } catch {
+      return '';
+    }
   });
   const [keySaveSuccess, setKeySaveSuccess] = useState<boolean>(false);
 
@@ -446,13 +453,23 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   const callDirectBrowserGemini = async (
     base64WithMime: string,
     mimeType: string,
-    apiKey: string
+    apiKey: string,
+    claudeApiKey: string = ''
   ): Promise<{ result?: ScannedReceiptData; error?: string }> => {
     const pureBase64 = base64WithMime.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
     let rateLimited = false;
     try {
+      // Claude is loaded on demand so the SDK is not part of the main bundle
+      const claude = claudeApiKey ? await import('../../utils/claudeReceiptOcr') : null;
+      const claudeCaller = claude ? claude.createClaudeReceiptCaller({ apiKey: claudeApiKey, browser: true }) : null;
+      const models = [
+        ...(claude ? [claude.CLAUDE_RECEIPT_MODEL] : []),
+        ...(apiKey ? RECEIPT_OCR_MODELS : [])
+      ];
       const { data } = await runReceiptOcr(
-        async ({ model, prompt, systemInstruction, responseSchema, image }) => {
+        async args => {
+          const { model, prompt, systemInstruction, responseSchema, image } = args;
+          if (claude && claudeCaller && claude.isClaudeModel(model)) return claudeCaller(args);
           const controller = new AbortController();
           // Pro models "think" before answering; give them time on slow mobile networks
           const timer = setTimeout(() => controller.abort(), 90000);
@@ -487,7 +504,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
           }
         },
         { data: pureBase64, mimeType: mimeType && mimeType.startsWith('image/') ? mimeType : 'image/jpeg' },
-        { todayIso: new Date().toLocaleDateString('en-CA') }
+        { todayIso: new Date().toLocaleDateString('en-CA'), models }
       );
       return { result: data as ScannedReceiptData };
     } catch (e: any) {
@@ -518,6 +535,15 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
         ''
       ).trim() : '';
 
+      const claudeApiKey = (() => {
+        try {
+          return typeof window !== 'undefined' ? (localStorage.getItem('user_anthropic_api_key') || '').trim() : '';
+        } catch {
+          return '';
+        }
+      })();
+      const hasClientKey = Boolean(claudeApiKey) || clientApiKey.length > 5;
+
       const isStaticHost = !hasBackend();
 
       let scanErrorMessage: string | undefined = undefined;
@@ -537,6 +563,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
               image: finalBase64,
               mimeType: finalMime,
               apiKey: clientApiKey,
+              anthropicApiKey: claudeApiKey,
               todayIso: new Date().toLocaleDateString('en-CA')
             })
           });
@@ -562,9 +589,14 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
         }
       }
 
-      // 2. Direct browser Gemini Vision OCR (ideal for GitHub Pages and mobile direct calls)
-      if (clientApiKey && clientApiKey.length > 5) {
-        const direct = await callDirectBrowserGemini(finalBase64, finalMime, clientApiKey);
+      // 2. Direct browser OCR with the user's own key (Claude first, then Gemini) — for GitHub Pages
+      if (hasClientKey) {
+        const direct = await callDirectBrowserGemini(
+          finalBase64,
+          finalMime,
+          clientApiKey.length > 5 ? clientApiKey : '',
+          claudeApiKey
+        );
         if (direct.result) {
           return {
             ...item,
@@ -593,11 +625,11 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
       return {
         ...item,
         status: 'error',
-        error: clientApiKey
+        error: hasClientKey
           ? (scanErrorMessage || 'AI ไม่สามารถอ่านข้อมูลจากภาพนี้ได้ชัดเจน หรือลายมือเลือนราง กรุณากด "ลองใหม่" หรือแตะ "ใช้ภาพนี้ & กรอกข้อมูลเอง"')
           : (isStaticHost
-              ? 'คุณกำลังใช้งานบน GitHub Pages: กรุณาระบุ Gemini API Key ในปุ่ม "Live / API Key" ด้านบน หรือแตะ "ใช้ภาพนี้ & กรอกข้อมูลเอง"'
-              : 'กรุณาระบุ Gemini API Key ในปุ่ม "ตั้งค่า Gemini API Key" ด้านบน หรือแตะ "ใช้ภาพนี้ & กรอกข้อมูลเอง"'),
+              ? 'คุณกำลังใช้งานบน GitHub Pages: กรุณาระบุ Claude หรือ Gemini API Key ในปุ่ม "API Key" ด้านบน หรือแตะ "ใช้ภาพนี้ & กรอกข้อมูลเอง"'
+              : (scanErrorMessage || 'กรุณาตั้งค่า ANTHROPIC_API_KEY / GEMINI_API_KEY บนเซิร์ฟเวอร์ หรือระบุ API Key ในปุ่ม "ตั้งค่า AI API Key" ด้านบน หรือแตะ "ใช้ภาพนี้ & กรอกข้อมูลเอง"')),
         result: undefined
       };
     } catch (err: any) {
@@ -1314,15 +1346,17 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
               type="button"
               onClick={() => setShowApiKeySettings(!showApiKeySettings)}
               className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold flex items-center space-x-1.5 transition ${
-                apiKeyInput
+                apiKeyInput || claudeKeyInput
                   ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/50'
                   : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-750'
               }`}
-              title="ตั้งค่า Gemini API Key (สำหรับ GitHub Pages หรือใช้งานตรงจาก Browser)"
+              title="ตั้งค่า Claude / Gemini API Key (สำหรับ GitHub Pages หรือใช้งานตรงจาก Browser)"
             >
               <Key className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{apiKeyInput ? 'Gemini Live: เชื่อมต่อแล้ว' : 'ตั้งค่า Gemini API Key'}</span>
-              <span className="sm:hidden">{apiKeyInput ? 'Live' : 'API Key'}</span>
+              <span className="hidden sm:inline">
+                {claudeKeyInput ? 'Claude: เชื่อมต่อแล้ว' : apiKeyInput ? 'Gemini: เชื่อมต่อแล้ว' : 'ตั้งค่า AI API Key'}
+              </span>
+              <span className="sm:hidden">{apiKeyInput || claudeKeyInput ? 'Live' : 'API Key'}</span>
             </button>
 
             <button
@@ -1337,10 +1371,74 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
         {/* API KEY SETTINGS DRAWER (For GitHub Pages or Direct Browser Vision OCR) */}
         {showApiKeySettings && (
           <div className="p-4 bg-slate-950/95 border-b border-sky-900/40 px-5 space-y-3 animate-in slide-in-from-top-2 duration-150">
+            <div className="p-3 bg-orange-950/20 border border-orange-800/40 rounded-xl space-y-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex items-center space-x-2 text-xs font-bold text-orange-300">
+                  <ShieldCheck className="w-4 h-4 text-orange-400 shrink-0" />
+                  <span>Claude API Key (แนะนำ — อ่านใบเสร็จแม่นยำที่สุด ใช้ก่อน Gemini)</span>
+                </div>
+                <a
+                  href="https://console.anthropic.com/settings/keys"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] text-amber-300 hover:text-amber-200 underline font-bold"
+                >
+                  🔑 สร้าง Claude API Key ที่ Anthropic Console ↗
+                </a>
+              </div>
+              <div className="flex flex-col sm:flex-row items-center gap-2">
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="วาง Claude API Key (sk-ant-...)"
+                  value={claudeKeyInput}
+                  onChange={(e) => setClaudeKeyInput(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-orange-500"
+                />
+                <div className="flex items-center space-x-2 shrink-0 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        localStorage.setItem('user_anthropic_api_key', claudeKeyInput.trim());
+                      } catch {
+                        // storage unavailable (private mode) - key only lives for this session
+                      }
+                      setKeySaveSuccess(true);
+                      setTimeout(() => setKeySaveSuccess(false), 2500);
+                    }}
+                    className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1 w-full sm:w-auto shadow-md"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>บันทึก Key</span>
+                  </button>
+                  {claudeKeyInput && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClaudeKeyInput('');
+                        try {
+                          localStorage.removeItem('user_anthropic_api_key');
+                        } catch {
+                          // ignore
+                        }
+                      }}
+                      className="px-3 py-2 bg-rose-950/40 border border-rose-800/40 hover:bg-rose-900/60 text-rose-300 rounded-xl text-xs font-semibold transition"
+                    >
+                      ลบ
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-400">
+                ถ้ามีเซิร์ฟเวอร์ที่ตั้งค่า ANTHROPIC_API_KEY ไว้แล้ว ไม่ต้องใส่ช่องนี้ คีย์ที่ใส่ที่นี่จะถูกเก็บไว้ใน Browser ของเครื่องนี้เท่านั้น
+              </p>
+            </div>
+
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="flex items-center space-x-2 text-xs font-bold text-sky-300">
                 <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0" />
-                <span>Google Gemini API Key (สำหรับใช้งาน Vision OCR บน GitHub Pages)</span>
+                <span>Google Gemini API Key (สำรอง — ใช้เมื่อ Claude ไม่พร้อม)</span>
               </div>
               <a
                 href="https://aistudio.google.com/app/apikey"
@@ -1659,7 +1757,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                   <Sparkles className="w-8 h-8" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-slate-100 text-sm">กำลังอ่านและตรวจยอดด้วย Gemini Pro OCR...</h4>
+                  <h4 className="font-bold text-slate-100 text-sm">กำลังอ่านและตรวจยอดด้วย AI (Claude / Gemini)...</h4>
                   <p className="text-xs text-slate-400 mt-1 max-w-sm">
                     ระบบ AI กำลังตรวจหาชื่อร้านค้า วันที่ ยอดเงินรวม ภาษี VAT และสกัดหมวดหมู่ค่าใช้จ่ายอัตโนมัติ
                   </p>

@@ -3,7 +3,8 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
-import { runReceiptOcr, FatalReceiptOcrError } from './src/utils/receiptOcr';
+import { runReceiptOcr, FatalReceiptOcrError, RECEIPT_OCR_MODELS } from './src/utils/receiptOcr';
+import { createClaudeReceiptCaller, isClaudeModel, CLAUDE_RECEIPT_MODEL } from './src/utils/claudeReceiptOcr';
 
 dotenv.config();
 
@@ -292,14 +293,19 @@ ${
   // API Route: AI Expense Receipt Scanner (Gemini Multimodal Vision OCR)
   app.post('/api/ai/scan-receipt', async (req, res) => {
     try {
-      const { image, mimeType, apiKey, clientApiKey } = req.body || {};
+      const { image, mimeType, apiKey, clientApiKey, anthropicApiKey } = req.body || {};
 
+      // Claude (vision) is the primary engine when a key is available; Gemini is the fallback
+      const claudeKey =
+        typeof anthropicApiKey === 'string' && anthropicApiKey.trim().length > 10
+          ? anthropicApiKey.trim()
+          : process.env.ANTHROPIC_API_KEY || '';
       const ai = getAiClient(apiKey || clientApiKey);
 
-      if (!ai) {
+      if (!claudeKey && !ai) {
         return res.status(400).json({
           error: 'MISSING_API_KEY',
-          message: 'ไม่พบการตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์ หรือ API Key จากผู้ใช้งาน กรุณาระบุ Gemini API Key ในช่องตั้งค่า'
+          message: 'ไม่พบ API Key สำหรับ AI อ่านใบเสร็จ กรุณาตั้งค่า ANTHROPIC_API_KEY (Claude) หรือ GEMINI_API_KEY บนเซิร์ฟเวอร์ หรือระบุ API Key ในช่องตั้งค่า'
         });
       }
 
@@ -319,8 +325,24 @@ ${
         detectedMime = 'image/jpeg';
       }
 
+      const claudeCaller = claudeKey ? createClaudeReceiptCaller({ apiKey: claudeKey }) : null;
+      const models = [
+        ...(claudeCaller ? [CLAUDE_RECEIPT_MODEL] : []),
+        ...(ai ? RECEIPT_OCR_MODELS : [])
+      ];
+
       const { data: receiptData, modelUsed } = await runReceiptOcr(
-        async ({ model, prompt, systemInstruction, responseSchema, image: img }) => {
+        async args => {
+          const { model, prompt, systemInstruction, responseSchema, image: img } = args;
+          if (isClaudeModel(model)) {
+            try {
+              return await claudeCaller!(args);
+            } catch (err: any) {
+              console.warn(`[AI OCR] Claude ${model} failed:`, err?.message || err);
+              throw err;
+            }
+          }
+          if (!ai) throw new Error('Gemini is not configured');
           try {
             const result = await ai.models.generateContent({
               model,
@@ -342,7 +364,7 @@ ${
           }
         },
         { data: cleanBase64, mimeType: detectedMime },
-        { todayIso: typeof req.body?.todayIso === 'string' ? req.body.todayIso : undefined }
+        { todayIso: typeof req.body?.todayIso === 'string' ? req.body.todayIso : undefined, models }
       );
 
       return res.json({ source: modelUsed, receiptData });
