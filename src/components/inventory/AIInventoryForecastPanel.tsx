@@ -167,7 +167,7 @@ export const AIInventoryForecastPanel: React.FC = () => {
       const data = await res.json();
       if (data && data.insights && Array.isArray(data.insights)) {
         setForecastItems(data.insights);
-        setSourceEngine(data.source || 'gemini-3.6-flash');
+        setSourceEngine(data.source || 'claude');
         setSummaryText(data.summaryText || `ระบบ AI วิเคราะห์ความเสี่ยงขาดสต๊อกล่วงหน้า ${days} วัน เรียบร้อยแล้ว`);
       } else {
         runLocalFallbackForecast(days);

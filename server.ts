@@ -1,10 +1,12 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
-import { runReceiptOcr, FatalReceiptOcrError, RECEIPT_OCR_MODELS } from './src/utils/receiptOcr';
-import { createClaudeReceiptCaller, isClaudeModel, CLAUDE_RECEIPT_MODEL } from './src/utils/claudeReceiptOcr';
+import { runReceiptOcr } from './src/utils/receiptOcr';
+import { createClaudeJsonCaller, CLAUDE_MODEL, ClaudeCallError, type ClaudeJsonCaller, type ClaudeEffort } from './src/utils/claudeClient';
+
+// JSON Schema type names used by the response schemas below
+const Type = { OBJECT: 'object', ARRAY: 'array', STRING: 'string', NUMBER: 'number', INTEGER: 'integer', BOOLEAN: 'boolean' } as const;
 
 dotenv.config();
 
@@ -76,7 +78,7 @@ async function startServer() {
     });
   }, 5 * 60_000).unref();
 
-  // AI calls spend the shop's Gemini quota; notifications relay to Telegram/LINE
+  // AI calls spend the shop's Claude API credits; notifications relay to Telegram/LINE
   app.use('/api/ai', rateLimit('ai', 20));
   app.use('/api/notify', rateLimit('notify', 30));
 
@@ -91,44 +93,38 @@ async function startServer() {
     });
   });
 
-  // Initialize Gemini AI Client
-  const getAiClient = (customApiKey?: string) => {
-    const apiKey = (customApiKey && typeof customApiKey === 'string' && customApiKey.trim().length > 5)
-      ? customApiKey.trim()
-      : process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return null;
+  // All AI features run on Claude. The key comes from ANTHROPIC_API_KEY, or from the shop's
+  // own key sent by the client. Without a key each route falls back to its rule-based engine.
+  const claudeCallers = new Map<string, ClaudeJsonCaller>();
+  const getAiClient = (customApiKey?: string): ClaudeJsonCaller | null => {
+    const apiKey =
+      customApiKey && typeof customApiKey === 'string' && customApiKey.trim().length > 10
+        ? customApiKey.trim()
+        : process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return null;
+    let caller = claudeCallers.get(apiKey);
+    if (!caller) {
+      caller = createClaudeJsonCaller({ apiKey });
+      claudeCallers.set(apiKey, caller);
     }
-    return new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build'
-        }
-      }
-    });
+    return caller;
   };
 
-  /**
-   * Helper: Generate content with automatic model fallback for 503 / 429 high demand spikes
-   */
-  const generateWithFallback = async (ai: GoogleGenAI, params: any, preferredModels = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-flash-latest']) => {
-    let lastErr: any = null;
-    for (const model of preferredModels) {
-      try {
-        const res = await ai.models.generateContent({
-          ...params,
-          model
-        });
-        return { response: res, modelUsed: model };
-      } catch (err: any) {
-        console.warn(`[AI SDK] Model ${model} encountered error:`, err?.message || err);
-        lastErr = err;
-        // Wait 250ms before trying the next fallback model
-        await new Promise(r => setTimeout(r, 250));
-      }
-    }
-    throw lastErr;
+  /** Ask Claude for JSON matching `config.responseSchema`; returns the text plus the model name. */
+  const generateWithClaude = async (
+    ai: ClaudeJsonCaller,
+    params: { contents: string; config: { systemInstruction?: string; responseSchema: Record<string, unknown> } },
+    effort: ClaudeEffort = 'high'
+  ) => {
+    const text = await ai({
+      system:
+        params.config.systemInstruction ||
+        'ตอบกลับเป็น JSON ตามโครงสร้าง Schema ที่กำหนดเท่านั้น ตอบด้วยภาษาไทยที่กระชับและเป็นมืออาชีพ',
+      prompt: params.contents,
+      schema: params.config.responseSchema,
+      effort
+    });
+    return { response: { text }, modelUsed: CLAUDE_MODEL };
   };
 
   // API Route: AI Menu Engineering & Price Recommendation Engine
@@ -143,7 +139,7 @@ async function startServer() {
       const ai = getAiClient();
 
       if (!ai) {
-        // High-quality rule-based fallback when GEMINI_API_KEY is not set
+        // Rule-based fallback when no Claude API key is configured
         const fallbackAnalyses = generateFallbackMenuEngineering(menuItems, ingredients, simulatedCostChanges);
         return res.json({
           source: 'rule-based-engine',
@@ -193,11 +189,10 @@ ${
 4. เสนอกลยุทธ์ปฏิบัติการ (actionStrategy) สำหรับเมนูนี้ เช่น การเพิ่มโปรโมชั่น, การปรับขนาดจาน, หรือการจัด Set
 `;
 
-      const { response, modelUsed } = await generateWithFallback(ai, {
+      const { response, modelUsed } = await generateWithClaude(ai, {
         contents: prompt,
         config: {
           systemInstruction: 'ตอบกลับเป็นรูปแบบ JSON ตามโครงสร้าง Schema ที่กำหนดเท่านั้น ตอบด้วยภาษาไทยที่กระชับและเป็นมืออาชีพ',
-          responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -255,7 +250,7 @@ ${
         : 32.5;
 
       return res.json({
-        source: modelUsed || 'gemini-3.6-flash',
+        source: modelUsed,
         overallSummary: {
           healthScore: parsedData.healthScore || 85,
           averageFoodCostPercent: avgFoodCost,
@@ -290,96 +285,42 @@ ${
     }
   });
 
-  // API Route: AI Expense Receipt Scanner (Gemini Multimodal Vision OCR)
+  // API Route: AI Expense Receipt Scanner (Claude vision + arithmetic verification)
   app.post('/api/ai/scan-receipt', async (req, res) => {
     try {
-      const { image, mimeType, apiKey, clientApiKey, anthropicApiKey } = req.body || {};
+      const { image, mimeType, anthropicApiKey } = req.body || {};
+      const ai = getAiClient(anthropicApiKey);
 
-      // Claude (vision) is the primary engine when a key is available; Gemini is the fallback
-      const claudeKey =
-        typeof anthropicApiKey === 'string' && anthropicApiKey.trim().length > 10
-          ? anthropicApiKey.trim()
-          : process.env.ANTHROPIC_API_KEY || '';
-      const ai = getAiClient(apiKey || clientApiKey);
-
-      if (!claudeKey && !ai) {
+      if (!ai) {
         return res.status(400).json({
           error: 'MISSING_API_KEY',
-          message: 'ไม่พบ API Key สำหรับ AI อ่านใบเสร็จ กรุณาตั้งค่า ANTHROPIC_API_KEY (Claude) หรือ GEMINI_API_KEY บนเซิร์ฟเวอร์ หรือระบุ API Key ในช่องตั้งค่า'
+          message: 'ไม่พบ Claude API Key กรุณาตั้งค่า ANTHROPIC_API_KEY บนเซิร์ฟเวอร์ หรือใส่ Claude API Key ในช่องตั้งค่า'
         });
       }
-
-      if (!image) {
+      if (!image || typeof image !== 'string') {
         return res.status(400).json({ error: 'กรุณาแนบไฟล์รูปภาพใบเสร็จ' });
       }
 
-      let cleanBase64 = image || '';
-      let detectedMime = mimeType || 'image/jpeg';
+      let cleanBase64 = image;
+      let detectedMime = typeof mimeType === 'string' ? mimeType : 'image/jpeg';
       if (cleanBase64.includes(';base64,')) {
         const parts = cleanBase64.split(';base64,');
         const mimeMatch = parts[0].match(/data:(.*)/);
         if (mimeMatch) detectedMime = mimeMatch[1];
         cleanBase64 = parts[1];
-      } else if (cleanBase64.startsWith('data:image/svg') || cleanBase64.includes('<svg')) {
-        cleanBase64 = Buffer.from(cleanBase64).toString('base64');
-        detectedMime = 'image/jpeg';
       }
 
-      const claudeCaller = claudeKey ? createClaudeReceiptCaller({ apiKey: claudeKey }) : null;
-      const models = [
-        ...(claudeCaller ? [CLAUDE_RECEIPT_MODEL] : []),
-        ...(ai ? RECEIPT_OCR_MODELS : [])
-      ];
-
-      const { data: receiptData, modelUsed } = await runReceiptOcr(
-        async args => {
-          const { model, prompt, systemInstruction, responseSchema, image: img } = args;
-          if (isClaudeModel(model)) {
-            try {
-              return await claudeCaller!(args);
-            } catch (err: any) {
-              console.warn(`[AI OCR] Claude ${model} failed:`, err?.message || err);
-              throw err;
-            }
-          }
-          if (!ai) throw new Error('Gemini is not configured');
-          try {
-            const result = await ai.models.generateContent({
-              model,
-              contents: [{ inlineData: { data: img.data, mimeType: img.mimeType } }, prompt],
-              config: {
-                systemInstruction,
-                responseMimeType: 'application/json',
-                responseSchema: responseSchema as any
-              }
-            });
-            return result.text || '';
-          } catch (err: any) {
-            const msg = String(err?.message || err || '');
-            if (msg.includes('API_KEY_INVALID') || msg.includes('API key not valid')) {
-              throw new FatalReceiptOcrError('Gemini API Key ไม่ถูกต้อง');
-            }
-            console.warn(`[AI OCR] Model ${model} failed:`, msg);
-            throw err;
-          }
-        },
+      const receiptData = await runReceiptOcr(
+        ({ prompt, system, schema, image: img }) => ai({ prompt, system, schema, image: img, effort: 'high' }),
         { data: cleanBase64, mimeType: detectedMime },
-        { todayIso: typeof req.body?.todayIso === 'string' ? req.body.todayIso : undefined, models }
+        { todayIso: typeof req.body?.todayIso === 'string' ? req.body.todayIso : undefined }
       );
 
-      return res.json({ source: modelUsed, receiptData });
+      return res.json({ source: CLAUDE_MODEL, receiptData });
     } catch (err: any) {
-      console.error('Error scanning receipt with Gemini:', err);
-      let errMsg = err?.message || String(err || '');
-      // If error message is serialized JSON or contains 503/429
-      if (errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE')) {
-        errMsg = 'ระบบ AI มีผู้ใช้งานหนาแน่นชั่วคราว (503 High Demand) กรุณากดปุ่มลองใหม่อีกครั้ง';
-      } else if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
-        errMsg = 'ระบบ AI มีการเรียกใช้งานเกินโควตาชั่วคราว กรุณารอสักครู่แล้วลองใหม่';
-      }
-      return res.status(500).json({
-        error: errMsg
-      });
+      console.error('Error scanning receipt with Claude:', err?.message || err);
+      const status = err instanceof ClaudeCallError && !err.retryable ? 400 : 502;
+      return res.status(status).json({ error: err?.message || 'AI อ่านใบเสร็จไม่สำเร็จ กรุณาลองใหม่' });
     }
   });
 
@@ -428,10 +369,9 @@ ${JSON.stringify(menuItems, null, 2)}
 5. ให้เหตุผล AI Insight และคำแนะนำสำหรับซัพพลายเออร์
 `;
 
-      const { response, modelUsed } = await generateWithFallback(ai, {
+      const { response, modelUsed } = await generateWithClaude(ai, {
         contents: prompt,
         config: {
-          responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -478,7 +418,7 @@ ${JSON.stringify(menuItems, null, 2)}
       const forecastResults = parsed.insights || generateFallbackInventoryForecast(ingredients, orders || [], menuItems || [], forecastDays);
 
       return res.json({
-        source: modelUsed || 'gemini-3.6-flash',
+        source: modelUsed,
         forecastDays,
         overallAlertCount: forecastResults.filter((r: any) => r.riskLevel === 'CRITICAL' || r.riskLevel === 'WARNING').length,
         criticalCount: forecastResults.filter((r: any) => r.riskLevel === 'CRITICAL').length,
@@ -536,11 +476,10 @@ ${JSON.stringify(ingredients, null, 2)}
 4. ประเมินมูลค่าเงินที่จะประหยัดได้ต่อเดือน (estimatedMonthlySavings) หากทำตามคำแนะนำ
 `;
 
-      const { response, modelUsed } = await generateWithFallback(ai, {
+      const { response, modelUsed } = await generateWithClaude(ai, {
         contents: prompt,
         config: {
           systemInstruction: 'ตอบกลับเป็น JSON ตามโครงสร้าง Schema ที่กำหนด ตอบเป็นภาษาไทยเชิงวิชาชีพ ปฏิบัติได้จริงในร้านอาหาร',
-          responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -608,7 +547,7 @@ ${JSON.stringify(ingredients, null, 2)}
       const parsedData = JSON.parse(response.text || '{}');
 
       return res.json({
-        source: modelUsed || 'gemini-3.6-flash',
+        source: modelUsed,
         analysis: {
           totalLossAmount: parsedData.totalLossAmount || wasteLogs.reduce((a: number, b: any) => a + (b.totalCostLoss || 0), 0),
           totalWasteEntries: wasteLogs.length,
@@ -659,10 +598,9 @@ ${JSON.stringify(menuItems || [], null, 2)}
 3. สร้างข้อความพูดแนะนำสั้นๆ โดนใจสำหรับให้แคชเชียร์เอ่ยถามลูกค้า (bundleTitle และ scriptForCashier)
       `;
 
-      const { response, modelUsed } = await generateWithFallback(ai, {
+      const { response, modelUsed } = await generateWithClaude(ai, {
         contents: prompt,
         config: {
-          responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -694,11 +632,11 @@ ${JSON.stringify(menuItems || [], null, 2)}
             required: ['bundleTitle', 'scriptForCashier', 'suggestions']
           }
         }
-      });
+      }, 'low'); // quick suggestion while the customer is at the counter
 
       const parsedData = JSON.parse(response.text || '{}');
       return res.json({
-        source: modelUsed || 'gemini-3.6-flash',
+        source: modelUsed,
         result: {
           bundleTitle: parsedData.bundleTitle || '💡 บทพูดอัปเซลลูกค้า: "รับไข่ดาวเป็ดลาวาเยิ้มๆ หรือชามะนาวเย็นสดชื่นทานคู่กะเพราเพิ่มด้วยไหมครับ/คะ?"',
           scriptForCashier: parsedData.scriptForCashier || 'เสนอเมนูคู่กินเพื่อเพิ่มยอดขายเฉลี่ยต่อบิล (Ticket Size)',

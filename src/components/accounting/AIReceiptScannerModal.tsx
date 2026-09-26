@@ -35,7 +35,7 @@ import {
 import { ExpenseCategory } from '../../types';
 import { usePOS } from '../../context/POSContext';
 import { compressBase64Image } from '../../utils/imageCompressor';
-import { runReceiptOcr, FatalReceiptOcrError, RECEIPT_OCR_MODELS } from '../../utils/receiptOcr';
+import { runReceiptOcr } from '../../utils/receiptOcr';
 import { apiUrl, hasBackend } from '../../utils/apiClient';
 import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 
@@ -132,9 +132,6 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   const [stockQty, setStockQty] = useState<number>(1);
   const [stockEntries, setStockEntries] = useState<StockEntryItem[]>([]);
   const [showApiKeySettings, setShowApiKeySettings] = useState<boolean>(false);
-  const [apiKeyInput, setApiKeyInput] = useState<string>(() => {
-    return typeof window !== 'undefined' ? (localStorage.getItem('user_gemini_api_key') || '') : '';
-  });
   const [claudeKeyInput, setClaudeKeyInput] = useState<string>(() => {
     try {
       return typeof window !== 'undefined' ? (localStorage.getItem('user_anthropic_api_key') || '') : '';
@@ -448,75 +445,31 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     };
   };
 
-  // Helper to call Gemini Vision directly from browser on static hosting (GitHub Pages) or client-side.
-  // Uses the same verified OCR pipeline as the backend (src/utils/receiptOcr.ts).
-  const callDirectBrowserGemini = async (
+  // Read a receipt directly from the browser with the shop's own Claude key (static hosting,
+  // no backend). Same verified pipeline as the server (src/utils/receiptOcr.ts).
+  const callDirectBrowserClaude = async (
     base64WithMime: string,
     mimeType: string,
-    apiKey: string,
-    claudeApiKey: string = ''
+    claudeApiKey: string
   ): Promise<{ result?: ScannedReceiptData; error?: string }> => {
     const pureBase64 = base64WithMime.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
-    let rateLimited = false;
     try {
-      // Claude is loaded on demand so the SDK is not part of the main bundle
-      const claude = claudeApiKey ? await import('../../utils/claudeReceiptOcr') : null;
-      const claudeCaller = claude ? claude.createClaudeReceiptCaller({ apiKey: claudeApiKey, browser: true }) : null;
-      const models = [
-        ...(claude ? [claude.CLAUDE_RECEIPT_MODEL] : []),
-        ...(apiKey ? RECEIPT_OCR_MODELS : [])
-      ];
-      const { data } = await runReceiptOcr(
-        async args => {
-          const { model, prompt, systemInstruction, responseSchema, image } = args;
-          if (claude && claudeCaller && claude.isClaudeModel(model)) return claudeCaller(args);
-          const controller = new AbortController();
-          // Pro models "think" before answering; give them time on slow mobile networks
-          const timer = setTimeout(() => controller.abort(), 90000);
-          try {
-            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-              method: 'POST',
-              signal: controller.signal,
-              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
-              body: JSON.stringify({
-                systemInstruction: { parts: [{ text: systemInstruction }] },
-                contents: [{ parts: [{ inlineData: { mimeType: image.mimeType, data: image.data } }, { text: prompt }] }],
-                generationConfig: { responseMimeType: 'application/json', responseSchema }
-              })
-            });
-            if (!res.ok) {
-              const errData = await res.json().catch(() => null);
-              const details = errData?.error?.message || `HTTP ${res.status}`;
-              if (res.status === 400 && (details.includes('API key') || details.includes('API_KEY_INVALID'))) {
-                throw new FatalReceiptOcrError('Gemini API Key ไม่ถูกต้อง กรุณาตรวจสอบหรือขอคีย์ใหม่ที่ aistudio.google.com');
-              }
-              if (res.status === 429 || details.includes('RESOURCE_EXHAUSTED')) rateLimited = true;
-              throw new Error(`${model}: ${details}`);
-            }
-            const json = await res.json();
-            const parts = json?.candidates?.[0]?.content?.parts || [];
-            // Thinking models may return thought parts first; the answer is the last text part
-            const text = parts.filter((p: any) => typeof p?.text === 'string' && !p.thought).map((p: any) => p.text).pop();
-            if (!text) throw new Error(`${model}: empty response`);
-            return text;
-          } finally {
-            clearTimeout(timer);
-          }
-        },
+      // Loaded on demand so the SDK is not part of the main bundle
+      const { createClaudeJsonCaller } = await import('../../utils/claudeClient');
+      const ai = createClaudeJsonCaller({ apiKey: claudeApiKey, browser: true });
+      const data = await runReceiptOcr(
+        ({ prompt, system, schema, image }) => ai({ prompt, system, schema, image, effort: 'high' }),
         { data: pureBase64, mimeType: mimeType && mimeType.startsWith('image/') ? mimeType : 'image/jpeg' },
-        { todayIso: new Date().toLocaleDateString('en-CA'), models }
+        { todayIso: new Date().toLocaleDateString('en-CA') }
       );
       return { result: data as ScannedReceiptData };
     } catch (e: any) {
-      console.warn('Direct Browser Gemini Vision Error:', e);
-      if (e instanceof FatalReceiptOcrError) return { error: e.message };
-      if (e?.name === 'AbortError') return { error: 'การเชื่อมต่อหมดเวลา (Timeout) กรุณาตรวจสอบสัญญาณอินเทอร์เน็ต' };
-      if (rateLimited) return { error: 'โควตาการใช้งาน Gemini API เต็มชั่วคราว กรุณารอสักครู่แล้วลองใหม่' };
+      console.warn('Direct browser Claude OCR error:', e);
       return { error: e?.message || 'AI ไม่สามารถอ่านข้อความจากภาพนี้ได้ชัดเจน' };
     }
   };
 
-  // Scan single item via Gemini OCR API or Browser Smart Parser
+  // Scan single item via the backend (server key) or directly with the shop's Claude key
   const runScanForItem = async (item: ReceiptQueueItem): Promise<ReceiptQueueItem> => {
     try {
       let finalBase64 = item.base64;
@@ -527,14 +480,6 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
         finalMime = rasterized.mimeType;
       }
 
-      // Check if client-side Gemini API key is configured
-      const clientApiKey = typeof window !== 'undefined' ? (
-        localStorage.getItem('user_gemini_api_key') ||
-        localStorage.getItem('gemini_api_key') ||
-        (import.meta as any).env?.VITE_GEMINI_API_KEY ||
-        ''
-      ).trim() : '';
-
       const claudeApiKey = (() => {
         try {
           return typeof window !== 'undefined' ? (localStorage.getItem('user_anthropic_api_key') || '').trim() : '';
@@ -542,7 +487,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
           return '';
         }
       })();
-      const hasClientKey = Boolean(claudeApiKey) || clientApiKey.length > 5;
+      const hasClientKey = Boolean(claudeApiKey);
 
       const isStaticHost = !hasBackend();
 
@@ -562,7 +507,6 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
             body: JSON.stringify({
               image: finalBase64,
               mimeType: finalMime,
-              apiKey: clientApiKey,
               anthropicApiKey: claudeApiKey,
               todayIso: new Date().toLocaleDateString('en-CA')
             })
@@ -585,18 +529,13 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
             if (errData?.message) scanErrorMessage = errData.message;
           }
         } catch (backendFetchErr: any) {
-          console.warn('Backend fetch bypassed or timed out, trying browser direct Gemini OCR:', backendFetchErr?.message);
+          console.warn('Backend unavailable, trying direct Claude OCR:', backendFetchErr?.message);
         }
       }
 
-      // 2. Direct browser OCR with the user's own key (Claude first, then Gemini) — for GitHub Pages
+      // 2. Direct browser OCR with the shop's own Claude key — for static hosting (no backend)
       if (hasClientKey) {
-        const direct = await callDirectBrowserGemini(
-          finalBase64,
-          finalMime,
-          clientApiKey.length > 5 ? clientApiKey : '',
-          claudeApiKey
-        );
+        const direct = await callDirectBrowserClaude(finalBase64, finalMime, claudeApiKey);
         if (direct.result) {
           return {
             ...item,
@@ -628,8 +567,8 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
         error: hasClientKey
           ? (scanErrorMessage || 'AI ไม่สามารถอ่านข้อมูลจากภาพนี้ได้ชัดเจน หรือลายมือเลือนราง กรุณากด "ลองใหม่" หรือแตะ "ใช้ภาพนี้ & กรอกข้อมูลเอง"')
           : (isStaticHost
-              ? 'คุณกำลังใช้งานบน GitHub Pages: กรุณาระบุ Claude หรือ Gemini API Key ในปุ่ม "API Key" ด้านบน หรือแตะ "ใช้ภาพนี้ & กรอกข้อมูลเอง"'
-              : (scanErrorMessage || 'กรุณาตั้งค่า ANTHROPIC_API_KEY / GEMINI_API_KEY บนเซิร์ฟเวอร์ หรือระบุ API Key ในปุ่ม "ตั้งค่า AI API Key" ด้านบน หรือแตะ "ใช้ภาพนี้ & กรอกข้อมูลเอง"')),
+              ? 'เว็บนี้ไม่มีเซิร์ฟเวอร์ AI: กรุณาใส่ Claude API Key ในปุ่ม "ตั้งค่า Claude API Key" ด้านบน หรือแตะ "ใช้ภาพนี้ & กรอกข้อมูลเอง"'
+              : (scanErrorMessage || 'กรุณาตั้งค่า ANTHROPIC_API_KEY บนเซิร์ฟเวอร์ หรือใส่ Claude API Key ในปุ่ม "ตั้งค่า Claude API Key" ด้านบน หรือแตะ "ใช้ภาพนี้ & กรอกข้อมูลเอง"')),
         result: undefined
       };
     } catch (err: any) {
@@ -1333,7 +1272,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-slate-100 text-base flex items-center space-x-2">
-                <span>สแกนใบเสร็จรับเงินค่าใช้จ่ายด้วย Gemini AI (Receipt OCR)</span>
+                <span>สแกนใบเสร็จรับเงินค่าใช้จ่ายด้วย Claude AI</span>
               </h3>
               <p className="text-xs text-slate-400">
                 ถ่ายภาพหรืออัปโหลดใบเสร็จเพื่อถอดรหัสรายการสินค้า ยอดเงินสกัด และลงบัญชีอัตโนมัติ
@@ -1346,17 +1285,17 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
               type="button"
               onClick={() => setShowApiKeySettings(!showApiKeySettings)}
               className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold flex items-center space-x-1.5 transition ${
-                apiKeyInput || claudeKeyInput
+                claudeKeyInput
                   ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/50'
                   : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-750'
               }`}
-              title="ตั้งค่า Claude / Gemini API Key (สำหรับ GitHub Pages หรือใช้งานตรงจาก Browser)"
+              title="ตั้งค่า Claude API Key (สำหรับเว็บที่ไม่มีเซิร์ฟเวอร์ AI)"
             >
               <Key className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">
-                {claudeKeyInput ? 'Claude: เชื่อมต่อแล้ว' : apiKeyInput ? 'Gemini: เชื่อมต่อแล้ว' : 'ตั้งค่า AI API Key'}
+                {claudeKeyInput ? 'Claude: เชื่อมต่อแล้ว' : 'ตั้งค่า Claude API Key'}
               </span>
-              <span className="sm:hidden">{apiKeyInput || claudeKeyInput ? 'Live' : 'API Key'}</span>
+              <span className="sm:hidden">{claudeKeyInput ? 'Live' : 'API Key'}</span>
             </button>
 
             <button
@@ -1375,7 +1314,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="flex items-center space-x-2 text-xs font-bold text-orange-300">
                   <ShieldCheck className="w-4 h-4 text-orange-400 shrink-0" />
-                  <span>Claude API Key (แนะนำ — อ่านใบเสร็จแม่นยำที่สุด ใช้ก่อน Gemini)</span>
+                  <span>Claude API Key (ใช้เมื่อเว็บไม่มีเซิร์ฟเวอร์ AI)</span>
                 </div>
                 <a
                   href="https://console.anthropic.com/settings/keys"
@@ -1435,69 +1374,13 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
               </p>
             </div>
 
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="flex items-center space-x-2 text-xs font-bold text-sky-300">
-                <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0" />
-                <span>Google Gemini API Key (สำรอง — ใช้เมื่อ Claude ไม่พร้อม)</span>
-              </div>
-              <a
-                href="https://aistudio.google.com/app/apikey"
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-amber-300 hover:text-amber-200 underline font-bold flex items-center space-x-1"
-              >
-                <span>🔑 รับ Gemini API Key ฟรีจาก Google AI Studio ↗</span>
-              </a>
-            </div>
-
-            <div className="p-2.5 bg-sky-950/40 border border-sky-800/40 rounded-xl text-[11px] text-slate-300 space-y-1">
-              <p className="font-semibold text-sky-200">
-                💡 <span className="underline">ทดลองใช้งานได้ทันทีโดยไม่ต้องใส่ Key:</span> คุณสามารถแตะเลือกรูปภาพใบเสร็จ หรือกดปุ่ม <strong>Demo Presets (บิ๊กซี / ตลาดสด / บิลไฟฟ้า)</strong> ด้านล่างเพื่อทดสอบระบบสแกนและบันทึกบัญชีได้ทันที!
-              </p>
-              <p className="text-slate-400 text-[10px]">
-                หากต้องการสแกนใบเสร็จจริงด้วยโมเดล Gemini Pro (ตรวจยอดอัตโนมัติ) สามารถวาง API Key ด้านล่างนี้ (คีย์จะถูกเก็บไว้ใน Browser ของเครื่องนี้ ห้ามใช้บนเครื่องสาธารณะ)
-              </p>
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-center gap-2">
-              <input
-                type="password"
-                placeholder="วาง Gemini API Key ของคุณที่นี่ (AIzaSy...)"
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500"
-              />
-              <div className="flex items-center space-x-2 shrink-0 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => {
-                    localStorage.setItem('user_gemini_api_key', apiKeyInput.trim());
-                    setKeySaveSuccess(true);
-                    setTimeout(() => setKeySaveSuccess(false), 2500);
-                  }}
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1 w-full sm:w-auto shadow-md"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>บันทึก Key</span>
-                </button>
-                {apiKeyInput && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setApiKeyInput('');
-                      localStorage.removeItem('user_gemini_api_key');
-                    }}
-                    className="px-3 py-2 bg-rose-950/40 border border-rose-800/40 hover:bg-rose-900/60 text-rose-300 rounded-xl text-xs font-semibold transition"
-                  >
-                    ลบ
-                  </button>
-                )}
-              </div>
-            </div>
+            <p className="text-[11px] text-slate-400">
+              ทดลองได้โดยไม่ต้องใส่ Key: กดปุ่ม Demo (บิ๊กซี / ตลาดสด / บิลไฟฟ้า) ด้านล่าง
+            </p>
             {keySaveSuccess && (
               <p className="text-[11px] text-emerald-400 font-bold flex items-center space-x-1">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>บันทึก API Key สำเร็จ! ระบบจะใช้ Gemini Vision ประมวลผลจากภาพจริงทันที</span>
+                <span>บันทึก Claude API Key แล้ว</span>
               </p>
             )}
           </div>
@@ -1741,7 +1624,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                   {isScanning && (
                     <div className="absolute inset-0 bg-sky-950/60 backdrop-blur-xs flex flex-col items-center justify-center space-y-2">
                       <RefreshCw className="w-8 h-8 text-sky-400 animate-spin" />
-                      <span className="text-xs font-bold text-sky-200">Gemini กำลังอ่านใบเสร็จ...</span>
+                      <span className="text-xs font-bold text-sky-200">Claude กำลังอ่านใบเสร็จ...</span>
                     </div>
                   )}
                 </div>
@@ -1757,7 +1640,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                   <Sparkles className="w-8 h-8" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-slate-100 text-sm">กำลังอ่านและตรวจยอดด้วย AI (Claude / Gemini)...</h4>
+                  <h4 className="font-bold text-slate-100 text-sm">กำลังอ่านและตรวจยอดด้วย Claude...</h4>
                   <p className="text-xs text-slate-400 mt-1 max-w-sm">
                     ระบบ AI กำลังตรวจหาชื่อร้านค้า วันที่ ยอดเงินรวม ภาษี VAT และสกัดหมวดหมู่ค่าใช้จ่ายอัตโนมัติ
                   </p>

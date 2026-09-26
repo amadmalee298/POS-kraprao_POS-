@@ -171,7 +171,7 @@ export const AIWasteAnalysisPanel: React.FC = () => {
     };
   };
 
-  // Trigger Gemini Analysis
+  // Trigger Claude analysis
   const runWasteAnalysis = async () => {
     setLoading(true);
     try {
@@ -284,7 +284,7 @@ export const AIWasteAnalysisPanel: React.FC = () => {
               <span>วิเคราะห์ขยะวัตถุดิบ & เสนอทางลดการเน่าเสีย</span>
             </h2>
             <p className="text-sm text-slate-300 leading-relaxed">
-              ระบบประมวลผล Gemini 3.6 Flash วิเคราะห์สาเหตุของเสียย้อนหลัง คำนวณความสูญเสียทางการเงิน
+              Claude AI วิเคราะห์สาเหตุของเสียย้อนหลัง คำนวณความสูญเสียทางการเงิน
               พร้อมเสนอแนะ <strong className="text-amber-300">การปรับรอบจัดซื้อ (Ordering Cycles)</strong> และวิธีป้องกันการเน่าเสียซ้ำซ้อน
             </p>
           </div>
@@ -447,7 +447,7 @@ export const AIWasteAnalysisPanel: React.FC = () => {
             {loading ? (
               <div className="py-12 text-center space-y-3">
                 <RefreshCw className="w-8 h-8 text-rose-400 animate-spin mx-auto" />
-                <p className="text-sm text-slate-300 font-medium">Gemini 3.6 Flash กำลังคำนวณและสร้างข้อเสนอแนะ...</p>
+                <p className="text-sm text-slate-300 font-medium">Claude กำลังคำนวณและสร้างข้อเสนอแนะ...</p>
               </div>
             ) : filteredSuggestions.length === 0 ? (
               <div className="p-8 text-center text-slate-400 text-sm bg-slate-950/40 rounded-2xl border border-slate-800/50">

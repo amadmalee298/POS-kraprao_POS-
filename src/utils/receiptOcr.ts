@@ -1,8 +1,8 @@
 /**
- * Receipt OCR pipeline shared by the Express backend (server.ts) and the browser
- * (direct Gemini calls on static hosting). Transport is injected, everything else —
- * model choice, prompt, JSON schema, arithmetic verification and the second
- * "re-check" pass — lives here so both paths produce identical, verified results.
+ * Receipt OCR pipeline shared by the Express backend (server.ts) and the browser (the shop's
+ * own Claude key on static hosting). The Claude call is injected; the prompt, JSON schema,
+ * arithmetic verification and the second "re-check" pass live here so both paths produce
+ * identical, verified results.
  */
 
 export type ReceiptExpenseCategory =
@@ -45,12 +45,6 @@ export interface VerifiedReceiptData {
   passes: number;
 }
 
-/**
- * Most accurate models first. "-latest" aliases always point at Google's newest Pro/Flash
- * release; the pinned versions are fallbacks if an alias is unavailable for the key.
- */
-export const RECEIPT_OCR_MODELS = ['gemini-pro-latest', 'gemini-2.5-pro', 'gemini-flash-latest', 'gemini-2.5-flash'];
-
 export const RECEIPT_CATEGORIES: ReceiptExpenseCategory[] = [
   'raw_material',
   'supplies',
@@ -61,40 +55,49 @@ export const RECEIPT_CATEGORIES: ReceiptExpenseCategory[] = [
   'other'
 ];
 
-/** Gemini responseSchema (OpenAPI subset). Type names are the same strings as the SDK's `Type` enum. */
-export const RECEIPT_OCR_RESPONSE_SCHEMA = {
-  type: 'OBJECT',
+/**
+ * JSON Schema of the answer (structured outputs). Every field is required; the model uses
+ * ""/0/[] for values it cannot read, which verifyReceiptExtraction reports as warnings.
+ */
+export const RECEIPT_OCR_SCHEMA = {
+  type: 'object',
   properties: {
-    documentType: { type: 'STRING', description: 'tax_invoice | receipt | cash_bill | handwritten | utility_bill | transfer_slip | other' },
-    vendorName: { type: 'STRING' },
-    vendorTaxId: { type: 'STRING', description: '13-digit tax ID of the seller if printed, else empty' },
-    date: { type: 'STRING', description: 'YYYY-MM-DD in the Gregorian calendar, or empty if unreadable' },
-    refNumber: { type: 'STRING' },
+    documentType: {
+      type: 'string',
+      enum: ['tax_invoice', 'receipt', 'cash_bill', 'handwritten', 'utility_bill', 'transfer_slip', 'other']
+    },
+    vendorName: { type: 'string' },
+    vendorTaxId: { type: 'string', description: '13-digit seller tax ID if printed, else empty' },
+    date: { type: 'string', description: 'YYYY-MM-DD (Gregorian) or empty if unreadable' },
+    refNumber: { type: 'string' },
     lineItems: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         properties: {
-          name: { type: 'STRING' },
-          quantity: { type: 'NUMBER' },
-          unitPrice: { type: 'NUMBER' },
-          amount: { type: 'NUMBER' }
+          name: { type: 'string' },
+          quantity: { type: 'number' },
+          unitPrice: { type: 'number' },
+          amount: { type: 'number' }
         },
-        required: ['name', 'amount']
+        required: ['name', 'quantity', 'unitPrice', 'amount']
       }
     },
-    subtotal: { type: 'NUMBER', description: 'sum before discount and before exclusive VAT; 0 if not printed' },
-    discount: { type: 'NUMBER', description: 'total discount printed on the bill; 0 if none' },
-    includeVat: { type: 'BOOLEAN' },
-    vatAmount: { type: 'NUMBER' },
-    amount: { type: 'NUMBER', description: 'grand total actually paid' },
-    category: { type: 'STRING', enum: RECEIPT_CATEGORIES },
-    title: { type: 'STRING' },
-    note: { type: 'STRING' },
-    unreadableFields: { type: 'ARRAY', items: { type: 'STRING' } },
-    confidenceScore: { type: 'NUMBER' }
+    subtotal: { type: 'number' },
+    discount: { type: 'number' },
+    includeVat: { type: 'boolean' },
+    vatAmount: { type: 'number' },
+    amount: { type: 'number', description: 'grand total actually payable' },
+    category: { type: 'string', enum: RECEIPT_CATEGORIES },
+    title: { type: 'string' },
+    note: { type: 'string' },
+    unreadableFields: { type: 'array', items: { type: 'string' } },
+    confidenceScore: { type: 'number' }
   },
-  required: ['vendorName', 'date', 'amount', 'includeVat', 'vatAmount', 'lineItems', 'category', 'title', 'confidenceScore']
+  required: [
+    'documentType', 'vendorName', 'vendorTaxId', 'date', 'refNumber', 'lineItems', 'subtotal', 'discount',
+    'includeVat', 'vatAmount', 'amount', 'category', 'title', 'note', 'unreadableFields', 'confidenceScore'
+  ]
 };
 
 export const RECEIPT_OCR_SYSTEM_INSTRUCTION =
@@ -317,74 +320,55 @@ export function parseModelJson(text: string): any {
   }
 }
 
-export interface ReceiptModelCallArgs {
-  model: string;
+/** One Claude call: returns the model's JSON text. Errors with `retryable: true` are retried once. */
+export type ReceiptModelCall = (args: {
   prompt: string;
-  systemInstruction: string;
-  responseSchema: typeof RECEIPT_OCR_RESPONSE_SCHEMA;
+  system: string;
+  schema: typeof RECEIPT_OCR_SCHEMA;
   image: { data: string; mimeType: string };
+}) => Promise<string>;
+
+const isRetryable = (err: unknown): boolean => Boolean(err && typeof err === 'object' && (err as { retryable?: boolean }).retryable);
+
+async function callWithRetry(call: ReceiptModelCall, args: Parameters<ReceiptModelCall>[0]): Promise<any> {
+  try {
+    return parseModelJson(await call(args));
+  } catch (err) {
+    if (!isRetryable(err)) throw err;
+    return parseModelJson(await call(args));
+  }
 }
 
-/** Transport-level error that must not be retried on another model (e.g. invalid API key). */
-export class FatalReceiptOcrError extends Error {}
-
 /**
- * Run the OCR pipeline: most accurate model first, falling back on errors; if the arithmetic
- * checks fail, ask the same model to re-read the image with the specific problems listed,
- * then keep whichever pass is more consistent.
+ * Run the OCR pipeline: read the receipt; if the arithmetic checks fail, ask Claude to re-read
+ * the image with the specific problems listed, then keep whichever pass is more consistent.
  */
 export async function runReceiptOcr(
-  callModel: (args: ReceiptModelCallArgs) => Promise<string>,
+  call: ReceiptModelCall,
   image: { data: string; mimeType: string },
-  options: { todayIso?: string; models?: string[] } = {}
-): Promise<{ data: VerifiedReceiptData; modelUsed: string }> {
+  options: { todayIso?: string } = {}
+): Promise<VerifiedReceiptData> {
   const todayIso = options.todayIso || new Date().toISOString().split('T')[0];
-  const models = options.models && options.models.length > 0 ? options.models : RECEIPT_OCR_MODELS;
-  let lastError: unknown = null;
+  const base = { system: RECEIPT_OCR_SYSTEM_INSTRUCTION, schema: RECEIPT_OCR_SCHEMA, image };
 
-  for (const model of models) {
-    let firstRaw: any;
-    try {
-      const text = await callModel({
-        model,
-        prompt: buildReceiptOcrPrompt(todayIso),
-        systemInstruction: RECEIPT_OCR_SYSTEM_INSTRUCTION,
-        responseSchema: RECEIPT_OCR_RESPONSE_SCHEMA,
-        image
-      });
-      firstRaw = parseModelJson(text);
-    } catch (err) {
-      if (err instanceof FatalReceiptOcrError) throw err;
-      lastError = err;
-      continue;
-    }
+  const firstRaw = await callWithRetry(call, { ...base, prompt: buildReceiptOcrPrompt(todayIso) });
+  const first = verifyReceiptExtraction(firstRaw, todayIso);
+  if (first.hardProblems.length === 0) return first.data;
 
-    const first = verifyReceiptExtraction(firstRaw, todayIso);
-    if (first.hardProblems.length === 0) {
-      return { data: first.data, modelUsed: model };
-    }
-
-    // Second pass: targeted re-read of the numbers that did not add up
-    try {
-      const text = await callModel({
-        model,
-        prompt: buildReceiptRecheckPrompt(todayIso, firstRaw, first.hardProblems),
-        systemInstruction: RECEIPT_OCR_SYSTEM_INSTRUCTION,
-        responseSchema: RECEIPT_OCR_RESPONSE_SCHEMA,
-        image
-      });
-      const second = verifyReceiptExtraction(parseModelJson(text), todayIso);
-      const better =
-        second.hardProblems.length < first.hardProblems.length ||
-        (second.hardProblems.length === first.hardProblems.length && second.data.warnings.length <= first.data.warnings.length)
-          ? second
-          : first;
-      return { data: { ...better.data, passes: 2 }, modelUsed: model };
-    } catch (err) {
-      if (err instanceof FatalReceiptOcrError) throw err;
-      return { data: first.data, modelUsed: model };
-    }
+  // Second pass: targeted re-read of the numbers that did not add up
+  try {
+    const secondRaw = await callWithRetry(call, {
+      ...base,
+      prompt: buildReceiptRecheckPrompt(todayIso, firstRaw, first.hardProblems)
+    });
+    const second = verifyReceiptExtraction(secondRaw, todayIso);
+    const better =
+      second.hardProblems.length < first.hardProblems.length ||
+      (second.hardProblems.length === first.hardProblems.length && second.data.warnings.length <= first.data.warnings.length)
+        ? second
+        : first;
+    return { ...better.data, passes: 2 };
+  } catch {
+    return first.data;
   }
-
-  throw lastError instanceof Error ? lastError : new Error('ไม่สามารถเชื่อมต่อ AI อ่านใบเสร็จได้');
 }

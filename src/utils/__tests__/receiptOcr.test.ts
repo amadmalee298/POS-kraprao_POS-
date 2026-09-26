@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { FatalReceiptOcrError, runReceiptOcr, verifyReceiptExtraction } from '../receiptOcr';
+import { runReceiptOcr, verifyReceiptExtraction } from '../receiptOcr';
+import { toStructuredSchema } from '../claudeClient';
 
 const TODAY = '2026-09-26';
 const image = { data: 'AAAA', mimeType: 'image/jpeg' };
@@ -53,30 +54,43 @@ describe('verifyReceiptExtraction', () => {
 });
 
 describe('runReceiptOcr', () => {
-  it('re-checks with the same model when the numbers do not add up and keeps the better pass', async () => {
-    const calls: string[] = [];
-    const { data, modelUsed } = await runReceiptOcr(async ({ model, prompt }) => {
-      calls.push(model);
+  it('re-reads the receipt when the numbers do not add up and keeps the better pass', async () => {
+    let calls = 0;
+    const data = await runReceiptOcr(async ({ prompt }) => {
+      calls++;
       const isRecheck = prompt.includes('ผลการอ่านรอบแรก');
       return JSON.stringify(isRecheck ? goodReceipt : { ...goodReceipt, amount: 820, vatAmount: 53.64 });
-    }, image, { todayIso: TODAY, models: ['m1', 'm2'] });
-    expect(calls).toEqual(['m1', 'm1']);
-    expect(modelUsed).toBe('m1');
+    }, image, { todayIso: TODAY });
+    expect(calls).toBe(2);
     expect(data.amount).toBe(320);
     expect(data.passes).toBe(2);
   });
 
-  it('falls back to the next model on errors but stops on a fatal key error', async () => {
-    const fallback = await runReceiptOcr(async ({ model }) => {
-      if (model === 'm1') throw new Error('503');
+  it('retries once on a retryable error but not on a bad key', async () => {
+    let attempts = 0;
+    const data = await runReceiptOcr(async () => {
+      attempts++;
+      if (attempts === 1) throw Object.assign(new Error('overloaded'), { retryable: true });
       return JSON.stringify(goodReceipt);
-    }, image, { todayIso: TODAY, models: ['m1', 'm2'] });
-    expect(fallback.modelUsed).toBe('m2');
+    }, image, { todayIso: TODAY });
+    expect(attempts).toBe(2);
+    expect(data.verified).toBe(true);
 
     await expect(
       runReceiptOcr(async () => {
-        throw new FatalReceiptOcrError('bad key');
-      }, image, { todayIso: TODAY, models: ['m1', 'm2'] })
-    ).rejects.toThrow('bad key');
+        throw Object.assign(new Error('Anthropic API Key ไม่ถูกต้อง'), { retryable: false });
+      }, image, { todayIso: TODAY })
+    ).rejects.toThrow('Anthropic API Key');
+  });
+});
+
+describe('toStructuredSchema', () => {
+  it('forbids extra keys on every object, including nested array items', () => {
+    const out = toStructuredSchema({
+      type: 'object',
+      properties: { list: { type: 'array', items: { type: 'object', properties: { a: { type: 'string' } } } } }
+    }) as any;
+    expect(out.additionalProperties).toBe(false);
+    expect(out.properties.list.items.additionalProperties).toBe(false);
   });
 });
