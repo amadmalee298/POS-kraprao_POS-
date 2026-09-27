@@ -73,7 +73,8 @@ import {
   Camera,
   Download,
   Star,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Send
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -100,10 +101,12 @@ import {
   PaymentRecord
 } from '../../types';
 import { AIReceiptScannerModal } from './AIReceiptScannerModal';
+import { TelegramInboxPanel } from '../telegram/TelegramInboxPanel';
+import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 
 type TimeHorizon = 'selected' | '6months' | 'year';
-type ViewTab = 'overview' | 'statement' | 'balance_sheet' | 'cash_flow' | 'ar_ap' | 'expenses' | 'incomes' | 'details';
+type ViewTab = 'overview' | 'statement' | 'balance_sheet' | 'cash_flow' | 'ar_ap' | 'expenses' | 'incomes' | 'details' | 'telegram';
 
 interface MonthlyFinancialData {
   monthKey: string; // YYYY-MM
@@ -398,6 +401,8 @@ export const AccountingView: React.FC = () => {
 
   const [timeHorizon, setTimeHorizon] = useState<TimeHorizon>('selected');
   const vatRegistered = isVatRegistered(settings);
+  const [telegramInbox] = useTelegramInbox();
+  const telegramWaiting = telegramInbox.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading').length;
   const vatRate = vatRateOf(settings);
   const [activeTab, setActiveTab] = useState<ViewTab>('overview');
 
@@ -1978,6 +1983,21 @@ export const AccountingView: React.FC = () => {
               <span>รายวัน</span>
               {activeTab === 'details' && (
                 <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-rose-500 rounded-full" />
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('telegram')}
+              className={`flex items-center space-x-1.5 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 whitespace-nowrap relative ${
+                activeTab === 'telegram'
+                  ? 'bg-sky-600/30 text-sky-200 border border-sky-500/40 shadow'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span>บิลจาก Telegram</span>
+              {telegramWaiting > 0 && (
+                <span className="ml-1 min-w-5 h-5 px-1.5 rounded-full bg-rose-500 text-white text-[10px] flex items-center justify-center">{telegramWaiting}</span>
               )}
             </button>
           </div>
@@ -4125,6 +4145,8 @@ export const AccountingView: React.FC = () => {
         )}
 
         {/* TAB 4: DETAILED REPORT & FINANCIAL RATIOS */}
+        {activeTab === 'telegram' && <TelegramInboxPanel incomeLabels={incomeCategoryLabels} />}
+
         {activeTab === 'details' && (
           <div className="space-y-4 sm:space-y-6">
             {/* Executive Header Banner */}
