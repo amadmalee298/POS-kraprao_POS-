@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { ExpenseCategory } from '../../types';
 import { usePOS } from '../../context/POSContext';
+import { vatInside, vatRateOf } from '../../utils/accounting';
 import { compressBase64Image } from '../../utils/imageCompressor';
 import { runReceiptOcr } from '../../utils/receiptOcr';
 import { apiUrl, hasBackend } from '../../utils/apiClient';
@@ -103,7 +104,8 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   onClose,
   onSaveExpense
 }) => {
-  const { ingredients, addStockLot, addIngredient, updateIngredient, ingredientCategories, ingredientUnits, menuItems = [], stockLots = [] } = usePOS();
+  const { ingredients, addStockLot, addIngredient, updateIngredient, ingredientCategories, ingredientUnits, menuItems = [], stockLots = [], settings } = usePOS();
+  const vatRate = vatRateOf(settings);
 
   const {
     sortedIngredients,
@@ -308,124 +310,6 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     });
   };
 
-  const generateFallbackData = (name?: string): ScannedReceiptData => {
-    const lower = (name || '').toLowerCase();
-    if (lower.includes('makro') || lower.includes('แม็คโคร') || lower.includes('แมคโคร') || lower.includes('siam makro')) {
-      return {
-        title: 'ซื้อวัตถุดิบ - สยามแม็คโคร',
-        vendorName: 'สยามแม็คโคร (Siam Makro)',
-        date: new Date().toISOString().split('T')[0],
-        category: 'raw_material',
-        amount: 1850.00,
-        includeVat: true,
-        vatAmount: 121.03,
-        netAmount: 1728.97,
-        refNumber: 'MAKRO-' + Math.floor(100000 + Math.random() * 900000),
-        note: 'CP หมูเนื้อแดง 10KG, น้ำมันพืช 5L, พริกแห้งจินดา 2KG',
-        confidenceScore: 96,
-        lineItems: [
-          { name: 'หมูเนื้อแดงแช่เย็น CP 10KG', amount: 1450.00 },
-          { name: 'น้ำมันปาล์มตรามรกต 5L', amount: 260.00 },
-          { name: 'พริกจินดาแห้งคัดพิเศษ 2KG', amount: 140.00 }
-        ]
-      };
-    } else if (lower.includes('ไฟฟ้า') || lower.includes('mea') || lower.includes('pea') || lower.includes('utility')) {
-      return {
-        title: 'บิลค่าไฟฟ้าประจำเดือน (MEA)',
-        vendorName: 'การไฟฟ้านครหลวง (MEA)',
-        date: new Date().toISOString().split('T')[0],
-        category: 'utilities',
-        amount: 3659.40,
-        includeVat: true,
-        vatAmount: 239.40,
-        netAmount: 3420.00,
-        refNumber: 'MEA-' + Math.floor(100000 + Math.random() * 900000),
-        note: 'ค่าไฟฟ้าประจำเดือนร้านกะเพรา',
-        confidenceScore: 95,
-        lineItems: [
-          { name: 'ค่าไฟฟ้าร้านค้า/สถานประกอบการประจำเดือน', amount: 3659.40 }
-        ]
-      };
-    } else if (lower.includes('บิ๊กซี') || lower.includes('big c') || lower.includes('supermarket')) {
-      return {
-        title: 'ซื้อวัตถุดิบสด - บิ๊กซี ซูเปอร์เซ็นเตอร์',
-        vendorName: 'บิ๊กซี ซูเปอร์เซ็นเตอร์ (Big C)',
-        date: new Date().toISOString().split('T')[0],
-        category: 'raw_material',
-        amount: 1280.00,
-        includeVat: true,
-        vatAmount: 83.74,
-        netAmount: 1196.26,
-        refNumber: 'BIGC-' + Math.floor(100000 + Math.random() * 900000),
-        note: 'CP หมูสับ 5KG, น้ำมันพืช 3L, ใบกะเพรา 10 กำ',
-        confidenceScore: 96,
-        lineItems: [
-          { name: 'หมูเนื้อแดงสับ CP 5KG', amount: 950.00 },
-          { name: 'น้ำมันพืชพาล์ม 1L x 3', amount: 180.00 },
-          { name: 'ใบกะเพราสด 10 กำ', amount: 150.00 }
-        ]
-      };
-    } else if (lower.includes('lotus') || lower.includes('โลตัส')) {
-      return {
-        title: 'ซื้อของสดและเครื่องปรุง - โลตัส',
-        vendorName: 'โลตัส ไฮเปอร์มาร์เก็ต (Lotus\'s)',
-        date: new Date().toISOString().split('T')[0],
-        category: 'raw_material',
-        amount: 1150.00,
-        includeVat: true,
-        vatAmount: 75.23,
-        netAmount: 1074.77,
-        refNumber: 'LOTUS-' + Math.floor(100000 + Math.random() * 900000),
-        note: 'ไข่ไก่เบอร์ 2 (30 ฟอง) x 3 แผง, ซีอิ๊วขาว, น้ำปลาแท้',
-        confidenceScore: 95,
-        lineItems: [
-          { name: 'ไข่ไก่สด เบอร์ 2 (3 แผง)', amount: 480.00 },
-          { name: 'ซีอิ๊วขาวสูตร 1 ตราเด็กสมบูรณ์', amount: 390.00 },
-          { name: 'น้ำปลาแท้ตราปลาหมึก', amount: 280.00 }
-        ]
-      };
-    } else if (lower.includes('7-11') || lower.includes('7-eleven') || lower.includes('เซเว่น') || lower.includes('cp all')) {
-      return {
-        title: 'ซื้อของใช้และซัพพลายสิ้นเปลือง - 7-Eleven',
-        vendorName: 'ซีพี ออลล์ (7-Eleven)',
-        date: new Date().toISOString().split('T')[0],
-        category: 'supplies',
-        amount: 320.00,
-        includeVat: true,
-        vatAmount: 20.93,
-        netAmount: 299.07,
-        refNumber: '7ELEVEN-' + Math.floor(100000 + Math.random() * 900000),
-        note: 'กระดาษชำระ, ถุงขยะดำ, น้ำดื่ม',
-        confidenceScore: 94,
-        lineItems: [
-          { name: 'กระดาษชำระแพ็ค 6 ม้วน', amount: 145.00 },
-          { name: 'ถุงขยะดำเหนียวพิเศษ 30x40', amount: 115.00 },
-          { name: 'น้ำดื่ม 1.5L x 2', amount: 60.00 }
-        ]
-      };
-    }
-
-    // Default smart template for general receipt photos
-    return {
-      title: 'ซื้อวัตถุดิบประกอบอาหาร - สยามแม็คโคร / ตลาดสด',
-      vendorName: 'สยามแม็คโคร (Siam Makro)',
-      date: new Date().toISOString().split('T')[0],
-      category: 'raw_material',
-      amount: 1650.00,
-      includeVat: true,
-      vatAmount: 107.94,
-      netAmount: 1542.06,
-      refNumber: 'MAKRO-' + Math.floor(100000 + Math.random() * 900000),
-      note: 'เนื้อหมูสด 8KG, พริกสด, กระเทียมไทย, น้ำมันพืช',
-      confidenceScore: 92,
-      lineItems: [
-        { name: 'หมูเนื้อแดง CP 8KG', amount: 1120.00 },
-        { name: 'พริกขี้หนูสวน & กระเทียมไทย 3KG', amount: 350.00 },
-        { name: 'น้ำมันพืชสำหรับปรุงอาหาร', amount: 180.00 }
-      ]
-    };
-  };
-
   // Empty draft for manual entry without hallucinated data
   const createEmptyReceiptDraft = (name?: string): ScannedReceiptData => {
     const cleanName = name ? name.replace(/\.[^/.]+$/, '') : '';
@@ -549,17 +433,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
         }
       }
 
-      // 3. If item is a demo preset
-      if (item.id.startsWith('demo-') || item.name.includes('บิ๊กซี') || item.name.includes('ตลาดสด') || item.name.includes('บิลไฟฟ้า')) {
-        const fallback = generateFallbackData(item.name);
-        return {
-          ...item,
-          status: 'success',
-          error: undefined,
-          result: fallback
-        };
-      }
-
+      // 3. No AI result: the cashier reads the receipt and types it in
       // 4. For uploaded receipt photos without AI connection or on error:
       return {
         ...item,
@@ -659,62 +533,6 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
 
     // Automatically scan the newly added items
     handleScanAllPending(newItems);
-  };
-
-  // Sample Receipt Presets (supports single preset or 'all_three' batch demo)
-  const handleSampleReceipt = async (type: 'supermarket' | 'fresh_market' | 'utilities' | 'all_three') => {
-    const getMockImg = (t: string) => {
-      if (t === 'supermarket') {
-        return 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="100%" height="100%" fill="%23f8fafc"/><text x="150" y="40" font-size="16" font-weight="bold" text-anchor="middle" fill="%230f172a">BIG C SUPERCENTER</text><text x="150" y="60" font-size="12" text-anchor="middle" fill="%2364748b">TAX INVOICE / RECEIPT</text><line x1="20" y1="80" x2="280" y2="80" stroke="%23cbd5e1" stroke-width="1"/><text x="20" y="110" font-size="12" fill="%23334155">CP Minced Pork 5KG  950.00</text><text x="20" y="135" font-size="12" fill="%23334155">Palm Oil 1L x3       180.00</text><text x="20" y="160" font-size="12" fill="%23334155">Fresh Basil 10P      150.00</text><line x1="20" y1="200" x2="280" y2="200" stroke="%230f172a" stroke-width="2"/><text x="20" y="230" font-size="14" font-weight="bold" fill="%230f172a">TOTAL AMOUNT:      1,280.00</text><text x="20" y="255" font-size="11" fill="%2364748b">VAT 7% INCLUDED:      83.74</text></svg>';
-      } else if (t === 'fresh_market') {
-        return 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="100%" height="100%" fill="%23fef3c7"/><text x="150" y="40" font-size="16" font-weight="bold" text-anchor="middle" fill="%2378350f">TALAD THAI FRESH MARKET</text><text x="150" y="60" font-size="12" text-anchor="middle" fill="%2392400e">BILL RECEIPT</text><line x1="20" y1="80" x2="280" y2="80" stroke="%23fde68a" stroke-width="2"/><text x="20" y="110" font-size="12" fill="%23451a03">Chili & Garlic 5KG    350.00</text><text x="20" y="135" font-size="12" fill="%23451a03">Crispy Pork 4KG     1,400.00</text><line x1="20" y1="180" x2="280" y2="180" stroke="%2378350f" stroke-width="2"/><text x="20" y="210" font-size="14" font-weight="bold" fill="%2378350f">NET TOTAL:          1,750.00</text></svg>';
-      } else {
-        return 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="100%" height="100%" fill="%23f0f9ff"/><text x="150" y="40" font-size="16" font-weight="bold" text-anchor="middle" fill="%230369a1">METROPOLITAN ELECTRICITY</text><text x="150" y="60" font-size="12" text-anchor="middle" fill="%230284c7">ELECTRICITY UTILITY BILL</text><line x1="20" y1="80" x2="280" y2="80" stroke="%23bae6fd" stroke-width="1"/><text x="20" y="120" font-size="12" fill="%230c4a6e">Usage Monthly Power: 3,420.00</text><text x="20" y="145" font-size="12" fill="%230c4a6e">VAT 7%:              239.40</text><line x1="20" y1="180" x2="280" y2="180" stroke="%230369a1" stroke-width="2"/><text x="20" y="210" font-size="14" font-weight="bold" fill="%230369a1">TOTAL PAYABLE:     3,659.40</text></svg>';
-      }
-    };
-
-    if (type === 'all_three') {
-      const types = ['supermarket', 'fresh_market', 'utilities'] as const;
-      const names = ['🛒 บิ๊กซี (วัตถุดิบ)', '🥩 ตลาดสดไท (ของสด)', '⚡ บิลไฟฟ้า MEA'];
-      const newItems: ReceiptQueueItem[] = [];
-      for (let i = 0; i < types.length; i++) {
-        const svg = getMockImg(types[i]);
-        const raster = await rasterizeToJpeg(svg);
-        newItems.push({
-          id: `demo-${types[i]}-${Date.now()}-${i}`,
-          base64: raster.base64,
-          mimeType: raster.mimeType,
-          name: names[i],
-          status: 'idle'
-        });
-      }
-      setQueue(prev => [...prev, ...newItems]);
-      if (!activeId && newItems.length > 0) {
-        setActiveId(newItems[0].id);
-      }
-      handleScanAllPending(newItems);
-      return;
-    }
-
-    const mockImg = getMockImg(type);
-    const raster = await rasterizeToJpeg(mockImg);
-    const nameMap: Record<string, string> = {
-      supermarket: '🛒 บิ๊กซี (วัตถุดิบ)',
-      fresh_market: '🥩 ตลาดสดไท (ของสด)',
-      utilities: '⚡ บิลไฟฟ้า MEA'
-    };
-    const newItem: ReceiptQueueItem = {
-      id: `demo-${type}-${Date.now()}`,
-      base64: raster.base64,
-      mimeType: raster.mimeType,
-      name: nameMap[type] || 'ใบเสร็จตัวอย่าง',
-      status: 'idle'
-    };
-    setQueue(prev => [...prev, newItem]);
-    if (!activeId) {
-      setActiveId(newItem.id);
-    }
-    handleScanAllPending([newItem]);
   };
 
   // Combine multiple receipts into one single expense
@@ -1374,9 +1192,6 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
               </p>
             </div>
 
-            <p className="text-[11px] text-slate-400">
-              ทดลองได้โดยไม่ต้องใส่ Key: กดปุ่ม Demo (บิ๊กซี / ตลาดสด / บิลไฟฟ้า) ด้านล่าง
-            </p>
             {keySaveSuccess && (
               <p className="text-[11px] text-emerald-400 font-bold flex items-center space-x-1">
                 <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1579,40 +1394,6 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
               </div>
             </div>
 
-            {/* Quick Presets for Demo */}
-            <div className="space-y-1.5 pt-1">
-              <span className="text-[11px] font-bold text-slate-400 block">
-                หรือทดลองเลือกใบเสร็จตัวอย่าง (Demo Presets):
-              </span>
-              <div className="grid grid-cols-3 gap-1.5">
-                <button
-                  onClick={() => handleSampleReceipt('supermarket')}
-                  className="p-2 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-sky-500 rounded-xl text-[11px] font-medium text-slate-300 text-center transition"
-                >
-                  🛒 บิ๊กซี (ซื้อวัตถุดิบ)
-                </button>
-                <button
-                  onClick={() => handleSampleReceipt('fresh_market')}
-                  className="p-2 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-amber-500 rounded-xl text-[11px] font-medium text-slate-300 text-center transition"
-                >
-                  🥩 ตลาดสด (ของสด)
-                </button>
-                <button
-                  onClick={() => handleSampleReceipt('utilities')}
-                  className="p-2 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500 rounded-xl text-[11px] font-medium text-slate-300 text-center transition"
-                >
-                  ⚡ บิลไฟฟ้า (สาธารณูปโภค)
-                </button>
-                <button
-                  onClick={() => handleSampleReceipt('all_three')}
-                  className="p-2 bg-gradient-to-r from-sky-950/60 to-emerald-950/60 hover:from-sky-900/80 hover:to-emerald-900/80 border border-sky-500/40 hover:border-sky-400 rounded-xl text-[11px] font-bold text-sky-200 text-center transition col-span-3 flex items-center justify-center space-x-1.5"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-                  <span>🚀 ทดลองสแกนทีเดียว 3 ใบเสร็จพร้อมกัน (Batch OCR 3 รูป)</span>
-                </button>
-              </div>
-            </div>
-
             {/* Image Preview Box */}
             {imagePreview && (
               <div className="p-3 bg-slate-950 border border-slate-800 rounded-2xl space-y-2 relative overflow-hidden">
@@ -1803,7 +1584,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                         value={scannedResult.amount}
                         onChange={e => {
                           const amt = Number(e.target.value);
-                          const vat = scannedResult.includeVat ? (amt * 7) / 107 : 0;
+                          const vat = scannedResult.includeVat ? vatInside(amt, vatRate) : 0;
                           updateActiveResultFields({
                             amount: amt,
                             vatAmount: Number(vat.toFixed(2)),
@@ -1835,7 +1616,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                         checked={scannedResult.includeVat}
                         onChange={e => {
                           const inc = e.target.checked;
-                          const vat = inc ? (scannedResult.amount * 7) / 107 : 0;
+                          const vat = inc ? vatInside(scannedResult.amount, vatRate) : 0;
                           updateActiveResultFields({
                             includeVat: inc,
                             vatAmount: Number(vat.toFixed(2)),
@@ -2345,7 +2126,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                 <div>
                   <h4 className="font-bold text-slate-400 text-sm">พร้อมสแกนใบเสร็จค่าใช้จ่าย</h4>
                   <p className="text-xs text-slate-500 mt-1 max-w-xs">
-                    โปรดเลือกไฟล์ภาพใบเสร็จทางด้านซ้าย หรือกดปุ่มใบเสร็จตัวอย่างเพื่อทดสอบระบบทันที
+                    โปรดเลือกไฟล์ภาพหรือถ่ายภาพใบเสร็จทางด้านซ้าย
                   </p>
                 </div>
               </div>

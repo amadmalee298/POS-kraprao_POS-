@@ -1,5 +1,7 @@
 import { countsAsRevenue } from '../../utils/orderUtils';
-import { findProteinOption } from '../../utils/recipeUtils';
+import { buildProfitAndLoss, EXPENSE_CATEGORY_LABELS, isVatRegistered, pct } from '../../utils/accounting';
+import { cartItemUnitCost } from '../../utils/recipeUtils';
+import { findProteinOption, effectiveUnitCost } from '../../utils/recipeUtils';
 import React, { useState, useMemo } from 'react';
 import {
   ResponsiveContainer,
@@ -69,6 +71,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   const {
     orders,
     expenses,
+    incomes = [],
     ingredients,
     branches,
     menuItems,
@@ -240,6 +243,19 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     });
   }, [orders, startDate, endDate, selectedBranchId]);
 
+  const filteredIncomesTotal = useMemo(
+    () =>
+      incomes
+        .filter(i => {
+          const d = i.date ? getLocalDateStr(i.date) : '';
+          if (startDate && d && d < startDate) return false;
+          if (endDate && d && d > endDate) return false;
+          return selectedBranchId === 'all' || !i.branchId || i.branchId === selectedBranchId;
+        })
+        .reduce((s, i) => s + (i.amount || 0), 0),
+    [incomes, startDate, endDate, selectedBranchId]
+  );
+
   const filteredExpenses = useMemo(() => {
     return expenses.filter(e => {
       const eDate = e.date ? getLocalDateStr(e.date) : '';
@@ -286,17 +302,24 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   // -------------------------------------------------------------
   // Real Financial Calculations
   // -------------------------------------------------------------
-  const calculateOrdersFoodCost = (orderList: typeof orders) => {
-    return orderList.reduce((sum, o) => {
-      const orderCost = (o.items || []).reduce((iSum, item) => {
-        const mi = menuItems.find(m => m.id === item.menuItem.id) || item.menuItem;
-        const unitCost = (mi?.costPrice !== undefined && mi.costPrice > 0 ? mi.costPrice : (item.totalPrice * 0.35 / Math.max(1, item.quantity))) +
-          (findProteinOption(mi || {}, item.proteinChoice?.name)?.costDelta || 0);
-        return iSum + (unitCost * item.quantity);
-      }, 0);
-      return sum + orderCost;
-    }, 0);
-  };
+  // Profit figures follow the accounting page: sales before VAT, cost of the dishes sold, selling
+  // and admin expenses (ingredient purchases are stock, already in the cost of sales)
+  const vatRegistered = isVatRegistered(settings);
+  const localDay = (d: string) => (d ? getLocalDateStr(d) : '');
+  const todayPL = useMemo(
+    () =>
+      buildProfitAndLoss({ orders, expenses, incomes }, { branchId: selectedBranchId, inPeriod: d => localDay(d) === todayStr }, vatRegistered),
+    [orders, expenses, incomes, selectedBranchId, todayStr, vatRegistered]
+  );
+  const periodPL = useMemo(
+    () =>
+      buildProfitAndLoss(
+        { orders, expenses, incomes },
+        { branchId: selectedBranchId, inPeriod: d => { const day = localDay(d); return (!startDate || day >= startDate) && (!endDate || day <= endDate); } },
+        vatRegistered
+      ),
+    [orders, expenses, incomes, selectedBranchId, startDate, endDate, vatRegistered]
+  );
 
   // Section 1 Core KPIs (Today Real Data)
   const todaySales = useMemo(() => {
@@ -313,51 +336,26 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     return Math.round(((todaySales - yesterdaySales) / yesterdaySales) * 100);
   }, [todaySales, yesterdaySales]);
 
-  const todayFoodCost = useMemo(() => {
-    return calculateOrdersFoodCost(todayOrders);
-  }, [todayOrders, menuItems]);
-
-  const todayExpensesTotal = useMemo(() => {
-    return todayExpensesList.reduce((sum, e) => sum + (e.amount || 0), 0);
-  }, [todayExpensesList]);
-
-  const todayProfit = useMemo(() => {
-    return todaySales - todayFoodCost - todayExpensesTotal;
-  }, [todaySales, todayFoodCost, todayExpensesTotal]);
-
-  const todayFoodCostPct = useMemo(() => {
-    if (todaySales === 0) return 0;
-    return Math.round((todayFoodCost / todaySales) * 1000) / 10;
-  }, [todaySales, todayFoodCost]);
+  const todayFoodCost = todayPL.cogs;
+  const todayExpensesTotal = todayPL.sga;
+  const todayProfit = todayPL.profitBeforeTax;
+  const todayFoodCostPct = pct(todayPL.cogs, todayPL.salesRevenue);
 
   const todayBillCount = todayOrders.length;
   const todayAvgBill = todayBillCount > 0 ? Math.round((todaySales / todayBillCount) * 100) / 100 : 0;
-  const todayBreakEvenPct = useMemo(() => {
-    const dailyTarget = 5000;
-    if (todaySales === 0) return 0;
-    return Math.min(100, Math.round((todaySales / dailyTarget) * 100));
-  }, [todaySales]);
-
   // Selected Filter Period Real Financials
   const periodTotalSales = useMemo(() => {
     return filteredOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
   }, [filteredOrders]);
 
-  const periodFoodCost = useMemo(() => {
-    return calculateOrdersFoodCost(filteredOrders);
-  }, [filteredOrders, menuItems]);
-
-  const periodExpenses = useMemo(() => {
-    return filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-  }, [filteredExpenses]);
-
-  const periodGrossProfit = periodTotalSales - periodFoodCost;
-  const periodNetProfit = periodGrossProfit - periodExpenses;
-
-  const periodFoodCostPct = useMemo(() => {
-    if (periodTotalSales === 0) return 0;
-    return Math.round((periodFoodCost / periodTotalSales) * 1000) / 10;
-  }, [periodTotalSales, periodFoodCost]);
+  const periodFoodCost = periodPL.cogs;
+  const periodExpenses = periodPL.sga;
+  const periodGrossProfit = periodPL.grossProfit;
+  const periodNetProfit = periodPL.profitBeforeTax;
+  const periodFoodCostPct = pct(periodPL.cogs, periodPL.salesRevenue);
+  // Cash actually in and out (VAT included, ingredient purchases included)
+  const periodCashIn = periodTotalSales + filteredIncomesTotal;
+  const periodCashOut = filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
 
   const periodBillCount = filteredOrders.length;
   const periodAvgBill = periodBillCount > 0 ? Math.round((periodTotalSales / periodBillCount) * 100) / 100 : 0;
@@ -422,25 +420,14 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     return Math.round(((periodTotalSales - prevPeriodSales) / prevPeriodSales) * 100);
   }, [datePreset, salesGrowthTodayPct, periodTotalSales, prevPeriodSales]);
 
-  const periodBreakEvenPct = useMemo(() => {
-    let days = 1;
-    if (datePreset === 'today') days = 1;
-    else if (datePreset === '7days') days = 7;
-    else if (datePreset === '30days') days = 30;
-    else if (datePreset === 'this_month') {
-      const now = new Date();
-      days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    } else if (datePreset === 'this_year') {
-      days = 365;
-    } else if (startDate && endDate) {
-      const s = new Date(startDate);
-      const e = new Date(endDate);
-      days = Math.max(1, Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1);
-    }
-    const target = 5000 * days;
-    if (periodTotalSales === 0) return 0;
-    return Math.min(100, Math.round((periodTotalSales / target) * 100));
-  }, [datePreset, startDate, endDate, periodTotalSales]);
+  // Break-even: sales needed to cover fixed costs at the current cost-of-sales ratio
+  const periodFixedCosts = periodPL.expenses.rent + periodPL.expenses.salary + periodPL.expenses.utilities + periodPL.expenses.other;
+  const periodBreakEvenSales = useMemo(() => {
+    const variableRatio = periodPL.salesRevenue > 0 ? (periodPL.cogs + periodPL.expenses.supplies + periodPL.expenses.marketing) / periodPL.salesRevenue : 0;
+    if (periodFixedCosts <= 0 || variableRatio >= 1) return 0;
+    return periodFixedCosts / (1 - variableRatio);
+  }, [periodPL, periodFixedCosts]);
+  const periodBreakEvenPct = periodBreakEvenSales > 0 ? Math.round((periodPL.salesRevenue / periodBreakEvenSales) * 100) : 0;
 
   // Section 14 Filtered Orders
   const filteredOrderHistory = useMemo(() => {
@@ -487,8 +474,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           return countsAsRevenue(o);
         });
         const sales = dayOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
-        const cost = calculateOrdersFoodCost(dayOrders);
-        const profit = sales - cost;
+        const { cogs: cost, grossProfit: profit } = buildProfitAndLoss({ orders: dayOrders, expenses: [], incomes: [] }, { branchId: 'all' }, vatRegistered);
         days.push({
           name: `${dayName} (${d.getDate()}/${d.getMonth() + 1})`,
           sales,
@@ -515,8 +501,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           return countsAsRevenue(o);
         });
         const sales = wOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
-        const cost = calculateOrdersFoodCost(wOrders);
-        const profit = sales - cost;
+        const { cogs: cost, grossProfit: profit } = buildProfitAndLoss({ orders: wOrders, expenses: [], incomes: [] }, { branchId: 'all' }, vatRegistered);
         weeks.push({
           name: `สัปดาห์ ${4 - w} (${startW.getDate()}/${startW.getMonth() + 1} - ${endW.getDate()}/${endW.getMonth() + 1})`,
           sales,
@@ -539,8 +524,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           return countsAsRevenue(o);
         });
         const sales = mOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
-        const cost = calculateOrdersFoodCost(mOrders);
-        const profit = sales - cost;
+        const { cogs: cost, grossProfit: profit } = buildProfitAndLoss({ orders: mOrders, expenses: [], incomes: [] }, { branchId: 'all' }, vatRegistered);
         return {
           name,
           sales,
@@ -561,8 +545,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           return countsAsRevenue(o);
         });
         const sales = yrOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
-        const cost = calculateOrdersFoodCost(yrOrders);
-        const profit = sales - cost;
+        const { cogs: cost, grossProfit: profit } = buildProfitAndLoss({ orders: yrOrders, expenses: [], incomes: [] }, { branchId: 'all' }, vatRegistered);
         return {
           name: `ปี ${yr + 543}`,
           sales,
@@ -597,8 +580,8 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         const name = item.menuItem.name || mItem.name || 'เมนูทั่วไป';
         const category = mItem.category || 'อาหาร';
         const key = item.menuItem.id || name;
-        const unitCost = (mItem.costPrice !== undefined && mItem.costPrice > 0 ? mItem.costPrice : (item.totalPrice * 0.35 / Math.max(1, item.quantity))) +
-          (findProteinOption(mItem, item.proteinChoice?.name)?.costDelta || 0);
+        // Cost recorded with the sale, like the accounting page (estimated at 40% when the dish had no cost)
+        const unitCost = cartItemUnitCost(item);
         const totalItemRev = item.totalPrice || (item.unitPrice * item.quantity);
         const totalItemCost = unitCost * item.quantity;
 
@@ -705,7 +688,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     let totalStockValue = 0;
 
     ingredients.forEach(ing => {
-      const val = (ing.currentStock || 0) * (ing.unitCost || 0);
+      const val = (ing.currentStock || 0) * effectiveUnitCost(ing);
       const cat = ing.category || 'วัตถุดิบทั่วไป';
       categoryTotals.set(cat, (categoryTotals.get(cat) || 0) + val);
       totalStockValue += val;
@@ -737,7 +720,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     let totalExp = 0;
 
     filteredExpenses.forEach(exp => {
-      const cat = exp.category || 'ค่าใช้จ่ายทั่วไป';
+      const cat = EXPENSE_CATEGORY_LABELS[exp.category] || exp.category || 'ค่าใช้จ่ายทั่วไป';
       catMap.set(cat, (catMap.get(cat) || 0) + (exp.amount || 0));
       totalExp += exp.amount || 0;
     });
@@ -975,8 +958,8 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     let score = 70; // Baseline
 
     // Check Profit Margin
-    if (periodTotalSales > 0) {
-      const margin = (periodNetProfit / periodTotalSales) * 100;
+    if (periodPL.totalIncome > 0) {
+      const margin = pct(periodNetProfit, periodPL.totalIncome);
       if (margin >= 25) score += 15;
       else if (margin >= 15) score += 10;
       else if (margin > 0) score += 5;
@@ -995,7 +978,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     else score -= Math.min(10, lowStockIngredients.length * 2);
 
     return Math.max(0, Math.min(100, score));
-  }, [periodTotalSales, periodNetProfit, todayFoodCostPct, lowStockIngredients]);
+  }, [periodPL, periodNetProfit, todayFoodCostPct, lowStockIngredients]);
 
   // -------------------------------------------------------------
   // EXPORT & TELEGRAM HANDLERS
@@ -1260,7 +1243,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               ฿{periodNetProfit.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
             </div>
             <div className="text-[10px] text-slate-400 font-bold flex items-center space-x-1 font-mono">
-              <span>{periodTotalSales > 0 ? `${Math.round((periodNetProfit / periodTotalSales) * 100)}% Net Margin` : 'ไม่มีรายการ'}</span>
+              <span>{periodPL.totalIncome > 0 ? `อัตรากำไร ${pct(periodNetProfit, periodPL.totalIncome)}%` : 'ไม่มีรายการ'}</span>
             </div>
           </div>
 
@@ -1319,14 +1302,18 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           {/* Card 6: Break-even */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1.5 shadow-md hover:border-amber-500/50 transition">
             <div className="text-[11px] text-slate-400 font-semibold flex items-center justify-between">
-              <span>{datePreset === 'today' ? 'Break-even วันนี้' : `เป้าหมายยอดขาย (${periodLabel})`}</span>
+              <span>จุดคุ้มทุน ({periodLabel})</span>
               <Target className="w-3.5 h-3.5 text-amber-400" />
             </div>
             <div className="text-xl font-black text-amber-400 font-mono">
-              {periodBreakEvenPct}%
+              {periodBreakEvenSales > 0 ? `${periodBreakEvenPct}%` : '-'}
             </div>
             <div className="text-[10px] text-amber-400 font-mono">
-              {periodBreakEvenPct >= 100 ? '✓ ถึงจุดคุ้มทุนแล้ว' : `เป้าหมาย ${periodBreakEvenPct}%`}
+              {periodBreakEvenSales <= 0
+                ? 'บันทึกค่าเช่า/เงินเดือน/น้ำไฟ เพื่อคำนวณ'
+                : periodBreakEvenPct >= 100
+                  ? '✓ ยอดขายเกินจุดคุ้มทุนแล้ว'
+                  : `ต้องขายก่อน VAT ให้ได้ ฿${Math.ceil(periodBreakEvenSales).toLocaleString('th-TH')}`}
             </div>
           </div>
         </div>
@@ -1417,7 +1404,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
               {activeMetrics.sales && <Area type="monotone" dataKey="sales" name="ยอดขาย" stroke="#f59e0b" fillOpacity={1} fill="url(#colorSales)" strokeWidth={2} />}
-              {activeMetrics.profit && <Area type="monotone" dataKey="profit" name="กำไร" stroke="#10b981" fillOpacity={1} fill="url(#colorProfit)" strokeWidth={2} />}
+              {activeMetrics.profit && <Area type="monotone" dataKey="profit" name="กำไรขั้นต้น" stroke="#10b981" fillOpacity={1} fill="url(#colorProfit)" strokeWidth={2} />}
               {activeMetrics.cost && <Area type="monotone" dataKey="cost" name="ต้นทุน" stroke="#f43f5e" fillOpacity={1} fill="url(#colorCost)" strokeWidth={2} />}
             </AreaChart>
           </ResponsiveContainer>
@@ -1745,12 +1732,12 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
           <div className="space-y-2 text-xs font-mono">
             <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center">
-              <span className="text-slate-300 font-bold">ยอดขายรวม (Gross Revenue)</span>
-              <span className="text-amber-400 font-black text-sm">฿{periodTotalSales.toLocaleString()}</span>
+              <span className="text-slate-300 font-bold">รายได้จากการขาย (ก่อน VAT)</span>
+              <span className="text-amber-400 font-black text-sm">฿{periodPL.salesRevenue.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span>
             </div>
 
             <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex justify-between items-center text-rose-400">
-              <span>(-) ต้นทุนวัตถุดิบอาหาร (COGS)</span>
+              <span>(-) ต้นทุนขาย</span>
               <span>-฿{periodFoodCost.toLocaleString()}</span>
             </div>
 
@@ -1760,12 +1747,18 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             </div>
 
             <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex justify-between items-center text-rose-400">
-              <span>(-) ค่าใช้จ่ายดำเนินงาน (OPEX)</span>
+              <span>(-) ค่าใช้จ่ายขายและบริหาร</span>
               <span>-฿{periodExpenses.toLocaleString()}</span>
             </div>
+            {periodPL.otherIncome > 0 && (
+              <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex justify-between items-center text-emerald-300">
+                <span>(+) รายได้อื่น</span>
+                <span>+฿{periodPL.otherIncome.toLocaleString()}</span>
+              </div>
+            )}
 
             <div className="p-3 bg-emerald-950/60 rounded-xl border border-emerald-500/40 flex justify-between items-center font-black text-emerald-400 text-sm">
-              <span>(=) กำไรสุทธิ (Net Profit)</span>
+              <span>(=) กำไรก่อนภาษีเงินได้</span>
               <span className="text-base">฿{periodNetProfit.toLocaleString()}</span>
             </div>
           </div>
@@ -1784,16 +1777,16 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div className="grid grid-cols-2 gap-2 text-xs font-mono">
             <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
               <span className="text-slate-400 text-[10px]">เงินเข้า (Inflow)</span>
-              <p className="font-bold text-emerald-400 text-sm">฿{periodTotalSales.toLocaleString()}</p>
+              <p className="font-bold text-emerald-400 text-sm">฿{periodCashIn.toLocaleString()}</p>
             </div>
             <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
               <span className="text-slate-400 text-[10px]">เงินออก (Outflow)</span>
-              <p className="font-bold text-rose-400 text-sm">฿{periodExpenses.toLocaleString()}</p>
+              <p className="font-bold text-rose-400 text-sm">฿{periodCashOut.toLocaleString()}</p>
             </div>
             <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
               <span className="text-slate-400 text-[10px]">กระแสเงินสดสุทธิ</span>
-              <p className={`font-bold text-sm ${periodNetProfit >= 0 ? 'text-cyan-400' : 'text-rose-400'}`}>
-                ฿{periodNetProfit.toLocaleString()}
+              <p className={`font-bold text-sm ${periodCashIn - periodCashOut >= 0 ? 'text-cyan-400' : 'text-rose-400'}`}>
+                ฿{(periodCashIn - periodCashOut).toLocaleString()}
               </p>
             </div>
             <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">

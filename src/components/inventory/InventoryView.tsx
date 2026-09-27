@@ -37,7 +37,7 @@ import {
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot } from '../../types';
 import { AIInventoryForecastPanel } from './AIInventoryForecastPanel';
-import { canonicalUnit } from '../../utils/recipeUtils';
+import { canonicalUnit, effectiveUnitCost } from '../../utils/recipeUtils';
 import { buildStockMovements, salesUsageByDay, withRunningBalance } from '../../utils/stockHistory';
 import { AIWasteAnalysisPanel } from './AIWasteAnalysisPanel';
 import { SmartAuditPanel } from './SmartAuditPanel';
@@ -714,7 +714,7 @@ export const InventoryView: React.FC = () => {
     const rows = targetList.map(ing => {
       const isLow = ing.currentStock <= ing.minStockAlert;
       const catTh = categoryNames[ing.category] || ing.category;
-      const totalVal = ing.currentStock * ing.unitCost;
+      const totalVal = ing.currentStock * effectiveUnitCost(ing);
 
       return [
         `"${ing.id}"`,
@@ -2104,7 +2104,7 @@ export const InventoryView: React.FC = () => {
                 <span className="text-emerald-400 font-mono font-bold text-[11px]">
                   มูลค่ารวม: {ingredients
                     .filter(i => selectedIngIds.includes(i.id))
-                    .reduce((sum, i) => sum + (i.currentStock * i.unitCost), 0)
+                    .reduce((sum, i) => sum + i.currentStock * effectiveUnitCost(i), 0)
                     .toLocaleString('th-TH')} ฿
                 </span>
               </div>
@@ -2120,7 +2120,7 @@ export const InventoryView: React.FC = () => {
                       </div>
                       <div className="text-right flex-shrink-0 ml-2">
                         <span className="text-amber-400 font-bold block">{i.currentStock} {i.unit}</span>
-                        <span className="text-[10px] text-slate-400">{(i.currentStock * i.unitCost).toLocaleString('th-TH')} ฿</span>
+                        <span className="text-[10px] text-slate-400">{(i.currentStock * effectiveUnitCost(i)).toLocaleString('th-TH', { maximumFractionDigits: 2 })} ฿</span>
                       </div>
                     </li>
                   ))}
