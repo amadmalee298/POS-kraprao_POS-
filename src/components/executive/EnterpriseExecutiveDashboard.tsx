@@ -1,5 +1,5 @@
 import { countsAsRevenue } from '../../utils/orderUtils';
-import { findProteinOption } from '../../utils/recipeUtils';
+import { findProteinOption, effectiveUnitCost } from '../../utils/recipeUtils';
 import React, { useState, useMemo } from 'react';
 import {
   ResponsiveContainer,
@@ -705,7 +705,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     let totalStockValue = 0;
 
     ingredients.forEach(ing => {
-      const val = (ing.currentStock || 0) * (ing.unitCost || 0);
+      const val = (ing.currentStock || 0) * effectiveUnitCost(ing);
       const cat = ing.category || 'วัตถุดิบทั่วไป';
       categoryTotals.set(cat, (categoryTotals.get(cat) || 0) + val);
       totalStockValue += val;

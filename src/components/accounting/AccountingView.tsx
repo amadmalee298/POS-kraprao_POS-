@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { countsAsRevenue, orderVatBreakdown } from '../../utils/orderUtils';
 import { useSharedList } from '../../hooks/useSharedList';
-import { cartItemUnitCost } from '../../utils/recipeUtils';
+import { cartItemUnitCost, effectiveUnitCost } from '../../utils/recipeUtils';
 import {
   buildBalanceSheet,
   buildCashFlow,
@@ -885,7 +885,7 @@ export const AccountingView: React.FC = () => {
 
   // Dynamic Real-data Balance Sheet Computations
   const liveInventoryAsset = useMemo(() => {
-    return ingredients.reduce((sum, ing) => sum + ((ing.currentStock || 0) * (ing.unitCost || 0)), 0);
+    return ingredients.reduce((sum, ing) => sum + (ing.currentStock || 0) * effectiveUnitCost(ing), 0);
   }, [ingredients]);
 
   const liveAccountsReceivable = totalUnpaidAR;
@@ -1757,12 +1757,9 @@ export const AccountingView: React.FC = () => {
           <div className="min-w-0 flex-1">
             <h2 className="font-bold text-sm sm:text-lg text-slate-100 flex items-center space-x-1.5 flex-wrap">
               <span className="truncate">การเงินและสมุดบัญชี</span>
-              <span className="px-1.5 py-0.5 text-[9px] sm:text-[10px] bg-sky-500/20 text-sky-300 border border-sky-500/30 rounded-full font-mono shrink-0">
-                P&L v2.0
-              </span>
             </h2>
             <p className="text-[11px] sm:text-xs text-slate-400 truncate sm:whitespace-normal">
-              สรุปงบกำไรขาดทุน (P&L) รายงานงบดุล และสมุดบันทึกค่าใช้จ่าย
+              งบกำไรขาดทุน งบแสดงฐานะการเงิน งบกระแสเงินสด และสมุดรายรับ-รายจ่าย
             </p>
           </div>
         </div>
@@ -1845,15 +1842,6 @@ export const AccountingView: React.FC = () => {
             <span>{isGeneratingPDF ? 'กำลังสร้าง PDF...' : 'ดาวน์โหลด PDF'}</span>
           </button>
 
-          {/* Export CSV */}
-          <button
-            onClick={handleExportCSV}
-            className="px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-400 font-bold text-xs rounded-xl shadow transition flex items-center space-x-1 shrink-0 active:scale-95 whitespace-nowrap"
-            title="Export CSV (รายรับ-รายจ่าย)"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Export CSV</span>
-          </button>
         </div>
       </div>
 
@@ -1866,7 +1854,7 @@ export const AccountingView: React.FC = () => {
             className="flex items-center justify-center space-x-1.5 py-2.5 px-2 bg-slate-900 border border-slate-800 hover:border-slate-700 text-emerald-400 rounded-xl text-xs font-bold transition active:scale-95 shadow-lg"
           >
             <FileSpreadsheet className="w-4 h-4 shrink-0 text-emerald-400" />
-            <span className="truncate">Export CSV (รายรับ-รายจ่าย)</span>
+            <span className="truncate">ส่งออก CSV (งบกำไรขาดทุน)</span>
           </button>
 
           <button
@@ -1912,7 +1900,7 @@ export const AccountingView: React.FC = () => {
               }`}
             >
               <Scale className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-              <span>⚖️ งบแสดงฐานะการเงิน (Balance Sheet)</span>
+              <span>งบแสดงฐานะการเงิน</span>
               {activeTab === 'balance_sheet' && (
                 <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-rose-500 rounded-full" />
               )}
@@ -1927,7 +1915,7 @@ export const AccountingView: React.FC = () => {
               }`}
             >
               <Banknote className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-sky-400" />
-              <span>💧 งบกระแสเงินสด (Cash Flow)</span>
+              <span>งบกระแสเงินสด</span>
               {activeTab === 'cash_flow' && (
                 <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-sky-500 rounded-full" />
               )}
@@ -1942,7 +1930,7 @@ export const AccountingView: React.FC = () => {
               }`}
             >
               <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
-              <span>👥 ลูกหนี้/เจ้าหนี้การค้า (AR & AP)</span>
+              <span>ลูกหนี้/เจ้าหนี้</span>
               {activeTab === 'ar_ap' && (
                 <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-amber-500 rounded-full" />
               )}
@@ -1957,7 +1945,7 @@ export const AccountingView: React.FC = () => {
               }`}
             >
               <Coins className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-              <span>💵 ทะเบียนรายรับอื่น ({selectedBranchIncomes.length})</span>
+              <span>รายได้อื่น ({selectedBranchIncomes.length})</span>
               {activeTab === 'incomes' && (
                 <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-emerald-500 rounded-full" />
               )}
@@ -1972,7 +1960,7 @@ export const AccountingView: React.FC = () => {
               }`}
             >
               <DollarSign className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              <span>สมุดรายจ่าย / รายการ</span>
+              <span>ค่าใช้จ่าย / ภาษีซื้อ</span>
               {activeTab === 'expenses' && (
                 <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-rose-500 rounded-full" />
               )}
@@ -1987,7 +1975,7 @@ export const AccountingView: React.FC = () => {
               }`}
             >
               <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              <span>รายงานรายละเอียด</span>
+              <span>รายวัน</span>
               {activeTab === 'details' && (
                 <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-rose-500 rounded-full" />
               )}
@@ -2015,6 +2003,9 @@ export const AccountingView: React.FC = () => {
       <div className="flex-1 p-3 sm:p-6 overflow-y-auto">
         {/* Printable & Capture PDF Container */}
         <div ref={reportRef} id="accounting-report-content" className="space-y-4 sm:space-y-6 bg-slate-950 p-2 sm:p-4 rounded-2xl">
+          {/* Report header and key figures: profit and loss views only */}
+          {(activeTab === 'overview' || activeTab === 'statement') && (
+          <>
           {/* Executive Report Header Band (Visible in PDF export) */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl">
             <div className="space-y-1">
@@ -2118,6 +2109,8 @@ export const AccountingView: React.FC = () => {
             </div>
           </div>
         </div>
+          </>
+          )}
 
         {/* TAB 1: OVERVIEW CHARTS */}
         {activeTab === 'overview' && (

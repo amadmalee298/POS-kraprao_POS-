@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { effectiveUnitCost } from '../../utils/recipeUtils';
 import { Printer, Download, X, Filter, Package } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { exportToPDF, printElement } from '../../utils/exportDocument';
@@ -32,7 +33,7 @@ export const InventoryReportModal: React.FC<InventoryReportModalProps> = ({ isOp
 
   // Calculate totals
   const totalItems = filteredIngredients.length;
-  const totalStockValue = filteredIngredients.reduce((sum, ing) => sum + (ing.currentStock * ing.unitCost), 0);
+  const totalStockValue = filteredIngredients.reduce((sum, ing) => sum + ing.currentStock * effectiveUnitCost(ing), 0);
   const lowStockCount = ingredients.filter(ing => ing.currentStock <= ing.minStockAlert && ing.currentStock > 0).length;
   const outOfStockCount = ingredients.filter(ing => ing.currentStock <= 0).length;
 
@@ -247,7 +248,7 @@ export const InventoryReportModal: React.FC<InventoryReportModalProps> = ({ isOp
                     </tr>
                   ) : (
                     filteredIngredients.map((ing, idx) => {
-                      const itemVal = ing.currentStock * ing.unitCost;
+                      const itemVal = ing.currentStock * effectiveUnitCost(ing);
                       const isOutOfStock = ing.currentStock <= 0;
                       const isLowStock = ing.currentStock > 0 && ing.currentStock <= ing.minStockAlert;
 
