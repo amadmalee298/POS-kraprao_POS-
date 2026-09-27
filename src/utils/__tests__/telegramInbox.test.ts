@@ -80,3 +80,11 @@ describe('caption as the entry name', () => {
     expect(captionTitle('รายจ่าย')).toBe('');
   });
 });
+
+describe('AI error messages', () => {
+  it('explains an empty Claude credit balance in Thai', async () => {
+    const { friendlyAiError } = await import('../../services/receiptScan');
+    expect(friendlyAiError('Claude API error 400: {"message":"Your credit balance is too low to access the Anthropic API."}')).toContain('เครดิต Claude API หมด');
+    expect(friendlyAiError('something else')).toBe('something else');
+  });
+});
