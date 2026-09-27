@@ -23,6 +23,11 @@ export const PromptPayQR: React.FC<PromptPayQRProps> = ({
 
   useEffect(() => {
     let isMounted = true;
+    if (!payload) {
+      setQrDataUrl('');
+      setLoading(false);
+      return;
+    }
     setLoading(true);
 
     generateQRCodeDataURL(payload, size)
@@ -64,7 +69,14 @@ export const PromptPayQR: React.FC<PromptPayQRProps> = ({
 
       {/* QR Image Container */}
       <div className="bg-white p-2 border border-slate-200 rounded-xl flex items-center justify-center relative min-w-[160px] min-h-[160px]">
-        {loading || !qrDataUrl ? (
+        {!payload ? (
+          <div className="flex flex-col items-center justify-center p-4 space-y-1 text-center max-w-[200px]">
+            <span className="text-xs font-bold text-rose-600">ยังไม่ได้ตั้งค่าพร้อมเพย์</span>
+            <span className="text-[10px] text-slate-500">
+              กรุณาใส่เบอร์มือถือ 10 หลัก หรือเลขประจำตัวผู้เสียภาษี 13 หลัก ที่หน้าตั้งค่า ก่อนรับชำระด้วย QR
+            </span>
+          </div>
+        ) : loading || !qrDataUrl ? (
           <div className="flex flex-col items-center justify-center p-6 space-y-2 text-slate-400">
             <div className="w-6 h-6 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
             <span className="text-[10px]">กำลังสร้าง QR...</span>

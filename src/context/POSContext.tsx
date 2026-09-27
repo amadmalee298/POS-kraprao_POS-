@@ -44,6 +44,7 @@ import {
   syncOrderToFirestore,
   syncOrdersBatchToFirestore,
   syncInventoryToFirestore,
+  applyStockDeltasToFirestore,
   syncStockAdjustmentToFirestore,
   syncWasteLogToFirestore,
   subscribeToCentralBranches,
@@ -106,8 +107,16 @@ import {
   DEFAULT_CATEGORIES
 } from '../data/initialData';
 import { calculateOrderTotals } from '../utils/tax';
+import {
+  generateOrderId,
+  generateOrderNumber,
+  computeSaleStockDeductions,
+  applyStockDeductions,
+  computeCartTotals,
+  mergeCloudOrders
+} from '../utils/orderUtils';
 import { crc16 } from '../utils/promptpay';
-import { SHOP_LOGO_URL } from '../assets/logo';
+import { SHOP_LOGO_URL, normalizeShopLogoUrl } from '../assets/logo';
 
 export function computeOrderChecksum(order: Order): string {
   const itemsCount = order.items ? order.items.length : 0;
@@ -369,6 +378,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const recentLocalMenuUpdatesRef = useRef<Map<string, number>>(new Map());
   // Track recently updated ingredient IDs and timestamps to protect local saves from being overwritten by stale cloud snapshots
   const recentLocalIngredientUpdatesRef = useRef<Map<string, number>>(new Map());
+  // Orders already re-sent to the cloud by the merge (avoids repeat writes)
+  const pushedBackRef = useRef<Set<string>>(new Set());
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('pos');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -871,126 +882,35 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!isStorageLoaded || !isFirebaseAvailable() || effectiveOffline) return;
 
     const unsubOrders = subscribeToRecentCentralOrders(1000, (centralOrderList, removedIds) => {
+      let pushBack: Order[] = [];
       setOrders(prev => {
-        let list = prev;
-        let hasChanges = false;
-        if (removedIds && removedIds.length > 0) {
-          const removedSet = new Set(removedIds.map(id => id.replace(/^ord-/, '')));
-          const filtered = list.filter(o => !removedSet.has(o.id) && !removedIds.includes(o.id));
-          if (filtered.length !== list.length) {
-            list = filtered;
-            hasChanges = true;
-          }
-        }
-        if (!centralOrderList || centralOrderList.length === 0) {
-          if (hasChanges) {
-            try { localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(list)); } catch (e) {}
-            return list;
-          }
-          return prev;
-        }
-        const localMap = new Map<string, Order>();
-        const orderNumberToId = new Map<string, string>();
-        list.forEach(o => {
-          if (o && o.id) {
-            localMap.set(o.id, o);
-            const normId = o.id.replace(/^ord-/, '');
-            if (normId !== o.id && !localMap.has(normId)) {
-              localMap.set(normId, o);
-            }
-            if (o.orderNumber) {
-              orderNumberToId.set(o.orderNumber, o.id);
-            }
-          }
-        });
-
-        centralOrderList.forEach(co => {
-          const coNormId = co.id.replace(/^ord-/, '');
-          let matchedId: string | null = null;
-          if (localMap.has(co.id)) {
-            matchedId = co.id;
-          } else if (localMap.has(coNormId)) {
-            matchedId = coNormId;
-          } else if (co.orderNumber && orderNumberToId.has(co.orderNumber)) {
-            matchedId = orderNumberToId.get(co.orderNumber)!;
-          }
-
-          if (!matchedId) {
-            localMap.set(co.id, co);
-            if (co.orderNumber) orderNumberToId.set(co.orderNumber, co.id);
-            hasChanges = true;
-          } else {
-            const existing = localMap.get(matchedId)!;
-            const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : (existing.createdAt ? new Date(existing.createdAt).getTime() : 0);
-            const cloudTime = co.updatedAt ? new Date(co.updatedAt).getTime() : (co.createdAt ? new Date(co.createdAt).getTime() : 0);
-
-            // Guard against reverting a 'served' order back to pending/cooking/ready upon page refresh
-            if (existing.status === 'served' && co.status !== 'served') {
-              if (existingTime >= cloudTime) {
-                // Keep local 'served' and push update to Firestore so cloud catches up
-                if (!effectiveOffline && isFirebaseAvailable()) {
-                  updateOrderStatusInFirestore(existing.id, 'served', { completedAt: existing.completedAt });
-                }
-                return;
-              }
-            }
-
-            // Guard against reverting a 'cancelled' order if local is newer
-            if (existing.status === 'cancelled' && co.status !== 'cancelled' && existingTime >= cloudTime) {
-              if (!effectiveOffline && isFirebaseAvailable()) {
-                updateOrderStatusInFirestore(existing.id, 'cancelled', {
-                  cancelReason: existing.cancelReason,
-                  cancelNote: existing.cancelNote,
-                  cancelledBy: existing.cancelledBy
-                });
-              }
-              return;
-            }
-
-            const isCloudNewer = cloudTime > existingTime;
-            if (isCloudNewer) {
-              const mergedOrder: Order = { ...existing, ...co, isSynced: true };
-              localMap.set(existing.id, mergedOrder);
-              localMap.set(co.id, mergedOrder);
-              if (matchedId !== existing.id) localMap.set(matchedId, mergedOrder);
-              hasChanges = true;
-            } else if (!existing.isSynced && co.isSynced) {
-              const mergedOrder: Order = { ...existing, isSynced: true };
-              localMap.set(existing.id, mergedOrder);
-              localMap.set(co.id, mergedOrder);
-              if (matchedId !== existing.id) localMap.set(matchedId, mergedOrder);
-              hasChanges = true;
-            }
-          }
-        });
-        if (!hasChanges) return prev;
-
-        // Deduplicate merged items by orderNumber / clean ID to guarantee no duplicate cards
-        const uniqueOrdersMap = new Map<string, Order>();
-        Array.from(localMap.values()).forEach(ord => {
-          if (!ord || !ord.id) return;
-          const key = ord.orderNumber || ord.id.replace(/^ord-/, '');
-          if (!uniqueOrdersMap.has(key)) {
-            uniqueOrdersMap.set(key, ord);
-          } else {
-            const current = uniqueOrdersMap.get(key)!;
-            const curTime = current.updatedAt ? new Date(current.updatedAt).getTime() : 0;
-            const ordTime = ord.updatedAt ? new Date(ord.updatedAt).getTime() : 0;
-            if (ord.status === 'served' && current.status !== 'served') {
-              uniqueOrdersMap.set(key, ord);
-            } else if (ordTime > curTime && current.status !== 'served') {
-              uniqueOrdersMap.set(key, ord);
-            }
-          }
-        });
-
-        const merged = Array.from(uniqueOrdersMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        const result = mergeCloudOrders(prev, centralOrderList || [], removedIds || []);
+        pushBack = result.pushBack;
+        if (!result.changed) return prev;
         try {
-          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(merged));
+          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
         } catch (e) {
           console.warn('[POS Real-Time Sync] Failed to cache synced orders', e);
         }
-        return merged;
+        return result.orders;
+      });
+      // Local served/cancelled orders the cloud has not caught up with: send them again
+      queueMicrotask(() => {
+        if (effectiveOffline || !isFirebaseAvailable()) return;
+        pushBack.forEach(o => {
+          const key = `${o.id}:${o.status}:${o.updatedAt || ''}`;
+          if (pushedBackRef.current.has(key)) return;
+          pushedBackRef.current.add(key);
+          if (o.status === 'served') {
+            updateOrderStatusInFirestore(o.id, 'served', { completedAt: o.completedAt });
+          } else if (o.status === 'cancelled') {
+            updateOrderStatusInFirestore(o.id, 'cancelled', {
+              cancelReason: o.cancelReason,
+              cancelNote: o.cancelNote,
+              cancelledBy: o.cancelledBy
+            });
+          }
+        });
       });
     });
 
@@ -1568,72 +1488,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       let newOrUpdatedCount = 0;
       setOrders(prev => {
-        const orderMap = new Map<string, Order>();
-        const orderNumberToId = new Map<string, string>();
-        prev.forEach(o => {
-          if (o && o.id) {
-            orderMap.set(o.id, o);
-            const normId = o.id.replace(/^ord-/, '');
-            if (normId !== o.id && !orderMap.has(normId)) orderMap.set(normId, o);
-            if (o.orderNumber) orderNumberToId.set(o.orderNumber, o.id);
-          }
-        });
-
-        cloudOrders.forEach(co => {
-          const coNormId = co.id.replace(/^ord-/, '');
-          let matchedId: string | null = null;
-          if (orderMap.has(co.id)) matchedId = co.id;
-          else if (orderMap.has(coNormId)) matchedId = coNormId;
-          else if (co.orderNumber && orderNumberToId.has(co.orderNumber)) matchedId = orderNumberToId.get(co.orderNumber)!;
-
-          if (!matchedId) {
-            orderMap.set(co.id, co);
-            if (co.orderNumber) orderNumberToId.set(co.orderNumber, co.id);
-            newOrUpdatedCount++;
-          } else {
-            const existing = orderMap.get(matchedId)!;
-            const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
-            const cloudTime = co.updatedAt ? new Date(co.updatedAt).getTime() : 0;
-
-            if (existing.status === 'served' && co.status !== 'served' && existingTime >= cloudTime) {
-              return;
-            }
-
-            const isCloudNewer = cloudTime > existingTime;
-            if (isCloudNewer) {
-              const mergedOrder: Order = { ...existing, ...co, isSynced: true };
-              orderMap.set(existing.id, mergedOrder);
-              orderMap.set(co.id, mergedOrder);
-              newOrUpdatedCount++;
-            } else if (!existing.isSynced && co.isSynced) {
-              const mergedOrder: Order = { ...existing, ...co, isSynced: true };
-              orderMap.set(existing.id, mergedOrder);
-              orderMap.set(co.id, mergedOrder);
-              newOrUpdatedCount++;
-            }
-          }
-        });
-
-        const uniqueOrders = new Map<string, Order>();
-        Array.from(orderMap.values()).forEach(ord => {
-          if (!ord || !ord.id) return;
-          const key = ord.orderNumber || ord.id.replace(/^ord-/, '');
-          if (!uniqueOrders.has(key)) {
-            uniqueOrders.set(key, ord);
-          } else {
-            const curr = uniqueOrders.get(key)!;
-            if (ord.status === 'served' && curr.status !== 'served') {
-              uniqueOrders.set(key, ord);
-            }
-          }
-        });
-        const merged = Array.from(uniqueOrders.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        const result = mergeCloudOrders(prev, cloudOrders);
+        newOrUpdatedCount = result.newOrUpdated;
+        if (!result.changed) return prev;
         try {
-          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(merged));
+          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
         } catch (e) {
           console.warn('[POS Cloud Pull] Failed to cache POS_ORDERS_DATA', e);
         }
-        return merged;
+        return result.orders;
       });
       return { count: newOrUpdatedCount, success: true };
     } catch (err) {
@@ -2095,10 +1958,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setIncomes(loadedIncomes);
           if (parsed.settings && typeof parsed.settings === 'object') {
             const mergedSettings = { ...INITIAL_SETTINGS, ...parsed.settings };
-            // If previous shopLogoUrl was the older default SVG or empty, update to the new official brand logo
-            if (!parsed.settings.shopLogoUrl || parsed.settings.shopLogoUrl.startsWith('data:image/svg+xml')) {
-              mergedSettings.shopLogoUrl = SHOP_LOGO_URL;
-            }
+            // Replace empty, old-default or no-longer-existing logo URLs with the current brand logo
+            mergedSettings.shopLogoUrl = normalizeShopLogoUrl(parsed.settings.shopLogoUrl);
             setSettings(mergedSettings);
           }
           if (parsed.securityLogs && Array.isArray(parsed.securityLogs)) setSecurityLogs(parsed.securityLogs);
@@ -2888,6 +2749,38 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Create order & automatic ingredient stock deduction
+  /**
+   * Deduct recipe ingredients for a sale. The local list is updated optimistically and the
+   * cloud copy is changed with atomic increments, so a stale snapshot can neither be pushed
+   * over other devices' stock nor bounce back and undo this deduction.
+   */
+  const deductStockForSale = (items: CartItem[]) => {
+    const deltas = computeSaleStockDeductions(items, ingredients);
+    if (deltas.size === 0) return;
+    const now = Date.now();
+    deltas.forEach((_, id) => recentLocalIngredientUpdatesRef.current.set(id, now));
+    setIngredients(prev => applyStockDeductions(prev, deltas));
+    if (!effectiveOffline && isFirebaseAvailable()) {
+      applyStockDeltasToFirestore(deltas, ingredients, currentBranch).catch(err =>
+        console.error('[POS] Failed to push stock deduction to cloud:', err)
+      );
+    }
+    // Offline: the reconnect sync (syncOfflineQueue) uploads the locally deducted stock levels.
+  };
+
+  /** Push a new order; if the write fails it is re-queued for the offline sync instead of being marked synced. */
+  const pushNewOrderToCloud = (newOrder: Order) => {
+    if (effectiveOffline || !isFirebaseAvailable()) return;
+    syncOrderToFirestore(newOrder, currentBranch)
+      .then(ok => {
+        if (ok) return;
+        setOrders(prev =>
+          prev.map(o => (o.id === newOrder.id ? { ...o, isSynced: false, isOfflineOrder: true, syncedAt: undefined } : o))
+        );
+      })
+      .catch(err => console.error('[POS] Failed to push order to cloud:', err));
+  };
+
   const createOrder = (
     paymentMethod: PaymentMethod,
     tenderedAmount: number,
@@ -2896,22 +2789,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     taxInvoiceCustomer?: CustomerTaxInfo,
     isFullTaxInvoiceRequested = false
   ): Order => {
-    const rawSubtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
-    let calculatedDiscount = 0;
-    if (discount.type === 'fixed') {
-      calculatedDiscount = Math.min(discount.amount, rawSubtotal);
-    } else {
-      calculatedDiscount = (rawSubtotal * Math.min(discount.amount, 100)) / 100;
-    }
-
-    const { vatAmount, grandTotal } = calculateOrderTotals(rawSubtotal, calculatedDiscount, settings);
+    const {
+      rawSubtotal,
+      discountAmount: calculatedDiscount,
+      vatAmount,
+      grandTotal
+    } = computeCartTotals(cart, discount, settings);
     const changeAmount = paymentMethod === 'cash' ? Math.max(0, tenderedAmount - grandTotal) : 0;
 
-    const orderNumber = `#KAP-${Math.floor(1000 + Math.random() * 9000)}`;
+    const orderNumber = generateOrderNumber(orders, currentBranch.id);
     const nowIso = new Date().toISOString();
 
     const newOrder: Order = {
-      id: `ord-${Date.now()}`,
+      id: generateOrderId(),
       orderNumber,
       branchId: currentBranch.id,
       orderType,
@@ -2939,65 +2829,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     newOrder.checksum = computeOrderChecksum(newOrder);
 
-    // Deduct raw ingredients from inventory automatically based on recipes
-    setIngredients(prevIngredients => {
-      const updated = [...prevIngredients];
-
-      cart.forEach(cartItem => {
-        const qty = cartItem.quantity;
-        // Deduct base menu recipe
-        cartItem.menuItem.recipe.forEach(rec => {
-          const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
-          if (ingIndex > -1) {
-            const ing = updated[ingIndex];
-            const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
-            updated[ingIndex] = {
-              ...ing,
-              currentStock: Math.max(0, ing.currentStock - needed)
-            };
-          }
-        });
-
-        // Deduct selected add-ons recipe
-        cartItem.selectedAddOns.forEach(addon => {
-          if (addon.recipe && addon.recipe.length > 0) {
-            addon.recipe.forEach(rec => {
-              const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
-              if (ingIndex > -1) {
-                const ing = updated[ingIndex];
-                const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
-                updated[ingIndex] = {
-                  ...ing,
-                  currentStock: Math.max(0, ing.currentStock - needed)
-                };
-              }
-            });
-          } else if (addon.ingredientId && addon.ingredientAmount) {
-            const ingIndex = updated.findIndex(ing => ing.id === addon.ingredientId);
-            if (ingIndex > -1) {
-              const ing = updated[ingIndex];
-              const needed = calcRecipeItemCostAndDeduction(ing, addon.ingredientAmount).stockDeduction * qty;
-              updated[ingIndex] = {
-                ...ing,
-                currentStock: Math.max(0, ing.currentStock - needed)
-              };
-            }
-          }
-        });
-      });
-
-      return updated;
-    });
-
+    deductStockForSale(cart);
     setOrders(prev => [newOrder, ...prev]);
     clearCart();
     playKitchenChime();
-
-    // Real-time Push to Firebase Firestore
-    if (!effectiveOffline && isFirebaseAvailable()) {
-      syncOrderToFirestore(newOrder, currentBranch);
-      syncInventoryToFirestore(ingredients, currentBranch);
-    }
+    pushNewOrderToCloud(newOrder);
 
     // Real-Time Notification Trigger: New Order & Low Stock
     try {
@@ -3049,7 +2885,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ): Order => {
     const rawSubtotal = items.reduce((sum, item) => sum + item.totalPrice, 0);
     const { vatAmount, grandTotal } = calculateOrderTotals(rawSubtotal, 0, settings);
-    const orderNumber = `#KAP-${Math.floor(1000 + Math.random() * 9000)}`;
+    const orderNumber = generateOrderNumber(orders, currentBranch.id);
     const nowIso = new Date().toISOString();
 
     const noteText = customerNickname
@@ -3057,7 +2893,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       : notes ? `QR Table Order: ${notes}` : 'QR Table Order';
 
     const newOrder: Order = {
-      id: `ord-${Date.now()}`,
+      id: generateOrderId(),
       orderNumber,
       branchId: currentBranch.id,
       orderType,
@@ -3083,65 +2919,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     newOrder.checksum = computeOrderChecksum(newOrder);
 
-    // Deduct raw ingredients from inventory automatically based on recipes
-    setIngredients(prevIngredients => {
-      const updated = [...prevIngredients];
-
-      items.forEach(cartItem => {
-        const qty = cartItem.quantity;
-
-        // Deduct menu item recipe
-        cartItem.menuItem.recipe.forEach(rec => {
-          const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
-          if (ingIndex > -1) {
-            const ing = updated[ingIndex];
-            const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
-            updated[ingIndex] = {
-              ...ing,
-              currentStock: Math.max(0, ing.currentStock - needed)
-            };
-          }
-        });
-
-        // Deduct selected add-ons recipe
-        cartItem.selectedAddOns.forEach(addon => {
-          if (addon.recipe && addon.recipe.length > 0) {
-            addon.recipe.forEach(rec => {
-              const ingIndex = updated.findIndex(ing => ing.id === rec.ingredientId);
-              if (ingIndex > -1) {
-                const ing = updated[ingIndex];
-                const needed = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit).stockDeduction * qty;
-                updated[ingIndex] = {
-                  ...ing,
-                  currentStock: Math.max(0, ing.currentStock - needed)
-                };
-              }
-            });
-          } else if (addon.ingredientId && addon.ingredientAmount) {
-            const ingIndex = updated.findIndex(ing => ing.id === addon.ingredientId);
-            if (ingIndex > -1) {
-              const ing = updated[ingIndex];
-              const needed = calcRecipeItemCostAndDeduction(ing, addon.ingredientAmount).stockDeduction * qty;
-              updated[ingIndex] = {
-                ...ing,
-                currentStock: Math.max(0, ing.currentStock - needed)
-              };
-            }
-          }
-        });
-      });
-
-      return updated;
-    });
-
+    deductStockForSale(items);
     setOrders(prev => [newOrder, ...prev]);
     playKitchenChime();
-
-    // Real-time Push to Firebase Firestore
-    if (!effectiveOffline && isFirebaseAvailable()) {
-      syncOrderToFirestore(newOrder, currentBranch);
-      syncInventoryToFirestore(ingredients, currentBranch);
-    }
+    pushNewOrderToCloud(newOrder);
 
     // Real-Time Notification Trigger: QR / Direct Order
     try {
@@ -3166,8 +2947,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const next = prev.map(ord => {
         const isMatch = ord.id === orderId ||
           ord.id === `ord-${orderId}` ||
-          ord.id.replace(/^ord-/, '') === orderId.replace(/^ord-/, '') ||
-          ord.orderNumber === orderId;
+          ord.id.replace(/^ord-/, '') === orderId.replace(/^ord-/, '');
 
         if (isMatch) {
           const completedAt = status === 'served' ? (ord.completedAt || now) : ord.completedAt;

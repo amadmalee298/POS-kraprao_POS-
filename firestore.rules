@@ -1,53 +1,105 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Multi-branch POS central synchronization rules
+    // Every POS device signs in (anonymously, or with Google for Sheets export) before it
+    // reads or writes. Requests without a Firebase user are rejected.
+    // Deploy with: firebase deploy --only firestore:rules
+    // (enable Authentication → Sign-in method → Anonymous in the Firebase console first).
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Guard against oversized or garbage documents.
+    function reasonableSize() {
+      return request.resource.data.size() <= 120;
+    }
+
+    function isNonNegativeNumber(field) {
+      return !(field in request.resource.data)
+        || (request.resource.data[field] is number && request.resource.data[field] >= 0);
+    }
+
+    function validOrder() {
+      return reasonableSize()
+        && isNonNegativeNumber('grandTotal')
+        && isNonNegativeNumber('subtotal')
+        && isNonNegativeNumber('discountAmount')
+        && isNonNegativeNumber('vatAmount')
+        && (!('items' in request.resource.data) || request.resource.data.items.size() <= 200);
+    }
+
+    function validMoneyRecord() {
+      return reasonableSize() && isNonNegativeNumber('amount');
+    }
+
     match /branches/{branchId} {
-      allow read, write: if true;
-      
+      allow read: if signedIn();
+      allow create, update: if signedIn() && reasonableSize();
+      allow delete: if signedIn();
+
       match /inventory/{ingredientId} {
-        allow read, write: if true;
+        allow read, delete: if signedIn();
+        allow create, update: if signedIn() && reasonableSize();
       }
-      
+
       match /status/{statusDoc} {
-        allow read, write: if true;
+        allow read, write: if signedIn();
+      }
+
+      match /config/{configDoc} {
+        allow read, write: if signedIn();
       }
     }
 
     match /orders/{orderId} {
-      allow read, write: if true;
-    }
-
-    match /menu_items/{itemId} {
-      allow read, write: if true;
-    }
-
-    match /inventory/{inventoryDoc} {
-      allow read, write: if true;
-    }
-
-    match /stock_adjustments/{logId} {
-      allow read, write: if true;
-    }
-
-    match /waste_logs/{wasteId} {
-      allow read, write: if true;
-    }
-
-    match /branch_sync_logs/{syncId} {
-      allow read, write: if true;
+      allow read, delete: if signedIn();
+      allow create, update: if signedIn() && validOrder();
     }
 
     match /expenses/{expenseId} {
-      allow read, write: if true;
+      allow read, delete: if signedIn();
+      allow create, update: if signedIn() && validMoneyRecord();
     }
 
     match /incomes/{incomeId} {
-      allow read, write: if true;
+      allow read, delete: if signedIn();
+      allow create, update: if signedIn() && validMoneyRecord();
     }
 
-    match /{document=**} {
-      allow read, write: if true;
+    match /menu_items/{itemId} {
+      allow read, delete: if signedIn();
+      allow create, update: if signedIn() && reasonableSize();
     }
+
+    match /inventory/{inventoryDoc} {
+      allow read, delete: if signedIn();
+      allow create, update: if signedIn() && reasonableSize();
+    }
+
+    // Audit-style logs: can be written and re-synced, but not deleted from a device.
+    match /stock_adjustments/{logId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && reasonableSize();
+    }
+
+    match /waste_logs/{wasteId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && reasonableSize();
+    }
+
+    match /branch_sync_logs/{syncId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && reasonableSize();
+    }
+
+    match /deleted_records/{recordId} {
+      allow read, write: if signedIn();
+    }
+
+    match /categories/{categoryDoc} {
+      allow read, write: if signedIn();
+    }
+
+    // Anything not listed above is denied (no catch-all wildcard).
   }
 }

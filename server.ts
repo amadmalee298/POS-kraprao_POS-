@@ -1,8 +1,12 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import { runReceiptOcr } from './src/utils/receiptOcr';
+import { createClaudeJsonCaller, CLAUDE_MODEL, ClaudeCallError, type ClaudeJsonCaller, type ClaudeEffort } from './src/utils/claudeClient';
+
+// JSON Schema type names used by the response schemas below
+const Type = { OBJECT: 'object', ARRAY: 'array', STRING: 'string', NUMBER: 'number', INTEGER: 'integer', BOOLEAN: 'boolean' } as const;
 
 dotenv.config();
 
@@ -10,8 +14,73 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '25mb' }));
-  app.use(express.urlencoded({ limit: '25mb', extended: true }));
+  // Behind Cloud Run / a reverse proxy: use the real client IP for rate limiting
+  app.set('trust proxy', 1);
+
+  // Receipt photos are sent as base64; 15 MB covers a ~4 MP JPEG with room to spare
+  app.use('/api', express.json({ limit: '15mb' }));
+  app.use('/api', express.urlencoded({ limit: '1mb', extended: true }));
+
+  // --- API protection -------------------------------------------------------
+  // Only this app's own pages may call the API. Other origins (e.g. the GitHub Pages build)
+  // must be listed in ALLOWED_ORIGINS (comma-separated), which also enables CORS for them.
+  const allowedOrigins = new Set(
+    (process.env.ALLOWED_ORIGINS || '')
+      .split(',')
+      .map(o => o.trim().replace(/\/+$/, ''))
+      .filter(Boolean)
+  );
+  app.use('/api', (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      let sameHost = false;
+      try {
+        sameHost = new URL(origin).host === req.headers.host;
+      } catch {
+        sameHost = false;
+      }
+      if (!sameHost && !allowedOrigins.has(origin)) {
+        return res.status(403).json({ error: 'Origin not allowed' });
+      }
+      if (!sameHost) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      }
+    }
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  });
+
+  // Simple in-memory fixed-window rate limiter (per client IP and route group)
+  const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+  const rateLimit = (group: string, maxPerWindow: number, windowMs = 60_000) =>
+    (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const key = `${group}:${req.ip}`;
+      const now = Date.now();
+      const bucket = rateBuckets.get(key);
+      if (!bucket || bucket.resetAt <= now) {
+        rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+        return next();
+      }
+      bucket.count++;
+      if (bucket.count > maxPerWindow) {
+        res.setHeader('Retry-After', String(Math.ceil((bucket.resetAt - now) / 1000)));
+        return res.status(429).json({ error: 'เรียกใช้งานถี่เกินไป กรุณารอสักครู่แล้วลองใหม่' });
+      }
+      next();
+    };
+  setInterval(() => {
+    const now = Date.now();
+    rateBuckets.forEach((bucket, key) => {
+      if (bucket.resetAt <= now) rateBuckets.delete(key);
+    });
+  }, 5 * 60_000).unref();
+
+  // AI calls spend the shop's Claude API credits; notifications relay to Telegram/LINE
+  app.use('/api/ai', rateLimit('ai', 20));
+  app.use('/api/notify', rateLimit('notify', 30));
 
   // API Route: Server Health & Connection Ping Endpoint
   app.get('/api/health', (req, res) => {
@@ -24,44 +93,38 @@ async function startServer() {
     });
   });
 
-  // Initialize Gemini AI Client
-  const getAiClient = (customApiKey?: string) => {
-    const apiKey = (customApiKey && typeof customApiKey === 'string' && customApiKey.trim().length > 5)
-      ? customApiKey.trim()
-      : process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return null;
+  // All AI features run on Claude. The key comes from ANTHROPIC_API_KEY, or from the shop's
+  // own key sent by the client. Without a key each route falls back to its rule-based engine.
+  const claudeCallers = new Map<string, ClaudeJsonCaller>();
+  const getAiClient = (customApiKey?: string): ClaudeJsonCaller | null => {
+    const apiKey =
+      customApiKey && typeof customApiKey === 'string' && customApiKey.trim().length > 10
+        ? customApiKey.trim()
+        : process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return null;
+    let caller = claudeCallers.get(apiKey);
+    if (!caller) {
+      caller = createClaudeJsonCaller({ apiKey });
+      claudeCallers.set(apiKey, caller);
     }
-    return new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build'
-        }
-      }
-    });
+    return caller;
   };
 
-  /**
-   * Helper: Generate content with automatic model fallback for 503 / 429 high demand spikes
-   */
-  const generateWithFallback = async (ai: GoogleGenAI, params: any, preferredModels = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-flash-latest']) => {
-    let lastErr: any = null;
-    for (const model of preferredModels) {
-      try {
-        const res = await ai.models.generateContent({
-          ...params,
-          model
-        });
-        return { response: res, modelUsed: model };
-      } catch (err: any) {
-        console.warn(`[AI SDK] Model ${model} encountered error:`, err?.message || err);
-        lastErr = err;
-        // Wait 250ms before trying the next fallback model
-        await new Promise(r => setTimeout(r, 250));
-      }
-    }
-    throw lastErr;
+  /** Ask Claude for JSON matching `config.responseSchema`; returns the text plus the model name. */
+  const generateWithClaude = async (
+    ai: ClaudeJsonCaller,
+    params: { contents: string; config: { systemInstruction?: string; responseSchema: Record<string, unknown> } },
+    effort: ClaudeEffort = 'high'
+  ) => {
+    const text = await ai({
+      system:
+        params.config.systemInstruction ||
+        'ตอบกลับเป็น JSON ตามโครงสร้าง Schema ที่กำหนดเท่านั้น ตอบด้วยภาษาไทยที่กระชับและเป็นมืออาชีพ',
+      prompt: params.contents,
+      schema: params.config.responseSchema,
+      effort
+    });
+    return { response: { text }, modelUsed: CLAUDE_MODEL };
   };
 
   // API Route: AI Menu Engineering & Price Recommendation Engine
@@ -76,7 +139,7 @@ async function startServer() {
       const ai = getAiClient();
 
       if (!ai) {
-        // High-quality rule-based fallback when GEMINI_API_KEY is not set
+        // Rule-based fallback when no Claude API key is configured
         const fallbackAnalyses = generateFallbackMenuEngineering(menuItems, ingredients, simulatedCostChanges);
         return res.json({
           source: 'rule-based-engine',
@@ -126,11 +189,10 @@ ${
 4. เสนอกลยุทธ์ปฏิบัติการ (actionStrategy) สำหรับเมนูนี้ เช่น การเพิ่มโปรโมชั่น, การปรับขนาดจาน, หรือการจัด Set
 `;
 
-      const { response, modelUsed } = await generateWithFallback(ai, {
+      const { response, modelUsed } = await generateWithClaude(ai, {
         contents: prompt,
         config: {
           systemInstruction: 'ตอบกลับเป็นรูปแบบ JSON ตามโครงสร้าง Schema ที่กำหนดเท่านั้น ตอบด้วยภาษาไทยที่กระชับและเป็นมืออาชีพ',
-          responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -188,7 +250,7 @@ ${
         : 32.5;
 
       return res.json({
-        source: modelUsed || 'gemini-3.6-flash',
+        source: modelUsed,
         overallSummary: {
           healthScore: parsedData.healthScore || 85,
           averageFoodCostPercent: avgFoodCost,
@@ -223,140 +285,42 @@ ${
     }
   });
 
-  // API Route: AI Expense Receipt Scanner (Gemini Multimodal Vision OCR)
+  // API Route: AI Expense Receipt Scanner (Claude vision + arithmetic verification)
   app.post('/api/ai/scan-receipt', async (req, res) => {
     try {
-      const { image, mimeType, apiKey, clientApiKey } = req.body || {};
-
-      const ai = getAiClient(apiKey || clientApiKey);
+      const { image, mimeType, anthropicApiKey } = req.body || {};
+      const ai = getAiClient(anthropicApiKey);
 
       if (!ai) {
         return res.status(400).json({
           error: 'MISSING_API_KEY',
-          message: 'ไม่พบการตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์ หรือ API Key จากผู้ใช้งาน กรุณาระบุ Gemini API Key ในช่องตั้งค่า'
+          message: 'ไม่พบ Claude API Key กรุณาตั้งค่า ANTHROPIC_API_KEY บนเซิร์ฟเวอร์ หรือใส่ Claude API Key ในช่องตั้งค่า'
         });
       }
-
-      if (!image) {
+      if (!image || typeof image !== 'string') {
         return res.status(400).json({ error: 'กรุณาแนบไฟล์รูปภาพใบเสร็จ' });
       }
 
-      let cleanBase64 = image || '';
-      let detectedMime = mimeType || 'image/jpeg';
+      let cleanBase64 = image;
+      let detectedMime = typeof mimeType === 'string' ? mimeType : 'image/jpeg';
       if (cleanBase64.includes(';base64,')) {
         const parts = cleanBase64.split(';base64,');
         const mimeMatch = parts[0].match(/data:(.*)/);
         if (mimeMatch) detectedMime = mimeMatch[1];
         cleanBase64 = parts[1];
-      } else if (cleanBase64.startsWith('data:image/svg') || cleanBase64.includes('<svg')) {
-        cleanBase64 = Buffer.from(cleanBase64).toString('base64');
-        detectedMime = 'image/jpeg';
       }
 
-      const promptText = `
-คุณเป็นผู้เชี่ยวชาญการอ่านเอกสารบัญชีและการสกัดข้อมูลจากภาพถ่ายใบเสร็จรับเงิน ใบกำกับภาษี สลิปชำระเงิน และบิลเงินสด (Cash Sale) ทุกรูปแบบในประเทศไทย รวมถึงบิลเขียนมือ (Handwritten bills), บิลกระดาษคาร์บอน, สลิป 7-Eleven, Makro, Lotus, Big C, ตลาดสด และร้านค้าทั่วไป (Multimodal Vision OCR Document AI)
-โปรดอ่านข้อความและตัวเลขทั้งหมดจากภาพใบเสร็จนี้อย่างละเอียดและตรงตามความเป็นจริง:
+      const receiptData = await runReceiptOcr(
+        ({ prompt, system, schema, image: img }) => ai({ prompt, system, schema, image: img, effort: 'high' }),
+        { data: cleanBase64, mimeType: detectedMime },
+        { todayIso: typeof req.body?.todayIso === 'string' ? req.body.todayIso : undefined }
+      );
 
-1. vendorName: อ่านชื่อร้านค้า/ซัพพลายเออร์/บริษัท/หน่วยงาน ที่พิมพ์อยู่บนหัวบิลหรือตราประทับจริง (เช่น 7-Eleven, Makro, Lotus, Big C, ตลาดสด) หากเป็นบิลเงินสดเขียนมือที่ไม่มีชื่อร้าน ให้ระบุ "บิลเงินสด/ร้านค้าทั่วไป"
-2. title: หัวข้อสรุปค่าใช้จ่ายสั้นๆ เช่น "ซื้อของสด/วัตถุดิบ (บิลเงินสด)", "ซื้อวัตถุดิบ CP - แม็คโคร" หรือ "บิลค่าน้ำประปา"
-3. date: วันที่ที่ระบุในเอกสาร แปลงเป็นรูปแบบ YYYY-MM-DD (หากระบุปีเป็น พ.ศ. เช่น 2567, 2568, 2569 ให้แปลงเป็น ค.ศ. เสมอ หากอ่านวันที่ไม่ออกให้ใช้วันที่ปัจจุบัน)
-4. category: เลือกหมวดหมู่ที่ตรงที่สุดจาก ['raw_material', 'supplies', 'rent', 'salary', 'utilities', 'marketing', 'other'] (อาหาร/เนื้อสัตว์/ผัก/เครื่องปรุง/ของสด = raw_material, ซัพพลายใช้สอย/อุปกรณ์สิ้นเปลือง/ของใช้ในร้าน/น้ำยาล้างจาน/ถุงขยะ/ถุงพลาสติก/กล่องอาหาร/ทิชชู่/ฟองน้ำ/อุปกรณ์ทำความสะอาด = supplies, ค่าน้ำ/ค่าไฟ/แก๊ส = utilities, ค่าแรง = salary, ค่าเช่า = rent, การตลาด/โฆษณา = marketing, อื่นๆ = other)
-5. amount: ยอดเงินรวมสุทธิ/ยอดรวมทั้งสิ้น/ยอดชำระจริง (Grand Total / Total / Net Paid / ยอดสุทธิ) เป็นตัวเลขทศนิยมแท้จริงจากภาพ
-6. includeVat: true หากระบุภาษีมูลค่าเพิ่ม VAT 7% ชัดเจน มิฉะนั้น false
-7. vatAmount: จำนวนเงินภาษีมูลค่าเพิ่ม VAT 7% (ถ้ามีระบุในบิล มิฉะนั้น 0)
-8. refNumber: เลขที่ใบเสร็จ / No. / Tax Invoice No. / Doc No. ที่ปรากฏในภาพ หากไม่มีให้ใส่ ""
-9. note: หมายเหตุสรุปสินค้า/บริการที่ซื้อจริงจากภาพ
-10. confidenceScore: ประเมินความชัดเจนของภาพและความมั่นใจในการอ่าน (0-100)
-11. lineItems: รายการสินค้าแต่ละแถวที่อ่านได้ พร้อมชื่อสินค้า (name) และราคา (amount)
-
-ตอบเฉพาะ JSON ตาม schema ที่กำหนดเท่านั้น
-`;
-
-      const { response, modelUsed } = await generateWithFallback(ai, {
-        contents: [
-          {
-            inlineData: {
-              data: cleanBase64,
-              mimeType: detectedMime
-            }
-          },
-          promptText
-        ],
-        config: {
-          systemInstruction: 'คุณเป็นระบบ OCR สกัดข้อมูลใบเสร็จรับเงินภาษาไทยและสากลที่มีความแม่นยำสูงสุด 100% สกัดข้อมูลจริงจากภาพลงในโครงสร้าง JSON ตามที่กำหนด ห้ามแต่งข้อมูลขึ้นมาเอง',
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              vendorName: { type: Type.STRING },
-              date: { type: Type.STRING },
-              category: { type: Type.STRING },
-              amount: { type: Type.NUMBER },
-              includeVat: { type: Type.BOOLEAN },
-              vatAmount: { type: Type.NUMBER },
-              refNumber: { type: Type.STRING },
-              note: { type: Type.STRING },
-              confidenceScore: { type: Type.NUMBER },
-              lineItems: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING },
-                    amount: { type: Type.NUMBER }
-                  },
-                  required: ['name', 'amount']
-                }
-              }
-            },
-            required: ['title', 'vendorName', 'date', 'category', 'amount', 'includeVat', 'vatAmount', 'refNumber', 'note', 'confidenceScore']
-          }
-        }
-      });
-
-      const parsedData = JSON.parse(response.text || '{}');
-      const validCategories = ['raw_material', 'supplies', 'rent', 'salary', 'utilities', 'equipment', 'marketing', 'other'];
-      let cat = parsedData.category || 'raw_material';
-      if (cat === 'equipment') cat = 'supplies';
-      if (!validCategories.includes(cat)) cat = 'raw_material';
-
-      const amt = typeof parsedData.amount === 'number' ? parsedData.amount : (parseFloat(parsedData.amount) || 0);
-      const vat = typeof parsedData.vatAmount === 'number' ? parsedData.vatAmount : (parseFloat(parsedData.vatAmount) || 0);
-      const net = amt > 0 ? (amt - vat) : 0;
-
-      return res.json({
-        source: modelUsed,
-        receiptData: {
-          title: parsedData.title || (parsedData.vendorName ? `บิล ${parsedData.vendorName}` : 'ค่าใช้จ่ายจากการสแกนใบเสร็จ'),
-          vendorName: parsedData.vendorName || 'ไม่ระบุชื่อร้านค้า',
-          date: parsedData.date || new Date().toISOString().split('T')[0],
-          category: cat,
-          amount: amt,
-          includeVat: Boolean(parsedData.includeVat),
-          vatAmount: vat,
-          netAmount: net,
-          refNumber: parsedData.refNumber || '',
-          note: parsedData.note || '',
-          confidenceScore: typeof parsedData.confidenceScore === 'number' ? parsedData.confidenceScore : 92,
-          lineItems: Array.isArray(parsedData.lineItems) ? parsedData.lineItems.map((li: any) => ({
-            name: li.name || 'รายการสินค้า',
-            amount: typeof li.amount === 'number' ? li.amount : (parseFloat(li.amount) || 0)
-          })) : []
-        }
-      });
+      return res.json({ source: CLAUDE_MODEL, receiptData });
     } catch (err: any) {
-      console.error('Error scanning receipt with Gemini:', err);
-      let errMsg = err?.message || String(err || '');
-      // If error message is serialized JSON or contains 503/429
-      if (errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE')) {
-        errMsg = 'ระบบ AI มีผู้ใช้งานหนาแน่นชั่วคราว (503 High Demand) กรุณากดปุ่มลองใหม่อีกครั้ง';
-      } else if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
-        errMsg = 'ระบบ AI มีการเรียกใช้งานเกินโควตาชั่วคราว กรุณารอสักครู่แล้วลองใหม่';
-      }
-      return res.status(500).json({
-        error: errMsg
-      });
+      console.error('Error scanning receipt with Claude:', err?.message || err);
+      const status = err instanceof ClaudeCallError && !err.retryable ? 400 : 502;
+      return res.status(status).json({ error: err?.message || 'AI อ่านใบเสร็จไม่สำเร็จ กรุณาลองใหม่' });
     }
   });
 
@@ -405,10 +369,9 @@ ${JSON.stringify(menuItems, null, 2)}
 5. ให้เหตุผล AI Insight และคำแนะนำสำหรับซัพพลายเออร์
 `;
 
-      const { response, modelUsed } = await generateWithFallback(ai, {
+      const { response, modelUsed } = await generateWithClaude(ai, {
         contents: prompt,
         config: {
-          responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -455,7 +418,7 @@ ${JSON.stringify(menuItems, null, 2)}
       const forecastResults = parsed.insights || generateFallbackInventoryForecast(ingredients, orders || [], menuItems || [], forecastDays);
 
       return res.json({
-        source: modelUsed || 'gemini-3.6-flash',
+        source: modelUsed,
         forecastDays,
         overallAlertCount: forecastResults.filter((r: any) => r.riskLevel === 'CRITICAL' || r.riskLevel === 'WARNING').length,
         criticalCount: forecastResults.filter((r: any) => r.riskLevel === 'CRITICAL').length,
@@ -513,11 +476,10 @@ ${JSON.stringify(ingredients, null, 2)}
 4. ประเมินมูลค่าเงินที่จะประหยัดได้ต่อเดือน (estimatedMonthlySavings) หากทำตามคำแนะนำ
 `;
 
-      const { response, modelUsed } = await generateWithFallback(ai, {
+      const { response, modelUsed } = await generateWithClaude(ai, {
         contents: prompt,
         config: {
           systemInstruction: 'ตอบกลับเป็น JSON ตามโครงสร้าง Schema ที่กำหนด ตอบเป็นภาษาไทยเชิงวิชาชีพ ปฏิบัติได้จริงในร้านอาหาร',
-          responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -585,7 +547,7 @@ ${JSON.stringify(ingredients, null, 2)}
       const parsedData = JSON.parse(response.text || '{}');
 
       return res.json({
-        source: modelUsed || 'gemini-3.6-flash',
+        source: modelUsed,
         analysis: {
           totalLossAmount: parsedData.totalLossAmount || wasteLogs.reduce((a: number, b: any) => a + (b.totalCostLoss || 0), 0),
           totalWasteEntries: wasteLogs.length,
@@ -607,112 +569,28 @@ ${JSON.stringify(ingredients, null, 2)}
     }
   });
 
-  // API Route: AI POS Smart Upsell & Pairing Suggestion Engine
-  app.post('/api/ai/pos-upsell', async (req, res) => {
-    try {
-      const { cart, menuItems, recentOrders } = req.body;
-      const ai = getAiClient();
-      if (!ai) {
-        const fallback = generateFallbackPOSUpsell(cart || [], menuItems || [], recentOrders || []);
-        return res.json({
-          source: 'rule-based-upsell-engine',
-          result: fallback
-        });
-      }
-
-      const prompt = `
-คุณเป็นระบบ AI อัจฉริยะผู้ช่วยแคชเชียร์หน้าร้านอาหาร (AI POS Smart Upsell & Pairing Assistant) สำหรับร้าน "ครัวกะเพรา POS Enterprise"
-โปรดวิเคราะห์รายการสินค้าที่อยู่ในตะกร้าลูกค้าปัจจุบัน (Cart) ร่วมกับรายการเมนูทั้งหมดของร้าน (Menu Items) และประวัติการขายล่าสุด เพื่อเสนอแนะ "เมนูขายดีที่ควรจับคู่ขายเพิ่ม (Popular Upsells & Pairings)" ให้แคชเชียร์ช่วยพูดเสนอขายกับลูกค้าได้ทันที (Upsell / Cross-sell)
-
-ข้อมูลรายการสินค้าในตะกร้าปัจจุบัน (Current Cart Items):
-${JSON.stringify(cart || [], null, 2)}
-
-รายการเมนูและท็อปปิ้งทั้งหมดที่มีในร้าน (Available Menu Items):
-${JSON.stringify(menuItems || [], null, 2)}
-
-หน้าที่ของคุณ:
-1. วิเคราะห์ว่าในตะกร้าปัจจุบันขาดอะไรที่จะทำให้มื้ออาหารสมบูรณ์ขึ้น (เช่น มีข้าวกะเพราแต่ยังไม่มีไข่ดาว/ไข่เจียว, มีอาหารหลักแต่ยังไม่มีเครื่องดื่ม, หรือถ้าตะกร้าว่างเปล่า ให้แนะนำเมนู Signature ยอดฮิต)
-2. เลือกเมนูหรือท็อปปิ้งจาก Available Menu Items จำนวน 3 รายการที่เหมาะกับการอัปเซลคู่กับสิ่งที่อยู่ในตะกร้ามากที่สุด
-3. สร้างข้อความพูดแนะนำสั้นๆ โดนใจสำหรับให้แคชเชียร์เอ่ยถามลูกค้า (bundleTitle และ scriptForCashier)
-      `;
-
-      const { response, modelUsed } = await generateWithFallback(ai, {
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              bundleTitle: {
-                type: Type.STRING,
-                description: 'ประโยคพูดแนะนำอัปเซลสั้นๆ สำหรับแคชเชียร์พูดกับลูกค้า'
-              },
-              scriptForCashier: {
-                type: Type.STRING,
-                description: 'คำอธิบายกลยุทธ์การอัปเซลในสถานการณ์นี้'
-              },
-              suggestions: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    menuItemId: { type: Type.STRING, description: 'ID ของเมนูจาก Available Menu Items' },
-                    name: { type: Type.STRING, description: 'ชื่อเมนู' },
-                    price: { type: Type.NUMBER, description: 'ราคาของเมนู' },
-                    category: { type: Type.STRING, description: 'ประเภท (addon, drink, menu, etc.)' },
-                    tag: { type: Type.STRING, description: 'ป้ายกำกับจุดเด่นสั้นๆ เช่น 🍳 ท็อปปิ้งอันดับ 1' },
-                    reason: { type: Type.STRING, description: 'เหตุผลที่แนะนำให้จับคู่กับรายการในตะกร้านี้' },
-                    confidenceScore: { type: Type.NUMBER, description: 'คะแนนความมั่นใจ 0-100' }
-                  },
-                  required: ['menuItemId', 'name', 'price', 'tag', 'reason']
-                }
-              }
-            },
-            required: ['bundleTitle', 'scriptForCashier', 'suggestions']
-          }
-        }
-      });
-
-      const parsedData = JSON.parse(response.text || '{}');
-      return res.json({
-        source: modelUsed || 'gemini-3.6-flash',
-        result: {
-          bundleTitle: parsedData.bundleTitle || '💡 บทพูดอัปเซลลูกค้า: "รับไข่ดาวเป็ดลาวาเยิ้มๆ หรือชามะนาวเย็นสดชื่นทานคู่กะเพราเพิ่มด้วยไหมครับ/คะ?"',
-          scriptForCashier: parsedData.scriptForCashier || 'เสนอเมนูคู่กินเพื่อเพิ่มยอดขายเฉลี่ยต่อบิล (Ticket Size)',
-          cartItemCount: cart?.length || 0,
-          suggestions: parsedData.suggestions && parsedData.suggestions.length > 0 
-            ? parsedData.suggestions 
-            : generateFallbackPOSUpsell(cart || [], menuItems || [], recentOrders || []).suggestions
-        }
-      });
-    } catch (err) {
-      console.error('Error generating AI POS upsell suggestions:', err);
-      const fallback = generateFallbackPOSUpsell(req.body.cart || [], req.body.menuItems || [], req.body.recentOrders || []);
-      return res.json({
-        source: 'fallback-upsell-engine',
-        result: fallback
-      });
-    }
-  });
-
   // API Route: Send Telegram Notification
   app.post('/api/notify/telegram', async (req, res) => {
     try {
-      const { botToken, chatId, message } = req.body;
-      if (!botToken || !chatId || !message) {
+      const { botToken, chatId, message } = req.body || {};
+      if (typeof botToken !== 'string' || !botToken || (typeof chatId !== 'string' && typeof chatId !== 'number') || typeof message !== 'string' || !message) {
         return res.status(400).json({ error: 'กรุณาระบุ Bot Token, Group Chat ID และข้อความ' });
       }
 
       // Clean token if user prefixed with "bot"
       const cleanToken = botToken.trim().startsWith('bot') ? botToken.trim().slice(3) : botToken.trim();
+      // Bot tokens look like 123456789:AA...; rejecting anything else keeps the URL path fixed
+      if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(cleanToken)) {
+        return res.status(400).json({ error: 'รูปแบบ Telegram Bot Token ไม่ถูกต้อง' });
+      }
       const telegramUrl = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
 
       const response = await fetch(telegramUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chat_id: chatId.trim(),
-          text: message
+          chat_id: String(chatId).trim(),
+          text: message.slice(0, 4096)
         })
       });
 
@@ -732,35 +610,40 @@ ${JSON.stringify(menuItems || [], null, 2)}
     }
   });
 
-  // API Route: Send LINE Notification
+  // API Route: Send LINE message via the LINE Messaging API (push message).
+  // LINE Notify was discontinued on 31 March 2025.
   app.post('/api/notify/line', async (req, res) => {
     try {
-      const { lineToken, message } = req.body;
-      if (!lineToken || !message) {
-        return res.status(400).json({ error: 'กรุณาระบุ LINE Token และข้อความ' });
+      const { lineToken, to, message } = req.body || {};
+      if (typeof lineToken !== 'string' || !lineToken.trim() || typeof to !== 'string' || !to.trim() || typeof message !== 'string' || !message) {
+        return res.status(400).json({ error: 'กรุณาระบุ Channel Access Token, User/Group ID และข้อความ' });
+      }
+      if (!/^[UCR][0-9a-f]{32}$/i.test(to.trim())) {
+        return res.status(400).json({ error: 'User/Group ID ไม่ถูกต้อง (ต้องขึ้นต้นด้วย U, C หรือ R ตามด้วยตัวอักษร 32 ตัว)' });
       }
 
-      const params = new URLSearchParams();
-      params.append('message', message);
-
-      const response = await fetch('https://notify-api.line.me/api/notify', {
+      const response = await fetch('https://api.line.me/v2/bot/message/push', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Authorization': `Bearer ${lineToken.trim()}`
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${lineToken.trim()}`
         },
-        body: params
+        body: JSON.stringify({
+          to: to.trim(),
+          // LINE text messages are limited to 5,000 characters
+          messages: [{ type: 'text', text: message.slice(0, 5000) }]
+        })
       });
 
-      const data = await response.json();
-      if (!response.ok || data.status !== 200) {
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         return res.status(400).json({
-          error: data.message || 'เกิดข้อผิดพลาดจาก LINE Notify API (โปรดตรวจสอบ Token)',
+          error: data.message || 'เกิดข้อผิดพลาดจาก LINE Messaging API (โปรดตรวจสอบ Token และ ID ผู้รับ)',
           details: data
         });
       }
 
-      return res.json({ success: true, result: data });
+      return res.json({ success: true });
     } catch (err: any) {
       console.error('LINE notification error:', err);
       return res.status(500).json({ error: err.message || 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ LINE ได้' });
@@ -1082,93 +965,6 @@ function generateFallbackWasteAnalysis(wasteLogs: any[], ingredients: any[], sto
     spoilageByReason,
     actionableSuggestions,
     generalRecommendations: 'การบริหารรอบการสั่งซื้อแบบกระชับ (Frequent Small Batches) ร่วมกับการติดป้าย FIFO คือกุญแจสำคัญที่สุดในการลด Food Waste ของร้านอาหาร'
-  };
-}
-
-function generateFallbackPOSUpsell(cart: any[], menuItems: any[] = [], _recentOrders: any[] = []) {
-  const hasItems = cart && cart.length > 0;
-  const cartNames = (cart || []).map(i => i.name || '').join(' ');
-  const hasDrinkInCart = /ชา|น้ำ|เย็น|เก๊กฮวย|โอเลี้ยง|โค้ก|โซดา|เป๊ปซี่|เครื่องดื่ม/i.test(cartNames);
-  const hasEggInCart = /ไข่ดาว|ไข่เจียว|ไข่ต้ม|ไข่เยี่ยวม้า/i.test(cartNames);
-  const hasSoupInCart = /ต้ม|ซุป|แกง|จืด|เล้ง|แซ่บ/i.test(cartNames);
-
-  const findMenu = (keyword: string, fallbackId: string, fallbackName: string, fallbackPrice: number, fallbackCat: string, img?: string) => {
-    const matched = menuItems.find(m => m.name?.includes(keyword) || m.id === fallbackId);
-    if (matched) {
-      return {
-        menuItemId: matched.id,
-        name: matched.name,
-        price: matched.price,
-        category: matched.category || fallbackCat,
-        image: matched.image || img || ''
-      };
-    }
-    return {
-      menuItemId: fallbackId,
-      name: fallbackName,
-      price: fallbackPrice,
-      category: fallbackCat,
-      image: img || ''
-    };
-  };
-
-  const suggestions = [];
-
-  if (!hasEggInCart) {
-    const egg = findMenu('ไข่ดาว', 'add-1', 'ไข่ดาวเป็ดลาวาเยิ้มๆ', 15, 'addon');
-    suggestions.push({
-      ...egg,
-      tag: '🍳 ท็อปปิ้งอันดับ 1',
-      reason: 'ลูกค้า 88% สั่งคู่กับเมนูกะเพรา ช่วยเพิ่มความนัวเข้ากันและเพิ่มมูลค่าต่อบิลทันที +15 บาท',
-      confidenceScore: 96
-    });
-  }
-
-  if (!hasDrinkInCart) {
-    const drink = findMenu('ชา', 'drk-1', 'ชามะนาวเย็นสดชื่น', 35, 'drink');
-    suggestions.push({
-      ...drink,
-      tag: '🥤 ตัดเผ็ดร้อน',
-      reason: 'เครื่องดื่มเปรี้ยวหวานสดชื่นช่วยตัดความเผ็ดร้อนของผัดกะเพราได้อย่างลงตัว',
-      confidenceScore: 93
-    });
-  } else {
-    const side = findMenu('เกี๊ยว', 'add-2', 'เกี๊ยวกรอบหมูสับทอดใหม่', 39, 'addon');
-    suggestions.push({
-      ...side,
-      tag: '🥟 ของทานเล่นคู่กะเพรา',
-      reason: 'ความกรุบกรอบของเกี๊ยวทอดช่วยเพิ่มเท็กซ์เจอร์ในการทานคู่กะเพราให้เพลิดเพลินยิ่งขึ้น',
-      confidenceScore: 89
-    });
-  }
-
-  if (!hasSoupInCart) {
-    const soup = findMenu('ต้ม', 'soup-1', 'ต้มจืดเต้าหู้หมูสับหม้อไฟ', 89, 'menu');
-    suggestions.push({
-      ...soup,
-      tag: '🍲 ซดคล่องคอ',
-      reason: 'น้ำซุปต้มจืดร้อนๆ ช่วยคลายความเผ็ดและซดคล่องคอ ทานคู่กับข้าวสวยกะเพราอร่อยกลมกล่อม',
-      confidenceScore: 88
-    });
-  } else {
-    const crispy = findMenu('หมูกรอบ', 'main-2', 'กะเพราหมูกรอบคริสปี้', 85, 'menu');
-    suggestions.push({
-      ...crispy,
-      tag: '🔥 เมนูขายดีอันดับ 1',
-      reason: 'เมนูยอดฮิตที่ลูกค้ามักสั่งเพิ่มเป็นกับข้าวกลับบ้านหรือแบ่งทานด้วยกันในโต๊ะ',
-      confidenceScore: 90
-    });
-  }
-
-  return {
-    bundleTitle: !hasItems 
-      ? '💡 แนะนำลูกค้า: "วันนี้รับเป็นกะเพราหมูสับโบราณ หรือกะเพราหมูกรอบคริสปี้ขายดีอันดับ 1 ดีครับ/คะ?"'
-      : '💡 บทพูดอัปเซลลูกค้า: "รับไข่ดาวเป็ดลาวาเยิ้มๆ หรือชามะนาวเย็นสดชื่นทานคู่กะเพราเพิ่มด้วยไหมครับ/คะ?"',
-    scriptForCashier: !hasItems
-      ? 'แนะนำเมนู Signature ของร้านสำหรับลูกค้าที่ยังตัดสินใจไม่ได้'
-      : 'เสนอเมนูคู่กินที่ช่วยตัดรสเผ็ดหรือเพิ่มความนัว เพื่อเพิ่มยอดขายเฉลี่ยต่อบิล (Ticket Size) +20-30%',
-    cartItemCount: cart?.length || 0,
-    suggestions: suggestions.slice(0, 3)
   };
 }
 

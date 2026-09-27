@@ -1,3 +1,4 @@
+import { apiUrl } from '../../utils/apiClient';
 import React, { useState, useEffect } from 'react';
 import { calcRecipeItemCostAndDeduction } from '../../utils/recipeUtils';
 import { usePOS } from '../../context/POSContext';
@@ -148,7 +149,7 @@ export const AIInventoryForecastPanel: React.FC = () => {
   const fetchAIForecast = async (days: number) => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/ai/inventory-forecast', {
+      const res = await fetch(apiUrl('/api/ai/inventory-forecast'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -166,7 +167,7 @@ export const AIInventoryForecastPanel: React.FC = () => {
       const data = await res.json();
       if (data && data.insights && Array.isArray(data.insights)) {
         setForecastItems(data.insights);
-        setSourceEngine(data.source || 'gemini-3.6-flash');
+        setSourceEngine(data.source || 'claude');
         setSummaryText(data.summaryText || `ระบบ AI วิเคราะห์ความเสี่ยงขาดสต๊อกล่วงหน้า ${days} วัน เรียบร้อยแล้ว`);
       } else {
         runLocalFallbackForecast(days);

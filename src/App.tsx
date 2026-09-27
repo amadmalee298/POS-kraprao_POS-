@@ -4,22 +4,25 @@ import { HeaderNavbar } from './components/HeaderNavbar';
 import { SidebarDrawer } from './components/SidebarDrawer';
 import { LoginScreen } from './components/LoginScreen';
 import { POSView } from './components/pos/POSView';
-import { KDSView } from './components/kds/KDSView';
-import { InventoryView } from './components/inventory/InventoryView';
-import { AccountingView } from './components/accounting/AccountingView';
-import { SettingsView } from './components/settings/SettingsView';
-import { OrderHistoryView } from './components/orders/OrderHistoryView';
-import {
-  ExecutiveDashboardView,
-  QrOrderingView,
-  RecipeCostingView,
-  POManagementView,
-  QuotationView,
-  TaxReceiptView,
-  CRMView,
-  LineNotifyView,
-  AnalyticsView
-} from './components/ExtendedViews';
+// Heavy views are code-split so the POS screen loads fast on tablets; each chunk is fetched on first use
+const lazyNamed = <T extends Record<string, any>>(loader: () => Promise<T>, name: keyof T) =>
+  React.lazy(() => loader().then(m => ({ default: m[name] as React.ComponentType })));
+
+const KDSView = lazyNamed(() => import('./components/kds/KDSView'), 'KDSView');
+const InventoryView = lazyNamed(() => import('./components/inventory/InventoryView'), 'InventoryView');
+const AccountingView = lazyNamed(() => import('./components/accounting/AccountingView'), 'AccountingView');
+const SettingsView = lazyNamed(() => import('./components/settings/SettingsView'), 'SettingsView');
+const OrderHistoryView = lazyNamed(() => import('./components/orders/OrderHistoryView'), 'OrderHistoryView');
+const loadExtendedViews = () => import('./components/ExtendedViews');
+const ExecutiveDashboardView = lazyNamed(loadExtendedViews, 'ExecutiveDashboardView');
+const QrOrderingView = lazyNamed(loadExtendedViews, 'QrOrderingView');
+const RecipeCostingView = lazyNamed(loadExtendedViews, 'RecipeCostingView');
+const POManagementView = lazyNamed(loadExtendedViews, 'POManagementView');
+const QuotationView = lazyNamed(loadExtendedViews, 'QuotationView');
+const TaxReceiptView = lazyNamed(loadExtendedViews, 'TaxReceiptView');
+const CRMView = lazyNamed(loadExtendedViews, 'CRMView');
+const LineNotifyView = lazyNamed(loadExtendedViews, 'LineNotifyView');
+
 import {
   WifiOff,
   RefreshCw
@@ -72,7 +75,7 @@ const MainLayout: React.FC = () => {
   }, [settings.autoLockMinutes, isLocked, setIsLocked]);
 
   return (
-    <div className="min-h-screen bg-[#0d0704] text-stone-100 flex flex-col font-sans antialiased selection:bg-orange-500 selection:text-white">
+    <div className="h-[100dvh] bg-[#0d0704] text-stone-100 flex flex-col font-sans antialiased selection:bg-orange-500 selection:text-white">
       {/* Fullscreen PIN Lock Screen */}
       {isLocked && <LoginScreen />}
 
@@ -110,8 +113,16 @@ const MainLayout: React.FC = () => {
       <SidebarDrawer />
 
       {/* Main Content Body */}
-      <main className="flex-1 overflow-x-hidden overflow-y-auto">
-        {activeTab === 'dashboard' && <ExecutiveDashboardView />}
+      <main className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto">
+        <React.Suspense
+          fallback={
+            <div className="flex items-center justify-center py-24 text-stone-400 text-sm">
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              กำลังโหลด...
+            </div>
+          }
+        >
+        {(activeTab === 'dashboard' || activeTab === 'analytics') && <ExecutiveDashboardView />}
         {activeTab === 'pos' && <POSView />}
         {activeTab === 'qr' && <QrOrderingView />}
         {activeTab === 'kds' && <KDSView />}
@@ -124,8 +135,8 @@ const MainLayout: React.FC = () => {
         {activeTab === 'order_history' && <OrderHistoryView />}
         {activeTab === 'crm' && <CRMView />}
         {activeTab === 'line_notify' && <LineNotifyView />}
-        {activeTab === 'analytics' && <AnalyticsView />}
         {activeTab === 'settings' && <SettingsView />}
+        </React.Suspense>
       </main>
 
       {/* Visual Conflict Resolver Modal for Local vs Cloud Mismatch */}

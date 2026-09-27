@@ -251,7 +251,20 @@ const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512
   </g>
 </svg>`;
 
-import icon512Png from './icon-512.png';
+// 256px JPEG (~18 KB). The former 1.2 MB icon-512.png / logo.png files were corrupted
+// (binary saved as UTF-8 text) and could not be decoded by any browser.
+import shopLogoJpg from './logo-256.jpg';
 
 export const FALLBACK_SVG_LOGO = `data:image/svg+xml;utf8,${encodeURIComponent(svgContent)}`;
-export const SHOP_LOGO_URL = icon512Png;
+export const SHOP_LOGO_URL = shopLogoJpg;
+
+/**
+ * Settings saved by older builds may hold the URL of a logo file that no longer exists
+ * (e.g. .../assets/icon-512-<hash>.png). Map those, and empty values, to the current logo.
+ */
+export const normalizeShopLogoUrl = (url: string | undefined | null): string => {
+  if (!url || url.startsWith('data:image/svg+xml')) return SHOP_LOGO_URL;
+  if (/\/assets\/(icon-512|logo)-[\w-]+\.(png|jpe?g)(\?.*)?$/.test(url) && url !== SHOP_LOGO_URL) return SHOP_LOGO_URL;
+  if (/(^|\/)(logo|icon|icon-512)\.(png|jpe?g)$/.test(url)) return SHOP_LOGO_URL;
+  return url;
+};

@@ -11,6 +11,11 @@ interface PinModalProps {
   requiredRole?: 'admin' | 'manager';
 }
 
+const MAX_PIN_ATTEMPTS = 5;
+const LOCKOUT_BASE_MS = 30_000;
+// Shared across modal instances so closing and reopening does not reset the counter
+const pinLockout = { failed: 0, until: 0 };
+
 export const PinModal: React.FC<PinModalProps> = ({
   isOpen,
   onClose,
@@ -30,6 +35,13 @@ export const PinModal: React.FC<PinModalProps> = ({
       return;
     }
 
+    if (Date.now() < pinLockout.until) {
+      const secs = Math.ceil((pinLockout.until - Date.now()) / 1000);
+      setError(`ใส่ PIN ผิดหลายครั้ง กรุณารอ ${secs} วินาที`);
+      setPin('');
+      return;
+    }
+
     if (requiredRole) {
       if (userToVerify.role !== 'admin' && userToVerify.role !== requiredRole) {
         setError(`สิทธิ์ไม่เพียงพอ! ต้องการสิทธิ์ระดับ ${requiredRole === 'admin' ? 'เจ้าของร้าน (Admin)' : 'ผู้จัดการร้าน (Manager)'}`);
@@ -38,6 +50,7 @@ export const PinModal: React.FC<PinModalProps> = ({
     }
 
     if (currentPin === userToVerify.pin) {
+      pinLockout.failed = 0;
       logSecurityEvent({
         userId: userToVerify.id,
         userName: userToVerify.name,
@@ -60,6 +73,10 @@ export const PinModal: React.FC<PinModalProps> = ({
         status: 'FAILED',
         details: `รหัส PIN ไม่ถูกต้องขณะยืนยันตัวตนสำหรับผู้ใช้ ${userToVerify.name}`
       });
+      pinLockout.failed += 1;
+      if (pinLockout.failed % MAX_PIN_ATTEMPTS === 0) {
+        pinLockout.until = Date.now() + LOCKOUT_BASE_MS * (pinLockout.failed / MAX_PIN_ATTEMPTS);
+      }
       setError('รหัสพนักงาน (PIN) ไม่ถูกต้อง!');
       setPin('');
     }

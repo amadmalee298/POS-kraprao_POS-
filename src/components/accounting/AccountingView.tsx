@@ -1941,7 +1941,7 @@ export const AccountingView: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] bg-slate-950 text-slate-100 overflow-hidden">
+    <div className="flex flex-col h-full bg-slate-950 text-slate-100 overflow-hidden">
       {/* Top Header Navbar */}
       <div className="p-3 sm:p-4 bg-slate-900 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
         <div className="flex items-center space-x-2.5">

@@ -19,9 +19,9 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { PaymentMethod, OrderType, CustomerTaxInfo, Order, QrPaymentOption } from '../../types';
-import { generatePromptPayPayload } from '../../utils/promptpay';
+import { resolvePromptPayId } from '../../utils/promptpay';
 import { PromptPayQR } from '../common/PromptPayQR';
-import { calculateOrderTotals } from '../../utils/tax';
+import { computeCartTotals } from '../../utils/orderUtils';
 import { TouchNumpadModal } from './TouchNumpad';
 
 const DEFAULT_POS_PAYMENT_METHODS: QrPaymentOption[] = [
@@ -60,13 +60,18 @@ interface PaymentModalProps {
   onClose: () => void;
   onOrderCompleted: (order: Order) => void;
   initialPaymentMethod?: PaymentMethod;
+  /** Order type / table already chosen on the POS screen */
+  initialOrderType?: OrderType;
+  initialTable?: string;
 }
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({
   isOpen,
   onClose,
   onOrderCompleted,
-  initialPaymentMethod = 'cash'
+  initialPaymentMethod = 'cash',
+  initialOrderType = 'takeaway',
+  initialTable
 }) => {
   const { cart, discount, createOrder, currentBranch, settings } = usePOS();
 
@@ -89,29 +94,27 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [promptpayCountdown, setPromptpayCountdown] = useState(180);
 
   // Calculate totals
-  const rawSubtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
-  let calculatedDiscount = 0;
-  if (discount.type === 'fixed') {
-    calculatedDiscount = Math.min(discount.amount, rawSubtotal);
-  } else {
-    calculatedDiscount = (rawSubtotal * Math.min(discount.amount, 100)) / 100;
-  }
-  const { vatAmount, vatRate, vatType, enableVat, grandTotal } = calculateOrderTotals(
+  const {
     rawSubtotal,
-    calculatedDiscount,
-    settings
-  );
+    discountAmount: calculatedDiscount,
+    vatAmount,
+    vatRate,
+    vatType,
+    enableVat,
+    grandTotal
+  } = computeCartTotals(cart, discount, settings);
 
   useEffect(() => {
     if (isOpen) {
       if (initialPaymentMethod) {
         setPaymentMethod(initialPaymentMethod);
       }
-      setOrderType('takeaway');
+      setOrderType(initialOrderType);
+      if (initialTable) setTableNumber(initialTable);
       setTenderedAmount(grandTotal);
       setPromptpayCountdown(180);
     }
-  }, [isOpen, grandTotal, initialPaymentMethod]);
+  }, [isOpen, grandTotal, initialPaymentMethod, initialOrderType, initialTable]);
 
   // PromptPay countdown tick
   useEffect(() => {
@@ -169,24 +172,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   };
 
   // Resolve active PromptPay and TrueMoney accounts from configured QR Payment Methods or Branch
-  const activePromptPayMethod = settings.qrPaymentMethods?.find(m => m.type === 'promptpay' && m.enabled !== false);
   const activeTrueMoneyMethod = settings.qrPaymentMethods?.find(m => m.type === 'truemoney' && m.enabled !== false);
 
-  const activePromptPayId = activePromptPayMethod?.accountNumber?.trim()
-    || currentBranch.promptpayMobileOrTaxId
-    || settings.promptpayMobileOrTaxId
-    || settings.promptPayId
-    || '0812345678';
+  const activePromptPayId = resolvePromptPayId(settings, currentBranch);
 
   const activeTrueMoneyNumber = activeTrueMoneyMethod?.accountNumber?.trim()
     || currentBranch.promptpayMobileOrTaxId
     || settings.promptpayMobileOrTaxId
-    || '081-234-5678';
+    || '';
 
-  const promptpayPayloadStr = generatePromptPayPayload(
-    activePromptPayId,
-    grandTotal
-  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-2 sm:p-4 animate-in fade-in duration-200">

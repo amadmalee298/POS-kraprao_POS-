@@ -1,6 +1,12 @@
 @import "tailwindcss";
 @import "./styles/print-receipt.css";
 
+/* Large prices / totals on the POS screens */
+@utility font-num {
+  font-family: 'Kanit', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
 @utility no-scrollbar {
   ::-webkit-scrollbar {
     display: none;

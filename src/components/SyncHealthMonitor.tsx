@@ -1,3 +1,4 @@
+import { apiUrl } from '../utils/apiClient';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Wifi,
@@ -98,7 +99,7 @@ export const SyncHealthMonitor: React.FC = () => {
 
       const start = performance.now();
       try {
-        const res = await fetch('/api/health', { method: 'GET', cache: 'no-store' });
+        const res = await fetch(apiUrl('/api/health'), { method: 'GET', cache: 'no-store' });
         const end = performance.now();
         const duration = Math.round(end - start);
 
@@ -143,7 +144,7 @@ export const SyncHealthMonitor: React.FC = () => {
     setIsPinging(true);
     const start = performance.now();
     try {
-      const res = await fetch('/api/health', { method: 'GET', cache: 'no-store' });
+      const res = await fetch(apiUrl('/api/health'), { method: 'GET', cache: 'no-store' });
       const end = performance.now();
       const duration = Math.round(end - start);
 

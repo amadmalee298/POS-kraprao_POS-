@@ -1,3 +1,4 @@
+import { apiUrl } from '../../utils/apiClient';
 import React, { useState, useEffect } from 'react';
 import { calcRecipeItemCostAndDeduction } from '../../utils/recipeUtils';
 import {
@@ -70,7 +71,7 @@ export const AIMenuEngineeringPanel: React.FC = () => {
   const fetchMenuEngineeringAnalysis = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/ai/menu-engineering', {
+      const response = await fetch(apiUrl('/api/ai/menu-engineering'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -289,7 +290,7 @@ export const AIMenuEngineeringPanel: React.FC = () => {
                 <Sparkles className="w-3 h-3 text-amber-400 animate-spin" />
                 <span>AI Menu Engineering & Price Advisor</span>
               </span>
-              <span className="text-xs text-slate-400 font-mono">Gemini 3.6 Flash</span>
+              <span className="text-xs text-slate-400 font-mono">Claude</span>
             </div>
             <h3 className="text-lg font-black text-slate-100 flex items-center space-x-2">
               <span>วิเคราะห์วิศวกรรมเมนูอาหาร & ข้อเสนอแนะปรับราคาด้วย AI</span>

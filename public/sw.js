@@ -1,4 +1,5 @@
-const CACHE_NAME = 'kaprao-pos-v2';
+// Bump when static assets change so phones drop the old (broken) logo from the cache
+const CACHE_NAME = 'kaprao-pos-v3';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -58,20 +59,8 @@ self.addEventListener('fetch', (event) => {
               puzzleCount: 1,
               dogCount: 0,
               marketTrendSummary: 'ทำงานในโหมดออฟไลน์: บันทึกข้อมูลเมนูและต้นทุนในเครื่องเพื่อใช้งานต่อเนื่องโดยไม่สะดุด'
-            },
-            receiptData: {
-              title: 'ใบเสร็จวัตถุดิบ (โหมดออฟไลน์)',
-              vendorName: 'ร้านค้าวัตถุดิบสด',
-              date: new Date().toISOString().split('T')[0],
-              category: 'raw_material',
-              amount: 1500.00,
-              includeVat: true,
-              vatAmount: 98.13,
-              netAmount: 1401.87,
-              refNumber: 'OFFLINE-' + Math.floor(100000 + Math.random() * 900000),
-              note: 'สแกนในโหมดออฟไลน์: บันทึกรายการลงเครื่องแล้ว',
-              confidenceScore: 90
             }
+            // No receiptData here: an offline "scan" must never invent an expense amount
           }),
           {
             status: 200,
