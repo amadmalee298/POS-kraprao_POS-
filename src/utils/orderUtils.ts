@@ -1,4 +1,4 @@
-import { CartItem, Ingredient, Order, SpiceLevel, SystemSettings, MenuItem } from '../types';
+import { AddOnOption, CartItem, Ingredient, Order, SpiceLevel, SystemSettings, MenuItem } from '../types';
 import { calcRecipeItemCostAndDeduction } from './recipeUtils';
 import { calculateOrderTotals, TaxCalculationResult } from './tax';
 
@@ -203,4 +203,25 @@ export function mergeCloudOrders(
 export function orderVatBreakdown(order: Pick<Order, 'grandTotal' | 'vatAmount'>): { vat: number; base: number } {
   const vat = roundMoney(Math.max(0, order.vatAmount || 0));
   return { vat, base: roundMoney((order.grandTotal || 0) - vat) };
+}
+
+/**
+ * Items of an order that came from the cloud (e.g. a customer's QR order) carry only names and
+ * ids. Re-attach the shop's own menu items and add-ons so recipes are known for stock deduction.
+ */
+export function resolveItemsForStock(items: CartItem[], menuItems: MenuItem[], addOns: AddOnOption[]): CartItem[] {
+  const menuById = new Map(menuItems.map(m => [m.id, m]));
+  const addOnById = new Map(addOns.map(a => [a.id, a]));
+  const addOnByName = new Map(addOns.map(a => [a.name, a]));
+  return items.map(item => ({
+    ...item,
+    menuItem: menuById.get(item.menuItem?.id) || item.menuItem,
+    selectedAddOns: (item.selectedAddOns || []).map(a => addOnById.get(a.id) || addOnByName.get(a.name) || a)
+  }));
+}
+
+/** Short, readable number for a customer's QR order, e.g. "#Q5-7K2M" for table 5. */
+export function generateQrOrderNumber(table: string): string {
+  const safeTable = String(table || '').replace(/[^0-9A-Za-zก-๙-]/g, '').slice(0, 8) || '0';
+  return `#Q${safeTable}-${randomSuffix(4)}`;
 }

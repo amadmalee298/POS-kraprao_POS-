@@ -2220,3 +2220,68 @@ export function subscribeToDeletedRecords(
 
 
 
+
+export interface CustomerCatalog {
+  branch: { id: string; name: string; promptpayMobileOrTaxId: string };
+  menuItems: MenuItem[];
+  categories: CategoryItem[];
+  addOns: AddOnOption[];
+  settings: Partial<SystemSettings>;
+}
+
+/**
+ * Everything the customer QR ordering page needs, and nothing else: menu, categories,
+ * toppings, shop name / PromptPay and the few settings that affect prices.
+ * The customer page never loads orders, accounting or stock.
+ */
+export async function fetchCustomerCatalog(branchId: string): Promise<CustomerCatalog | null> {
+  if (!dbInstance) return null;
+  await waitForFirebaseAuth();
+  try {
+    const [menuItems, categories, branchSnap, addOnSnap, settingsSnap] = await Promise.all([
+      fetchMenuItemsFromFirestore(),
+      fetchCategoriesFromFirestore(branchId),
+      getDoc(doc(dbInstance, 'branches', branchId)),
+      getDoc(doc(dbInstance, 'branches', branchId, 'config', 'addons')),
+      getDoc(doc(dbInstance, 'branches', branchId, 'config', 'settings'))
+    ]);
+    const b = branchSnap.exists() ? branchSnap.data() : {};
+    const st = settingsSnap.exists() ? settingsSnap.data() : {};
+    return {
+      branch: {
+        id: branchId,
+        name: String(b.name || st.shopName || ''),
+        promptpayMobileOrTaxId: String(b.promptpayMobileOrTaxId || st.promptpayMobileOrTaxId || '')
+      },
+      menuItems,
+      categories: categories || [],
+      addOns: addOnSnap.exists() && Array.isArray(addOnSnap.data().addOns) ? (addOnSnap.data().addOns as AddOnOption[]) : [],
+      settings: {
+        shopName: st.shopName,
+        shopLogoUrl: st.shopLogoUrl,
+        enableVat: st.enableVat,
+        vatRate: st.vatRate,
+        vatType: st.vatType,
+        promptpayMobileOrTaxId: st.promptpayMobileOrTaxId,
+        qrPaymentMethods: st.qrPaymentMethods
+      }
+    };
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to load customer catalog:', err);
+    return null;
+  }
+}
+
+/** Follow one order's status (used by the customer after placing a QR order). */
+export function subscribeToOrderStatus(
+  orderId: string,
+  onUpdate: (status: OrderStatus | null) => void
+): () => void {
+  if (!dbInstance) return () => {};
+  const orderDocId = orderId.startsWith('ord-') ? orderId : `ord-${orderId}`;
+  return onSnapshot(
+    doc(dbInstance, 'orders', orderDocId),
+    snap => onUpdate(snap.exists() ? ((snap.data().status as OrderStatus) || null) : null),
+    err => console.warn('[Firebase Service] Order status listener error:', err)
+  );
+}

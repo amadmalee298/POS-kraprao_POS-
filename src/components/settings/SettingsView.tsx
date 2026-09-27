@@ -72,7 +72,8 @@ const DEFAULT_QR_METHODS: QrPaymentOption[] = [
     id: 'promptpay',
     name: 'พร้อมเพย์ QR Code',
     type: 'promptpay',
-    accountNumber: '081-234-5678',
+    // Empty until the shop enters its real PromptPay number (a QR is only shown for a valid one)
+    accountNumber: '',
     accountName: 'ร้านครัวกะเพรา POS',
     instructions: 'สแกน QR Code ด้วยแอปธนาคารทุกธนาคารเพื่อชำระเงิน',
     enabled: true
@@ -81,16 +82,16 @@ const DEFAULT_QR_METHODS: QrPaymentOption[] = [
     id: 'truemoney',
     name: 'TrueMoney Wallet',
     type: 'truemoney',
-    accountNumber: '081-234-5678',
+    accountNumber: '',
     accountName: 'ร้านครัวกะเพรา POS',
     instructions: 'โอนผ่านแอป TrueMoney Wallet เข้าเบอร์ร้าน',
-    enabled: true
+    enabled: false
   },
   {
     id: 'linepay',
     name: 'Rabbit LINE Pay',
     type: 'linepay',
-    accountNumber: 'MERCHANT-KAPRAO-99',
+    accountNumber: '',
     accountName: 'ครัวกะเพรา POS',
     instructions: 'ชำระผ่าน Rabbit LINE Pay สแกนที่หน้าร้านหรือในแอป',
     enabled: false

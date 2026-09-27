@@ -113,7 +113,8 @@ import {
   computeSaleStockDeductions,
   applyStockDeductions,
   computeCartTotals,
-  mergeCloudOrders
+  mergeCloudOrders,
+  resolveItemsForStock
 } from '../utils/orderUtils';
 import { crc16 } from '../utils/promptpay';
 import { SHOP_LOGO_URL, normalizeShopLogoUrl } from '../assets/logo';
@@ -378,6 +379,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const recentLocalMenuUpdatesRef = useRef<Map<string, number>>(new Map());
   // Track recently updated ingredient IDs and timestamps to protect local saves from being overwritten by stale cloud snapshots
   const recentLocalIngredientUpdatesRef = useRef<Map<string, number>>(new Map());
+  // QR orders whose stock was already deducted on approval (guards against double taps)
+  const approvedQrStockRef = useRef<Set<string>>(new Set());
   // Orders already re-sent to the cloud by the merge (avoids repeat writes)
   const pushedBackRef = useRef<Set<string>>(new Set());
 
@@ -1783,10 +1786,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     try {
       console.log(`[POS Storage Sync] Initializing LocalStorage data load for key '${LOCAL_STORAGE_KEY}'...`);
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('table') || params.get('qr')) {
-        setActiveTab('qr');
-      }
 
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (saved) {
@@ -2921,7 +2920,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     newOrder.checksum = computeOrderChecksum(newOrder);
 
-    deductStockForSale(items);
+    // Orders waiting for staff approval do not touch stock yet (see updateOrderStatus)
+    if (initialStatus !== 'pending-qr') deductStockForSale(items);
     setOrders(prev => [newOrder, ...prev]);
     playKitchenChime();
     pushNewOrderToCloud(newOrder);
@@ -2944,6 +2944,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateOrderStatus = (orderId: string, status: OrderStatus) => {
     const now = new Date().toISOString();
     let updatedTarget: Order | undefined;
+
+    // Approving a customer's QR order is when its ingredients leave the stock. A rejected
+    // (cancelled) QR order never deducted anything, so nothing needs to be returned.
+    const normalizedId = orderId.replace(/^ord-/, '');
+    const current = orders.find(o => o.id.replace(/^ord-/, '') === normalizedId);
+    if (
+      current?.status === 'pending-qr' &&
+      status !== 'pending-qr' &&
+      status !== 'cancelled' &&
+      !approvedQrStockRef.current.has(normalizedId)
+    ) {
+      approvedQrStockRef.current.add(normalizedId);
+      deductStockForSale(resolveItemsForStock(current.items, menuItems, addOns));
+    }
 
     setOrders(prev => {
       const next = prev.map(ord => {
@@ -3006,6 +3020,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     }
   };
+
+  // "Auto-approve QR orders" is a per-device switch: the device that has it on (e.g. the
+  // counter tablet) approves customers' QR orders as they arrive, which sends them to the
+  // kitchen and deducts their stock exactly once.
+  const updateOrderStatusRef = useRef(updateOrderStatus);
+  updateOrderStatusRef.current = updateOrderStatus;
+  useEffect(() => {
+    if (!autoApproveQR || !isStorageLoaded) return;
+    orders
+      .filter(o => o.status === 'pending-qr' && o.branchId === currentBranch.id)
+      .forEach(o => updateOrderStatusRef.current(o.id, 'pending'));
+  }, [orders, autoApproveQR, isStorageLoaded, currentBranch.id]);
 
   const cancelOrder = (
     orderId: string,
