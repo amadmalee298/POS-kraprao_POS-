@@ -22,6 +22,7 @@ import { PinModal } from './PinModal';
 import { OfflineSyncModal } from './OfflineSyncModal';
 import { SyncHealthMonitor } from './SyncHealthMonitor';
 import { MerchantConnectionModal } from './common/MerchantConnectionModal';
+import { gatewayEnabled } from '../services/paymentGateway';
 import { GoogleSheetsModal } from './common/GoogleSheetsModal';
 import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
 
@@ -156,11 +157,11 @@ export const HeaderNavbar: React.FC = () => {
               <button
                 onClick={() => setIsMerchantModalOpen(true)}
                 className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-[#180f0a] hover:bg-[#25170f] border border-[#2d1b12] text-stone-300 transition active:scale-95 shadow-sm"
-                title="คลิกเพื่อจัดการการเชื่อมต่อแอป Merchant Pro"
+                title="ตั้งค่า Payment Gateway (PromptPay อัตโนมัติ)"
               >
                 <Store className="w-3.5 h-3.5 text-blue-400" />
-                <span className="text-[11px]">Merchant Pro</span>
-                {settings.merchantSettings?.isConnected !== false ? (
+                <span className="text-[11px]">Payment Gateway</span>
+                {gatewayEnabled(settings) ? (
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 ) : (
                   <span className="w-2 h-2 rounded-full bg-stone-500" />

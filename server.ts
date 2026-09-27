@@ -3,6 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import { runReceiptOcr } from './src/utils/receiptOcr';
+import { handleOpnPromptPay } from './api/_opn';
 import { createClaudeJsonCaller, CLAUDE_MODEL, ClaudeCallError, type ClaudeJsonCaller, type ClaudeEffort } from './src/utils/claudeClient';
 
 // JSON Schema type names used by the response schemas below
@@ -647,6 +648,18 @@ ${JSON.stringify(ingredients, null, 2)}
     } catch (err: any) {
       console.error('LINE notification error:', err);
       return res.status(500).json({ error: err.message || 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ LINE ได้' });
+    }
+  });
+
+  // API Route: Opn Payments PromptPay (same logic as api/payment/promptpay.ts on Vercel)
+  app.all('/api/payment/promptpay', async (req, res) => {
+    try {
+      const result = await handleOpnPromptPay(req.method, req.query as Record<string, unknown>, req.body, process.env.OMISE_SECRET_KEY);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(result.status).json(result.body);
+    } catch (err: any) {
+      console.error('Payment gateway error:', err);
+      return res.status(500).json({ error: err.message || 'เชื่อมต่อ Payment Gateway ไม่สำเร็จ' });
     }
   });
 

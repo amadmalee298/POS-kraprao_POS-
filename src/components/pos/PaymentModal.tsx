@@ -21,6 +21,8 @@ import { usePOS } from '../../context/POSContext';
 import { PaymentMethod, OrderType, CustomerTaxInfo, Order, QrPaymentOption } from '../../types';
 import { resolvePromptPayId } from '../../utils/promptpay';
 import { PromptPayQR } from '../common/PromptPayQR';
+import { GatewayPromptPayPanel } from '../common/GatewayPromptPayPanel';
+import { gatewayEnabled } from '../../services/paymentGateway';
 import { computeCartTotals } from '../../utils/orderUtils';
 import { TouchNumpadModal } from './TouchNumpad';
 
@@ -92,6 +94,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
   // PromptPay countdown
   const [promptpayCountdown, setPromptpayCountdown] = useState(180);
+  // The payment gateway has reported this bill as paid
+  const [gatewayPaid, setGatewayPaid] = useState(false);
 
   // Calculate totals
   const {
@@ -113,6 +117,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       if (initialTable) setTableNumber(initialTable);
       setTenderedAmount(grandTotal);
       setPromptpayCountdown(180);
+      setGatewayPaid(false);
     }
   }, [isOpen, grandTotal, initialPaymentMethod, initialOrderType, initialTable]);
 
@@ -137,9 +142,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setTenderedAmount(prev => prev + amount);
   };
 
-  const handleProcessCheckout = () => {
+  const handleProcessCheckout = (paidByGateway = false) => {
     if (paymentMethod === 'cash' && tenderedAmount < grandTotal) {
       alert(`จำนวนเงินสดรับมาไม่เพียงพอ! ขาดอีก ${grandTotal - tenderedAmount} บาท`);
+      return;
+    }
+    if (
+      paymentMethod === 'promptpay' &&
+      gatewayEnabled(settings) &&
+      !paidByGateway &&
+      !gatewayPaid &&
+      !window.confirm('ระบบยังไม่ได้รับยอดจากการสแกนนี้\nตรวจสลิปหรือแอปธนาคารแล้ว ยืนยันชำระเลยหรือไม่?')
+    ) {
       return;
     }
 
@@ -181,6 +195,20 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     || settings.promptpayMobileOrTaxId
     || '';
 
+
+  const staticPromptPay = (
+    <div className="flex flex-col items-center justify-center py-1 sm:py-2 space-y-2 sm:space-y-3">
+      <PromptPayQR promptPayId={activePromptPayId} amount={grandTotal} branchName={currentBranch.name} size={220} />
+      <div className="text-center">
+        <div className="text-xs sm:text-sm font-bold text-slate-200">
+          ยอดสแกนจ่าย: <span className="text-amber-400 text-base sm:text-lg font-extrabold">{grandTotal} ฿</span>
+        </div>
+        <div className="text-[10px] sm:text-[11px] text-sky-400 font-mono mt-1">
+          หมดเวลาใน: {Math.floor(promptpayCountdown / 60)}:{(promptpayCountdown % 60).toString().padStart(2, '0')} นาที
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-2 sm:p-4 animate-in fade-in duration-200">
@@ -436,25 +464,21 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             )}
 
             {/* PROMPTPAY PANEL */}
-            {paymentMethod === 'promptpay' && (
-              <div className="flex flex-col items-center justify-center py-1 sm:py-2 space-y-2 sm:space-y-3">
-                <PromptPayQR
-                  promptPayId={activePromptPayId}
+            {paymentMethod === 'promptpay' && gatewayEnabled(settings) && (
+              <div className="py-1 sm:py-2">
+                <GatewayPromptPayPanel
                   amount={grandTotal}
-                  branchName={currentBranch.name}
-                  size={220}
+                  reference={currentBranch.name}
+                  serverUrl={settings.merchantSettings?.serverUrl}
+                  onPaid={() => {
+                    setGatewayPaid(true);
+                    if (settings.merchantSettings?.autoConfirmPayment === true) handleProcessCheckout(true);
+                  }}
+                  fallback={staticPromptPay}
                 />
-
-                <div className="text-center">
-                  <div className="text-xs sm:text-sm font-bold text-slate-200">
-                    ยอดสแกนจ่าย: <span className="text-amber-400 text-base sm:text-lg font-extrabold">{grandTotal} ฿</span>
-                  </div>
-                  <div className="text-[10px] sm:text-[11px] text-sky-400 font-mono mt-1">
-                    หมดเวลาใน: {Math.floor(promptpayCountdown / 60)}:{(promptpayCountdown % 60).toString().padStart(2, '0')} นาที
-                  </div>
-                </div>
               </div>
             )}
+            {paymentMethod === 'promptpay' && !gatewayEnabled(settings) && staticPromptPay}
 
             {/* TRUEMONEY PANEL */}
             {paymentMethod === 'truemoney' && (
@@ -620,7 +644,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             </button>
 
             <button
-              onClick={handleProcessCheckout}
+              onClick={() => handleProcessCheckout()}
               className="py-2.5 sm:py-3 px-3 sm:px-6 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm rounded-xl shadow-lg shadow-emerald-950/60 flex items-center space-x-1.5 sm:space-x-2 transition active:scale-[0.99]"
             >
               <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-300 shrink-0" />

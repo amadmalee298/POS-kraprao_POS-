@@ -5,6 +5,8 @@ import { PaymentMethod } from '../../types';
 import { suggestCashAmounts } from '../../utils/orderUtils';
 import { resolvePromptPayId } from '../../utils/promptpay';
 import { PromptPayQR } from '../common/PromptPayQR';
+import { GatewayPromptPayPanel } from '../common/GatewayPromptPayPanel';
+import { gatewayEnabled } from '../../services/paymentGateway';
 
 interface QuickPayModalProps {
   isOpen: boolean;
@@ -53,11 +55,13 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
   const [tab, setTab] = useState<MethodTab>('cash');
   const [otherMethod, setOtherMethod] = useState<PaymentMethod>('transfer');
   const [received, setReceived] = useState(0);
+  const [gatewayPaid, setGatewayPaid] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setTab('cash');
       setReceived(0);
+      setGatewayPaid(false);
     }
   }, [isOpen]);
 
@@ -77,9 +81,24 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
   const change = received - grandTotal;
   const canConfirm = grandTotal > 0 && (!isCash || received >= grandTotal);
   const cashOptions = suggestCashAmounts(grandTotal, 2);
+  const useGateway = gatewayEnabled(settings);
+  const staticQr = (
+    <div className="flex flex-col sm:flex-row items-center gap-4">
+      <PromptPayQR
+        promptPayId={resolvePromptPayId(settings, currentBranch)}
+        amount={grandTotal}
+        branchName={currentBranch?.name}
+        size={200}
+      />
+      <p className="text-sm text-[#b3a393] leading-relaxed">
+        ให้ลูกค้าสแกนจ่าย แล้วตรวจสลิปหรือแจ้งเตือนในแอปธนาคารก่อนกด “ได้รับเงินแล้ว”
+      </p>
+    </div>
+  );
 
   const confirm = () => {
     if (!canConfirm) return;
+    if (tab === 'promptpay' && useGateway && !gatewayPaid && !window.confirm('ระบบยังไม่ได้รับยอดจากการสแกนนี้\nตรวจสลิปหรือแอปธนาคารแล้ว ยืนยันชำระเลยหรือไม่?')) return;
     const method: PaymentMethod = tab === 'cash' ? 'cash' : tab === 'promptpay' ? 'promptpay' : otherMethod;
     onConfirm(method, isCash ? received : grandTotal, isCash ? Math.max(0, change) : 0);
   };
@@ -178,18 +197,20 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
           </div>
         )}
 
-        {tab === 'promptpay' && (
-          <div className="flex flex-col sm:flex-row items-center gap-4">
-            <PromptPayQR
-              promptPayId={resolvePromptPayId(settings, currentBranch)}
-              amount={grandTotal}
-              branchName={currentBranch?.name}
-              size={200}
-            />
-            <p className="text-sm text-[#b3a393] leading-relaxed">
-              ให้ลูกค้าสแกนจ่าย แล้วตรวจสลิปหรือแจ้งเตือนในแอปธนาคารก่อนกด “ได้รับเงินแล้ว”
-            </p>
-          </div>
+        {tab === 'promptpay' && !useGateway && staticQr}
+
+        {tab === 'promptpay' && useGateway && (
+          <GatewayPromptPayPanel
+            amount={grandTotal}
+            reference={[currentBranch?.name, subtitle].filter(Boolean).join(' · ')}
+            serverUrl={settings.merchantSettings?.serverUrl}
+            size={200}
+            onPaid={() => {
+              setGatewayPaid(true);
+              if (settings.merchantSettings?.autoConfirmPayment === true) onConfirm('promptpay', grandTotal, 0);
+            }}
+            fallback={staticQr}
+          />
         )}
 
         {tab === 'other' && (
@@ -216,7 +237,15 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
             canConfirm ? 'bg-[#3ecf8e] text-[#062a1a] active:scale-[0.99]' : 'bg-[#2a1b12] text-[#7d6a5a] cursor-not-allowed'
           }`}
         >
-          {isCash ? (canConfirm ? `ยืนยัน · ทอน ฿${baht(Math.max(0, change))}` : 'แตะยอดเงินที่รับมา') : 'ได้รับเงินแล้ว'}
+          {isCash
+            ? canConfirm
+              ? `ยืนยัน · ทอน ฿${baht(Math.max(0, change))}`
+              : 'แตะยอดเงินที่รับมา'
+            : tab === 'promptpay' && gatewayPaid
+              ? '✓ ได้รับเงินแล้ว · ยืนยันชำระ'
+              : tab === 'promptpay' && useGateway
+                ? 'รอลูกค้าสแกนจ่าย · ยืนยันชำระ'
+                : 'ได้รับเงินแล้ว'}
         </button>
 
         {onOpenFullInvoice && (

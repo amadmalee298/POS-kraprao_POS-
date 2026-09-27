@@ -377,14 +377,22 @@ export interface User {
 }
 
 export interface MerchantConnectionSettings {
+  /** Bills paid by PromptPay use a gateway QR (exact amount, confirmed by the gateway) */
   isConnected: boolean;
-  merchantName: string;
-  merchantId: string;
-  terminalId: string;
-  apiKey?: string;
-  provider: 'bbl_merchant_pro' | 'promptpay_dynamic' | 'scb_merchant' | 'kbank_merchant' | 'delivery_merchant';
+  provider: 'opn' | 'bbl_merchant_pro' | 'promptpay_dynamic' | 'scb_merchant' | 'kbank_merchant' | 'delivery_merchant';
+  /** Site that runs api/payment/promptpay (the shop's Vercel deploy); empty = this site */
+  serverUrl?: string;
+  /** Close the bill by itself once the gateway reports the payment */
   autoConfirmPayment: boolean;
+  /** Last successful connection test */
   lastConnectedAt?: string;
+  livemode?: boolean;
+  accountEmail?: string;
+  // Earlier fields, kept so old saved settings still load
+  merchantName?: string;
+  merchantId?: string;
+  terminalId?: string;
+  apiKey?: string;
 }
 
 export interface QrPaymentOption {
