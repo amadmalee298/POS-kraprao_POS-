@@ -211,15 +211,11 @@ const renderPaymentMethodBadge = (pm?: PaymentMethod) => {
 export const QrOrderingView: React.FC = () => {
   const {
     currentBranch,
-    menuItems,
-    addOns,
     orders,
-    createDirectOrder,
     updateOrderStatus,
     autoApproveQR,
     setAutoApproveQR,
     tables,
-    categories,
     addTable,
     updateTable,
     deleteTable,
@@ -353,18 +349,11 @@ export const QrOrderingView: React.FC = () => {
   };
 
   const [selectedPrintTable, setSelectedPrintTable] = useState<string | null>(null);
-  const [selectedSimTable, setSelectedSimTable] = useState<string | null>('5');
+  // Table selected in the table grid (for its QR code and the customer-page link)
+  const [selectedSimTable, setSelectedSimTable] = useState<string | null>(null);
   const [copiedTable, setCopiedTable] = useState<string | null>(null);
   const [isEditTableMode, setIsEditTableMode] = useState<boolean>(false);
   const [newTableNameInput, setNewTableNameInput] = useState<string>('');
-
-  // Customer Ordering Simulation State
-  const [simCart, setSimCart] = useState<CartItem[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [isViewCartOpen, setIsViewCartOpen] = useState(false);
-  const [customizingItem, setCustomizingItem] = useState<MenuItem | null>(null);
-  const [customerNickname, setCustomerNickname] = useState<string>('');
 
   // Publish the customer-visible menu now (it also republishes automatically after menu changes)
   const [publishState, setPublishState] = useState<'idle' | 'working' | 'done' | 'error'>('idle');
@@ -432,126 +421,6 @@ export const QrOrderingView: React.FC = () => {
       setDeletingTableTarget(null);
     }
   };
-
-  // Customization modal state inside phone
-  const [simQuantity, setSimQuantity] = useState(1);
-  const [simSpiceLevel, setSimSpiceLevel] = useState<SpiceLevel | undefined>('เผ็ดปานกลาง');
-  const [simProtein, setSimProtein] = useState<{ name: ProteinChoice; extraPrice: number } | null>(null);
-  const [simSelectedAddOns, setSimSelectedAddOns] = useState<AddOnOption[]>([]);
-  const [simNotes, setSimNotes] = useState('');
-  const [simPaymentMethod, setSimPaymentMethod] = useState<PaymentMethod>('promptpay');
-  const [selectedQrOptionId, setSelectedQrOptionId] = useState<string>('promptpay');
-  const [orderSuccessTicket, setOrderSuccessTicket] = useState<{ orderNumber: string; table: string; total: number; paymentMethod: PaymentMethod } | null>(null);
-
-  // Featured / Primary Addon for QR Ordering simulator
-  const primarySimAddon: AddOnOption | null = (addOns && addOns.length > 0)
-    ? (addOns.find(a => a.id === 'add-egg-fried' || a.name === 'เพิ่มไข่ดาว') || addOns[0])
-    : null;
-
-  const simOtherAddOns = (addOns || []).filter(a => !primarySimAddon || a.id !== primarySimAddon.id);
-
-  const handleOpenSim = (table: string) => {
-    setSelectedSimTable(table);
-    setSimCart([]);
-    const firstActive = configuredPaymentMethods.find(m => m.enabled);
-    if (firstActive) {
-      setSelectedQrOptionId(firstActive.id);
-      if (firstActive.type === 'promptpay' || firstActive.type === 'cash' || firstActive.type === 'credit' || firstActive.type === 'truemoney') {
-        setSimPaymentMethod(firstActive.type);
-      } else {
-        setSimPaymentMethod('transfer');
-      }
-    } else {
-      setSimPaymentMethod('promptpay');
-    }
-    setIsViewCartOpen(false);
-    setOrderSuccessTicket(null);
-  };
-
-  const handleOpenCustomizer = (item: MenuItem) => {
-    setCustomizingItem(item);
-    setSimQuantity(1);
-    if (item.category === 'drinks_dessert') {
-      setSimSpiceLevel(undefined);
-      setSimProtein(null);
-    } else {
-      setSimSpiceLevel('เผ็ดปานกลาง');
-      setSimProtein(null);
-    }
-    setSimSelectedAddOns([]);
-    setSimNotes('');
-  };
-
-  const handleToggleAddOn = (addon: AddOnOption) => {
-    setSimSelectedAddOns(prev => {
-      const exists = prev.some(a => a.id === addon.id);
-      if (exists) {
-        return prev.filter(a => a.id !== addon.id);
-      }
-      return [...prev, addon];
-    });
-  };
-
-  const isPrimarySimSelected = primarySimAddon ? simSelectedAddOns.some(
-    a => a.id === primarySimAddon.id
-  ) : false;
-
-  const handleAddCustomizedToSimCart = () => {
-    if (!customizingItem) return;
-    const proteinExtra = simProtein ? simProtein.extraPrice : 0;
-    const addOnsTotal = simSelectedAddOns.reduce((sum, a) => sum + a.price, 0);
-    const unitPrice = customizingItem.price + proteinExtra + addOnsTotal;
-    const itemTotalPrice = unitPrice * simQuantity;
-
-    const newCartItem: CartItem = {
-      cartItemId: `sim-cart-${Date.now()}-${Math.random()}`,
-      menuItem: customizingItem,
-      quantity: simQuantity,
-      spiceLevel: simSpiceLevel,
-      proteinChoice: simProtein || undefined,
-      selectedAddOns: simSelectedAddOns,
-      specialNotes: simNotes,
-      unitPrice,
-      totalPrice: itemTotalPrice
-    };
-
-    setSimCart(prev => [...prev, newCartItem]);
-    setCustomizingItem(null);
-  };
-
-  const handleSubmitSimOrder = () => {
-    if (!selectedSimTable || simCart.length === 0) return;
-    const grandTotal = simCart.reduce((sum, item) => sum + item.totalPrice, 0);
-    const initialStatus = autoApproveQR ? 'pending' : 'pending-qr';
-    
-    const created = createDirectOrder(
-      simCart,
-      selectedSimTable,
-      'dine-in',
-      simNotes || 'สั่งผ่าน QR Code',
-      initialStatus,
-      customerNickname.trim() || undefined,
-      simPaymentMethod
-    );
-    
-    setOrderSuccessTicket({
-      orderNumber: created.orderNumber,
-      table: selectedSimTable,
-      total: grandTotal,
-      paymentMethod: simPaymentMethod
-    });
-    setSimCart([]);
-    setIsViewCartOpen(false);
-  };
-
-  // Filter menu items for sim view
-  const filteredMenuItems = menuItems.filter(item => {
-    const matchCategory = isItemInCategory(item, selectedCategory, categories);
-    const matchSearch = searchQuery.trim() === '' || 
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      item.description.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchCategory && matchSearch;
-  });
 
   // Orders for verification card
   const pendingQrOrders = orders.filter(o => o.status === 'pending-qr' && o.branchId === currentBranch.id);
@@ -736,14 +605,17 @@ export const QrOrderingView: React.FC = () => {
         <div className="border-t border-slate-800/80 pt-3 flex items-center justify-between text-xs">
           <div className="flex items-center space-x-2 text-slate-300">
             <Smartphone className="w-4 h-4 text-red-500" />
-            <span>หน้าจำลองลูกค้าสแกนโต๊ะ <strong className="text-amber-400 font-bold">{selectedSimTable || '5'}</strong></span>
+            <span>หน้าสั่งอาหารของลูกค้า โต๊ะ <strong className="text-amber-400 font-bold">{selectedSimTable || tables[0] || '-'}</strong></span>
           </div>
-          <button
-            onClick={() => handleOpenSim(selectedSimTable || tables[0] || '5')}
+          {/* Opens the real customer page (the same one a customer gets by scanning the table QR) */}
+          <a
+            href={getTableOrderUrl(selectedSimTable || tables[0] || '1', currentBranch.id)}
+            target="_blank"
+            rel="noopener noreferrer"
             className="text-amber-400 font-bold hover:underline transition"
           >
-            จำลองการทดสอบ →
-          </button>
+            เปิดหน้าลูกค้า →
+          </a>
         </div>
       </div>
 
@@ -1165,13 +1037,9 @@ export const QrOrderingView: React.FC = () => {
 
               {/* REAL SCANNABLE QR CODE IMAGE */}
               <div
-                onClick={() => {
-                  const table = selectedPrintTable;
-                  setSelectedPrintTable(null);
-                  handleOpenSim(table);
-                }}
+                onClick={() => window.open(getTableOrderUrl(selectedPrintTable, currentBranch.id), '_blank', 'noopener')}
                 className="bg-slate-50 p-3 rounded-xl border border-slate-200 inline-block mx-auto shadow-sm cursor-pointer relative group"
-                title="คลิกเพื่อสั่งอาหาร"
+                title="เปิดหน้าสั่งอาหารของลูกค้า"
               >
                 <QrCodeImage
                   text={getTableOrderUrl(selectedPrintTable, currentBranch.id)}
@@ -1243,577 +1111,14 @@ export const QrOrderingView: React.FC = () => {
               </button>
 
               <button
-                onClick={() => {
-                  const table = selectedPrintTable;
-                  setSelectedPrintTable(null);
-                  handleOpenSim(table);
-                }}
+                // The real customer page for this table, in a new tab
+                onClick={() => window.open(getTableOrderUrl(selectedPrintTable, currentBranch.id), '_blank', 'noopener')}
                 className="py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center space-x-1 transition"
               >
                 <Smartphone className="w-4 h-4" />
                 <span>ลองสั่ง</span>
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 2: SIMULATED CUSTOMER MOBILE QR ORDERING INTERFACE */}
-      {selectedSimTable && (
-        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-          {/* Simulated Smartphone Container */}
-          <div className="bg-slate-900 border-4 border-slate-700 rounded-[36px] max-w-md w-full h-[88vh] flex flex-col shadow-2xl overflow-hidden relative animate-in slide-in-from-bottom-6 duration-300">
-            
-            {/* Phone Top Speaker Bar */}
-            <div className="bg-slate-950 text-slate-400 px-6 py-2 flex items-center justify-between text-[11px] font-mono border-b border-slate-800 shrink-0">
-              <div className="flex items-center space-x-1 font-bold text-amber-400">
-                <QrCode className="w-3.5 h-3.5" />
-                <span>QR ORDER • โต๊ะ {selectedSimTable}</span>
-              </div>
-              <button
-                onClick={() => setSelectedSimTable(null)}
-                className="text-slate-400 hover:text-white p-0.5 rounded-md"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Mobile Header Banner */}
-            <div className="bg-gradient-to-r from-red-950 via-slate-900 to-amber-950 p-4 border-b border-slate-800 shrink-0">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-[10px] uppercase font-bold text-red-400 tracking-wider">
-                    {currentBranch.name}
-                  </div>
-                  <h3 className="text-base font-black text-slate-100 flex items-center space-x-1.5">
-                    <Utensils className="w-4 h-4 text-red-500" />
-                    <span>ครัวกะเพรา (Digital Menu)</span>
-                  </h3>
-                </div>
-                <div className="bg-red-600/90 text-white px-2.5 py-1 rounded-xl font-extrabold text-xs shadow-md border border-red-400/30">
-                  โต๊ะ {selectedSimTable}
-                </div>
-              </div>
-
-              {/* Customer Nickname Input Box */}
-              <div className="mt-2.5 bg-slate-950/90 border border-slate-800 rounded-2xl p-2.5 space-y-1">
-                <label className="text-[11px] font-medium text-slate-300 block">
-                  ลูกค้าสามารถใส่ชื่อเล่นแทนเลขโต๊ะ <span className="text-slate-400">(เพื่อเรียกคิว / พิมพ์บิล)</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="ใส่ชื่อเล่นของคุณ เช่น คุณมุก / เจ๊นุ่น / โต๊ะ 5 - บอล"
-                  value={customerNickname}
-                  onChange={e => setCustomerNickname(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 text-slate-100 rounded-xl px-3 py-1.5 text-xs placeholder:text-slate-500 focus:outline-none focus:border-red-500"
-                />
-              </div>
-
-              {/* Category Pills Slider */}
-              <div className="flex space-x-1.5 mt-2.5 overflow-x-auto no-scrollbar pb-1 text-[11px]">
-                <button
-                  onClick={() => setSelectedCategory('all')}
-                  className={`px-3.5 py-1.5 rounded-xl whitespace-nowrap font-bold transition ${
-                    selectedCategory === 'all'
-                      ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-md'
-                      : 'bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  ทั้งหมด
-                </button>
-                {categories.map(cat => (
-                  <button
-                    key={cat.id}
-                    onClick={() => setSelectedCategory(cat.id)}
-                    className={`px-3.5 py-1.5 rounded-xl whitespace-nowrap font-bold transition ${
-                      selectedCategory === cat.id
-                        ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-md'
-                        : 'bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    {cat.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Mobile Menu List Body */}
-            <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-950/40">
-              {filteredMenuItems.map(item => (
-                <div
-                  key={item.id}
-                  className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex items-center justify-between gap-3 hover:border-slate-700 transition"
-                >
-                  <img
-                    src={item.image}
-                    alt={item.name}
-                    className="w-16 h-16 rounded-xl object-cover shrink-0 border border-slate-800"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center space-x-1.5">
-                      <h4 className="font-bold text-slate-100 text-xs truncate">{item.name}</h4>
-                      {item.isPopular && (
-                        <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 rounded font-extrabold shrink-0">
-                          ฮิต
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">{item.description}</p>
-                    <div className="text-amber-400 font-extrabold text-xs mt-1">
-                      ฿{item.price}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleOpenCustomizer(item)}
-                    className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl shadow-md transition shrink-0 flex items-center space-x-1"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>เลือก</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            {/* Bottom Mobile Cart Floating Bar */}
-            {simCart.length > 0 && !isViewCartOpen && (
-              <div className="p-3 bg-slate-900 border-t border-slate-800 shrink-0">
-                <button
-                  onClick={() => setIsViewCartOpen(true)}
-                  className="w-full py-2.5 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-white font-bold text-xs rounded-2xl shadow-lg flex items-center justify-between px-4 transition"
-                >
-                  <div className="flex items-center space-x-2">
-                    <ShoppingBag className="w-4 h-4" />
-                    <span>ดูตะกร้าสั่งอาหาร ({simCart.reduce((sum, i) => sum + i.quantity, 0)})</span>
-                  </div>
-                  <span className="font-mono text-sm font-black">
-                    ฿{simCart.reduce((sum, i) => sum + i.totalPrice, 0)}
-                  </span>
-                </button>
-              </div>
-            )}
-
-            {/* SUB-MODAL 1: ITEM CUSTOMIZER (INSIDE MOBILE PHONE) */}
-            {customizingItem && (
-              <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-sm z-30 flex flex-col justify-end">
-                <div className="bg-slate-900 border-t border-slate-800 rounded-t-3xl p-4 space-y-4 max-h-[85%] overflow-y-auto animate-in slide-in-from-bottom duration-200 text-slate-200">
-                  <div className="flex justify-between items-start border-b border-slate-800 pb-2">
-                    <div>
-                      <h4 className="font-bold text-slate-100 text-sm">{customizingItem.name}</h4>
-                      <p className="text-[11px] text-amber-400 font-extrabold">เริ่มต้น ฿{customizingItem.price}</p>
-                    </div>
-                    <button
-                      onClick={() => setCustomizingItem(null)}
-                      className="text-slate-400 p-1 hover:text-white"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-
-                  {/* Quantity */}
-                  <div className="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                    <span className="text-xs font-bold text-slate-300">จำนวน</span>
-                    <div className="flex items-center space-x-3">
-                      <button
-                        onClick={() => setSimQuantity(Math.max(1, simQuantity - 1))}
-                        className="w-7 h-7 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg flex items-center justify-center"
-                      >
-                        -
-                      </button>
-                      <span className="font-bold font-mono text-sm text-amber-400">{simQuantity}</span>
-                      <button
-                        onClick={() => setSimQuantity(simQuantity + 1)}
-                        className="w-7 h-7 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg flex items-center justify-center"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Featured / Primary Topping Toggle */}
-                  {primarySimAddon && (
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
-                        ท็อปปิ้งแนะนำ (Featured Extra)
-                      </label>
-                      <div
-                        onClick={() => handleToggleAddOn(primarySimAddon)}
-                        className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition select-none ${
-                          isPrimarySimSelected
-                            ? 'bg-amber-950/60 border-amber-500 text-amber-200 ring-1 ring-amber-500/40'
-                            : 'bg-slate-950 border-slate-800 text-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-2.5">
-                          <div className={`p-1.5 rounded-lg ${isPrimarySimSelected ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-amber-400'}`}>
-                            <Egg className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <div className="text-xs font-bold text-slate-100 flex items-center space-x-1">
-                              <span>{primarySimAddon.name}</span>
-                              <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-extrabold">+{primarySimAddon.price}฿</span>
-                            </div>
-                            <div className="text-[10px] text-slate-400">ท็อปปิ้งเพิ่มความอร่อย</div>
-                          </div>
-                        </div>
-                        <div className={`w-5 h-5 rounded-md border flex items-center justify-center ${
-                          isPrimarySimSelected ? 'bg-amber-500 border-amber-400 text-slate-950' : 'bg-slate-900 border-slate-700'
-                        }`}>
-                          {isPrimarySimSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Other Add-on Toppings for QR Ordering */}
-                  {simOtherAddOns.length > 0 && (
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                        {primarySimAddon ? 'ตัวเลือกท็อปปิ้งเพิ่มเติม' : 'รายการท็อปปิ้ง'} ({simOtherAddOns.length} รายการ)
-                      </label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                        {simOtherAddOns.map(addon => {
-                          const isSelected = simSelectedAddOns.some(a => a.id === addon.id);
-                          return (
-                            <button
-                              key={addon.id}
-                              type="button"
-                              onClick={() => handleToggleAddOn(addon)}
-                              className={`p-2 rounded-xl border flex items-center justify-between text-left transition ${
-                                isSelected
-                                  ? 'bg-amber-950/40 border-amber-500/60 text-amber-300 ring-1 ring-amber-500/30'
-                                  : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
-                              }`}
-                            >
-                              <div className="flex items-center space-x-2 truncate mr-1">
-                                <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                                  isSelected ? 'bg-amber-500 border-amber-400 text-slate-950' : 'border-slate-700 bg-slate-900'
-                                }`}>
-                                  {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                                </div>
-                                <span className="text-[11px] font-medium text-slate-200 truncate">{addon.name}</span>
-                              </div>
-                              <span className="text-[11px] font-bold text-amber-400 shrink-0">+{addon.price}฿</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Notes */}
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-400 block mb-1">หมายเหตุเพิ่มเติม</label>
-                    <input
-                      type="text"
-                      placeholder="เช่น ขอข้าวน้อย, ไม่ใส่กระเทียม"
-                      value={simNotes}
-                      onChange={e => setSimNotes(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-red-500"
-                    />
-                  </div>
-
-                  {/* Add to Cart Button */}
-                  <button
-                    onClick={handleAddCustomizedToSimCart}
-                    className="w-full py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center space-x-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>เพิ่มลงตะกร้า • ฿{(customizingItem.price + (simProtein ? simProtein.extraPrice : 0) + simSelectedAddOns.reduce((s, a) => s + a.price, 0)) * simQuantity}</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* SUB-MODAL 2: CUSTOMER BASKET & CHECKOUT DRAWER */}
-            {isViewCartOpen && (
-              <div className="absolute inset-0 bg-slate-950/95 z-40 flex flex-col p-4 animate-in fade-in duration-200">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <div className="flex items-center space-x-2">
-                    <ShoppingBag className="w-5 h-5 text-red-500" />
-                    <h4 className="font-bold text-slate-100 text-sm">ตะกร้าสินค้า (โต๊ะ {selectedSimTable})</h4>
-                  </div>
-                  <button
-                    onClick={() => setIsViewCartOpen(false)}
-                    className="text-slate-400 p-1 hover:text-white"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto py-3 space-y-2.5">
-                  {simCart.map(item => (
-                    <div key={item.cartItemId} className="bg-slate-900 border border-slate-800 rounded-2xl p-3 space-y-1.5 text-slate-200">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="font-bold text-xs text-slate-100">{item.menuItem.name} x{item.quantity}</div>
-                          <div className="text-[10px] text-slate-400 space-x-1 mt-0.5">
-                            <span>• {item.spiceLevel}</span>
-                            {item.proteinChoice && <span>• {item.proteinChoice.name}</span>}
-                          </div>
-                          {item.selectedAddOns.length > 0 && (
-                            <div className="text-[10px] text-amber-300 mt-0.5 font-medium">
-                              + {item.selectedAddOns.map(a => a.name).join(', ')}
-                            </div>
-                          )}
-                          {item.specialNotes && (
-                            <div className="text-[10px] text-slate-400 italic">"{item.specialNotes}"</div>
-                          )}
-                        </div>
-                        <span className="font-bold text-amber-400 text-xs font-mono">฿{item.totalPrice}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="border-t border-slate-800 pt-3 space-y-3 shrink-0">
-                  {/* Payment Method Selector */}
-                  <div className="space-y-2 pt-1">
-                    <label className="text-xs font-bold text-slate-200 flex items-center justify-between">
-                      <span className="flex items-center space-x-1.5">
-                        <CreditCard className="w-4 h-4 text-amber-400" />
-                        <span>ช่องทางการชำระเงิน (Payment Method)</span>
-                      </span>
-                      <span className="text-[10px] text-amber-400 font-bold">เลือกวิธีชำระ</span>
-                    </label>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      {configuredPaymentMethods.filter(m => m.enabled).length === 0 ? (
-                        <div className="col-span-2 p-3 bg-rose-950/40 border border-rose-900/50 rounded-xl text-xs text-rose-300 text-center">
-                          โปรดติดต่อพนักงานที่เคาน์เตอร์เพื่อชำระเงิน
-                        </div>
-                      ) : (
-                        configuredPaymentMethods.filter(m => m.enabled).map(method => {
-                          const isSelected = selectedQrOptionId === method.id || (simPaymentMethod === method.type && !selectedQrOptionId);
-
-                          let colorStyle = 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700';
-                          let iconBg = 'bg-slate-800 text-slate-400';
-                          let IconComp = Landmark;
-
-                          if (method.type === 'promptpay') {
-                            IconComp = QrCode;
-                            if (isSelected) {
-                              colorStyle = 'bg-blue-950/80 border-blue-500 text-blue-200 ring-1 ring-blue-500';
-                              iconBg = 'bg-blue-500 text-white';
-                            }
-                          } else if (method.type === 'truemoney') {
-                            IconComp = Wallet;
-                            if (isSelected) {
-                              colorStyle = 'bg-orange-950/80 border-orange-500 text-orange-200 ring-1 ring-orange-500';
-                              iconBg = 'bg-orange-500 text-white';
-                            }
-                          } else if (method.type === 'linepay') {
-                            IconComp = QrCode;
-                            if (isSelected) {
-                              colorStyle = 'bg-emerald-950/80 border-emerald-500 text-emerald-200 ring-1 ring-emerald-500';
-                              iconBg = 'bg-emerald-500 text-white';
-                            }
-                          } else if (method.type === 'cash') {
-                            IconComp = Banknote;
-                            if (isSelected) {
-                              colorStyle = 'bg-emerald-950/80 border-emerald-500 text-emerald-200 ring-1 ring-emerald-500';
-                              iconBg = 'bg-emerald-500 text-white';
-                            }
-                          } else if (method.type === 'credit') {
-                            IconComp = CreditCard;
-                            if (isSelected) {
-                              colorStyle = 'bg-purple-950/80 border-purple-500 text-purple-200 ring-1 ring-purple-500';
-                              iconBg = 'bg-purple-500 text-white';
-                            }
-                          } else {
-                            IconComp = Landmark;
-                            if (isSelected) {
-                              colorStyle = 'bg-amber-950/80 border-amber-500 text-amber-200 ring-1 ring-amber-500';
-                              iconBg = 'bg-amber-500 text-slate-950';
-                            }
-                          }
-
-                          return (
-                            <button
-                              key={method.id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedQrOptionId(method.id);
-                                if (method.type === 'promptpay' || method.type === 'cash' || method.type === 'credit' || method.type === 'truemoney') {
-                                  setSimPaymentMethod(method.type);
-                                } else {
-                                  setSimPaymentMethod('transfer');
-                                }
-                              }}
-                              className={`p-2 rounded-xl border text-left flex items-center space-x-2 transition ${colorStyle}`}
-                            >
-                              <div className={`p-1.5 rounded-lg shrink-0 ${iconBg}`}>
-                                <IconComp className="w-3.5 h-3.5" />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="font-bold text-[11px] leading-tight truncate">{method.name}</div>
-                                <div className="text-[9px] opacity-75 truncate">
-                                  {method.accountNumber || method.type}
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-
-                    {/* Payment Info Preview Details for currently selected active option */}
-                    {(() => {
-                      const activeMethods = configuredPaymentMethods.filter(m => m.enabled);
-                      const currentOption = activeMethods.find(m => m.id === selectedQrOptionId) || activeMethods[0];
-                      if (!currentOption) return null;
-
-                      if (currentOption.type === 'promptpay') {
-                        return (
-                          <div className="bg-slate-900 border border-blue-900/50 p-2.5 rounded-2xl text-center space-y-1.5 animate-in fade-in duration-150">
-                            <div className="bg-white p-2 rounded-xl inline-block shadow-sm">
-                              <PromptPayQrImage
-                                amount={simCart.reduce((s, i) => s + i.totalPrice, 0)}
-                                promptPayId={currentOption.accountNumber}
-                                alt="PromptPay QR"
-                                className="w-28 h-28 object-contain mx-auto"
-                              />
-                            </div>
-                            <div className="text-[10px] text-slate-300">
-                              <span className="font-bold text-blue-300">{currentOption.accountName || settings.shopName}</span> • พร้อมเพย์: <strong className="text-amber-400 font-mono">{currentOption.accountNumber || 'ยังไม่ได้ตั้งค่า'}</strong>
-                            </div>
-                            {currentOption.instructions && (
-                              <div className="text-[9px] text-slate-400 italic">{currentOption.instructions}</div>
-                            )}
-                          </div>
-                        );
-                      }
-
-                      if (currentOption.type === 'truemoney') {
-                        return (
-                          <div className="bg-slate-900 border border-orange-900/50 p-2.5 rounded-2xl text-[11px] text-slate-300 space-y-1.5 text-center animate-in fade-in duration-150">
-                            <div className="bg-white p-2 rounded-xl inline-block shadow-sm">
-                              <PromptPayQrImage
-                                amount={simCart.reduce((s, i) => s + i.totalPrice, 0)}
-                                promptPayId={currentOption.accountNumber}
-                                alt="TrueMoney QR"
-                                className="w-24 h-24 object-contain mx-auto"
-                              />
-                            </div>
-                            <div>โอนผ่าน TrueMoney Wallet: <strong className="text-amber-400 font-mono">{currentOption.accountNumber || 'ยังไม่ได้ตั้งค่า'}</strong></div>
-                            {currentOption.accountName && <div className="text-[9px] text-slate-400">ชื่อบัญชี: {currentOption.accountName}</div>}
-                            {currentOption.instructions && <div className="text-[9px] text-amber-300/90 italic">{currentOption.instructions}</div>}
-                          </div>
-                        );
-                      }
-
-                      if (currentOption.type === 'linepay') {
-                        return (
-                          <div className="bg-slate-900 border border-emerald-900/50 p-2.5 rounded-2xl text-[11px] text-slate-300 space-y-1 text-center animate-in fade-in duration-150">
-                            <div className="font-bold text-emerald-400">Rabbit LINE Pay</div>
-                            <div>ID / Merchant: <strong className="text-amber-400 font-mono">{currentOption.accountNumber}</strong></div>
-                            {currentOption.accountName && <div className="text-[9px] text-slate-400">ร้าน: {currentOption.accountName}</div>}
-                            {currentOption.instructions && <div className="text-[9px] text-slate-400 italic">{currentOption.instructions}</div>}
-                          </div>
-                        );
-                      }
-
-                      if (currentOption.type === 'cash') {
-                        return (
-                          <div className="bg-slate-900 border border-emerald-900/50 p-2.5 rounded-2xl text-[11px] text-slate-300 flex items-center space-x-2 animate-in fade-in duration-150">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                            <span>{currentOption.instructions || 'สั่งอาหารเข้าครัวได้เลย ชำระเงินสดหรือแสกนที่เคาน์เตอร์แคชเชียร์หลังรับประทานเสร็จ'}</span>
-                          </div>
-                        );
-                      }
-
-                      if (currentOption.type === 'credit') {
-                        return (
-                          <div className="bg-slate-900 border border-purple-900/50 p-2.5 rounded-2xl text-[11px] text-slate-300 flex items-center space-x-2 animate-in fade-in duration-150">
-                            <CreditCard className="w-4 h-4 text-purple-400 shrink-0" />
-                            <span>{currentOption.instructions || 'รองรับ Visa, Mastercard, JCB พนักงานจะนำเครื่องแตะบัตรมาให้บริการที่โต๊ะ'}</span>
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <div className="bg-slate-900 border border-amber-900/50 p-2.5 rounded-2xl text-[11px] text-slate-300 space-y-1 text-center animate-in fade-in duration-150">
-                          <div className="font-bold text-amber-400">{currentOption.name}</div>
-                          {currentOption.accountNumber && <div>เลขบัญชี/ID: <strong className="text-amber-400 font-mono">{currentOption.accountNumber}</strong></div>}
-                          {currentOption.accountName && <div className="text-[9px] text-slate-400">ชื่อบัญชี: {currentOption.accountName}</div>}
-                          {currentOption.instructions && <div className="text-[9px] text-slate-300 italic">{currentOption.instructions}</div>}
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  <div className="flex justify-between items-center text-sm font-black text-slate-100 border-t border-slate-800/80 pt-2">
-                    <span>ยอดรวมทั้งสิ้น</span>
-                    <span className="text-amber-400 font-mono text-base">฿{simCart.reduce((sum, i) => sum + i.totalPrice, 0)}</span>
-                  </div>
-
-                  <button
-                    onClick={handleSubmitSimOrder}
-                    className="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-black text-xs rounded-2xl shadow-xl flex items-center justify-center space-x-2 transition"
-                  >
-                    <Send className="w-4 h-4" />
-                    <span>ส่งออเดอร์เข้าครัว (Send Order to Kitchen)</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* SUB-MODAL 3: ORDER SUCCESS TICKET OVERLAY */}
-            {orderSuccessTicket && (
-              <div className="absolute inset-0 bg-slate-950/95 z-50 flex flex-col items-center justify-center p-6 text-center space-y-4 animate-in zoom-in-95 duration-200">
-                <div className="p-4 bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30">
-                  <CheckCircle2 className="w-12 h-12" />
-                </div>
-                <div className="space-y-1">
-                  <h3 className="text-lg font-black text-slate-100">ส่งออเดอร์เข้าครัวสำเร็จ!</h3>
-                  <p className="text-xs text-slate-400">ออเดอร์ของคุณถูกส่งไปยังหน้าจอห้องครัว (KDS) เรียบร้อยแล้ว</p>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl w-full text-left space-y-2 font-mono text-xs">
-                  <div className="flex justify-between text-slate-400">
-                    <span>เลขที่ออเดอร์:</span>
-                    <span className="font-bold text-amber-400">{orderSuccessTicket.orderNumber}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>โต๊ะนั่ง:</span>
-                    <span className="font-bold text-slate-100">โต๊ะ {orderSuccessTicket.table}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>วิธีชำระเงิน:</span>
-                    <span className="font-bold text-blue-300">
-                      {orderSuccessTicket.paymentMethod === 'promptpay' && 'พร้อมเพย์ QR'}
-                      {orderSuccessTicket.paymentMethod === 'cash' && 'ชำระที่เคาน์เตอร์'}
-                      {orderSuccessTicket.paymentMethod === 'credit' && 'บัตรเครดิต/เดบิต'}
-                      {orderSuccessTicket.paymentMethod === 'truemoney' && 'TrueMoney Wallet'}
-                      {orderSuccessTicket.paymentMethod === 'transfer' && 'โอนเงินธนาคาร'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-slate-400 border-t border-slate-800 pt-2">
-                    <span>ยอดรวมสุทธิ:</span>
-                    <span className="font-bold text-emerald-400 text-sm">฿{orderSuccessTicket.total}</span>
-                  </div>
-                </div>
-
-                {orderSuccessTicket.paymentMethod === 'cash' && (
-                  <div className="bg-emerald-500/10 border border-emerald-500/30 p-3 rounded-2xl text-[11px] text-emerald-300 space-y-1 text-left w-full">
-                    <div className="font-bold flex items-center space-x-1.5 text-emerald-400">
-                      <Banknote className="w-4 h-4" />
-                      <span>ชำระเงินสดที่เคาน์เตอร์แคชเชียร์</span>
-                    </div>
-                    <p className="text-slate-300">
-                      ลูกค้าสามารถทานอาหารก่อน แล้วแจ้งเลขโต๊ะ <strong>({orderSuccessTicket.table})</strong> หรือแสดงหน้านี้เพื่อชำระเงินสด/สแกนจ่ายที่เคาน์เตอร์ได้ทันที
-                    </p>
-                  </div>
-                )}
-
-                <button
-                  onClick={() => setOrderSuccessTicket(null)}
-                  className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold text-xs rounded-xl transition"
-                >
-                  สั่งรายการเพิ่มเติม
-                </button>
-              </div>
-            )}
-
           </div>
         </div>
       )}
@@ -8177,6 +7482,7 @@ export const LineNotifyView: React.FC = () => {
   const initialCreds = getStoredCredentials();
   const [lineToken, setLineToken] = useState(initialCreds.lineToken);
   const [lineTargetId, setLineTargetId] = useState(initialCreds.lineTargetId);
+  const [lineRelayUrl, setLineRelayUrl] = useState(initialCreds.lineRelayUrl || '');
   const [telegramToken, setTelegramToken] = useState(initialCreds.telegramToken);
   const [telegramChatId, setTelegramChatId] = useState(initialCreds.telegramChatId);
   const [tokenSavedToast, setTokenSavedToast] = useState<string | null>(null);
@@ -8242,7 +7548,8 @@ export const LineNotifyView: React.FC = () => {
       telegramToken: telegramToken.trim(),
       telegramChatId: telegramChatId.trim(),
       lineToken: lineToken.trim(),
-      lineTargetId: lineTargetId.trim()
+      lineTargetId: lineTargetId.trim(),
+      lineRelayUrl: lineRelayUrl.trim()
     });
     setTokenSavedToast('บันทึกการตั้งค่า LINE Token & Telegram Bot เรียบร้อยแล้ว!');
     setTimeout(() => setTokenSavedToast(null), 3500);
@@ -8336,7 +7643,8 @@ export const LineNotifyView: React.FC = () => {
       telegramToken: telegramToken.trim(),
       telegramChatId: telegramChatId.trim(),
       lineToken: lineToken.trim(),
-      lineTargetId: lineTargetId.trim()
+      lineTargetId: lineTargetId.trim(),
+      lineRelayUrl: lineRelayUrl.trim()
     });
 
     const res = await dispatchNotification(titleText, msgContent, {
@@ -8457,6 +7765,20 @@ export const LineNotifyView: React.FC = () => {
                     placeholder="U... (ผู้ใช้) หรือ C... (กลุ่มที่เชิญบอทเข้าแล้ว)"
                   />
                   <p className="text-[10px] text-slate-500 mt-1">LINE Notify ปิดให้บริการแล้ว (31 มี.ค. 2025) ต้องใช้ LINE Official Account แทน</p>
+                </div>
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1 text-[11px]">ที่อยู่ตัวส่ง LINE (Vercel):</label>
+                  <input
+                    type="url"
+                    value={lineRelayUrl}
+                    onChange={e => setLineRelayUrl(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-emerald-300 font-mono font-bold focus:border-emerald-500"
+                    placeholder="https://ชื่อโปรเจกต์.vercel.app"
+                    autoComplete="off"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    เว็บบน GitHub Pages ส่ง LINE เองไม่ได้ ให้นำ repo นี้ขึ้น Vercel (ฟรี) แล้ววางลิงก์ที่นี่ ถ้าเว็บเปิดจาก Vercel อยู่แล้วเว้นว่างได้
+                  </p>
                 </div>
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-[10px] text-slate-500">สำหรับส่งเตือนเข้ากลุ่ม Line</span>
