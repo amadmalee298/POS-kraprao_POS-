@@ -179,7 +179,7 @@ export const InventoryReportModal: React.FC<InventoryReportModalProps> = ({ isOp
                   รายงานสรุปคลังวัตถุดิบและสินค้าคงเหลือ (Inventory Stock Summary Report)
                 </h1>
                 <p className="text-xs text-slate-600 mt-1">
-                  สาขา: {currentBranch?.name || 'สำนักงานใหญ่'} | ที่อยู่: {currentBranch?.address || '123 ถนนสุขุมวิท กรุงเทพมหานคร'} | เลขผู้เสียภาษี: {currentBranch?.taxId || '0105560000000'}
+                  สาขา: {currentBranch?.name || '-'} | ที่อยู่: {currentBranch?.address || '-'} | เลขผู้เสียภาษี: {currentBranch?.taxId || '-'}
                 </p>
               </div>
 

@@ -125,6 +125,15 @@ export interface Order {
   /** 'unpaid' for orders placed before payment (customer QR orders). Missing = paid. */
   paymentStatus?: 'paid' | 'unpaid';
   paidAt?: string;
+  /** Coupon code used on this bill */
+  couponCode?: string;
+  /** CRM member the bill was credited to */
+  memberId?: string;
+  memberName?: string;
+  /** Running number of the full tax invoice issued for this sale (e.g. INV202609-0003) */
+  taxInvoiceNo?: string;
+  /** Withholding tax the customer deducted when paying (บาท) */
+  withholdingTax?: number;
   /** When staff accepted a customer's QR order into the kitchen (the kitchen timer starts here). */
   acceptedAt?: string;
   orderSource?: 'pos' | 'qr';

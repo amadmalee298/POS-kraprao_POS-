@@ -12,6 +12,7 @@ import {
   Receipt,
   ChevronLeft,
   Percent,
+  Ticket,
   FileText,
   Wallet
 } from 'lucide-react';
@@ -25,6 +26,8 @@ import { CustomizationModal } from './CustomizationModal';
 import { QuickAddModal } from './QuickAddModal';
 import { PaymentModal } from './PaymentModal';
 import { QuickPayModal } from './QuickPayModal';
+import { CrmCheckoutModal } from './CrmCheckoutModal';
+import { checkCoupon, pointsForAmount, useCrm } from '../../crm/crm';
 import { ReceiptModal } from './ReceiptModal';
 import { TouchNumpadModal } from './TouchNumpad';
 import { RecentReceiptsModal } from './RecentReceiptsModal';
@@ -112,6 +115,8 @@ export const POSView: React.FC = () => {
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [numpadItem, setNumpadItem] = useState<CartItem | null>(null);
   const [isDiscountOpen, setIsDiscountOpen] = useState(false);
+  const [isCrmOpen, setIsCrmOpen] = useState(false);
+  const { members, setMembers, coupons, setCoupons, config: crmConfig } = useCrm();
   const [isCartSheetOpen, setIsCartSheetOpen] = useState(false); // phones
 
   useEffect(() => {
@@ -201,7 +206,23 @@ export const POSView: React.FC = () => {
     setIsPreBill(true);
   };
 
+  // A coupon stops applying when the bill drops under its minimum (items removed after applying it)
+  useEffect(() => {
+    if (!discount.couponCode) return;
+    const check = checkCoupon(coupons, discount.couponCode, totals.rawSubtotal);
+    if (!check.ok) setDiscount({ amount: 0, type: 'fixed', member: discount.member });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totals.rawSubtotal, discount.couponCode]);
+
   const finishOrder = (order: Order, change: number) => {
+    // Member points and coupon use are recorded once the bill is paid
+    if (order.memberId && crmConfig.bahtPerPoint > 0 && order.paymentStatus !== 'unpaid') {
+      const earned = pointsForAmount(order.grandTotal, crmConfig.bahtPerPoint);
+      if (earned > 0) setMembers(prev => prev.map(m => (m.id === order.memberId ? { ...m, points: m.points + earned } : m)));
+    }
+    if (order.couponCode) {
+      setCoupons(prev => prev.map(c => (c.code === order.couponCode ? { ...c, usedCount: (c.usedCount || 0) + 1 } : c)));
+    }
     setIsPayOpen(false);
     setIsFullInvoiceOpen(false);
     setIsCartSheetOpen(false);
@@ -308,6 +329,15 @@ export const POSView: React.FC = () => {
           >
             <Percent className="w-4 h-4 text-[#ff8a3d]" />
             {totals.discountAmount > 0 ? `ส่วนลด −฿${baht(totals.discountAmount)}` : 'ส่วนลด'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsCrmOpen(true)}
+            disabled={cart.length === 0}
+            className="h-10 px-3 rounded-xl border border-[#3a2517] bg-[#1d130c] text-sm flex items-center gap-1.5 disabled:opacity-40 max-w-[45%]"
+          >
+            <Ticket className="w-4 h-4 text-[#ff8a3d] shrink-0" />
+            <span className="truncate">{discount.member?.name || discount.couponCode || 'คูปอง/สมาชิก'}</span>
           </button>
           <button
             type="button"
@@ -743,6 +773,25 @@ export const POSView: React.FC = () => {
           }}
         />
       )}
+
+      <CrmCheckoutModal
+        isOpen={isCrmOpen}
+        onClose={() => setIsCrmOpen(false)}
+        subtotal={totals.rawSubtotal}
+        coupons={coupons}
+        members={members}
+        bahtPerPoint={crmConfig.bahtPerPoint}
+        appliedCoupon={discount.couponCode}
+        appliedMember={discount.member}
+        onApplyCoupon={c =>
+          setDiscount(prev =>
+            c
+              ? { amount: c.value, type: c.type, note: `คูปอง ${c.code}`, couponCode: c.code, member: prev.member }
+              : { amount: 0, type: 'fixed', member: prev.member }
+          )
+        }
+        onApplyMember={m => setDiscount(prev => ({ ...prev, member: m ? { id: m.id, name: m.name } : undefined }))}
+      />
 
       {isDiscountOpen && (
         <TouchNumpadModal

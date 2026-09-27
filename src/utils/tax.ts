@@ -56,3 +56,14 @@ export function calculateOrderTotals(
     grandTotal: round2(grandTotal)
   };
 }
+
+/** Thai 13-digit taxpayer / national ID with its check digit (dashes and spaces are ignored). */
+export function isValidThaiTaxId(raw: string): boolean {
+  const id = (raw || '').replace(/[\s-]/g, '');
+  if (!/^\d{13}$/.test(id)) return false;
+  const sum = id
+    .slice(0, 12)
+    .split('')
+    .reduce((acc, d, i) => acc + Number(d) * (13 - i), 0);
+  return (11 - (sum % 11)) % 10 === Number(id[12]);
+}

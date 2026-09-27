@@ -92,6 +92,8 @@ import {
   Star
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
+import { nextDocNumber, useSharedList } from '../hooks/useSharedList';
+import { Coupon, Member, nextMemberId, normalizePhone, useCrm } from '../crm/crm';
 import { useFrequentIngredients } from '../utils/useFrequentIngredients';
 import {
   getStoredCredentials,
@@ -111,7 +113,9 @@ import {
   NotificationTriggers
 } from '../services/notificationService';
 import { MenuItem, AddOnOption, RecipeIngredient, MenuCategory, CartItem, SpiceLevel, ProteinChoice, ProteinOption, Order, CustomerTaxInfo, PaymentMethod, QrPaymentOption } from '../types';
-import { orderVatBreakdown } from '../utils/orderUtils';
+import { countsAsRevenue, orderVatBreakdown } from '../utils/orderUtils';
+import { isValidThaiTaxId } from '../utils/tax';
+import { sellerInfo } from '../utils/seller';
 import { exportToPDF, exportToPNG, printElement } from '../utils/exportDocument';
 import { AIMenuEngineeringPanel } from './inventory/AIMenuEngineeringPanel';
 import { BulkIngredientCostEditorPanel } from './inventory/BulkIngredientCostEditorPanel';
@@ -4298,75 +4302,23 @@ interface Quotation {
   items: QuotationItemRow[];
   discount: number;
   includeVat: boolean;
+  /** VAT rate used when the quotation was made (older quotations: 7) */
+  vatRate?: number;
   status: 'รออนุมัติ' | 'อนุมัติแล้ว' | 'ยืนยันสั่งซื้อ' | 'ยกเลิก';
   createdAt: string;
   notes?: string;
 }
 
 export const QuotationView: React.FC = () => {
-  const { menuItems } = usePOS();
+  const { menuItems, settings, currentBranch } = usePOS();
   
-  const [quotations, setQuotations] = useState<Quotation[]>(() => {
-    try {
-      const saved = localStorage.getItem('POS_QUOTATIONS');
-      return saved ? JSON.parse(saved) : [
-        {
-          id: 'qt-001',
-          quotationNo: 'QT-202607-001',
-          customerName: 'คุณภัทรพล สุขสวัสดิ์',
-          companyName: 'บริษัท สยามนวัตกรรม จำกัด',
-          taxId: '0105562098123',
-          phone: '081-987-6543',
-          email: 'pattarapol@siaminno.co.th',
-          address: '123/45 อาคารสยามสแควร์ ชั้น 12 ถนนพระราม 1 ปทุมวัน กรุงเทพฯ 10330',
-          eventDate: '2026-08-05',
-          validUntil: '2026-08-01',
-          items: [
-            { id: '1', name: 'ข้าวผัดกะเพราเนื้อสไลส์พรีเมียม (กล่องจัดเลี้ยง)', qty: 50, price: 95 },
-            { id: '2', name: 'ไข่ดาวโบราณขอบกรอบ', qty: 50, price: 15 },
-            { id: '3', name: 'ต้มยำกุ้งน้ำข้นเซตพิเศษ', qty: 10, price: 220 },
-            { id: '4', name: 'ชาไทยเย็นตรามือ (ขวด 250ml)', qty: 50, price: 35 }
-          ],
-          discount: 300,
-          includeVat: true,
-          status: 'อนุมัติแล้ว',
-          createdAt: '2026-07-20',
-          notes: 'มัดจำ 50% ก่อนวันงาน 3 วัน ส่งมอบเวลา 11:30 น.'
-        },
-        {
-          id: 'qt-002',
-          quotationNo: 'QT-202607-002',
-          customerName: 'คุณวรรณิสา แก้วมณี',
-          companyName: 'โรงพยาบาลกรุงเทพ เซ็นเตอร์',
-          taxId: '0105558012341',
-          phone: '089-123-4567',
-          email: 'wannisak@bhh.co.th',
-          address: '456 ถนนเพชรบุรีตัดใหม่ ห้วยขวาง กรุงเทพฯ 10310',
-          eventDate: '2026-08-10',
-          validUntil: '2026-08-03',
-          items: [
-            { id: '1', name: 'ข้าวผัดกะเพราไก่สับไข่ดาว (กล่องจัดเลี้ยง)', qty: 120, price: 65 },
-            { id: '2', name: 'เฉาก๊วยชากังราวใส่น้ำเชื่อม', qty: 120, price: 25 }
-          ],
-          discount: 500,
-          includeVat: false,
-          status: 'รอพิจารณา',
-          createdAt: '2026-07-22',
-          notes: 'ขอใบเสนอราคาด่วนเพื่อเสนอที่ประชุมคณะกรรมการ'
-        }
-      ];
-    } catch {
-      return [];
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('POS_QUOTATIONS', JSON.stringify(quotations));
-    } catch (e) {
-      console.error('Failed to save quotations to localStorage', e);
-    }
-  }, [quotations]);
+  // Shared with every device of the branch; the two sample quotations older versions created
+  // (made-up customers) are dropped
+  const [quotations, setQuotations] = useSharedList<Quotation>('quotations', 'POS_QUOTATIONS', list =>
+    list.filter(q => !((q.id === 'qt-001' && q.quotationNo === 'QT-202607-001') || (q.id === 'qt-002' && q.quotationNo === 'QT-202607-002')))
+  );
+  const shopVatRate = settings.vatRate ?? 7;
+  const quoteSeller = sellerInfo(settings, currentBranch);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -4431,7 +4383,7 @@ export const QuotationView: React.FC = () => {
   // Calculations for form
   const formSubtotal = formItems.reduce((sum, item) => sum + item.qty * item.price, 0);
   const formAfterDiscount = Math.max(0, formSubtotal - formDiscount);
-  const formVat = formIncludeVat ? formAfterDiscount * 0.07 : 0;
+  const formVat = formIncludeVat ? (formAfterDiscount * shopVatRate) / 100 : 0;
   const formGrandTotal = formAfterDiscount + formVat;
 
   const handleCreateQuotation = (e: React.FormEvent) => {
@@ -4443,7 +4395,9 @@ export const QuotationView: React.FC = () => {
 
     const newQuotation: Quotation = {
       id: `qt-${Date.now()}`,
-      quotationNo: `QT-${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}-${(quotations.length + 1).toString().padStart(3, '0')}`,
+      // Running number per month, never reused after a deletion
+      quotationNo: nextDocNumber(`QT-${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}-`, quotations.map(q => q.quotationNo)),
+      vatRate: formIncludeVat ? shopVatRate : 0,
       customerName: formCustomerName || 'ลูกค้าจัดเลี้ยง',
       companyName: formCompanyName || '-',
       taxId: formTaxId,
@@ -4570,7 +4524,7 @@ export const QuotationView: React.FC = () => {
                 filteredQuotations.map(q => {
                   const sub = q.items.reduce((s, i) => s + i.qty * i.price, 0);
                   const afterDis = Math.max(0, sub - q.discount);
-                  const vat = q.includeVat ? afterDis * 0.07 : 0;
+                  const vat = q.includeVat ? (afterDis * (q.vatRate ?? 7)) / 100 : 0;
                   const total = afterDis + vat;
 
                   return (
@@ -4601,7 +4555,7 @@ export const QuotationView: React.FC = () => {
                       </td>
                       <td className="p-3.5 text-right font-mono font-bold text-emerald-400 text-sm">
                         ฿{total.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
-                        {q.includeVat && <div className="text-[10px] text-slate-500 font-sans font-normal">(รวม VAT 7%)</div>}
+                        {q.includeVat && <div className="text-[10px] text-slate-500 font-sans font-normal">(รวม VAT {q.vatRate ?? 7}%)</div>}
                       </td>
                       <td className="p-3.5 text-center">
                         <span
@@ -4840,7 +4794,7 @@ export const QuotationView: React.FC = () => {
                       onChange={e => setFormIncludeVat(e.target.checked)}
                       className="rounded accent-red-500"
                     />
-                    <span className="font-bold text-amber-400">คิดภาษีมูลค่าเพิ่ม VAT 7%</span>
+                    <span className="font-bold text-amber-400">คิดภาษีมูลค่าเพิ่ม VAT {shopVatRate}%</span>
                   </label>
                   <span className="font-mono font-bold text-amber-400">฿{formVat.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span>
                 </div>
@@ -4927,10 +4881,12 @@ export const QuotationView: React.FC = () => {
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2">
                     <img src={SHOP_LOGO_URL} alt="Logo" className="w-8 h-8 object-contain shrink-0" />
-                    <span className="font-black text-lg text-slate-900 tracking-wide">ครัวกะเพรา POS ENTERPRISE</span>
+                    <span className="font-black text-lg text-slate-900 tracking-wide">{quoteSeller.name}</span>
                   </div>
-                  <p className="text-[11px] text-slate-600">123/88 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพฯ 10110</p>
-                  <p className="text-[11px] text-slate-600">โทร: 02-999-8888 | เลขประจำตัวผู้เสียภาษี: 0105559082910</p>
+                  {quoteSeller.address && <p className="text-[11px] text-slate-600">{quoteSeller.address}</p>}
+                  <p className="text-[11px] text-slate-600">
+                    {[quoteSeller.phone && `โทร: ${quoteSeller.phone}`, quoteSeller.taxId && `เลขประจำตัวผู้เสียภาษี: ${quoteSeller.taxId}`].filter(Boolean).join(' | ')}
+                  </p>
                 </div>
                 <div className="text-right space-y-1">
                   <div className="text-xl font-black text-red-600 uppercase tracking-widest">ใบเสนอราคา</div>
@@ -4989,7 +4945,7 @@ export const QuotationView: React.FC = () => {
               {(() => {
                 const sub = viewingQuotation.items.reduce((s, i) => s + i.qty * i.price, 0);
                 const afterDis = Math.max(0, sub - viewingQuotation.discount);
-                const vat = viewingQuotation.includeVat ? afterDis * 0.07 : 0;
+                const vat = viewingQuotation.includeVat ? (afterDis * (viewingQuotation.vatRate ?? 7)) / 100 : 0;
                 const grand = afterDis + vat;
 
                 return (
@@ -5016,7 +4972,7 @@ export const QuotationView: React.FC = () => {
                       )}
                       {viewingQuotation.includeVat && (
                         <div className="flex justify-between text-amber-700">
-                          <span>VAT 7%:</span>
+                          <span>VAT {viewingQuotation.vatRate ?? 7}%:</span>
                           <span>฿{vat.toFixed(2)}</span>
                         </div>
                       )}
@@ -5079,70 +5035,11 @@ export const QuotationView: React.FC = () => {
 };
 
 // 5. CRM Membership & Coupon View (สมาชิก CRM & คูปองส่วนลด)
-interface Member {
-  id: string;
-  name: string;
-  phone: string;
-  points: number;
-  tier: 'Silver' | 'Gold' | 'Platinum';
-  registeredAt: string;
-}
-
-interface Coupon {
-  id: string;
-  code: string;
-  type: 'fixed' | 'percent';
-  value: number;
-  minSpend: number;
-  expiryDate: string;
-  isActive: boolean;
-}
-
 export const CRMView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'members' | 'coupons'>('members');
 
-  const [members, setMembers] = useState<Member[]>(() => {
-    try {
-      const saved = localStorage.getItem('POS_MEMBERS');
-      return saved ? JSON.parse(saved) : [
-        { id: 'M-001', name: 'คุณสมชาย ใจดี', phone: '081-234-5678', points: 450, tier: 'Gold', registeredAt: '2026-01-10' },
-        { id: 'M-002', name: 'คุณนภา หวานเย็น', phone: '089-876-5432', points: 120, tier: 'Silver', registeredAt: '2026-03-15' },
-        { id: 'M-003', name: 'คุณวิชัย สายลุย', phone: '086-555-4321', points: 890, tier: 'Platinum', registeredAt: '2025-11-20' },
-        { id: 'M-004', name: 'คุณอนุรักษ์ มีมิตร', phone: '082-999-1122', points: 230, tier: 'Silver', registeredAt: '2026-05-01' }
-      ];
-    } catch {
-      return [];
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('POS_MEMBERS', JSON.stringify(members));
-    } catch (e) {
-      console.error('Failed to save members to localStorage', e);
-    }
-  }, [members]);
-
-  const [coupons, setCoupons] = useState<Coupon[]>(() => {
-    try {
-      const saved = localStorage.getItem('POS_COUPONS');
-      return saved ? JSON.parse(saved) : [
-        { id: 'cp-1', code: 'KAPRAO50', type: 'fixed', value: 50, minSpend: 300, expiryDate: '2026-08-31', isActive: true },
-        { id: 'cp-2', code: 'VIP10', type: 'percent', value: 10, minSpend: 500, expiryDate: '2026-12-31', isActive: true },
-        { id: 'cp-3', code: 'WELCOME30', type: 'fixed', value: 30, minSpend: 150, expiryDate: '2026-09-30', isActive: true }
-      ];
-    } catch {
-      return [];
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('POS_COUPONS', JSON.stringify(coupons));
-    } catch (e) {
-      console.error('Failed to save coupons to localStorage', e);
-    }
-  }, [coupons]);
+  // Members, coupons and the points rule are shared by every device of the branch
+  const { members, setMembers, coupons, setCoupons, config: crmConfig, setConfig: setCrmConfig } = useCrm();
 
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -5151,7 +5048,7 @@ export const CRMView: React.FC = () => {
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
   const [newMemberTier, setNewMemberTier] = useState<Member['tier']>('Silver');
-  const [newMemberPoints, setNewMemberPoints] = useState<number>(50);
+  const [newMemberPoints, setNewMemberPoints] = useState<number>(0);
 
   // Edit Points Modal
   const [selectedMemberForPoints, setSelectedMemberForPoints] = useState<Member | null>(null);
@@ -5163,17 +5060,30 @@ export const CRMView: React.FC = () => {
   const [couponType, setCouponType] = useState<'fixed' | 'percent'>('fixed');
   const [couponValue, setCouponValue] = useState<number>(50);
   const [couponMinSpend, setCouponMinSpend] = useState<number>(200);
-  const [couponExpiry, setCouponExpiry] = useState<string>('2026-08-31');
+  const [couponExpiry, setCouponExpiry] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
 
   // Member Handlers
   const handleAddMember = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMemberName.trim() || !newMemberPhone.trim()) return;
+    if (normalizePhone(newMemberPhone).length < 9) {
+      alert('เบอร์โทรไม่ถูกต้อง');
+      return;
+    }
+    const dup = members.find(m => normalizePhone(m.phone) === normalizePhone(newMemberPhone));
+    if (dup) {
+      alert(`เบอร์นี้เป็นสมาชิกอยู่แล้ว: ${dup.name} (${dup.id})`);
+      return;
+    }
 
     const newM: Member = {
-      id: `M-00${members.length + 1}`,
-      name: newMemberName,
-      phone: newMemberPhone,
+      id: nextMemberId(members),
+      name: newMemberName.trim(),
+      phone: newMemberPhone.trim(),
       points: Number(newMemberPoints) || 0,
       tier: newMemberTier,
       registeredAt: new Date().toISOString().split('T')[0]
@@ -5201,10 +5111,18 @@ export const CRMView: React.FC = () => {
   const handleAddCoupon = (e: React.FormEvent) => {
     e.preventDefault();
     if (!couponCode.trim()) return;
+    if (coupons.some(c => c.code.toUpperCase() === couponCode.trim().toUpperCase())) {
+      alert('มีรหัสคูปองนี้อยู่แล้ว');
+      return;
+    }
+    if (!(Number(couponValue) > 0) || (couponType === 'percent' && Number(couponValue) > 100)) {
+      alert('มูลค่าส่วนลดไม่ถูกต้อง');
+      return;
+    }
 
     const newCp: Coupon = {
       id: `cp-${Date.now()}`,
-      code: couponCode.toUpperCase(),
+      code: couponCode.trim().toUpperCase(),
       type: couponType,
       value: Number(couponValue),
       minSpend: Number(couponMinSpend),
@@ -5294,6 +5212,23 @@ export const CRMView: React.FC = () => {
       {/* TAB 1: MEMBERS */}
       {activeTab === 'members' && (
         <div className="space-y-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center gap-3 text-xs text-slate-300">
+            <span className="font-bold text-slate-100">กติกาสะสมแต้ม:</span>
+            <span>ทุกยอดชำระ</span>
+            <input
+              type="number"
+              min={0}
+              aria-label="กี่บาทได้ 1 แต้ม"
+              value={crmConfig.bahtPerPoint || ''}
+              placeholder="0"
+              onChange={e => setCrmConfig({ bahtPerPoint: Math.max(0, Number(e.target.value) || 0) })}
+              className="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-100"
+            />
+            <span>บาท = 1 แต้ม</span>
+            <span className="text-slate-500">
+              {crmConfig.bahtPerPoint > 0 ? '· แต้มเข้าอัตโนมัติเมื่อใส่เบอร์สมาชิกตอนคิดเงินที่หน้าร้าน' : '· ใส่ 0 = ไม่สะสมแต้มอัตโนมัติ'}
+            </span>
+          </div>
           <div className="relative w-full sm:w-80">
             <input
               type="text"
@@ -5652,137 +5587,37 @@ interface POItem {
   processedBy?: string;
 }
 
-const INITIAL_SUPPLIERS: Supplier[] = [
-  {
-    id: 's1',
-    name: 'ฟาร์มเนื้อไทยกำแพงแสน',
-    contactPerson: 'คุณชัยชนะ',
-    phone: '085-333-4444',
-    address: 'นครปฐม',
-    leadTimeDays: 2,
-    status: 'Active',
-    bankName: 'ธนาคารกสิกรไทย (KBANK)',
-    bankAccountNo: '123-1-56789-0',
-    bankAccountName: 'บจก. เนื้อไทยกำแพงแสน ฟาร์มมิ่ง'
-  },
-  {
-    id: 's2',
-    name: 'ตลาดไทค้าส่งผักและเครื่องเทศ',
-    contactPerson: 'คุณประเสริฐ',
-    phone: '081-999-8877',
-    address: 'ปทุมธานี',
-    leadTimeDays: 1,
-    status: 'Active',
-    bankName: 'ธนาคารไทยพาณิชย์ (SCB)',
-    bankAccountNo: '405-2-98765-1',
-    bankAccountName: 'ร้านตลาดไทค้าส่งผัก'
-  },
-  {
-    id: 's3',
-    name: 'เบทาโกร',
-    contactPerson: 'ฝ่ายขายจัดซื้อ',
-    phone: '02-792-1111',
-    address: 'กรุงเทพมหานคร',
-    leadTimeDays: 2,
-    status: 'Active',
-    bankName: 'ธนาคารกรุงเทพ (BBL)',
-    bankAccountNo: '001-3-45678-9',
-    bankAccountName: 'บมจ. เบทาโกร'
-  }
-];
-
-const INITIAL_PO_LIST: POItem[] = [
-  {
-    id: 'po1',
-    poNumber: 'PO-2026-001',
-    orderDate: '2/7/2569',
-    deliveryDate: '4/7/2569',
-    supplierId: 's1',
-    supplierName: 'ฟาร์มเนื้อไทยกำแพงแสน',
-    leadTimeDays: 2,
-    itemsSummary: 'เนื้อวัวบดพรีเมียม (A5) (30 kg)',
-    totalAmount: 9300,
-    paymentStatus: 'ชำระแล้ว',
-    paymentMethod: 'โอนเงิน',
-    paymentSlipUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=500&q=80',
-    stockStatus: 'รับของเข้าสต๊อกแล้ว',
-    processedBy: 'บันทึกโดยคลังแล้ว'
-  },
-  {
-    id: 'po2',
-    poNumber: 'PO-2026-002',
-    orderDate: '5/7/2569',
-    deliveryDate: '6/7/2569',
-    supplierId: 's2',
-    supplierName: 'ตลาดไทค้าส่งผักและเครื่องเทศ',
-    leadTimeDays: 1,
-    itemsSummary: 'ใบกะเพราแดงป่า (ฉบับพิเศษ) (10 kg)',
-    totalAmount: 3925,
-    paymentStatus: 'ชำระแล้ว',
-    paymentMethod: 'เงินสด',
-    cashNote: 'ชำระเงินสดเมื่อรับสินค้า',
-    stockStatus: 'รับของเข้าสต๊อกแล้ว',
-    processedBy: 'บันทึกโดยคลังแล้ว'
-  },
-  {
-    id: 'po3',
-    poNumber: 'PO-2026-003',
-    orderDate: '10/7/2569',
-    deliveryDate: '12/7/2569',
-    supplierId: 's3',
-    supplierName: 'เบทาโกร',
-    leadTimeDays: 2,
-    itemsSummary: 'อกไก่สดแช่เย็น (25 kg)',
-    totalAmount: 4500,
-    paymentStatus: 'ยังไม่แนบสลิป',
-    stockStatus: 'รอรับของ'
-  }
-];
+// Sample suppliers and purchase orders that older versions created on first use (made-up
+// companies and bank accounts). They are removed from saved data.
+const SAMPLE_SUPPLIER_IDS: Record<string, string> = { s1: 'ฟาร์มเนื้อไทยกำแพงแสน', s2: 'ตลาดไทค้าส่งผักและเครื่องเทศ', s3: 'เบทาโกร' };
+const SAMPLE_PO_NUMBERS: Record<string, string> = { po1: 'PO-2026-001', po2: 'PO-2026-002', po3: 'PO-2026-003' };
+const withoutSampleSuppliers = (list: Supplier[]) => list.filter(s => SAMPLE_SUPPLIER_IDS[s.id] !== s.name);
+const withoutSamplePOs = (list: POItem[]) => list.filter(p => SAMPLE_PO_NUMBERS[p.id] !== p.poNumber);
 
 export const POManagementView: React.FC = () => {
   const [receiveNotice, setReceiveNotice] = useState<string | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'po' | 'suppliers'>('po');
-  const [poList, setPoList] = useState<POItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('POS_PO_LIST');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch (e) {
-      console.error('Failed to parse poList from localStorage', e);
-    }
-    return INITIAL_PO_LIST;
-  });
+  // Shared with every device of the branch (see useSharedList)
+  const { addExpense, currentBranch } = usePOS();
+  const [poList, setPoList] = useSharedList<POItem>('purchase_orders', 'POS_PO_LIST', withoutSamplePOs);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('POS_PO_LIST', JSON.stringify(poList));
-    } catch (e) {
-      console.error('Failed to save poList to localStorage', e);
-    }
-  }, [poList]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
-    try {
-      const saved = localStorage.getItem('POS_SUPPLIERS');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch (e) {
-      console.error('Failed to parse suppliers from localStorage', e);
-    }
-    return INITIAL_SUPPLIERS;
-  });
-
-  // Save suppliers to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('POS_SUPPLIERS', JSON.stringify(suppliers));
-    } catch (e) {
-      console.error('Failed to save suppliers to localStorage', e);
-    }
-  }, [suppliers]);
+  // A paid purchase order is money out: it is recorded once as a raw-material expense
+  const recordPoExpense = (po: POItem, method: string, slip?: string) => {
+    addExpense({
+      branchId: currentBranch.id,
+      date: new Date().toISOString().slice(0, 10),
+      category: 'raw_material',
+      title: `จ่ายค่าสินค้า ${po.poNumber} · ${po.supplierName}`,
+      amount: po.totalAmount,
+      includeVat: false,
+      vatAmount: 0,
+      netAmount: po.totalAmount,
+      refNumber: po.poNumber,
+      note: `${method} · ${po.itemsSummary}`,
+      receiptImage: slip || undefined
+    });
+  };
+  const [suppliers, setSuppliers] = useSharedList<Supplier>('suppliers', 'POS_SUPPLIERS', withoutSampleSuppliers);
 
   // Modals state
   const [isAddPoOpen, setIsAddPoOpen] = useState(false);
@@ -5850,6 +5685,14 @@ export const POManagementView: React.FC = () => {
   const handleCreatePO = (e: React.FormEvent) => {
     e.preventDefault();
     const supp = suppliers.find(s => s.id === newPoSupplierId) || suppliers[0];
+    if (!supp) {
+      alert('กรุณาเพิ่มซัพพลายเออร์ก่อนเปิดใบสั่งซื้อ');
+      return;
+    }
+    if (!newPoItemsSummary.trim() || !(newPoAmount > 0)) {
+      alert('กรุณาระบุรายการสินค้าและยอดเงินของใบสั่งซื้อ');
+      return;
+    }
     const today = new Date();
     const orderDateStr = `${today.getDate()}/${today.getMonth() + 1}/${today.getFullYear() + 543}`;
     const delivDate = new Date(today);
@@ -5858,14 +5701,15 @@ export const POManagementView: React.FC = () => {
 
     const newPO: POItem = {
       id: `po-${Date.now()}`,
-      poNumber: `PO-2026-00${poList.length + 1}`,
+      // Running number per Thai year, e.g. PO-2569-0007 (never reused after a deletion)
+      poNumber: nextDocNumber(`PO-${today.getFullYear() + 543}-`, poList.map(p => p.poNumber)),
       orderDate: orderDateStr,
       deliveryDate: delivDateStr,
-      supplierId: supp?.id || 's1',
-      supplierName: supp?.name || 'ซัพพลายเออร์',
-      leadTimeDays: supp?.leadTimeDays || 1,
-      itemsSummary: newPoItemsSummary || 'วัตถุดิบจัดซื้อทั่วไป',
-      totalAmount: newPoAmount || 1000,
+      supplierId: supp.id,
+      supplierName: supp.name,
+      leadTimeDays: supp.leadTimeDays || 1,
+      itemsSummary: newPoItemsSummary.trim(),
+      totalAmount: newPoAmount,
       paymentStatus: 'ยังไม่แนบสลิป',
       stockStatus: 'รอรับของ'
     };
@@ -5884,13 +5728,13 @@ export const POManagementView: React.FC = () => {
     const newSupp: Supplier = {
       id: `s${Date.now()}`,
       name: newSuppName,
-      contactPerson: newSuppContact || 'ผู้ติดต่อ',
-      phone: newSuppPhone || '080-000-0000',
-      address: newSuppAddress || 'กรุงเทพมหานคร',
+      contactPerson: newSuppContact.trim(),
+      phone: newSuppPhone.trim(),
+      address: newSuppAddress.trim(),
       leadTimeDays: Number(newSuppLeadTime) || 1,
       status: 'Active',
       bankName: newSuppBankName,
-      bankAccountNo: newSuppBankAccNo || '000-0-00000-0',
+      bankAccountNo: newSuppBankAccNo.trim(),
       bankAccountName: newSuppBankAccName || newSuppName
     };
 
@@ -5960,8 +5804,15 @@ export const POManagementView: React.FC = () => {
     setTimeout(() => setReceiveNotice(null), 6000);
   };
 
-  // Handle Attach Slip Mock
+  // Attach the transfer slip the shop actually uploaded (compressed so the shared list stays small)
+  const [slipDataUrl, setSlipDataUrl] = useState<string>('');
   const handleAttachSlip = (poId: string) => {
+    if (!slipDataUrl) {
+      alert('กรุณาเลือกรูปสลิปโอนเงินก่อน');
+      return;
+    }
+    const po = poList.find(p => p.id === poId);
+    if (po && po.paymentStatus !== 'ชำระแล้ว') recordPoExpense(po, 'โอนเงิน', slipDataUrl);
     setPoList(prev =>
       prev.map(p =>
         p.id === poId
@@ -5969,16 +5820,19 @@ export const POManagementView: React.FC = () => {
               ...p,
               paymentStatus: 'ชำระแล้ว',
               paymentMethod: 'โอนเงิน',
-              paymentSlipUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=500&q=80'
+              paymentSlipUrl: slipDataUrl
             }
           : p
       )
     );
+    setSlipDataUrl('');
     setAttachingSlipPoId(null);
   };
 
   // Handle Pay Cash
   const handlePayCash = (poId: string) => {
+    const po = poList.find(p => p.id === poId);
+    if (po && po.paymentStatus !== 'ชำระแล้ว') recordPoExpense(po, 'เงินสด');
     setPoList(prev =>
       prev.map(p =>
         p.id === poId
@@ -6843,11 +6697,26 @@ export const POManagementView: React.FC = () => {
 
             {paymentModeTab === 'slip' ? (
               <div className="space-y-4">
-                <div className="border-2 border-dashed border-slate-800 hover:border-amber-500/50 bg-slate-950 rounded-xl p-6 text-center space-y-2 cursor-pointer transition">
-                  <UploadCloud className="w-8 h-8 text-amber-400 mx-auto" />
-                  <div className="text-xs font-bold text-slate-200">อัปโหลดสลิปโอนเงิน</div>
-                  <p className="text-[11px] text-slate-400">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่ออัปโหลดไฟล์ (JPG, PNG)</p>
-                </div>
+                <label className="block border-2 border-dashed border-slate-800 hover:border-amber-500/50 bg-slate-950 rounded-xl p-6 text-center space-y-2 cursor-pointer transition">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={async e => {
+                      const file = e.target.files?.[0];
+                      if (file) setSlipDataUrl(await compressImageFile(file, 900, 0.7));
+                    }}
+                  />
+                  {slipDataUrl ? (
+                    <img src={slipDataUrl} alt="สลิปที่เลือก" className="max-h-48 mx-auto rounded-lg" />
+                  ) : (
+                    <>
+                      <UploadCloud className="w-8 h-8 text-amber-400 mx-auto" />
+                      <div className="text-xs font-bold text-slate-200">แตะเพื่อเลือกรูปสลิปโอนเงิน</div>
+                      <p className="text-[11px] text-slate-400">JPG หรือ PNG (ระบบย่อขนาดให้อัตโนมัติ)</p>
+                    </>
+                  )}
+                </label>
 
                 <div className="flex items-center justify-end space-x-3 pt-2">
                   <button
@@ -6858,7 +6727,8 @@ export const POManagementView: React.FC = () => {
                   </button>
                   <button
                     onClick={() => handleAttachSlip(attachingSlipPoId)}
-                    className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow transition"
+                    disabled={!slipDataUrl}
+                    className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow transition disabled:opacity-40"
                   >
                     ยืนยันแนบสลิป
                   </button>
@@ -7133,7 +7003,9 @@ const thaiBahtText = (amount: number): string => {
 
 // 8. Tax Receipt & Invoice View (ใบเสร็จรับเงินและใบกำกับภาษี)
 export const TaxReceiptView: React.FC = () => {
-  const { orders, updateOrderTaxInfo, addTaxInvoiceOrder, currentBranch, menuItems } = usePOS();
+  const { orders, updateOrderTaxInfo, addTaxInvoiceOrder, currentBranch, menuItems, settings } = usePOS();
+  const vatRate = settings.vatRate ?? 7;
+  const seller = sellerInfo(settings, currentBranch);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'abb' | 'full'>('all');
@@ -7170,7 +7042,6 @@ export const TaxReceiptView: React.FC = () => {
   const [payRef, setPayRef] = useState('');
   const [vatType, setVatType] = useState<'inclusive' | 'exclusive' | 'none'>('inclusive');
   const [whtRate, setWhtRate] = useState<number>(0);
-  const [autoIncomeLog, setAutoIncomeLog] = useState(true);
 
   // Form state for Edit Tax Info Modal
   const [editCompanyName, setEditCompanyName] = useState('');
@@ -7179,12 +7050,14 @@ export const TaxReceiptView: React.FC = () => {
   const [editAddress, setEditAddress] = useState('');
   const [editPhone, setEditPhone] = useState('');
 
-  // Computed summary stats for top cards
-  const totalReceiptsCount = orders.length;
-  const totalRevenue = orders.reduce((sum, o) => sum + o.grandTotal, 0);
+  // Computed summary stats for top cards: paid sales only (cancelled or unpaid bills are not receipts)
+  const receiptOrders = orders.filter(o => o.branchId === currentBranch.id && countsAsRevenue(o));
+  const totalReceiptsCount = receiptOrders.length;
+  const totalRevenue = receiptOrders.reduce((sum, o) => sum + o.grandTotal, 0);
   // VAT as recorded on each order at the time of sale (respects the shop's VAT settings)
-  const totalVat = orders.reduce((sum, o) => sum + orderVatBreakdown(o).vat, 0);
-  const totalWht = orders.reduce((sum, o) => (o.customerTaxInfo ? sum + orderVatBreakdown(o).base * 0.03 : sum), 0);
+  const totalVat = receiptOrders.reduce((sum, o) => sum + orderVatBreakdown(o).vat, 0);
+  // Withholding tax actually recorded on invoices (customers deduct it only for some services)
+  const totalWht = receiptOrders.reduce((sum, o) => sum + (o.withholdingTax || 0), 0);
 
   // Computed totals for New Receipt Form
   const rawSubtotal = newItems.reduce((acc, it) => acc + it.quantity * it.unitPrice, 0);
@@ -7193,11 +7066,11 @@ export const TaxReceiptView: React.FC = () => {
   let totalGrand = rawSubtotal;
 
   if (vatType === 'inclusive') {
-    calculatedVat = (rawSubtotal * 7) / 107;
+    calculatedVat = (rawSubtotal * vatRate) / (100 + vatRate);
     subtotalBeforeVat = rawSubtotal - calculatedVat;
     totalGrand = rawSubtotal;
   } else if (vatType === 'exclusive') {
-    calculatedVat = (rawSubtotal * 7) / 100;
+    calculatedVat = (rawSubtotal * vatRate) / 100;
     subtotalBeforeVat = rawSubtotal;
     totalGrand = rawSubtotal + calculatedVat;
   } else {
@@ -7237,59 +7110,47 @@ export const TaxReceiptView: React.FC = () => {
     }
   };
 
-  // Handle Quotation Selection
+  // Real quotations (shared list) and customers already known from tax invoices and quotations
+  const [savedQuotations] = useSharedList<Quotation>('quotations', 'POS_QUOTATIONS');
+  const knownCustomers = React.useMemo(() => {
+    const byKey = new Map<string, { key: string; company: string; taxId: string; branch: string; address: string; phone: string }>();
+    orders.forEach(o => {
+      const t = o.customerTaxInfo;
+      if (t?.companyName && t.taxId) byKey.set(t.taxId, { key: t.taxId, company: t.companyName, taxId: t.taxId, branch: t.branchCode || 'สำนักงานใหญ่', address: t.address || '', phone: t.phone || '' });
+    });
+    savedQuotations.forEach(q => {
+      const key = q.taxId || `qt:${q.companyName || q.customerName}`;
+      if (!byKey.has(key)) byKey.set(key, { key, company: q.companyName || q.customerName, taxId: q.taxId || '', branch: 'สำนักงานใหญ่', address: q.address || '', phone: q.phone || '' });
+    });
+    return Array.from(byKey.values()).sort((a, b) => a.company.localeCompare(b.company, 'th'));
+  }, [orders, savedQuotations]);
+
+  const fillCustomer = (c: { company: string; taxId: string; branch: string; address: string; phone: string }) => {
+    setFormCompany(c.company);
+    setFormTaxId(c.taxId);
+    setFormBranch(c.branch || 'สำนักงานใหญ่');
+    setFormAddress(c.address);
+    setFormPhone(c.phone);
+  };
+
   const handleSelectQuotation = (qtId: string) => {
     setSelectedQuotationId(qtId);
     setSelectedPosOrderId('');
-    if (!qtId) return;
-
-    if (qtId === 'QT-2026-001') {
-      setCrmCustomer('ptt');
-      setFormCompany('บจก. ปตท. น้ำมันและการค้าปลีก');
-      setFormTaxId('0105558000000');
-      setFormPhone('081-234-5678');
-      setFormBranch('สำนักงานใหญ่');
-      setFormAddress('555/1 ถนนวิภาวดีรังสิต แขวงจตุจักร เขตจตุจักร กรุงเทพฯ');
-      setNewItems([
-        { id: 'q1', name: 'เหมาจัดเลี้ยงอาหารกะเพราพรีเมียม (100 ชุด)', quantity: 1, unitPrice: 15000, total: 15000 }
-      ]);
-      setDocType('full');
-    } else if (qtId === 'QT-2026-002') {
-      setCrmCustomer('scg');
-      setFormCompany('บจก. เอสซีจี เคมิคอลส์');
-      setFormTaxId('0105559123456');
-      setFormPhone('02-586-3333');
-      setFormBranch('สำนักงานใหญ่');
-      setFormAddress('1 ถนนปูนซิเมนต์ไทย แขวงบางซื่อ เขตบางซื่อ กรุงเทพฯ 10800');
-      setNewItems([
-        { id: 'q2', name: 'จัดเลี้ยงข้าวกล่องกะเพราซีฟู้ด & เครื่องดื่ม (200 ชุด)', quantity: 1, unitPrice: 25000, total: 25000 }
-      ]);
-      setDocType('full');
-    }
+    const q = savedQuotations.find(x => x.id === qtId);
+    if (!q) return;
+    fillCustomer({ company: q.companyName || q.customerName, taxId: q.taxId || '', branch: 'สำนักงานใหญ่', address: q.address || '', phone: q.phone || '' });
+    const items = q.items.map(it => ({ id: `q-${it.id}`, name: it.name, quantity: it.qty, unitPrice: it.price, total: it.qty * it.price }));
+    if (q.discount > 0) items.push({ id: 'q-discount', name: 'ส่วนลด', quantity: 1, unitPrice: -q.discount, total: -q.discount });
+    setNewItems(items);
+    // The quotation's amounts are before VAT when it adds VAT on top
+    setVatType(q.includeVat ? 'exclusive' : 'none');
+    setDocType(q.taxId ? 'full' : 'general');
   };
 
-  // Handle CRM Customer Dropdown
-  const handleSelectCrm = (val: string) => {
-    setCrmCustomer(val);
-    if (val === 'ptt') {
-      setFormCompany('บจก. ปตท. น้ำมันและการค้าปลีก');
-      setFormTaxId('0105558000000');
-      setFormPhone('081-234-5678');
-      setFormBranch('สำนักงานใหญ่');
-      setFormAddress('555/1 ถนนวิภาวดีรังสิต แขวงจตุจักร เขตจตุจักร กรุงเทพฯ');
-    } else if (val === 'scg') {
-      setFormCompany('บจก. เอสซีจี เคมิคอลส์');
-      setFormTaxId('0105559123456');
-      setFormPhone('02-586-3333');
-      setFormBranch('สำนักงานใหญ่');
-      setFormAddress('1 ถนนปูนซิเมนต์ไทย แขวงบางซื่อ เขตบางซื่อ กรุงเทพฯ 10800');
-    } else if (val === 'siam') {
-      setFormCompany('บจก. สยามนวัตกรรม');
-      setFormTaxId('0105562098123');
-      setFormPhone('02-123-4567');
-      setFormBranch('สำนักงานใหญ่');
-      setFormAddress('123/45 ถนนพระราม 1 ปทุมวัน กรุงเทพฯ 10330');
-    }
+  const handleSelectCrm = (key: string) => {
+    setCrmCustomer(key);
+    const c = knownCustomers.find(x => x.key === key);
+    if (c) fillCustomer(c);
   };
 
   // Item List Actions
@@ -7335,73 +7196,115 @@ export const TaxReceiptView: React.FC = () => {
     setNewItems(prev => prev.filter(it => it.id !== id));
   };
 
+  // Next full tax invoice number: must run in sequence without gaps or repeats
+  const nextTaxInvoiceNo = () => {
+    const now = new Date();
+    return nextDocNumber(`INV${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-`, orders.map(o => o.taxInvoiceNo || ''));
+  };
+
   // Submit New Receipt
   const handleCreateReceiptSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (docType === 'full' && (!formCompany.trim() || !formTaxId.trim())) {
-      alert('กรุณากรอกชื่อบริษัท/ผู้เสียภาษี และ เลขประจำตัวผู้เสียภาษี (Tax ID)');
+    if (docType === 'full') {
+      if (!formCompany.trim() || !formTaxId.trim()) {
+        alert('กรุณากรอกชื่อบริษัท/ผู้เสียภาษี และ เลขประจำตัวผู้เสียภาษี (Tax ID)');
+        return;
+      }
+      if (!isValidThaiTaxId(formTaxId)) {
+        alert('เลขประจำตัวผู้เสียภาษีไม่ถูกต้อง (ต้องเป็นตัวเลข 13 หลักที่ถูกต้องตามหลักตรวจสอบ)');
+        return;
+      }
+    }
+    const taxInfo =
+      docType === 'full'
+        ? {
+            companyName: formCompany.trim(),
+            taxId: formTaxId.replace(/[\s-]/g, ''),
+            branchCode: formBranch || 'สำนักงานใหญ่',
+            address: formAddress.trim(),
+            phone: formPhone.trim()
+          }
+        : undefined;
+    const taxInvoiceNo = docType === 'full' ? nextTaxInvoiceNo() : undefined;
+    const withholdingTax = calculatedWht > 0 ? Number(calculatedWht.toFixed(2)) : undefined;
+
+    const resetForm = () => {
+      setIsCreateModalOpen(false);
+      setFormCompany('');
+      setFormTaxId('');
+      setFormAddress('');
+      setFormPhone('');
+      setSelectedPosOrderId('');
+      setSelectedQuotationId('');
+      setCrmCustomer('');
+      setNewItems([{ id: '1', name: '', quantity: 1, unitPrice: 0, total: 0 }]);
+    };
+
+    // A sale from the till already exists: issue the document for it instead of recording the
+    // sale a second time (which would double the revenue)
+    const posOrder = selectedPosOrderId ? orders.find(o => o.id === selectedPosOrderId) : undefined;
+    if (posOrder) {
+      if (taxInfo) updateOrderTaxInfo(posOrder.id, taxInfo, { taxInvoiceNo: posOrder.taxInvoiceNo || taxInvoiceNo, withholdingTax });
+      setPrintingOrder({ ...posOrder, customerTaxInfo: taxInfo || posOrder.customerTaxInfo, taxInvoiceNo: posOrder.taxInvoiceNo || taxInvoiceNo });
+      resetForm();
       return;
     }
 
-    const orderNum = `#INV-${Math.floor(1000 + Math.random() * 9000)}`;
-
+    if (!newItems.some(it => it.name.trim() && it.quantity * it.unitPrice !== 0)) {
+      alert('กรุณาใส่รายการสินค้า/บริการและราคา');
+      return;
+    }
+    const nowIso = new Date().toISOString();
     const newOrderObj: Order = {
       id: `ord-tax-${Date.now()}`,
-      orderNumber: orderNum,
+      orderNumber: taxInvoiceNo || nextDocNumber(`RC${new Date().getFullYear()}-`, orders.map(o => o.orderNumber)),
       branchId: currentBranch.id,
       orderType: 'takeaway',
-      items: newItems.map((it, idx) => ({
-        cartItemId: `it-${idx}`,
-        menuItem: {
-          id: `m-${idx}`,
-          name: it.name || 'รายการสินค้า/บริการ',
-          nameEn: 'Service Item',
-          category: 'special',
-          price: it.unitPrice,
-          costPrice: it.unitPrice * 0.6,
-          description: '',
-          image: '',
-          recipe: []
-        },
-        quantity: it.quantity,
-        selectedAddOns: [],
-        unitPrice: it.unitPrice,
-        totalPrice: it.quantity * it.unitPrice
-      })),
+      items: newItems
+        .filter(it => it.name.trim())
+        .map((it, idx) => ({
+          cartItemId: `it-${idx}`,
+          menuItem: {
+            id: `m-${idx}`,
+            name: it.name.trim(),
+            nameEn: '',
+            category: 'special',
+            price: it.unitPrice,
+            // Unknown for items typed in by hand; reports then use their usual estimate
+            costPrice: 0,
+            description: '',
+            image: '',
+            recipe: []
+          },
+          quantity: it.quantity,
+          selectedAddOns: [],
+          unitPrice: it.unitPrice,
+          totalPrice: it.quantity * it.unitPrice
+        })),
       subtotal: subtotalBeforeVat,
       discountAmount: 0,
+      discountType: 'fixed',
       vatAmount: calculatedVat,
       grandTotal: totalGrand,
-      paymentMethod: payMethod === 'เงินสด' ? 'cash' : payMethod === 'สแกน PromptPay' ? 'promptpay' : 'transfer',
+      paymentMethod: payMethod === 'เงินสด' ? 'cash' : payMethod === 'สแกน PromptPay' ? 'promptpay' : payMethod === 'บัตรเครดิต' ? 'credit' : 'transfer',
       tenderedAmount: netPaid,
       changeAmount: 0,
       status: 'served',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      customerTaxInfo:
-        docType === 'full'
-          ? {
-              companyName: formCompany || 'ลูกค้าทั่วไป',
-              taxId: formTaxId || '0000000000000',
-              branchCode: formBranch || 'สำนักงานใหญ่',
-              address: formAddress || '-',
-              phone: formPhone || '-'
-            }
-          : undefined,
-      isFullTaxInvoiceRequested: docType === 'full'
+      paymentStatus: 'paid',
+      paidAt: nowIso,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      completedAt: nowIso,
+      customerTaxInfo: taxInfo,
+      isFullTaxInvoiceRequested: docType === 'full',
+      taxInvoiceNo,
+      withholdingTax,
+      orderSource: 'pos'
     };
 
     addTaxInvoiceOrder(newOrderObj);
-    setIsCreateModalOpen(false);
-
-    // Reset Form
-    setFormCompany('');
-    setFormTaxId('');
-    setFormAddress('');
-    setFormPhone('');
-    setSelectedPosOrderId('');
-    setSelectedQuotationId('');
-    setNewItems([{ id: '1', name: 'รายการสินค้า/บริการ', quantity: 1, unitPrice: 0, total: 0 }]);
+    setPrintingOrder(newOrderObj);
+    resetForm();
   };
 
   // Edit Tax Modal Handlers
@@ -7421,16 +7324,21 @@ export const TaxReceiptView: React.FC = () => {
       alert('กรุณากรอกชื่อบริษัท/ผู้เสียภาษี และ เลขประจำตัวผู้เสียภาษี');
       return;
     }
+    if (!isValidThaiTaxId(editTaxId)) {
+      alert('เลขประจำตัวผู้เสียภาษีไม่ถูกต้อง (ต้องเป็นตัวเลข 13 หลักที่ถูกต้องตามหลักตรวจสอบ)');
+      return;
+    }
 
     const taxInfo: CustomerTaxInfo = {
-      companyName: editCompanyName,
-      taxId: editTaxId,
+      companyName: editCompanyName.trim(),
+      taxId: editTaxId.replace(/[\s-]/g, ''),
       branchCode: editBranchCode,
-      address: editAddress,
-      phone: editPhone
+      address: editAddress.trim(),
+      phone: editPhone.trim()
     };
 
-    updateOrderTaxInfo(editingTaxOrder.id, taxInfo);
+    // Keep the invoice number if one was issued; a first full invoice gets the next number
+    updateOrderTaxInfo(editingTaxOrder.id, taxInfo, { taxInvoiceNo: editingTaxOrder.taxInvoiceNo || nextTaxInvoiceNo() });
     setEditingTaxOrder(null);
   };
 
@@ -7443,6 +7351,7 @@ export const TaxReceiptView: React.FC = () => {
 
     const matchSearch =
       o.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (o.taxInvoiceNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (o.customerTaxInfo?.companyName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (o.customerTaxInfo?.taxId || '').includes(searchTerm);
 
@@ -7669,7 +7578,7 @@ export const TaxReceiptView: React.FC = () => {
                       className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-emerald-500 truncate"
                     >
                       <option value="">-- เลือกออเดอร์ POS --</option>
-                      {orders.map(o => (
+                      {receiptOrders.slice(0, 300).map(o => (
                         <option key={o.id} value={o.id}>
                           {o.orderNumber} - ฿{o.grandTotal.toFixed(2)} ({o.customerTaxInfo?.companyName || 'ลูกค้าทั่วไป'})
                         </option>
@@ -7683,9 +7592,14 @@ export const TaxReceiptView: React.FC = () => {
                       onChange={e => handleSelectQuotation(e.target.value)}
                       className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-emerald-500 truncate"
                     >
-                      <option value="">-- เลือกใบเสนอราคา QT --</option>
-                      <option value="QT-2026-001">QT-2026-001 (บจก. ปตท. น้ำมันและการค้าปลีก - ฿15,000.00)</option>
-                      <option value="QT-2026-002">QT-2026-002 (บจก. เอสซีจี เคมิคอลส์ - ฿25,000.00)</option>
+                      <option value="">{savedQuotations.length ? '-- เลือกใบเสนอราคา QT --' : '-- ยังไม่มีใบเสนอราคา --'}</option>
+                      {savedQuotations
+                        .filter(q => q.status !== 'ยกเลิก')
+                        .map(q => (
+                          <option key={q.id} value={q.id}>
+                            {q.quotationNo} ({q.companyName || q.customerName})
+                          </option>
+                        ))}
                     </select>
                   </div>
                 </div>
@@ -7748,10 +7662,12 @@ export const TaxReceiptView: React.FC = () => {
                     onChange={e => handleSelectCrm(e.target.value)}
                     className="w-full sm:w-auto px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-[11px] text-slate-300 focus:outline-none focus:border-emerald-500 max-w-full truncate"
                   >
-                    <option value="">-- เลือกจากรายชื่อ CRM --</option>
-                    <option value="ptt">บจก. ปตท. น้ำมันและการค้าปลีก (Tax ID: 0105558000000)</option>
-                    <option value="scg">บจก. เอสซีจี เคมิคอลส์ (Tax ID: 0105559123456)</option>
-                    <option value="siam">บจก. สยามนวัตกรรม (Tax ID: 0105562098123)</option>
+                    <option value="">{knownCustomers.length ? '-- เลือกลูกค้าที่เคยออกเอกสาร --' : '-- ยังไม่มีลูกค้าที่บันทึกไว้ --'}</option>
+                    {knownCustomers.map(c => (
+                      <option key={c.key} value={c.key}>
+                        {c.company}{c.taxId ? ` (Tax ID: ${c.taxId})` : ''}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -7763,7 +7679,7 @@ export const TaxReceiptView: React.FC = () => {
                       required={docType === 'full'}
                       value={formCompany}
                       onChange={e => setFormCompany(e.target.value)}
-                      placeholder="เช่น บจก. ปตท. น้ำมันและการค้าปลีก"
+                      placeholder="ชื่อบริษัท หรือชื่อลูกค้า"
                       className="w-full mt-1 px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
                     />
                   </div>
@@ -7785,7 +7701,7 @@ export const TaxReceiptView: React.FC = () => {
                       type="text"
                       value={formTaxId}
                       onChange={e => setFormTaxId(e.target.value)}
-                      placeholder="0105558000000"
+                      placeholder="เลขประจำตัวผู้เสียภาษี 13 หลัก"
                       className="w-full mt-1 px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-slate-100 focus:outline-none focus:border-emerald-500"
                     />
                   </div>
@@ -7965,15 +7881,7 @@ export const TaxReceiptView: React.FC = () => {
                   </div>
 
                   <div className="flex items-center pt-5">
-                    <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={autoIncomeLog}
-                        onChange={e => setAutoIncomeLog(e.target.checked)}
-                        className="w-4 h-4 rounded bg-slate-900 border-slate-800 text-emerald-500 focus:ring-0"
-                      />
-                      <span>บันทึกรายรับลงสมุดบัญชีการเงินทันที (Auto Income Log)</span>
-                    </label>
+                    <p className="text-[11px] text-slate-400">ยอดนี้นับเป็นยอดขายในสมุดบัญชีให้อัตโนมัติ (ถ้าเลือกบิลจากหน้าร้าน ระบบจะออกเอกสารให้บิลเดิม ไม่นับยอดซ้ำ)</p>
                   </div>
                 </div>
 
@@ -8134,7 +8042,7 @@ export const TaxReceiptView: React.FC = () => {
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full my-6 overflow-hidden shadow-2xl space-y-4">
             <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950">
               <span className="font-bold text-slate-100 text-sm">
-                พิมพ์ใบกำกับภาษี / ใบเสร็จรับเงิน #{printingOrder.orderNumber}
+                พิมพ์ใบกำกับภาษี / ใบเสร็จรับเงิน {printingOrder.taxInvoiceNo || printingOrder.orderNumber}
               </span>
               <div className="flex items-center space-x-2">
                 <button
@@ -8173,15 +8081,21 @@ export const TaxReceiptView: React.FC = () => {
             >
               <div className="flex justify-between items-start border-b border-slate-300 pb-3">
                 <div>
-                  <div className="font-black text-lg text-slate-900">ครัวกะเพรา POS (สำนักงานใหญ่)</div>
-                  <div className="text-[11px] text-slate-600">123/88 ถนนสุขุมวิท เขตคลองเตย กรุงเทพฯ 10110</div>
-                  <div className="text-[11px] text-slate-600">เลขประจำตัวผู้เสียภาษี: 0105559082910</div>
+                  <div className="font-black text-lg text-slate-900">{seller.name}</div>
+                  {seller.address && <div className="text-[11px] text-slate-600">{seller.address}</div>}
+                  <div className="text-[11px] text-slate-600">
+                    {seller.taxId ? `เลขประจำตัวผู้เสียภาษี: ${seller.taxId}` : '⚠️ ยังไม่ได้ตั้งเลขประจำตัวผู้เสียภาษีของร้าน (ตั้งค่าร้าน)'}
+                    {seller.phone ? ` · โทร ${seller.phone}` : ''}
+                  </div>
                 </div>
                 <div className="text-right">
                   <div className="text-base font-black text-emerald-700">
                     {printingOrder.customerTaxInfo ? 'ใบกำกับภาษี / ใบเสร็จรับเงิน' : 'ใบกำกับภาษีอย่างย่อ (ABB)'}
                   </div>
-                  <div className="font-mono text-slate-900 font-bold">{printingOrder.orderNumber}</div>
+                  <div className="font-mono text-slate-900 font-bold">{printingOrder.taxInvoiceNo || printingOrder.orderNumber}</div>
+                  {printingOrder.taxInvoiceNo && printingOrder.taxInvoiceNo !== printingOrder.orderNumber && (
+                    <div className="font-mono text-slate-500 text-[11px]">อ้างอิงบิล {printingOrder.orderNumber}</div>
+                  )}
                   <div className="text-[10px] text-slate-500">
                     วันที่: {new Date(printingOrder.createdAt).toLocaleDateString('th-TH')} {new Date(printingOrder.createdAt).toLocaleTimeString('th-TH')}
                   </div>
@@ -8228,6 +8142,12 @@ export const TaxReceiptView: React.FC = () => {
                     <div className="flex justify-between font-mono text-xs text-slate-800">
                       <div className="text-slate-600 font-sans">วิธีชำระเงิน: {printingOrder.paymentMethod}</div>
                       <div className="space-y-1 text-right">
+                        {printingOrder.discountAmount > 0 && (
+                          <div>
+                            รวมเป็นเงิน ฿{(printingOrder.subtotal || 0).toFixed(2)} · ส่วนลด{printingOrder.couponCode ? ` (${printingOrder.couponCode})` : ''} −฿
+                            {printingOrder.discountAmount.toFixed(2)}
+                          </div>
+                        )}
                         <div>มูลค่าสินค้า (ก่อน VAT): ฿{vatBase.toFixed(2)}</div>
                         <div className="text-amber-700">ภาษีมูลค่าเพิ่ม (VAT): ฿{vat.toFixed(2)}</div>
                         <div className="text-sm font-bold text-emerald-700 font-sans">ราคารวมทั้งสิ้น: ฿{printingOrder.grandTotal.toFixed(2)}</div>

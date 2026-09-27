@@ -19,10 +19,11 @@ import {
   X
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
+import { findManagerByPin } from '../../utils/pins';
 import { SecurityLogEntry } from '../../types';
 
 export const SecurityLogPanel: React.FC = () => {
-  const { securityLogs, clearSecurityLogs, deleteSecurityLog, logSecurityEvent, settings } = usePOS();
+  const { securityLogs, clearSecurityLogs, deleteSecurityLog, logSecurityEvent, settings, users } = usePOS();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'SUCCESS' | 'FAILED'>('all');
@@ -161,10 +162,7 @@ export const SecurityLogPanel: React.FC = () => {
   // Execute Clear All Logs with Manager PIN verification
   const handleConfirmClearLogs = (e: React.FormEvent) => {
     e.preventDefault();
-    const validManagerPin = settings.managerPin || '5555';
-    const validAdminPin = settings.adminPin || '1234';
-
-    if (managerPinInput === validManagerPin || managerPinInput === validAdminPin) {
+    if (findManagerByPin(managerPinInput, users, settings)) {
       clearSecurityLogs();
       setIsClearModalOpen(false);
       setManagerPinInput('');
@@ -178,7 +176,7 @@ export const SecurityLogPanel: React.FC = () => {
         details: 'ทำการล้างประวัติการตรวจสอบความปลอดภัยทั้งหมดเรียบร้อยแล้ว'
       });
     } else {
-      setClearError('รหัส PIN ไม่ถูกต้อง! กรุณากรอก Manager PIN (5555) หรือ Admin PIN (1234)');
+      setClearError('รหัส PIN ไม่ถูกต้อง กรุณาใช้ PIN ของเจ้าของร้านหรือผู้จัดการ');
     }
   };
 
@@ -569,7 +567,7 @@ export const SecurityLogPanel: React.FC = () => {
 
               <div>
                 <label className="block text-slate-300 font-bold mb-1.5">
-                  ป้อน Manager PIN (5555) หรือ Admin PIN (1234) เพื่อยืนยัน *
+                  ป้อน PIN ของเจ้าของร้านหรือผู้จัดการเพื่อยืนยัน *
                 </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />

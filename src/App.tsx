@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { SyncConflictResolverModal } from './components/SyncConflictResolverModal';
 import { QrOrderAlert } from './components/QrOrderAlert';
+import { NotificationSettingsSync } from './components/NotificationSettingsSync';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
 
 const MainLayout: React.FC = () => {
@@ -145,6 +146,7 @@ const MainLayout: React.FC = () => {
       </main>
 
       <QrOrderAlert />
+      <NotificationSettingsSync />
 
       {/* Visual Conflict Resolver Modal for Local vs Cloud Mismatch */}
       <SyncConflictResolverModal

@@ -8,6 +8,7 @@ import {
   getDocs,
   deleteDoc,
   deleteField,
+  runTransaction,
   updateDoc,
   writeBatch,
   onSnapshot as firestoreOnSnapshot,
@@ -279,7 +280,12 @@ function buildOrderPayload(order: Order, branch: Pick<Branch, 'id' | 'name'>, no
   checksum: order.checksum || '',
   paymentStatus: order.paymentStatus || 'paid',
   paidAt: order.paidAt || null,
-  acceptedAt: order.acceptedAt || null
+  acceptedAt: order.acceptedAt || null,
+  taxInvoiceNo: order.taxInvoiceNo || null,
+  couponCode: order.couponCode || null,
+  memberId: order.memberId || null,
+  memberName: order.memberName || null,
+  withholdingTax: order.withholdingTax || null
 });
 }
 
@@ -749,7 +755,12 @@ export function docToOrder(docId: string, data: any): Order {
     orderSource: data.orderSource || 'pos',
     paymentStatus: data.paymentStatus === 'unpaid' ? 'unpaid' : 'paid',
     paidAt: data.paidAt || undefined,
-    acceptedAt: data.acceptedAt || undefined
+    acceptedAt: data.acceptedAt || undefined,
+    taxInvoiceNo: data.taxInvoiceNo || undefined,
+    couponCode: data.couponCode || undefined,
+    memberId: data.memberId || undefined,
+    memberName: data.memberName || undefined,
+    withholdingTax: Number(data.withholdingTax) || undefined
   };
 }
 
@@ -1826,6 +1837,57 @@ export async function syncSettingsToFirestore(
     return true;
   } catch (err) {
     console.error('[Firebase Service] ❌ Failed to sync settings to Firestore:', err);
+    return false;
+  }
+}
+
+/**
+ * A shared per-branch document (branches/{branchId}/config/{key}) for small lists the shop edits
+ * by hand (suppliers, purchase orders, quotations, members, coupons, notification settings...).
+ * Staff-only under the security rules.
+ */
+export function subscribeToBranchDoc(
+  branchId: string,
+  key: string,
+  onData: (data: DocumentData | null) => void
+): () => void {
+  if (!dbInstance) return () => {};
+  return onSnapshot(
+    doc(dbInstance, 'branches', branchId, 'config', key),
+    snap => onData(snap.exists() ? snap.data() : null),
+    err => console.warn(`[Firebase Service] Shared document ${key} listener error:`, err)
+  );
+}
+
+export async function saveBranchDoc(branchId: string, key: string, data: Record<string, unknown>): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
+  try {
+    await setDoc(doc(dbInstance, 'branches', branchId, 'config', key), { ...cleanForFirestore(data), updatedAt: serverTimestamp() });
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to save shared document ${key}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Claim a once-per-day job (e.g. the daily summary message) for one device only. Returns true for
+ * the device that gets it; false when another device already did it today.
+ */
+export async function claimDailyJob(branchId: string, job: string, day: string): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return true;
+  await waitForFirebaseAuth();
+  try {
+    const ref = doc(dbInstance, 'branches', branchId, 'status', `job_${job}`);
+    return await runTransaction(dbInstance, async tx => {
+      const snap = await tx.get(ref);
+      if (snap.exists() && snap.data().day === day) return false;
+      tx.set(ref, { day, claimedAt: new Date().toISOString() });
+      return true;
+    });
+  } catch (err) {
+    console.warn(`[Firebase Service] Could not claim job ${job}:`, err);
     return false;
   }
 }
