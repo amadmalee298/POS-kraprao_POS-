@@ -30,6 +30,7 @@ import {
 import { SyncConflictResolverModal } from './components/SyncConflictResolverModal';
 import { QrOrderAlert } from './components/QrOrderAlert';
 import { NotificationSettingsSync } from './components/NotificationSettingsSync';
+import { TelegramInboxPoller } from './components/telegram/TelegramInboxPoller';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
 
 const MainLayout: React.FC = () => {
@@ -147,6 +148,7 @@ const MainLayout: React.FC = () => {
 
       <QrOrderAlert />
       <NotificationSettingsSync />
+      <TelegramInboxPoller />
 
       {/* Visual Conflict Resolver Modal for Local vs Cloud Mismatch */}
       <SyncConflictResolverModal

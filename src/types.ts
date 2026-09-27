@@ -655,3 +655,36 @@ export interface SyncConflictReport {
 
 
 
+
+/** A receipt or cash bill photo sent to the shop's Telegram bot, waiting for a manager's approval */
+export interface PendingReceipt {
+  id: string; // tg-<chatId>-<messageId>
+  source: 'telegram';
+  chatId: string;
+  messageId: number;
+  fileId: string;
+  senderName: string;
+  caption: string;
+  receivedAt: string; // ISO
+  kind: 'expense' | 'income';
+  status: 'reading' | 'pending' | 'failed' | 'approved' | 'rejected';
+  data?: {
+    title: string;
+    vendorName: string;
+    date: string; // YYYY-MM-DD
+    category: ExpenseCategory;
+    amount: number;
+    includeVat: boolean;
+    vatAmount: number;
+    netAmount: number;
+    refNumber: string;
+    note: string;
+    warnings: string[];
+    verified: boolean;
+    confidenceScore: number;
+  };
+  error?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  recordId?: string; // expense or income created on approval
+}

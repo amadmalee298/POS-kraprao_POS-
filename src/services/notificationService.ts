@@ -282,13 +282,10 @@ export async function sendTelegramMessage(
   // 2. Direct client-side fetch to Telegram Bot API (Always works directly from browser & GitHub Pages)
   try {
     const telegramUrl = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
+    // A form body keeps this a "simple" request: Telegram rejects the CORS preflight a JSON body needs
     const response = await fetch(telegramUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: cleanChatId,
-        text: message,
-      }),
+      body: new URLSearchParams({ chat_id: cleanChatId, text: message }),
     });
 
     const data = await response.json().catch(() => ({}));
