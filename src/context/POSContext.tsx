@@ -2073,10 +2073,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const existingUser = users.find(u => u.id === staff.id);
       let role: UserRole = 'staff';
       const roleLower = (staff.role || '').toLowerCase();
-      if (roleLower.includes('ผู้จัดการ') || roleLower.includes('manager')) {
-        role = 'manager';
-      } else if (roleLower.includes('เจ้าของ') || roleLower.includes('เชฟใหญ่') || roleLower.includes('admin') || roleLower.includes('แอดมิน')) {
+      // Owner first: "เจ้าของร้าน / ผู้จัดการใหญ่" also contains "ผู้จัดการ" and was mapped to manager.
+      // A head chef is kitchen staff, not the shop owner.
+      if (roleLower.includes('เจ้าของ') || roleLower.includes('owner') || roleLower.includes('admin') || roleLower.includes('แอดมิน')) {
         role = 'admin';
+      } else if (roleLower.includes('ผู้จัดการ') || roleLower.includes('manager')) {
+        role = 'manager';
       } else if (roleLower.includes('แคชเชียร์') || roleLower.includes('cashier')) {
         role = 'cashier';
       }

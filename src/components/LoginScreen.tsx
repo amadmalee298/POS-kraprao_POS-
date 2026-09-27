@@ -230,17 +230,9 @@ export const LoginScreen: React.FC = () => {
       return;
     }
 
-    // Priority 1: Check selected user
-    let authenticatedUser = (selectedUser && selectedUser.pin === pinToTest) ? selectedUser : null;
-
-    // Priority 2: Auto-detect staff by PIN if entered PIN matches any active user
-    if (!authenticatedUser) {
-      const matchedByPin = sanitizedUsers.find(u => u.pin === pinToTest);
-      if (matchedByPin) {
-        authenticatedUser = matchedByPin;
-        setSelectedUserId(matchedByPin.id);
-      }
-    }
+    // The PIN is checked only against the person whose name is selected. Matching any
+    // user with that PIN logged people in (or asked them to reset) as someone else.
+    const authenticatedUser = selectedUser && selectedUser.pin === pinToTest ? selectedUser : null;
 
     if (authenticatedUser && isWeakPin(authenticatedUser.pin)) {
       // Default or trivially guessable PIN: force the user to choose a new one before unlocking the POS
@@ -315,7 +307,7 @@ export const LoginScreen: React.FC = () => {
         details: `ป้อนรหัสพนักงาน (PIN) ไม่ถูกต้องสำหรับบัญชี ${selectedUser.name}`
       });
       registerFailedAttempt();
-      setError('รหัสพนักงาน (PIN) ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
+      setError(`PIN ของ ${selectedUser.name.split(' ')[0]} ไม่ถูกต้อง — ถ้าไม่ใช่คุณ แตะเลือกชื่อของคุณก่อน`);
       setTimeout(() => setPin(''), 450);
     }
   }, [isLockedOut, lockoutRemaining, registerFailedAttempt, selectedUser, sanitizedUsers, clockInAction, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
