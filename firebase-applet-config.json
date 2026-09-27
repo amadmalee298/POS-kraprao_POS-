@@ -1,12 +1,12 @@
 {
-  "projectId": "triple-bounty-3gtt6",
-  "appId": "1:742837910539:web:4695cc8ae9b3d5136f1b0e",
-  "apiKey": "AIzaSyAqyD_0BeXI4iIpTtTac9cNgVU-_yWa4WA",
-  "authDomain": "triple-bounty-3gtt6.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-kapraoposenterpr-10253cdd-c4f7-4d6e-8dfa-9abe7d1725c2",
-  "storageBucket": "triple-bounty-3gtt6.firebasestorage.app",
-  "messagingSenderId": "742837910539",
-  "measurementId": "",
-  "oAuthClientId": "742837910539-bn90mbuar1s38bt24p88e4421nfevam4.apps.googleusercontent.com",
-  "recaptchaSiteKey": ""
+  "projectId": "krua-kaprao-pos",
+  "appId": "1:133239082566:web:b84faa4730ce4777a58447",
+  "apiKey": "AIzaSyAu7KL49K6c3k3i5aCZNDmwgTLZg6jajec",
+  "authDomain": "krua-kaprao-pos.firebaseapp.com",
+  "firestoreDatabaseId": "",
+  "storageBucket": "krua-kaprao-pos.firebasestorage.app",
+  "messagingSenderId": "133239082566",
+  "measurementId": "G-4C8TGSFZ4V",
+  "recaptchaSiteKey": "",
+  "oAuthClientId": ""
 }

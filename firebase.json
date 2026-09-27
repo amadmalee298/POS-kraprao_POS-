@@ -1,8 +1,5 @@
 {
-  "firestore": [
-    {
-      "database": "ai-studio-kapraoposenterpr-10253cdd-c4f7-4d6e-8dfa-9abe7d1725c2",
-      "rules": "firestore.rules"
-    }
-  ]
+  "firestore": {
+    "rules": "firestore.rules"
+  }
 }

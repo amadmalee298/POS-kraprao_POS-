@@ -100,6 +100,14 @@ try {
     dbInstance = getFirestore(app);
   }
   isInitialized = true;
+
+  // Google Analytics for Firebase, only where the browser supports it (loaded on demand so the
+  // customer QR page does not pay for it up front)
+  if (cfg.measurementId && typeof window !== 'undefined') {
+    import('firebase/analytics')
+      .then(({ getAnalytics, isSupported }) => isSupported().then(ok => ok && getAnalytics(app)))
+      .catch(() => undefined);
+  }
   console.log(`[Firebase Service] 🔥 Connected to Firebase Project: ${firebaseConfig.projectId} (DB: ${cfg.firestoreDatabaseId || 'default'})`);
 
   const auth = getAuth(app);
