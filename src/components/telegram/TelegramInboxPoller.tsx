@@ -3,9 +3,10 @@ import type { PendingReceipt } from '../../types';
 import { usePOS } from '../../context/POSContext';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
-import { scanReceiptImage } from '../../services/receiptScan';
+import { scanReceiptImage, vercelBase } from '../../services/receiptScan';
 import {
   baht,
+  captionTitle,
   downloadTelegramFile,
   INBOX_OFFSET_KEY,
   INBOX_STATUS_EVENT,
@@ -23,11 +24,14 @@ const POLL_MS = 20_000;
 const KEEP_ITEMS = 300;
 
 /** Reads one Telegram photo with AI; used by the poller and by "read again" on the approval screen. */
-export async function readTelegramReceipt(token: string, item: Pick<PendingReceipt, 'fileId' | 'receivedAt'>, serverUrl?: string) {
-  const original = await downloadTelegramFile(token, item.fileId);
+export async function readTelegramReceipt(token: string, item: Pick<PendingReceipt, 'fileId' | 'receivedAt' | 'caption'>, serverUrl?: string) {
+  const original = await downloadTelegramFile(token, item.fileId, vercelBase(serverUrl));
   const image = await compressBase64Image(original, 1600, 0.85);
   const result = await scanReceiptImage(image, 'image/jpeg', serverUrl);
-  return toPendingData(result, item.receivedAt.slice(0, 10));
+  const data = toPendingData(result, item.receivedAt.slice(0, 10));
+  // A transfer slip names the bank, not what was bought: the sender's caption says it better
+  const fromCaption = captionTitle(item.caption || '');
+  return fromCaption ? { ...data, title: fromCaption } : data;
 }
 
 /**

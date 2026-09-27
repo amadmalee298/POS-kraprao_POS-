@@ -1,5 +1,5 @@
 // Bump when static assets change so phones drop the old (broken) logo from the cache
-const CACHE_NAME = 'kaprao-pos-v3';
+const CACHE_NAME = 'kaprao-pos-v4';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -40,6 +40,10 @@ self.addEventListener('activate', (event) => {
 // Fetch Event - Network First with Cache Fallback + AI API offline handler
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+
+  // Other sites (Telegram, Firebase, LINE relay, payment server...) go straight to the network:
+  // answering them here turned any failure into a fake "503 Offline" and hid the real response
+  if (url.origin !== self.location.origin) return;
 
   // Handle AI API endpoints when offline gracefully
   if (url.pathname.startsWith('/api/ai/')) {

@@ -71,3 +71,12 @@ describe('telegram form body', () => {
     expect(f.has('skip')).toBe(false);
   });
 });
+
+describe('caption as the entry name', () => {
+  it('drops the income/expense keyword', async () => {
+    const { captionTitle } = await import('../../services/telegramInbox');
+    expect(captionTitle('รายจ่าย กุ้ง 3กก ปลาหมึก 2กก')).toBe('กุ้ง 3กก ปลาหมึก 2กก');
+    expect(captionTitle('#รายรับ: ค่าจัดเลี้ยง')).toBe('ค่าจัดเลี้ยง');
+    expect(captionTitle('รายจ่าย')).toBe('');
+  });
+});
