@@ -21,7 +21,6 @@ import { usePOS } from '../context/POSContext';
 import { PinModal } from './PinModal';
 import { OfflineSyncModal } from './OfflineSyncModal';
 import { SyncHealthMonitor } from './SyncHealthMonitor';
-import { MerchantConnectionModal } from './common/MerchantConnectionModal';
 import { GoogleSheetsModal } from './common/GoogleSheetsModal';
 import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
 
@@ -46,7 +45,6 @@ export const HeaderNavbar: React.FC = () => {
 
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isOfflineModalOpen, setIsOfflineModalOpen] = useState(false);
-  const [isMerchantModalOpen, setIsMerchantModalOpen] = useState(false);
   const [isGoogleSheetsModalOpen, setIsGoogleSheetsModalOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
 
@@ -152,21 +150,6 @@ export const HeaderNavbar: React.FC = () => {
                 <FileSpreadsheet className="w-4 h-4" />
               </button>
 
-              {/* Merchant Pro Pill (Optional Desktop) */}
-              <button
-                onClick={() => setIsMerchantModalOpen(true)}
-                className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-[#180f0a] hover:bg-[#25170f] border border-[#2d1b12] text-stone-300 transition active:scale-95 shadow-sm"
-                title="คลิกเพื่อจัดการการเชื่อมต่อแอป Merchant Pro"
-              >
-                <Store className="w-3.5 h-3.5 text-blue-400" />
-                <span className="text-[11px]">Merchant Pro</span>
-                {settings.merchantSettings?.isConnected !== false ? (
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                ) : (
-                  <span className="w-2 h-2 rounded-full bg-stone-500" />
-                )}
-              </button>
-
               {/* Sync Health & Connection Monitor */}
               <SyncHealthMonitor />
 
@@ -252,12 +235,6 @@ export const HeaderNavbar: React.FC = () => {
       <OfflineSyncModal
         isOpen={isOfflineModalOpen}
         onClose={() => setIsOfflineModalOpen(false)}
-      />
-
-      {/* Merchant Pro Connection Modal */}
-      <MerchantConnectionModal
-        isOpen={isMerchantModalOpen}
-        onClose={() => setIsMerchantModalOpen(false)}
       />
 
       {/* Google Sheets Sync Modal */}
