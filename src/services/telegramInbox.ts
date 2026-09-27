@@ -77,19 +77,57 @@ export const isIncomeCaption = (caption: string) => /#?(รายรับ|ร�
 
 export const pendingId = (p: Pick<IncomingPhoto, 'chatId' | 'messageId'>) => `tg-${p.chatId}-${p.messageId}`;
 
-/** Downloads a Telegram file as a data URL */
-export async function downloadTelegramFile(token: string, fileId: string): Promise<string> {
-  const file = await telegramCall<{ file_path: string }>(token, 'getFile', { file_id: fileId });
-  const res = await fetch(`${API}/file/bot${cleanBotToken(token)}/${file.file_path}`);
-  if (!res.ok) throw new Error('ดาวน์โหลดรูปจาก Telegram ไม่สำเร็จ');
-  const blob = await res.blob();
-  return new Promise((resolve, reject) => {
+const blobToDataUrl = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(new Error('อ่านรูปไม่สำเร็จ'));
     reader.readAsDataURL(blob);
   });
+
+const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * Downloads a Telegram file as a data URL: straight from Telegram (tried twice), then through the
+ * shop's Vercel site (api/telegram/file) when one is set up. The error names each attempt's cause.
+ */
+export async function downloadTelegramFile(token: string, fileId: string, relayBase = ''): Promise<string> {
+  const problems: string[] = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const file = await telegramCall<{ file_path: string }>(token, 'getFile', { file_id: fileId });
+      const res = await fetch(`${API}/file/bot${cleanBotToken(token)}/${file.file_path}`, { cache: 'no-store' });
+      if (res.ok) return await blobToDataUrl(await res.blob());
+      problems.push(`HTTP ${res.status}`);
+    } catch (e: any) {
+      problems.push(e?.message || 'เชื่อมต่อไม่ได้');
+    }
+    if (attempt === 0) await wait(1500);
+  }
+  if (relayBase) {
+    try {
+      const res = await fetch(`${relayBase}/api/telegram/file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: cleanBotToken(token), fileId })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.dataUrl) return data.dataUrl;
+      problems.push(`Vercel: ${data.error || `HTTP ${res.status}`}`);
+    } catch (e: any) {
+      problems.push(`Vercel: ${e?.message || 'เชื่อมต่อไม่ได้'}`);
+    }
+  }
+  throw new Error(`ดาวน์โหลดรูปจาก Telegram ไม่สำเร็จ (${[...new Set(problems)].join(', ')})`);
 }
+
+/** The caption without the income/expense keyword, used as the entry's name */
+export const captionTitle = (caption: string) =>
+  caption
+    .replace(/#?(รายรับ|รายจ่าย|รับเงิน|จ่ายเงิน|income|expense)\s*:?/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = ['rent', 'salary', 'utilities', 'raw_material', 'supplies', 'marketing', 'other'];
 

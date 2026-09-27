@@ -4,7 +4,8 @@ import type { ExpenseCategory, IncomeCategory, PendingReceipt } from '../../type
 import { usePOS } from '../../context/POSContext';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
-import { baht, downloadTelegramFile, telegramCall } from '../../services/telegramInbox';
+import { baht, captionTitle, downloadTelegramFile, telegramCall } from '../../services/telegramInbox';
+import { vercelBase } from '../../services/receiptScan';
 import { EXPENSE_CATEGORY_LABELS, round2, vatInside, vatRateOf } from '../../utils/accounting';
 import { compressBase64Image } from '../../utils/imageCompressor';
 import { readTelegramReceipt } from './TelegramInboxPoller';
@@ -25,7 +26,7 @@ const APPROVER_ROLES = ['admin', 'manager'];
 
 const formFor = (p: PendingReceipt): Form => ({
   kind: p.kind,
-  title: p.data?.title || (p.caption ? p.caption.slice(0, 80) : 'บิลจาก Telegram'),
+  title: p.data?.title || captionTitle(p.caption || '') || 'บิลจาก Telegram',
   date: p.data?.date || p.receivedAt.slice(0, 10),
   category: p.data?.category || 'other',
   incomeCategory: 'other',
@@ -61,7 +62,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
 
   const loadImage = async (p: PendingReceipt) => {
     if (images[p.id] || !token) return images[p.id];
-    const img = await compressBase64Image(await downloadTelegramFile(token, p.fileId), 900, 0.75);
+    const img = await compressBase64Image(await downloadTelegramFile(token, p.fileId, vercelBase(settings.merchantSettings?.serverUrl)), 900, 0.75);
     setImages(prev => ({ ...prev, [p.id]: img }));
     return img;
   };
