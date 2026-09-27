@@ -80,6 +80,16 @@ export function applyStockDeductions(ingredients: Ingredient[], deltas: Map<stri
 /** Stable identity used to match a local order with its cloud copy (doc ids carry an "ord-" prefix). */
 export const normalizeOrderId = (id: string): string => (id || '').replace(/^ord-/, '');
 
+/**
+ * Older versions wrote every status change a second time to `orders/<id without "ord-">`,
+ * creating stub documents that hold only a status. Merged as orders they wiped the real
+ * order's items, total and branch.
+ */
+export function isStubOrderDoc(docId: string, data: Record<string, unknown> | undefined): boolean {
+  if (!data) return false;
+  return !docId.startsWith('ord-') && !Array.isArray(data.items) && !data.branchId && !data.orderNumber;
+}
+
 /** Round a money amount to satang (2 decimals). */
 export const roundMoney = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 

@@ -548,9 +548,9 @@ export const QrOrderingView: React.FC = () => {
   });
 
   // Orders for verification card
-  const pendingQrOrders = orders.filter(o => o.status === 'pending-qr');
+  const pendingQrOrders = orders.filter(o => o.status === 'pending-qr' && o.branchId === currentBranch.id);
   const approvedQrOrders = orders.filter(
-    o => (o.status === 'pending' || o.status === 'cooking') && o.isQrOrder
+    o => (o.status === 'pending' || o.status === 'cooking') && o.isQrOrder && o.branchId === currentBranch.id
   );
 
   return (

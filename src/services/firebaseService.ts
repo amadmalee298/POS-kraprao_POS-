@@ -7,6 +7,8 @@ import {
   getDoc,
   getDocs,
   deleteDoc,
+  deleteField,
+  updateDoc,
   writeBatch,
   onSnapshot as firestoreOnSnapshot,
   increment,
@@ -27,6 +29,7 @@ import {
   type Auth
 } from 'firebase/auth';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
+import { isStubOrderDoc } from '../utils/orderUtils';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem, CategoryItem, AddOnOption, SystemSettings } from '../types';
 
@@ -275,7 +278,8 @@ function buildOrderPayload(order: Order, branch: Pick<Branch, 'id' | 'name'>, no
   updatedAt: serverTimestamp(),
   checksum: order.checksum || '',
   paymentStatus: order.paymentStatus || 'paid',
-  paidAt: order.paidAt || null
+  paidAt: order.paidAt || null,
+  acceptedAt: order.acceptedAt || null
 });
 }
 
@@ -700,7 +704,8 @@ export function docToOrder(docId: string, data: any): Order {
     isQrOrder: Boolean(data.isQrOrder),
     orderSource: data.orderSource || 'pos',
     paymentStatus: data.paymentStatus === 'unpaid' ? 'unpaid' : 'paid',
-    paidAt: data.paidAt || undefined
+    paidAt: data.paidAt || undefined,
+    acceptedAt: data.acceptedAt || undefined
   };
 }
 
@@ -715,8 +720,9 @@ export function subscribeToRecentCentralOrders(
   if (!dbInstance) return () => {};
 
   try {
-    const ordersCol = collection(dbInstance, 'orders');
-    const q = query(ordersCol, limit(limitCount));
+    // Newest first: without an explicit order Firestore returns documents by id, i.e. the
+    // oldest orders, and new orders stop arriving once the collection outgrows the limit.
+    const q = query(collection(dbInstance, 'orders'), orderBy('createdAt', 'desc'), limit(limitCount));
 
     const unsubscribe = onSnapshot(
       q,
@@ -725,15 +731,14 @@ export function subscribeToRecentCentralOrders(
         const removedIds: string[] = [];
 
         snapshot.docChanges().forEach(change => {
-          if (change.type === 'removed') {
-            const rawId = change.doc.id;
-            const cleanId = rawId.startsWith('ord-') ? rawId.replace('ord-', '') : rawId;
-            removedIds.push(rawId);
-            removedIds.push(cleanId);
+          if (change.type === 'removed' && !isStubOrderDoc(change.doc.id, change.doc.data())) {
+            removedIds.push(change.doc.id);
+            removedIds.push(change.doc.id.replace(/^ord-/, ''));
           }
         });
 
         snapshot.forEach(docSnap => {
+          if (isStubOrderDoc(docSnap.id, docSnap.data())) return;
           orderList.push(docToOrder(docSnap.id, docSnap.data()));
         });
         orderList.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -751,6 +756,26 @@ export function subscribeToRecentCentralOrders(
   }
 }
 
+/** Delete the stub order documents described in isStubOrderDoc. Returns how many were removed. */
+export async function purgeStubOrderDocs(): Promise<number> {
+  if (!dbInstance || !navigator.onLine) return 0;
+  await waitForFirebaseAuth();
+  try {
+    // Stubs have no createdAt, so they are found by id order (ids without "ord-" sort first)
+    const snap = await getDocs(query(collection(dbInstance, 'orders'), orderBy('__name__'), limit(500)));
+    const stubs = snap.docs.filter(d => isStubOrderDoc(d.id, d.data()));
+    if (stubs.length === 0) return 0;
+    const batch = writeBatch(dbInstance);
+    stubs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    console.log(`[Firebase Service] 🧹 Removed ${stubs.length} stub order documents.`);
+    return stubs.length;
+  } catch (err) {
+    console.warn('[Firebase Service] Could not clean up stub order documents:', err);
+    return 0;
+  }
+}
+
 /**
  * Manually fetch recent sales orders from Firestore
  */
@@ -758,11 +783,11 @@ export async function fetchCentralOrdersFromFirestore(limitCount: number = 500):
   if (!dbInstance || !navigator.onLine) return [];
   await waitForFirebaseAuth();
   try {
-    const ordersCol = collection(dbInstance, 'orders');
-    const q = query(ordersCol, limit(limitCount));
+    const q = query(collection(dbInstance, 'orders'), orderBy('createdAt', 'desc'), limit(limitCount));
     const snap = await getDocs(q);
     const list: Order[] = [];
     snap.forEach(docSnap => {
+      if (isStubOrderDoc(docSnap.id, docSnap.data())) return;
       list.push(docToOrder(docSnap.id, docSnap.data()));
     });
     list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -1448,6 +1473,7 @@ export async function updateOrderStatusInFirestore(
   status: OrderStatus,
   extra?: {
     completedAt?: string;
+    acceptedAt?: string;
     cancelledBy?: { userId?: string; userName: string; role: string; cancelledAt?: string };
     cancelReason?: string;
     cancelNote?: string;
@@ -1456,42 +1482,30 @@ export async function updateOrderStatusInFirestore(
   if (!dbInstance || !navigator.onLine) return false;
   await waitForFirebaseAuth();
 
+  const docId = orderId.startsWith('ord-') ? orderId : `ord-${orderId}`;
   try {
-    const primaryDocId = orderId.startsWith('ord-') ? orderId : `ord-${orderId}`;
-    const rawDocId = orderId.replace(/^ord-/, '');
     const nowIso = new Date().toISOString();
-
-    const updatePayload: Record<string, any> = cleanForFirestore({
-      status,
+    const updatePayload: Record<string, any> = {
+      ...cleanForFirestore({
+        status,
+        updatedAtIso: nowIso,
+        isSynced: true,
+        ...(extra?.acceptedAt ? { acceptedAt: extra.acceptedAt } : {}),
+        ...(status === 'cancelled'
+          ? { cancelledBy: extra?.cancelledBy, cancelReason: extra?.cancelReason, cancelNote: extra?.cancelNote }
+          : {})
+      }),
       updatedAt: serverTimestamp(),
-      updatedAtIso: nowIso,
-      isSynced: true,
-      ...(status === 'served' ? { completedAt: extra?.completedAt || nowIso } : {}),
-      ...(status === 'cancelled' ? {
-        cancelledBy: extra?.cancelledBy,
-        cancelReason: extra?.cancelReason,
-        cancelNote: extra?.cancelNote
-      } : {})
-    });
+      // A served order called back to the kitchen is no longer complete
+      completedAt: status === 'served' ? extra?.completedAt || nowIso : deleteField()
+    };
 
-    // Write to primaryDocId (ord-...)
-    const primaryRef = doc(dbInstance, 'orders', primaryDocId);
-    await setDoc(primaryRef, updatePayload, { merge: true });
-
-    // Also update rawDocId if distinct, ensuring any legacy document without ord- prefix is kept in sync
-    if (rawDocId && rawDocId !== primaryDocId) {
-      try {
-        const rawRef = doc(dbInstance, 'orders', rawDocId);
-        await setDoc(rawRef, updatePayload, { merge: true });
-      } catch {
-        // Silently ignore secondary doc update
-      }
-    }
-
-    console.log(`[Firebase Service] ☁️ Order ${orderId} (${primaryDocId}) status successfully updated to '${status}' in Firestore.`);
+    // updateDoc never creates a document: a status change must not leave a stub order behind
+    // when the full order has not reached the cloud yet (it is uploaded with its status later).
+    await updateDoc(doc(dbInstance, 'orders', docId), updatePayload);
     return true;
   } catch (err) {
-    console.error(`[Firebase Service] ❌ Failed to update status for order ${orderId} in Firestore:`, err);
+    console.error(`[Firebase Service] ❌ Failed to update status for order ${docId} in Firestore:`, err);
     return false;
   }
 }
