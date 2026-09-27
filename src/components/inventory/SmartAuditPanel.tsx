@@ -30,7 +30,7 @@ import { Ingredient, SmartAuditItem } from '../../types';
 import { exportToPDF, exportToPNG, printElement } from '../../utils/exportDocument';
 
 export const SmartAuditPanel: React.FC = () => {
-  const { ingredients, updateIngredientStock } = usePOS();
+  const { ingredients, moveStock } = usePOS();
 
   // Camera State
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -182,9 +182,22 @@ export const SmartAuditPanel: React.FC = () => {
   const handleApplyBatchStockAdjustments = () => {
     if (auditSessionList.length === 0) return;
 
-    auditSessionList.forEach(item => {
-      updateIngredientStock(item.ingredientId, item.physicalStock);
-    });
+    // The counted amount replaces the recorded one; the difference is kept in the stock history
+    // (who counted, how much was missing or extra) and sent as a delta
+    moveStock(
+      auditSessionList.flatMap(item => {
+        const ing = ingredients.find(i => i.id === item.ingredientId);
+        if (!ing) return [];
+        return [
+          {
+            ingredientId: item.ingredientId,
+            change: item.physicalStock - ing.currentStock,
+            reason: 'audit_correction',
+            notes: `ตรวจนับได้ ${item.physicalStock} ${ing.unit} (ในระบบ ${ing.currentStock})${item.notes ? ` · ${item.notes}` : ''}`
+          }
+        ];
+      })
+    );
 
     setAppliedSuccessModal(true);
   };

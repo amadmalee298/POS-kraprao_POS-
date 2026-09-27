@@ -603,6 +603,37 @@ export async function syncWasteLogToFirestore(wasteLog: WasteLog, branch: Branch
 }
 
 /**
+ * Shared stock history: adjustments (receiving, counts, corrections, waste) and waste records of a
+ * branch, newest first, so every device shows the same stock card.
+ */
+export function subscribeToStockHistory(
+  branchId: string,
+  onAdjustments: (logs: StockAdjustmentLog[]) => void,
+  onWaste: (logs: WasteLog[]) => void
+): () => void {
+  if (!dbInstance) return () => {};
+  const forBranch = (d: DocumentData) => !d.branchId || d.branchId === branchId;
+  const strip = <T,>(d: DocumentData): T => {
+    const { branchId: _b, branchName: _n, syncedAt: _s, updatedAt: _u, ...rest } = d;
+    return rest as T;
+  };
+  const unsubAdj = onSnapshot(
+    query(collection(dbInstance, 'stock_adjustments'), orderBy('timestamp', 'desc'), limit(1000)),
+    snap => onAdjustments(snap.docs.map(d => d.data()).filter(forBranch).map(d => strip<StockAdjustmentLog>(d))),
+    err => console.warn('[Firebase Service] Stock history listener error:', err)
+  );
+  const unsubWaste = onSnapshot(
+    query(collection(dbInstance, 'waste_logs'), orderBy('loggedDate', 'desc'), limit(500)),
+    snap => onWaste(snap.docs.map(d => d.data()).filter(forBranch).map(d => strip<WasteLog>(d))),
+    err => console.warn('[Firebase Service] Waste history listener error:', err)
+  );
+  return () => {
+    unsubAdj();
+    unsubWaste();
+  };
+}
+
+/**
  * Real-time listener for central branches
  */
 export function subscribeToCentralBranches(
@@ -1240,10 +1271,14 @@ export async function fetchBranchInventoryFromFirestore(branchId: string = 'bran
 export async function syncIngredientToFirestore(
   ingredient: Ingredient,
   branchId: string = 'branch-1786349847821',
-  branchName: string = 'ครัวกะเพรา ตลาด กกท'
+  branchName: string = 'ครัวกะเพรา ตลาด กกท',
+  options?: { withStock?: boolean }
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
   await waitForFirebaseAuth();
+  // Stock levels change through deltas (applyStockDeltasToFirestore); an edit of an ingredient's
+  // details must not overwrite the level other devices have been updating.
+  const withStock = options?.withStock !== false;
 
   try {
     const nowIso = new Date().toISOString();
@@ -1264,7 +1299,7 @@ export async function syncIngredientToFirestore(
       ingredientId: ingredient.id,
       id: ingredient.id,
       name: ingredient.name || '',
-      currentStock: sanitizedCurrentStock,
+      ...(withStock ? { currentStock: sanitizedCurrentStock, isLowStock: sanitizedCurrentStock <= sanitizedMinAlert } : {}),
       minStockAlert: sanitizedMinAlert,
       unit: ingredient.unit || 'pcs',
       unitCost: sanitizedUnitCost,
@@ -1275,7 +1310,6 @@ export async function syncIngredientToFirestore(
       isFrequent: !!ingredient.isFrequent,
       branchId,
       branchName,
-      isLowStock: sanitizedCurrentStock <= sanitizedMinAlert,
       lastUpdated: nowIso,
       updatedAt: serverTimestamp()
     };

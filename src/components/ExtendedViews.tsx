@@ -5740,7 +5740,7 @@ const INITIAL_PO_LIST: POItem[] = [
 ];
 
 export const POManagementView: React.FC = () => {
-  const { ingredients, updateIngredientStock } = usePOS();
+  const [receiveNotice, setReceiveNotice] = useState<string | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'po' | 'suppliers'>('po');
   const [poList, setPoList] = useState<POItem[]>(() => {
     try {
@@ -5954,15 +5954,10 @@ export const POManagementView: React.FC = () => {
       })
     );
 
-    // If ingredient matches, add stock
-    const po = poList.find(p => p.id === poId);
-    if (po && ingredients.length > 0) {
-      // Find matching ingredient
-      const match = ingredients.find(ing => po.itemsSummary.includes(ing.name));
-      if (match) {
-        updateIngredientStock(match.id, match.currentStock + 10);
-      }
-    }
+    // A PO only has a free-text item list, so the amounts are not known here. Stock is added in
+    // the stock table ("รับของ") with the quantities and price actually delivered.
+    setReceiveNotice('ทำเครื่องหมายรับของแล้ว · เพิ่มสต็อกที่หน้า "คลังวัตถุดิบ" ปุ่ม "รับของ" ตามจำนวนที่ได้รับจริง');
+    setTimeout(() => setReceiveNotice(null), 6000);
   };
 
   // Handle Attach Slip Mock
@@ -6002,6 +5997,11 @@ export const POManagementView: React.FC = () => {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto animate-in fade-in duration-200">
+      {receiveNotice && (
+        <div role="status" className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/40 text-emerald-200 text-sm">
+          {receiveNotice}
+        </div>
+      )}
       {/* Top Header Box */}
       <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

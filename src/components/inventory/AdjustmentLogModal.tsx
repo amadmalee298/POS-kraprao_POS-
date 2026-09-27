@@ -48,8 +48,6 @@ export const AdjustmentLogModal: React.FC<AdjustmentLogModalProps> = ({
     ingredients,
     stockAdjustmentLogs,
     recordStockAdjustment,
-    deleteStockAdjustmentLog,
-    clearStockAdjustmentLogs,
     currentUser
   } = usePOS();
 
@@ -530,7 +528,6 @@ export const AdjustmentLogModal: React.FC<AdjustmentLogModalProps> = ({
                     <th className="px-4 py-3 font-semibold text-center">ยอดคงเหลือ (ก่อน ➔ หลัง)</th>
                     <th className="px-4 py-3 font-semibold">สาเหตุที่ปรับ</th>
                     <th className="px-4 py-3 font-semibold">ผู้ทำรายการ / หมายเหตุ</th>
-                    <th className="px-4 py-3 font-semibold text-right">ลบ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-sans">
@@ -609,16 +606,6 @@ export const AdjustmentLogModal: React.FC<AdjustmentLogModalProps> = ({
                           </div>
                         </td>
 
-                        {/* Delete Log */}
-                        <td className="px-4 py-3 whitespace-nowrap text-right">
-                          <button
-                            onClick={() => deleteStockAdjustmentLog(log.id)}
-                            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition opacity-60 group-hover:opacity-100"
-                            title="ลบรายการนี้"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
                       </tr>
                     );
                   })}
@@ -637,19 +624,7 @@ export const AdjustmentLogModal: React.FC<AdjustmentLogModalProps> = ({
           </div>
 
           <div className="flex items-center space-x-2">
-            {stockAdjustmentLogs.length > 0 && (
-              <button
-                onClick={() => {
-                  if (window.confirm('คุณแน่ใจหรือไม่ว่าต้องการล้างประวัติการปรับสต็อกทั้งหมด?')) {
-                    clearStockAdjustmentLogs();
-                  }
-                }}
-                className="px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/80 rounded-xl text-xs font-bold transition flex items-center space-x-1"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>ล้างประวัติทั้งหมด</span>
-              </button>
-            )}
+            <span className="text-slate-500 font-sans">ประวัติใช้ร่วมกันทุกเครื่องและลบไม่ได้ ถ้าบันทึกผิด ให้ปรับยอดกลับ</span>
             <button
               onClick={onClose}
               className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl transition"

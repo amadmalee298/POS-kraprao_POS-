@@ -37,6 +37,8 @@ import {
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot } from '../../types';
 import { AIInventoryForecastPanel } from './AIInventoryForecastPanel';
+import { canonicalUnit } from '../../utils/recipeUtils';
+import { buildStockMovements, salesUsageByDay, withRunningBalance } from '../../utils/stockHistory';
 import { AIWasteAnalysisPanel } from './AIWasteAnalysisPanel';
 import { SmartAuditPanel } from './SmartAuditPanel';
 import { AdjustmentLogModal } from './AdjustmentLogModal';
@@ -55,6 +57,11 @@ export const InventoryView: React.FC = () => {
     updateIngredientStock,
     updateIngredientPriceAndRecalculate,
     addStockLot,
+    addWasteLog,
+    moveStock,
+    menuItems,
+    addOns,
+    orders,
     recordStockAdjustment,
     addStockAdjustmentLog,
     stockAdjustmentLogs,
@@ -160,6 +167,7 @@ export const InventoryView: React.FC = () => {
   const [quickNoteInput, setQuickNoteInput] = useState<string>('');
   const [quickWasteReason, setQuickWasteReason] = useState<'waste' | 'expired' | 'damage'>('waste');
   const [quickSupplierInput, setQuickSupplierInput] = useState<string>('');
+  const [quickPaidInput, setQuickPaidInput] = useState<string>('');
   const [quickUsePackage, setQuickUsePackage] = useState(false);
   const [quickPackageQty, setQuickPackageQty] = useState<number>(1);
   const [quickPackageUnit, setQuickPackageUnit] = useState<string>('ขวด');
@@ -167,10 +175,12 @@ export const InventoryView: React.FC = () => {
 
   const handleOpenQuickAddStock = (ing: Ingredient) => {
     setQuickActionModal({ type: 'add_stock', ingredient: ing });
-    const isLiquid = ing.unit === 'ml';
-    const isWeight = ing.unit === 'g';
+    const unit = canonicalUnit(ing.unit);
+    const isLiquid = unit === 'ml';
+    const isWeight = unit === 'g';
     const hasPkg = !!(ing.packageSize && ing.packageSize > 0);
-    const usePkg = hasPkg || isLiquid;
+    // Only use packages when the size is known; a guessed bottle size would add the wrong amount
+    const usePkg = hasPkg;
     const pkgUnit = ing.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : 'แพ็ค');
     const pkgSize = ing.packageSize || (isLiquid ? 680 : isWeight ? 1000 : 1);
 
@@ -181,6 +191,7 @@ export const InventoryView: React.FC = () => {
     setQuickQtyInput(usePkg ? (1 * pkgSize).toString() : '5');
     setQuickNoteInput('เติมสต็อกด่วน');
     setQuickSupplierInput('');
+    setQuickPaidInput('');
   };
 
   const handleOpenQuickLogWaste = (ing: Ingredient) => {
@@ -208,43 +219,36 @@ export const InventoryView: React.FC = () => {
     }
 
     if (type === 'add_stock') {
-      const newStock = ingredient.currentStock + qty;
-      let finalNote = quickNoteInput.trim() || 'รับสินค้าเข้าสต็อกด่วน';
+      let finalNote = quickNoteInput.trim() || 'รับสินค้าเข้าสต็อก';
       if (quickUsePackage) {
-        finalNote += ` (รับเข้า ${quickPackageQty} ${quickPackageUnit} @ 1 ${quickPackageUnit} = ${quickPackageSize} ${ingredient.unit})`;
+        finalNote += ` (1 ${quickPackageUnit} = ${quickPackageSize} ${ingredient.unit})`;
       }
+      const paid = parseFloat(quickPaidInput);
+      // Price actually paid for this delivery, per stock unit (falls back to the current cost)
+      const receivedUnitCost = !isNaN(paid) && paid > 0 ? Number((paid / qty).toFixed(4)) : ingredient.unitCost;
 
-      recordStockAdjustment(
-        ingredient.id,
-        newStock,
-        'restock',
-        finalNote,
-        currentUser?.name || 'ผู้จัดการ',
-        currentUser?.role || 'manager'
-      );
+      addStockLot({
+        ingredientId: ingredient.id,
+        lotNumber: `LOT-${Date.now().toString().slice(-6)}`,
+        quantity: qty,
+        unitCost: receivedUnitCost,
+        supplier: quickSupplierInput.trim(),
+        receivedDate: new Date().toISOString().slice(0, 10),
+        expiryDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 14).toISOString().slice(0, 10),
+        notes: finalNote,
+        packageQty: quickUsePackage ? quickPackageQty : undefined,
+        packageUnit: quickUsePackage ? quickPackageUnit : undefined,
+        packageSize: quickUsePackage ? quickPackageSize : undefined
+      });
 
-      if (quickSupplierInput.trim()) {
-        addStockLot({
-          ingredientId: ingredient.id,
-          lotNumber: `LOT-QUICK-${Date.now().toString().slice(-4)}`,
-          quantity: qty,
-          unitCost: ingredient.unitCost,
-          supplier: quickSupplierInput.trim(),
-          receivedDate: new Date().toISOString().slice(0, 10),
-          expiryDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 14).toISOString().slice(0, 10),
-          notes: finalNote,
-          packageQty: quickUsePackage ? quickPackageQty : undefined,
-          packageUnit: quickUsePackage ? quickPackageUnit : undefined,
-          packageSize: quickUsePackage ? quickPackageSize : undefined
-        });
-      }
-
-      // Remember packaging settings if not yet saved on ingredient
-      if (quickUsePackage && (!ingredient.packageUnit || !ingredient.packageSize)) {
+      // Remember the package size, and the new purchase price when one was entered
+      const rememberPackage = quickUsePackage && (!ingredient.packageUnit || !ingredient.packageSize);
+      const newCost = !isNaN(paid) && paid > 0 && Math.abs(receivedUnitCost - ingredient.unitCost) > 1e-6;
+      if (rememberPackage || newCost) {
         updateIngredient({
           ...ingredient,
-          packageUnit: quickPackageUnit,
-          packageSize: quickPackageSize
+          ...(rememberPackage ? { packageUnit: quickPackageUnit, packageSize: quickPackageSize } : {}),
+          ...(newCost ? { unitCost: receivedUnitCost } : {})
         });
       }
 
@@ -257,15 +261,19 @@ export const InventoryView: React.FC = () => {
         }
       }
 
-      const newStock = Math.max(0, ingredient.currentStock - qty);
-      recordStockAdjustment(
-        ingredient.id,
-        newStock,
-        quickWasteReason,
-        quickNoteInput.trim() || 'ตัดสต็อกของเสีย/เสื่อมสภาพ',
-        currentUser?.name || 'ผู้จัดการ',
-        currentUser?.role || 'manager'
-      );
+      // One record for both the stock history and the waste report
+      addWasteLog({
+        ingredientId: ingredient.id,
+        ingredientName: ingredient.name,
+        quantity: qty,
+        unit: ingredient.unit,
+        unitCost: ingredient.unitCost,
+        totalCostLoss: Number((qty * ingredient.unitCost).toFixed(2)),
+        reason: quickWasteReason === 'expired' ? 'expired' : quickWasteReason === 'damage' ? 'damaged' : 'spoiled',
+        loggedDate: new Date().toISOString().slice(0, 10),
+        notes: quickNoteInput.trim() || 'ตัดสต็อกของเสีย/เสื่อมสภาพ',
+        reportedBy: currentUser?.name || 'ผู้จัดการ'
+      });
 
       setSavedIngId(ingredient.id);
       setTimeout(() => setSavedIngId(null), 2500);
@@ -379,6 +387,17 @@ export const InventoryView: React.FC = () => {
     );
   };
 
+  // Dishes and toppings whose recipes use the ingredients selected for deletion
+  const dishesUsingSelected = React.useMemo(() => {
+    if (!isBulkDeleteConfirmOpen) return [];
+    const sel = new Set(selectedIngIds);
+    const uses = (lines?: { ingredientId: string }[]) => !!lines?.some(r => sel.has(r.ingredientId));
+    return [
+      ...menuItems.filter(m => uses(m.recipe) || (m.availableProteins || []).some(p => uses(p.recipe))).map(m => m.name),
+      ...addOns.filter(a => uses(a.recipe) || (a.ingredientId ? sel.has(a.ingredientId) : false)).map(a => `ท็อปปิ้ง ${a.name}`)
+    ];
+  }, [isBulkDeleteConfirmOpen, selectedIngIds, menuItems, addOns]);
+
   const handleConfirmBulkDelete = () => {
     deleteIngredients(selectedIngIds);
     setSelectedIngIds([]);
@@ -417,20 +436,16 @@ export const InventoryView: React.FC = () => {
     if (bulkStockAdjustMode !== 'no_change' && bulkStockValue.trim() !== '') {
       const val = parseFloat(bulkStockValue);
       if (!isNaN(val)) {
-        selectedIngIds.forEach(id => {
-          const ing = ingredients.find(i => i.id === id);
-          if (ing) {
-            let newStock = ing.currentStock;
-            if (bulkStockAdjustMode === 'set') {
-              newStock = Math.max(0, val);
-            } else if (bulkStockAdjustMode === 'add') {
-              newStock = Math.max(0, ing.currentStock + val);
-            } else if (bulkStockAdjustMode === 'subtract') {
-              newStock = Math.max(0, ing.currentStock - val);
-            }
-            updateIngredientStock(id, newStock);
-          }
-        });
+        // One history entry per ingredient, sent as deltas
+        moveStock(
+          selectedIngIds.flatMap(id => {
+            const ing = ingredients.find(i => i.id === id);
+            if (!ing) return [];
+            const change =
+              bulkStockAdjustMode === 'set' ? Math.max(0, val) - ing.currentStock : bulkStockAdjustMode === 'add' ? val : -val;
+            return [{ ingredientId: id, change, reason: bulkStockAdjustMode === 'add' ? 'restock' : 'manual_adjustment', notes: 'ปรับยอดหลายรายการพร้อมกัน' }];
+          })
+        );
       }
     }
 
@@ -443,133 +458,64 @@ export const InventoryView: React.FC = () => {
     setBulkUnit('no_change');
   };
 
-  // Mock Movement Log Data for Tab 2
-  const movementLogs = [
-    {
-      id: 'log-1',
-      date: '3 ก.ค. 2569 04:30:00',
-      ingredientName: 'เนื้อวัวบด พรีเมียม (A5)',
-      ingredientId: 'i1',
-      unit: 'kg',
-      type: 'IN' as const,
-      amount: 30.0,
-      note: 'รับของจาก PO-2026-001',
-      refNo: 'PO-2026-001',
-      operator: 'ผู้จัดการ สมหญิง'
-    },
-    {
-      id: 'log-2',
-      date: '6 ก.ค. 2569 06:00:00',
-      ingredientName: 'ใบกะเพราแดงป่า (ฉุนพิเศษ)',
-      ingredientId: 'i5',
-      unit: 'kg',
-      type: 'IN' as const,
-      amount: 15.0,
-      note: 'รับของจาก PO-2026-002',
-      refNo: 'PO-2026-002',
-      operator: 'ผู้จัดการ สมหญิง'
-    },
-    {
-      id: 'log-3',
-      date: '7 ก.ค. 2569 11:15:00',
-      ingredientName: 'หมูกรอบ สูตรเฉพาะ',
-      ingredientId: 'i2',
-      unit: 'kg',
-      type: 'OUT' as const,
-      amount: 1.2,
-      note: 'ตัดสต๊อกอัตโนมัติ ออเดอร์ #ORD-089',
-      refNo: '#ORD-089',
-      operator: 'ระบบ POS'
-    },
-    {
-      id: 'log-4',
-      date: '8 ก.ค. 2569 14:00:00',
-      ingredientName: 'หมูสับอนามัย',
-      ingredientId: 'i3',
-      unit: 'kg',
-      type: 'ADJUST' as const,
-      amount: 0.5,
-      note: 'วัตถุดิบหมดอายุ/สูญเสีย ปรับยอดโดย แอดมิน',
-      refNo: 'ADJ-2026-04',
-      operator: 'แอดมิน'
-    },
-    {
-      id: 'log-5',
-      date: '10 ก.ค. 2569 18:30:00',
-      ingredientName: 'กุ้งแช่บ๊วยไซส์ใหญ่',
-      ingredientId: 'i4',
-      unit: 'kg',
-      type: 'OUT' as const,
-      amount: 0.5,
-      note: 'ตัดสต๊อกอัตโนมัติ ออเดอร์ #ORD-095',
-      refNo: '#ORD-095',
-      operator: 'ระบบ POS'
-    }
-  ];
+  // Real stock movements: shared history (receiving, waste, counts, corrections) plus daily sales
+  const allMovements = React.useMemo(() => {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const since = dateFilter === 'today' ? new Date().setHours(0, 0, 0, 0) : dateFilter === '7days' ? Date.now() - 7 * dayMs : dateFilter === '30days' ? Date.now() - 30 * dayMs : Date.now() - 90 * dayMs;
+    const sales = salesUsageByDay(orders, ingredients, menuItems, addOns, since);
+    return buildStockMovements(
+      stockAdjustmentLogs.filter(l => new Date(l.timestamp).getTime() >= since),
+      sales,
+      ingredients
+    );
+  }, [orders, ingredients, menuItems, addOns, stockAdjustmentLogs, dateFilter]);
+
+  const movementLogs = allMovements.map(m => ({
+    id: m.id,
+    date: new Date(m.time).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }),
+    ingredientName: m.ingredientName,
+    ingredientId: m.ingredientId,
+    unit: m.unit,
+    type: m.type,
+    amount: Math.abs(Number(m.change.toFixed(3))),
+    sign: m.change >= 0 ? '+' : '-',
+    note: m.note,
+    refNo: '',
+    operator: m.operator
+  }));
 
   const filteredLogs = movementLogs.filter(log => {
     const matchesIng = selectedIngredientFilter === 'all' || log.ingredientId === selectedIngredientFilter;
     const matchesType = txTypeFilter === 'all' || log.type === txTypeFilter;
-    const matchesSearch =
-      log.ingredientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.note.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.refNo.toLowerCase().includes(searchTerm.toLowerCase());
+    const q = searchTerm.toLowerCase();
+    const matchesSearch = !q || log.ingredientName.toLowerCase().includes(q) || log.note.toLowerCase().includes(q) || log.operator.toLowerCase().includes(q);
     return matchesIng && matchesType && matchesSearch;
   });
 
-  // Calculate totals for Tab 2
-  const totalIn = movementLogs.filter(l => l.type === 'IN').reduce((acc, l) => acc + l.amount, 0);
-  const totalOut = movementLogs.filter(l => l.type === 'OUT').reduce((acc, l) => acc + l.amount, 0);
-  const totalAdjust = movementLogs.filter(l => l.type === 'ADJUST').reduce((acc, l) => acc + l.amount, 0);
+  // Totals only make sense in one unit, i.e. for one ingredient
+  const singleIngredient = selectedIngredientFilter !== 'all' ? ingredients.find(i => i.id === selectedIngredientFilter) : undefined;
+  const sumBy = (type: string) => filteredLogs.filter(l => l.type === type).reduce((acc, l) => acc + (l.sign === '+' ? l.amount : -l.amount), 0);
+  const totalIn = sumBy('IN');
+  const totalOut = -sumBy('OUT');
+  const totalAdjust = sumBy('ADJUST');
+  const totalsUnit = singleIngredient ? singleIngredient.unit : 'หน่วย (เลือกวัตถุดิบเพื่อดูยอดรวม)';
 
-  // Mock Stock Card Records for Tab 3
-  const stockCardRecords = [
-    {
-      id: 'sc-1',
-      dateTime: '3/7/2569 04:30:00',
-      ingredientName: 'เนื้อวัวบด พรีเมียม (A5)',
-      type: 'IN' as const,
-      cardAmount: '+ 30 kg',
-      netBalance: '35.4 kg',
-      operatorNote: 'รับของจาก PO-2026-001 โดย: ผู้จัดการ สมหญิง'
-    },
-    {
-      id: 'sc-2',
-      dateTime: '6/7/2569 06:00:00',
-      ingredientName: 'ใบกะเพราแดงป่า (ฉุนพิเศษ)',
-      type: 'IN' as const,
-      cardAmount: '+ 15 kg',
-      netBalance: '18.2 kg',
-      operatorNote: 'รับของจาก PO-2026-002 โดย: ผู้จัดการ สมหญิง'
-    },
-    {
-      id: 'sc-3',
-      dateTime: '7/7/2569 11:15:00',
-      ingredientName: 'หมูกรอบ สูตรเฉพาะ',
-      type: 'OUT' as const,
-      cardAmount: '- 2.5 kg',
-      netBalance: '12.5 kg',
-      operatorNote: 'ตัดสต๊อกอัตโนมัติ ออเดอร์ #ORD-089 โดย: POS System'
-    },
-    {
-      id: 'sc-4',
-      dateTime: '8/7/2569 14:00:00',
-      ingredientName: 'หมูสับอนามัย',
-      type: 'ADJUST' as const,
-      cardAmount: '- 0.5 kg',
-      netBalance: '14.5 kg',
-      operatorNote: 'วัตถุดิบหมดอายุ/สูญเสีย ปรับยอดโดย: แอดมิน'
-    },
-    {
-      id: 'sc-5',
-      dateTime: '10/7/2569 18:30:00',
-      ingredientName: 'กุ้งแช่บ๊วยไซส์ใหญ่',
-      type: 'OUT' as const,
-      cardAmount: '- 1.2 kg',
-      netBalance: '8.8 kg',
-      operatorNote: 'ตัดสต๊อกอัตโนมัติ ออเดอร์ #ORD-095 โดย: POS System'
-    }
-  ];
+  // Stock card of one ingredient with running balance (worked back from today's stock)
+  const stockCardIngredient = singleIngredient || ingredients[0];
+  const stockCardRecords = stockCardIngredient
+    ? withRunningBalance(
+        allMovements.filter(m => m.ingredientId === stockCardIngredient.id),
+        stockCardIngredient.currentStock
+      ).map(m => ({
+        id: m.id,
+        dateTime: new Date(m.time).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }),
+        ingredientName: m.ingredientName,
+        type: m.type,
+        cardAmount: `${m.change >= 0 ? '+' : '-'} ${Math.abs(Number(m.change.toFixed(3)))} ${m.unit}`,
+        netBalance: `${m.balance} ${m.unit}`,
+        operatorNote: `${m.note} โดย: ${m.operator}`
+      }))
+    : [];
 
   const handleCloudSync = async () => {
     if (!pullCloudAllData) return;
@@ -695,24 +641,6 @@ export const InventoryView: React.FC = () => {
     const parsedCost = parseFloat(editIngUnitCostInput);
     const finalUnitCost = !isNaN(parsedCost) && parsedCost >= 0 ? parsedCost : editIngUnitCost;
 
-    if (editIngStock !== editingIng.currentStock) {
-      const diff = editIngStock - editingIng.currentStock;
-      const performer = currentUser?.name || 'ผู้จัดการ';
-      const performerRole = currentUser?.role || 'manager';
-      addStockAdjustmentLog({
-        ingredientId: editingIng.id,
-        ingredientName: editIngName.trim(),
-        previousStock: editingIng.currentStock,
-        newStock: Math.max(0, editIngStock),
-        changeQty: parseFloat((editIngStock - editingIng.currentStock).toFixed(3)),
-        unit: finalUnit,
-        reason: diff > 0 ? 'restock' : 'manual_adjustment',
-        notes: 'แก้ไขยอดสต็อกจากหน้าต่างแก้ไขข้อมูลวัตถุดิบ',
-        userName: performer,
-        userRole: performerRole
-      });
-    }
-
     const pkgSizeNum = parseFloat(editIngPackageSize);
     updateIngredient({
       ...editingIng,
@@ -725,7 +653,7 @@ export const InventoryView: React.FC = () => {
       barcode: editIngBarcode.trim() || undefined,
       packageUnit: editIngPackageUnit.trim() || undefined,
       packageSize: !isNaN(pkgSizeNum) && pkgSizeNum > 0 ? pkgSizeNum : undefined
-    });
+    }, editIngStock > editingIng.currentStock ? 'restock' : 'manual_adjustment', 'แก้ยอดจากหน้าต่างแก้ไขข้อมูลวัตถุดิบ');
 
     if (editIngUnit === 'custom' && editIngCustomUnit.trim()) {
       addIngredientUnit({
@@ -1550,7 +1478,7 @@ export const InventoryView: React.FC = () => {
                   <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
                   <span>ยอดรับเข้าสะสม (IN)</span>
                 </div>
-                <div className="text-xl font-black text-emerald-400">+{totalIn.toFixed(1)} หน่วย</div>
+                <div className="text-xl font-black text-emerald-400">+{Number(totalIn.toFixed(3))} {totalsUnit}</div>
               </div>
 
               <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-1">
@@ -1558,7 +1486,7 @@ export const InventoryView: React.FC = () => {
                   <ArrowDownRight className="w-3.5 h-3.5 text-rose-400" />
                   <span>ยอดเบิก / ตัดขายสะสม (OUT)</span>
                 </div>
-                <div className="text-xl font-black text-rose-400">-{totalOut.toFixed(1)} หน่วย</div>
+                <div className="text-xl font-black text-rose-400">-{Number(totalOut.toFixed(3))} {totalsUnit}</div>
               </div>
 
               <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-1">
@@ -1566,7 +1494,7 @@ export const InventoryView: React.FC = () => {
                   <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
                   <span>ยอดปรับปรุงบัญชี (ADJUST)</span>
                 </div>
-                <div className="text-xl font-black text-sky-400">-{totalAdjust.toFixed(1)} หน่วย</div>
+                <div className="text-xl font-black text-sky-400">{totalAdjust >= 0 ? '+' : ''}{Number(totalAdjust.toFixed(3))} {totalsUnit}</div>
               </div>
             </div>
 
@@ -1669,7 +1597,7 @@ export const InventoryView: React.FC = () => {
                                 : 'text-sky-400'
                             }
                           >
-                            {log.type === 'IN' ? '+' : '-'}
+                            {log.sign}
                             {log.amount} {log.unit}
                           </span>
                         </td>
@@ -1693,8 +1621,20 @@ export const InventoryView: React.FC = () => {
               <div className="flex items-center space-x-3">
                 <FileSpreadsheet className="w-5 h-5 text-orange-400" />
                 <span className="text-xs sm:text-sm font-bold text-slate-200">
-                  บันทึกสมุด Stock Card ตรวจสอบย้อนหลัง: อ้างอิงรหัสพนักงานผู้ดำเนินการทุกเคส
+                  สต็อกการ์ด: {stockCardIngredient?.name || '-'} (คงเหลือตอนนี้ {stockCardIngredient?.currentStock ?? 0} {stockCardIngredient?.unit})
                 </span>
+                <select
+                  aria-label="เลือกวัตถุดิบ"
+                  value={stockCardIngredient?.id || ''}
+                  onChange={e => setSelectedIngredientFilter(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-xs text-slate-200"
+                >
+                  {ingredients.map(i => (
+                    <option key={i.id} value={i.id}>
+                      {i.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <span className="px-3 py-1 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/30 text-xs font-bold whitespace-nowrap">
                 {stockCardRecords.length} บันทึก
@@ -2187,6 +2127,14 @@ export const InventoryView: React.FC = () => {
               </ul>
             </div>
 
+            {dishesUsingSelected.length > 0 && (
+              <div role="alert" className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-200 text-xs space-y-1">
+                <p className="font-bold">⚠️ ยังมี {dishesUsingSelected.length} เมนู/ท็อปปิ้งที่ใช้วัตถุดิบนี้ในสูตร</p>
+                <p className="text-amber-200/80">{dishesUsingSelected.slice(0, 8).join(', ')}{dishesUsingSelected.length > 8 ? ' …' : ''}</p>
+                <p className="text-amber-200/80">ถ้าลบ ส่วนนั้นของสูตรจะไม่ถูกตัดสต็อกอีก ควรเปลี่ยนสูตร หรือใช้ "รวมวัตถุดิบซ้ำ" ในหน้าเมนูแทน</p>
+              </div>
+            )}
+
             <div className="flex items-center space-x-2 pt-2">
               <button
                 type="button"
@@ -2462,6 +2410,18 @@ export const InventoryView: React.FC = () => {
                     onChange={e => setQuickSupplierInput(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
                   />
+                  <label className="block text-slate-300 font-bold pt-1">ราคาที่จ่ายทั้งหมด (บาท, ไม่บังคับ)</label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="any"
+                    placeholder={`ว่างไว้ = ใช้ราคาทุนเดิม ${quickActionModal.ingredient.unitCost} บาท/${quickActionModal.ingredient.unit}`}
+                    value={quickPaidInput}
+                    onChange={e => setQuickPaidInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
+                  />
+                  <p className="text-[11px] text-slate-400">ใส่ราคาจริงแล้วระบบปรับราคาทุนต่อหน่วยและต้นทุนเมนูให้</p>
                 </div>
               )}
 

@@ -1,6 +1,5 @@
-import { apiUrl } from '../../utils/apiClient';
 import React, { useState, useEffect } from 'react';
-import { calcRecipeItemCostAndDeduction } from '../../utils/recipeUtils';
+import { forecastInventory } from '../../utils/stockHistory';
 import { usePOS } from '../../context/POSContext';
 import {
   Sparkles,
@@ -47,7 +46,7 @@ export interface InventoryForecastItem {
 }
 
 export const AIInventoryForecastPanel: React.FC = () => {
-  const { ingredients, orders, menuItems, addStockLot, updateIngredientStock } = usePOS();
+  const { ingredients, orders, menuItems, addOns } = usePOS();
 
   const [forecastDays, setForecastDays] = useState<number>(7);
   const [filterRisk, setFilterRisk] = useState<'all' | 'CRITICAL' | 'WARNING' | 'OPTIMAL' | 'HIGH_DEMAND'>('all');
@@ -65,124 +64,43 @@ export const AIInventoryForecastPanel: React.FC = () => {
   const [poSupplierName, setPoSupplierName] = useState<string>('ซัพพลายเออร์รวมวัตถุดิบสดประจำร้าน');
   const [isPOSuccess, setIsPOSuccess] = useState<boolean>(false);
 
-  // Client-side fallback calculator
-  const runLocalFallbackForecast = (days: number) => {
-    const ingredientConsumedMap: Record<string, number> = {};
-
-    orders.forEach(order => {
-      if (order.items && Array.isArray(order.items)) {
-        order.items.forEach(cartItem => {
-          const mItem = menuItems.find(m => m.id === cartItem.menuItem?.id || m.name === cartItem.menuItem?.name);
-          if (mItem && mItem.recipe && Array.isArray(mItem.recipe)) {
-            mItem.recipe.forEach(r => {
-              const ing = ingredients.find(i => i.id === r.ingredientId);
-              const deduction = calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).stockDeduction * (cartItem.quantity || 1);
-              ingredientConsumedMap[r.ingredientId] = (ingredientConsumedMap[r.ingredientId] || 0) + deduction;
-            });
-          }
-        });
-      }
-    });
-
-    const generated: InventoryForecastItem[] = ingredients.map(ing => {
-      const totalConsumed = ingredientConsumedMap[ing.id] || 0;
-      let dailyConsumption = totalConsumed > 0 ? totalConsumed / 3 : 0;
-
-      if (dailyConsumption <= 0) {
-        if (ing.name.includes('หมู') || ing.name.includes('เนื้อ') || ing.name.includes('กุ้ง')) {
-          dailyConsumption = 2.5;
-        } else if (ing.name.includes('กะเพรา') || ing.name.includes('พริก')) {
-          dailyConsumption = 1.2;
-        } else if (ing.name.includes('ไข่')) {
-          dailyConsumption = 25;
-        } else {
-          dailyConsumption = 0.6;
-        }
-      }
-
-      const daysRemaining = dailyConsumption > 0 ? Number((ing.currentStock / dailyConsumption).toFixed(1)) : 99;
-
-      let riskLevel: 'CRITICAL' | 'WARNING' | 'OPTIMAL' = 'OPTIMAL';
-      let forecastNote = '';
-      let supplierAdvice = '';
-
-      if (daysRemaining <= 2.0 || ing.currentStock <= ing.minStockAlert) {
-        riskLevel = 'CRITICAL';
-        forecastNote = `⚠️ เสี่ยงหมดสต๊อกในอีก ${daysRemaining} วัน! (ยอดใช้อัตราเฉลี่ย ${dailyConsumption.toFixed(1)} ${ing.unit}/วัน)`;
-        supplierAdvice = `สั่งซื้อด่วนทันทีอย่างน้อย ${Math.ceil(dailyConsumption * days)} ${ing.unit} ก่อนรอบขายถัดไป`;
-      } else if (daysRemaining <= 4.0) {
-        riskLevel = 'WARNING';
-        forecastNote = `⚡ แจ้งเตือนสต๊อกเริ่มต่ำกว่าเกณฑ์ความปลอดภัย คาดว่าจะหมดในอีก ${daysRemaining} วัน`;
-        supplierAdvice = `ควรจัดซื้อเติมคลังภายใน 24-48 ชั่วโมง`;
-      } else {
-        riskLevel = 'OPTIMAL';
-        forecastNote = `✅ วัตถุดิบเพียงพอสำหรับอีก ${daysRemaining} วันข้างหน้า`;
-        supplierAdvice = `รักษารอบสั่งซื้อตามปกติ`;
-      }
-
-      const isHighDemand = dailyConsumption >= 1.5 || ing.name.includes('หมู') || ing.name.includes('กะเพรา') || ing.name.includes('กุ้ง');
-      const reorderQty = Math.max(0, Math.ceil(dailyConsumption * days - ing.currentStock + ing.minStockAlert));
-      const estCost = Number((reorderQty * ing.unitCost).toFixed(2));
-
-      return {
-        ingredientId: ing.id,
-        ingredientName: ing.name,
-        currentStock: ing.currentStock,
-        unit: ing.unit,
-        minStockAlert: ing.minStockAlert,
-        dailyConsumptionRate: Number(dailyConsumption.toFixed(2)),
-        daysUntilStockout: daysRemaining,
-        riskLevel,
-        isHighDemand,
-        suggestedReorderQty: reorderQty,
-        estimatedReorderCost: estCost,
-        forecastNote,
-        supplierAdvice
-      };
-    });
-
+  // Forecast from the shop's own sales (same deduction rules as the till). No AI guesswork for
+  // numbers: stock and usage are exact figures, so they are calculated, not predicted.
+  const fetchAIForecast = (days: number) => {
+    const rows = forecastInventory(ingredients, orders, menuItems, addOns, days);
+    const generated: InventoryForecastItem[] = rows.map(r => ({
+      ingredientId: r.ingredientId,
+      ingredientName: r.ingredientName,
+      currentStock: r.currentStock,
+      unit: r.unit,
+      minStockAlert: r.minStockAlert,
+      dailyConsumptionRate: Number(r.dailyUsage.toFixed(2)),
+      daysUntilStockout: r.daysLeft ?? 99,
+      riskLevel: r.riskLevel,
+      isHighDemand: r.daysLeft !== null && r.daysLeft <= 7,
+      suggestedReorderQty: r.suggestedOrderQty,
+      estimatedReorderCost: r.estimatedCost,
+      forecastNote:
+        r.daysLeft === null
+          ? r.riskLevel === 'CRITICAL'
+            ? `ต่ำกว่าจุดเตือน (${r.minStockAlert} ${r.unit}) · ยังไม่มียอดใช้จากการขายใน ${r.daysOfData || 14} วันล่าสุด`
+            : `ยังไม่มียอดใช้จากการขายใน 14 วันล่าสุด`
+          : `ใช้เฉลี่ย ${Number(r.dailyUsage.toFixed(2))} ${r.unit}/วัน (จาก ${r.daysOfData} วันที่มีการขาย) · พอใช้อีก ${r.daysLeft} วัน`,
+      supplierAdvice: r.suggestedOrderQty > 0 ? `สั่ง ${r.suggestedOrderQty} ${r.unit} ให้พอ ${days} วัน + จุดเตือน` : undefined
+    }));
     setForecastItems(generated);
-    setSourceEngine('rule-based-engine');
-    setSummaryText(`ประมวลผลการพยากรณ์ความต้องการวัตถุดิบล่วงหน้า ${days} วัน สมบูรณ์`);
-  };
-
-  const fetchAIForecast = async (days: number) => {
-    setIsLoading(true);
-    try {
-      const res = await fetch(apiUrl('/api/ai/inventory-forecast'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ingredients,
-          orders,
-          menuItems,
-          forecastDays: days
-        })
-      });
-
-      if (!res.ok) {
-        throw new Error('API server returned error status');
-      }
-
-      const data = await res.json();
-      if (data && data.insights && Array.isArray(data.insights)) {
-        setForecastItems(data.insights);
-        setSourceEngine(data.source || 'claude');
-        setSummaryText(data.summaryText || `ระบบ AI วิเคราะห์ความเสี่ยงขาดสต๊อกล่วงหน้า ${days} วัน เรียบร้อยแล้ว`);
-      } else {
-        runLocalFallbackForecast(days);
-      }
-    } catch (err) {
-      console.warn('AI Forecast API call failed, running local rule forecaster:', err);
-      runLocalFallbackForecast(days);
-    } finally {
-      setIsLoading(false);
-    }
+    setSourceEngine('sales-data');
+    const daysOfData = rows[0]?.daysOfData || 0;
+    setSummaryText(
+      daysOfData
+        ? `คำนวณจากยอดขายจริง ${daysOfData} วันล่าสุด เพื่อให้พอใช้ ${days} วัน`
+        : 'ยังไม่มีออเดอร์ใน 14 วันล่าสุด จึงยังคำนวณอัตราการใช้ไม่ได้ (แสดงเฉพาะรายการที่ต่ำกว่าจุดเตือน)'
+    );
   };
 
   useEffect(() => {
     fetchAIForecast(forecastDays);
-  }, [forecastDays, ingredients.length]);
+  }, [forecastDays, ingredients, orders, menuItems, addOns]);
 
   // Handle PO draft creation
   const handleOpenPODraft = () => {
@@ -192,7 +110,7 @@ export const AIInventoryForecastPanel: React.FC = () => {
     forecastItems.forEach(item => {
       if (item.riskLevel === 'CRITICAL' || item.riskLevel === 'WARNING') {
         selectedMap[item.ingredientId] = true;
-        qtyMap[item.ingredientId] = item.suggestedReorderQty || 10;
+        qtyMap[item.ingredientId] = item.suggestedReorderQty || 0;
       }
     });
 
@@ -201,41 +119,33 @@ export const AIInventoryForecastPanel: React.FC = () => {
     setIsPODraftOpen(true);
   };
 
-  const handleConfirmPORestock = () => {
-    let itemsAddedCount = 0;
+  /**
+   * The purchase order is a list to send to the supplier. Nothing enters the stock here: goods are
+   * added with "รับของ" in the stock table when they actually arrive (with the real amount and price).
+   */
+  const poText = () => {
+    const lines = Object.keys(selectedForPO)
+      .filter(k => selectedForPO[k])
+      .map(k => {
+        const item = forecastItems.find(f => f.ingredientId === k);
+        const q = customOrderQtys[k] !== undefined ? customOrderQtys[k] : item?.suggestedReorderQty || 0;
+        return item && q > 0 ? `- ${item.ingredientName} ${q} ${item.unit}` : null;
+      })
+      .filter(Boolean);
+    return [`ใบสั่งซื้อ ${new Date().toLocaleDateString('th-TH')}${poSupplierName ? ` ถึง ${poSupplierName}` : ''}`, ...lines].join('\n');
+  };
 
-    Object.keys(selectedForPO).forEach(ingId => {
-      if (selectedForPO[ingId]) {
-        const item = forecastItems.find(f => f.ingredientId === ingId);
-        const ing = ingredients.find(i => i.id === ingId);
-        const qtyToOrder = customOrderQtys[ingId] || item?.suggestedReorderQty || 10;
-
-        if (ing && qtyToOrder > 0) {
-          // 1. Add Stock Lot
-          addStockLot({
-            ingredientId: ingId,
-            lotNumber: `LOT-AI-${Date.now().toString().slice(-6)}`,
-            quantity: qtyToOrder,
-            unitCost: ing.unitCost,
-            receivedDate: new Date().toISOString().split('T')[0],
-            expiryDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString().split('T')[0],
-            supplier: poSupplierName,
-            notes: `เติมสต๊อกอัตโนมัติจากใบสั่งซื้อ AI Forecast (ความต้องการล่วงหน้า ${forecastDays} วัน)`
-          });
-
-          // 2. Update stock level
-          updateIngredientStock(ingId, ing.currentStock + qtyToOrder);
-          itemsAddedCount++;
-        }
-      }
-    });
-
+  const handleConfirmPORestock = async () => {
+    try {
+      await navigator.clipboard.writeText(poText());
+    } catch {
+      window.prompt('คัดลอกรายการสั่งซื้อ', poText());
+    }
     setIsPOSuccess(true);
     setTimeout(() => {
       setIsPOSuccess(false);
       setIsPODraftOpen(false);
-      fetchAIForecast(forecastDays);
-    }, 2000);
+    }, 2500);
   };
 
   // Metrics calculation
@@ -275,8 +185,8 @@ export const AIInventoryForecastPanel: React.FC = () => {
               พยากรณ์วัตถุดิบขาดแคลน & เตือนวัตถุดิบขายดีล่วงหน้า
             </h2>
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              ระบบวิเคราะห์อัตราการบริโภคจริงย้อนหลังร่วมกับสูตรอาหาร (Recipe BOM) 
-              คำนวณจำนวนวันที่เหลือรอด <span className="text-rose-400 font-bold">(Days until Stockout)</span> และสร้างรายการใบสั่งซื้อ PO อัตโนมัติเพื่อป้องกันสินค้าขาดหน้าเตา
+              คำนวณจากยอดขายจริง 14 วันล่าสุดร่วมกับสูตรอาหาร: ใช้วันละเท่าไหร่ พอใช้อีกกี่วัน และควรสั่งเท่าไหร่
+              {summaryText && <span className="block mt-1 text-slate-300">{summaryText}</span>}
             </p>
           </div>
 
@@ -534,25 +444,15 @@ export const AIInventoryForecastPanel: React.FC = () => {
 
                   <button
                     onClick={() => {
-                      if (ingObj) {
-                        addStockLot({
-                          ingredientId: item.ingredientId,
-                          lotNumber: `LOT-AI-${Date.now().toString().slice(-6)}`,
-                          quantity: item.suggestedReorderQty || 10,
-                          unitCost: ingObj.unitCost,
-                          receivedDate: new Date().toISOString().split('T')[0],
-                          expiryDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString().split('T')[0],
-                          supplier: 'สั่งเติมด่วน AI PO',
-                          notes: 'เติมสต๊อกจากการกดสั่งซื้อด่วนในหน้า AI Forecast'
-                        });
-                        updateIngredientStock(item.ingredientId, ingObj.currentStock + (item.suggestedReorderQty || 10));
-                        fetchAIForecast(forecastDays);
-                      }
+                      setSelectedForPO(prev => ({ ...prev, [item.ingredientId]: true }));
+                      setCustomOrderQtys(prev => ({ ...prev, [item.ingredientId]: item.suggestedReorderQty }));
+                      setIsPODraftOpen(true);
                     }}
-                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl font-bold text-xs flex items-center justify-center space-x-1.5 transition active:scale-95"
+                    disabled={!item.suggestedReorderQty}
+                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl font-bold text-xs flex items-center justify-center space-x-1.5 transition active:scale-95 disabled:opacity-40"
                   >
-                    <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-                    <span>เติมสต๊อกด่วน +{item.suggestedReorderQty} {item.unit}</span>
+                    <ShoppingCart className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{item.suggestedReorderQty ? `ใส่ใบสั่งซื้อ ${item.suggestedReorderQty} ${item.unit}` : 'ยังไม่ต้องสั่ง'}</span>
                   </button>
                 </div>
               </div>
@@ -616,7 +516,7 @@ export const AIInventoryForecastPanel: React.FC = () => {
                   {forecastItems.map(item => {
                     const ingObj = ingredients.find(i => i.id === item.ingredientId);
                     const isChecked = !!selectedForPO[item.ingredientId];
-                    const qty = customOrderQtys[item.ingredientId] !== undefined ? customOrderQtys[item.ingredientId] : (item.suggestedReorderQty || 10);
+                    const qty = customOrderQtys[item.ingredientId] !== undefined ? customOrderQtys[item.ingredientId] : (item.suggestedReorderQty || 0);
                     const unitPrice = ingObj?.unitCost || 0;
                     const itemTotal = qty * unitPrice;
 
@@ -674,7 +574,7 @@ export const AIInventoryForecastPanel: React.FC = () => {
                   .reduce((sum, k) => {
                     const item = forecastItems.find(f => f.ingredientId === k);
                     const ing = ingredients.find(i => i.id === k);
-                    const q = customOrderQtys[k] !== undefined ? customOrderQtys[k] : (item?.suggestedReorderQty || 10);
+                    const q = customOrderQtys[k] !== undefined ? customOrderQtys[k] : (item?.suggestedReorderQty || 0);
                     return sum + q * (ing?.unitCost || 0);
                   }, 0)
                   .toLocaleString()}
@@ -698,12 +598,12 @@ export const AIInventoryForecastPanel: React.FC = () => {
                 {isPOSuccess ? (
                   <>
                     <CheckCircle2 className="w-4 h-4 text-slate-950" />
-                    <span>อนุมัติ PO & รับเข้าคลังสำเร็จ!</span>
+                    <span>คัดลอกแล้ว ส่งให้ร้านค้าได้เลย · ของมาแล้วกด "รับของ" ในตารางคลัง</span>
                   </>
                 ) : (
                   <>
                     <Zap className="w-4 h-4 fill-slate-950" />
-                    <span>อนุมัติ PO & รับเข้าคลังอัตโนมัติ</span>
+                    <span>คัดลอกรายการสั่งซื้อ (ยังไม่เพิ่มสต็อก)</span>
                   </>
                 )}
               </button>

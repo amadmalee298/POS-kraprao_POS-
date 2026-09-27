@@ -77,6 +77,7 @@ import {
   purgeOutdatedCloudData,
   subscribeToMenuItems,
   subscribeToBranchInventory,
+  subscribeToStockHistory,
   subscribeToDeletedRecords
 } from '../services/firebaseService';
 import {
@@ -135,6 +136,16 @@ interface DiscountState {
   amount: number;
   type: 'fixed' | 'percent';
   note?: string;
+}
+
+/** One stock change: positive adds (received), negative removes (waste, correction). */
+export interface StockMove {
+  ingredientId: string;
+  change: number;
+  reason: string;
+  notes?: string;
+  userName?: string;
+  userRole?: string;
 }
 
 interface POSContextType {
@@ -263,7 +274,7 @@ interface POSContextType {
 
   // Inventory operations
   addIngredient: (ingredient: Omit<Ingredient, 'id'>) => Ingredient;
-  updateIngredient: (ingredient: Ingredient) => void;
+  updateIngredient: (ingredient: Ingredient, stockReason?: string, stockNote?: string) => void;
   deleteIngredients: (ingredientIds: string[]) => void;
   toggleIngredientFrequent: (ingredientId: string) => void;
   bulkUpdateIngredients: (ingredientIds: string[], updates: Partial<Omit<Ingredient, 'id'>>) => void;
@@ -292,6 +303,8 @@ interface POSContextType {
     userRole?: string
   ) => void;
   clearStockAdjustmentLogs: () => void;
+  /** Record stock changes (deltas) with shared history; see moveStock */
+  moveStock: (moves: StockMove[]) => StockAdjustmentLog[];
   deleteStockAdjustmentLog: (logId: string) => void;
 
   // Staff Scheduling & Roster operations
@@ -709,6 +722,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [wasteLogs, setWasteLogs] = useState<WasteLog[]>(INITIAL_WASTE_LOGS);
   const [stockAdjustmentLogs, setStockAdjustmentLogs] = useState<StockAdjustmentLog[]>(INITIAL_STOCK_ADJUSTMENT_LOGS);
 
+  // History written while offline, sent on reconnect
+  const pendingStockLogsRef = useRef<StockAdjustmentLog[]>([]);
+  const pendingWasteLogsRef = useRef<WasteLog[]>([]);
+
   const addStockAdjustmentLog = (entry: Omit<StockAdjustmentLog, 'id' | 'timestamp'>) => {
     const newEntry: StockAdjustmentLog = {
       ...entry,
@@ -718,6 +735,53 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setStockAdjustmentLogs(prev => [newEntry, ...prev]);
   };
 
+  /**
+   * The one way stock changes outside of sales: receiving, waste, counts and corrections.
+   * Each change goes to the cloud as a delta (added to whatever other devices did meanwhile, never
+   * overwriting their numbers) and leaves a history entry that is shared with every device.
+   */
+  const moveStock = (moves: StockMove[]): StockAdjustmentLog[] => {
+    const byId = new Map(ingredients.map(i => [i.id, i]));
+    const deltas = new Map<string, number>(); // amount to subtract, as for sales
+    const logs: StockAdjustmentLog[] = [];
+    const now = new Date().toISOString();
+    moves.forEach((m, idx) => {
+      const ing = byId.get(m.ingredientId);
+      if (!ing || !Number.isFinite(m.change) || m.change === 0) return;
+      const prev = ing.currentStock || 0;
+      const next = Math.max(0, prev + m.change);
+      const applied = Number((next - prev).toFixed(4));
+      byId.set(ing.id, { ...ing, currentStock: next });
+      if (!applied) return;
+      deltas.set(ing.id, (deltas.get(ing.id) || 0) - applied);
+      logs.push({
+        id: `adj-log-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        ingredientId: ing.id,
+        ingredientName: ing.name,
+        previousStock: prev,
+        newStock: next,
+        changeQty: applied,
+        unit: ing.unit,
+        reason: m.reason,
+        notes: m.notes || '',
+        userName: m.userName || currentUser?.name || 'ผู้ใช้งานระบบ',
+        userRole: m.userRole || currentUser?.role || 'staff',
+        timestamp: now
+      });
+    });
+    if (deltas.size > 0) pushStockDeltas(deltas);
+    if (logs.length > 0) {
+      setStockAdjustmentLogs(prev => [...logs, ...prev]);
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        logs.forEach(l => syncStockAdjustmentToFirestore(l, currentBranch).catch(console.warn));
+      } else {
+        pendingStockLogsRef.current.push(...logs);
+      }
+    }
+    return logs;
+  };
+
+  /** Set an ingredient to a counted / corrected amount (the difference is what is recorded and synced). */
   const recordStockAdjustment = (
     ingredientId: string,
     newStock: number,
@@ -728,45 +792,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ) => {
     const targetIng = ingredients.find(i => i.id === ingredientId);
     if (!targetIng) return;
-
-    const previousStock = targetIng.currentStock;
-    const sanitizedNewStock = Math.max(0, newStock);
-    const changeQty = parseFloat((sanitizedNewStock - previousStock).toFixed(3));
-
-    // Update stock level
-    const updatedIng = { ...targetIng, currentStock: sanitizedNewStock };
-    setIngredients(prev =>
-      prev.map(ing => (ing.id === ingredientId ? updatedIng : ing))
-    );
-    syncIngredientToFirestore(updatedIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
-      console.warn('[POS Ingredient Sync] Failed to sync stock adjustment to Cloud:', err);
-    });
-
-    // Record adjustment log
-    const performer = userName || currentUser?.name || 'ผู้ใช้งานระบบ';
-    const performerRole = userRole || currentUser?.role || 'staff';
-
-    addStockAdjustmentLog({
-      ingredientId: targetIng.id,
-      ingredientName: targetIng.name,
-      previousStock,
-      newStock: sanitizedNewStock,
-      changeQty,
-      unit: targetIng.unit,
-      reason,
-      notes: notes || '',
-      userName: performer,
-      userRole: performerRole
-    });
+    moveStock([{ ingredientId, change: Math.max(0, newStock) - (targetIng.currentStock || 0), reason, notes, userName, userRole }]);
   };
 
-  const clearStockAdjustmentLogs = () => {
-    setStockAdjustmentLogs([]);
-  };
-
-  const deleteStockAdjustmentLog = (logId: string) => {
-    setStockAdjustmentLogs(prev => prev.filter(l => l.id !== logId));
-  };
+  // Stock history is an audit trail shared through the cloud: entries are not deleted. A mistake
+  // is corrected with a new adjustment. (Kept for callers; they no longer offer deletion.)
+  const clearStockAdjustmentLogs = () => undefined;
+  const deleteStockAdjustmentLog = (_logId: string) => undefined;
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>(INITIAL_STAFF_MEMBERS);
   const [shifts, setShifts] = useState<ShiftEntry[]>(INITIAL_SHIFTS);
   const [shiftSwapRequests, setShiftSwapRequests] = useState<ShiftSwapRequest[]>(INITIAL_SHIFT_SWAP_REQUESTS);
@@ -1161,7 +1193,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               existing.name !== ci.name ||
               existing.packageUnit !== ci.packageUnit ||
               existing.packageSize !== ci.packageSize ||
-              existing.isFrequent !== ci.isFrequent;
+              existing.isFrequent !== ci.isFrequent ||
+              // A unit change elsewhere changes how every recipe line is deducted here
+              existing.unit !== ci.unit ||
+              existing.category !== ci.category ||
+              (existing.barcode || '') !== (ci.barcode || '');
             if (isDifferent) {
               localMap.set(ci.id, { ...existing, ...ci });
               changed = true;
@@ -1183,6 +1219,26 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return merged;
       });
     });
+
+    // Shared stock history (receiving, counts, corrections, waste) from every device
+    const mergeHistory = <T extends { id: string }>(prev: T[], cloud: T[], time: (x: T) => string): T[] => {
+      const byId = new Map(prev.map(x => [x.id, x]));
+      let changed = false;
+      cloud.forEach(x => {
+        if (!x.id || byId.has(x.id)) return;
+        byId.set(x.id, x);
+        changed = true;
+      });
+      if (!changed) return prev;
+      return Array.from(byId.values())
+        .sort((a, b) => (time(b) || '').localeCompare(time(a) || ''))
+        .slice(0, 2000);
+    };
+    const unsubHistory = subscribeToStockHistory(
+      branchTargetId,
+      logs => setStockAdjustmentLogs(prev => mergeHistory(prev, logs, l => l.timestamp)),
+      waste => setWasteLogs(prev => mergeHistory(prev, waste, w => w.loggedDate))
+    );
 
     // Real-time listener for deleted record tombstones (tombstone sync across clients)
     const unsubTombstones = subscribeToDeletedRecords((deletedSet) => {
@@ -1228,6 +1284,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       unsubIncomes();
       unsubMenus();
       unsubInventory();
+      unsubHistory();
       unsubTombstones();
     };
   }, [isStorageLoaded, effectiveOffline, currentBranch?.id, deletedMenuItemIds.length, deletedIngredientIds.length]);
@@ -1275,6 +1332,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (isFirebaseAvailable() && !effectiveOffline) {
         setFirebaseSyncState(prev => ({ ...prev, status: 'syncing' }));
         await flushPendingStock();
+        await flushPendingHistory();
         await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false });
         await syncBranchToFirestore(currentBranch);
         setFirebaseSyncState(prev => ({
@@ -1301,6 +1359,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try {
         const batchResult = await syncOrdersBatchToFirestore(pendingOrders, currentBranch);
         await flushPendingStock();
+        await flushPendingHistory();
         await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false });
         console.log(`[Firebase Service] ☁️ Synced ${batchResult.success} orders and inventory to Firestore.`);
       } catch (err) {
@@ -2728,6 +2787,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // storage full: the local stock numbers are still right on this device
     }
   };
+  const flushPendingHistory = async () => {
+    const logs = pendingStockLogsRef.current.splice(0);
+    const waste = pendingWasteLogsRef.current.splice(0);
+    await Promise.all([
+      ...logs.map(l => syncStockAdjustmentToFirestore(l, currentBranch)),
+      ...waste.map(w => syncWasteLogToFirestore(w, currentBranch))
+    ]).catch(console.warn);
+  };
+
   const flushPendingStock = async () => {
     const all = readPendingStock();
     const forBranch = all[currentBranch.id];
@@ -2750,13 +2818,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  const deductStockForSale = (items: CartItem[], direction: 1 | -1 = 1) => {
-    const deltas = computeSaleStockDeductions(items, ingredients);
+  /** Apply stock deltas (ingredientId -> amount to subtract) here and in the cloud, or queue them offline. */
+  const pushStockDeltas = (deltas: Map<string, number>) => {
     if (deltas.size === 0) return;
-    if (direction === -1) deltas.forEach((amount, id) => deltas.set(id, -amount));
     const now = Date.now();
     deltas.forEach((_, id) => recentLocalIngredientUpdatesRef.current.set(id, now));
-    setIngredients(prev => applyStockDeductions(prev, deltas));
+    setIngredients(prev => {
+      const next = applyStockDeductions(prev, deltas);
+      persistIngredientsLocally(next);
+      return next;
+    });
     const branch = currentBranch;
     if (!effectiveOffline && isFirebaseAvailable()) {
       applyStockDeltasToFirestore(deltas, ingredients, branch)
@@ -2764,12 +2835,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (!ok) addPendingStock(branch.id, deltas);
         })
         .catch(err => {
-          console.error('[POS] Failed to push stock deduction to cloud:', err);
+          console.error('[POS] Failed to push stock change to cloud:', err);
           addPendingStock(branch.id, deltas);
         });
     } else {
       addPendingStock(branch.id, deltas);
     }
+  };
+
+  const deductStockForSale = (items: CartItem[], direction: 1 | -1 = 1) => {
+    const deltas = computeSaleStockDeductions(items, ingredients);
+    if (direction === -1) deltas.forEach((amount, id) => deltas.set(id, -amount));
+    pushStockDeltas(deltas);
   };
 
   /** Put the ingredients of items that were never cooked back into stock. */
@@ -3198,7 +3275,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return newIng;
   };
 
-  const updateIngredient = (updatedIng: Ingredient) => {
+  const updateIngredient = (updatedIng: Ingredient, stockReason?: string, stockNote?: string) => {
     const sanitizedCost = typeof updatedIng.unitCost === 'number' && !isNaN(updatedIng.unitCost)
       ? updatedIng.unitCost
       : parseFloat(String(updatedIng.unitCost)) || 0;
@@ -3227,15 +3304,29 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     recentLocalIngredientUpdatesRef.current.set(cleanIng.id, Date.now());
 
+    // Details are saved as given; the stock level keeps its current value and any difference
+    // goes through moveStock (a delta with a history entry)
     setIngredients(prev => {
-      const next = prev.map(ing => (ing.id === cleanIng.id ? cleanIng : ing));
+      const next = prev.map(ing => (ing.id === cleanIng.id ? { ...cleanIng, currentStock: ing.currentStock } : ing));
       persistIngredientsLocally(next, undefined, [cleanIng.id]);
       return next;
     });
 
-    syncIngredientToFirestore(cleanIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
+    syncIngredientToFirestore(cleanIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท', {
+      withStock: false
+    }).catch(err => {
       console.warn('[POS Inventory Sync] Failed to sync updated ingredient to Cloud:', err);
     });
+    if (prevIng && Math.abs((prevIng.currentStock || 0) - sanitizedStock) > 1e-9) {
+      moveStock([
+        {
+          ingredientId: cleanIng.id,
+          change: sanitizedStock - (prevIng.currentStock || 0),
+          reason: stockReason || 'manual_adjustment',
+          notes: stockNote || 'แก้ยอดจากหน้าข้อมูลวัตถุดิบ'
+        }
+      ]);
+    }
 
     // A unit change must not change what existing recipe lines mean: lines written without a
     // unit keep the old one. Then costs are recalculated for every dish that uses the ingredient.
@@ -3322,7 +3413,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updateAddOn({ ...a, recipe, ingredientId: recipe[0]?.ingredientId, ingredientAmount: recipe[0]?.amountNeeded });
     });
 
-    updateIngredient({ ...keep, currentStock: (keep.currentStock || 0) + stockToAdd });
+    updateIngredient({ ...keep, currentStock: (keep.currentStock || 0) + stockToAdd }, 'restock', `รวมสต็อกจาก "${dup.name}"`);
     deleteIngredients([dup.id]);
     return { ok: true };
   };
@@ -3334,44 +3425,55 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     updateIngredient(updated);
   };
 
-  const bulkUpdateIngredients = (ingredientIds: string[], updates: Partial<Omit<Ingredient, 'id'>>) => {
+  /**
+   * Same details for several ingredients at once (category, unit, alert level, cost). Stock is not
+   * changed here. Like updateIngredient, a unit change keeps existing recipe lines meaning the same
+   * and dish costs are recalculated, once for all changed ingredients together.
+   */
+  const bulkUpdateIngredients = (ingredientIds: string[], input: Partial<Omit<Ingredient, 'id'>>) => {
+    const { currentStock: _ignored, ...updates } = input;
     const idSet = new Set(ingredientIds);
     const now = Date.now();
     ingredientIds.forEach(id => recentLocalIngredientUpdatesRef.current.set(id, now));
 
+    const before = new Map(ingredients.filter(i => idSet.has(i.id)).map(i => [i.id, i]));
+    const nextIngredients = ingredients.map(i => (idSet.has(i.id) ? { ...i, ...updates } : i));
+
     setIngredients(prev => {
-      const next = prev.map(ing => {
-        if (idSet.has(ing.id)) {
-          const updated = { ...ing, ...updates };
-          syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
-            console.warn('[POS Inventory Sync] Failed to sync bulk updated ingredient to Cloud:', err);
-          });
-          return updated;
-        }
-        return ing;
-      });
+      const next = prev.map(ing => (idSet.has(ing.id) ? { ...ing, ...updates } : ing));
       persistIngredientsLocally(next);
       return next;
     });
+    nextIngredients
+      .filter(i => idSet.has(i.id))
+      .forEach(updated =>
+        syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท', {
+          withStock: false
+        }).catch(err => console.warn('[POS Inventory Sync] Failed to sync bulk updated ingredient to Cloud:', err))
+      );
+
+    const unitChanged = updates.unit !== undefined;
+    const costChanged = updates.unitCost !== undefined || updates.packageSize !== undefined;
+    if (!unitChanged && !costChanged) return;
+    const stamp = (lines?: RecipeIngredient[]) =>
+      lines?.map(r => (idSet.has(r.ingredientId) && !r.recipeUnit ? { ...r, recipeUnit: before.get(r.ingredientId)?.unit || 'pcs' } : r));
+    const source = unitChanged
+      ? menuItems.map(m => ({
+          ...m,
+          recipe: stamp(m.recipe) || [],
+          availableProteins: m.availableProteins?.map(p => ({ ...p, recipe: stamp(p.recipe) }))
+        }))
+      : menuItems;
+    commitMenuItems(recostMenusUsing(idSet, nextIngredients, source));
+    if (unitChanged) {
+      addOns.forEach(a => {
+        if (a.recipe?.some(r => idSet.has(r.ingredientId) && !r.recipeUnit)) updateAddOn({ ...a, recipe: stamp(a.recipe) });
+      });
+    }
   };
 
   const updateIngredientStock = (ingredientId: string, newStock: number) => {
-    recentLocalIngredientUpdatesRef.current.set(ingredientId, Date.now());
-
-    setIngredients(prev => {
-      const next = prev.map(ing => {
-        if (ing.id === ingredientId) {
-          const updated = { ...ing, currentStock: Math.max(0, newStock) };
-          syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
-            console.warn('[POS Inventory Sync] Failed to sync stock to Cloud:', err);
-          });
-          return updated;
-        }
-        return ing;
-      });
-      persistIngredientsLocally(next);
-      return next;
-    });
+    recordStockAdjustment(ingredientId, newStock, 'manual_adjustment');
   };
 
   const updateIngredientPriceAndRecalculate = (
@@ -3390,7 +3492,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const next = prev.map(ing => {
         if (ing.id === ingredientId) {
           const updated = { ...ing, unitCost: cleanUnitCost };
-          syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท').catch(err => {
+          syncIngredientToFirestore(updated, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท', { withStock: false }).catch(err => {
             console.warn('[POS Inventory Sync] Failed to sync unit cost to Cloud:', err);
           });
           return updated;
@@ -3411,38 +3513,49 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     commitMenuItems(Array.from(recosted.values()));
   };
 
+  /** Goods received: a lot record plus the stock increase (with purchase price when given). */
   const addStockLot = (lotData: Omit<StockLot, 'id'>) => {
     const newLot: StockLot = {
       ...lotData,
-      id: `lot-${Date.now()}`
+      id: `lot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     };
     setStockLots(prev => [newLot, ...prev]);
-
-    // Also increase current stock for that ingredient
-    updateIngredientStock(
-      lotData.ingredientId,
-      (ingredients.find(i => i.id === lotData.ingredientId)?.currentStock || 0) + lotData.quantity
-    );
+    const pkg = lotData.packageQty && lotData.packageUnit ? ` (${lotData.packageQty} ${lotData.packageUnit})` : '';
+    moveStock([
+      {
+        ingredientId: lotData.ingredientId,
+        change: lotData.quantity,
+        reason: 'restock',
+        notes: [`รับเข้า ${lotData.lotNumber}${pkg}`, lotData.supplier && `จาก ${lotData.supplier}`, lotData.notes].filter(Boolean).join(' · ')
+      }
+    ]);
   };
 
   // Waste Log operations
   const addWasteLog = (logData: Omit<WasteLog, 'id'>) => {
     const newLog: WasteLog = {
       ...logData,
-      id: `waste-${Date.now()}`
+      id: `waste-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     };
     setWasteLogs(prev => [newLog, ...prev]);
-
-    // Deduct stock if ingredient exists
-    const targetIng = ingredients.find(i => i.id === logData.ingredientId);
-    if (targetIng) {
-      updateIngredientStock(targetIng.id, Math.max(0, targetIng.currentStock - logData.quantity));
+    if (isFirebaseAvailable() && !effectiveOffline) {
+      syncWasteLogToFirestore(newLog, currentBranch).catch(console.warn);
+    } else {
+      pendingWasteLogsRef.current.push(newLog);
     }
+    moveStock([
+      {
+        ingredientId: logData.ingredientId,
+        change: -Math.abs(logData.quantity),
+        reason: logData.reason === 'expired' ? 'expired' : logData.reason === 'damaged' ? 'damaged' : 'waste',
+        notes: logData.notes,
+        userName: logData.reportedBy
+      }
+    ]);
   };
 
-  const deleteWasteLog = (logId: string) => {
-    setWasteLogs(prev => prev.filter(w => w.id !== logId));
-  };
+  // Waste records are shared history like stock adjustments; they are not deleted
+  const deleteWasteLog = (_logId: string) => undefined;
 
   // Accounting functions
   const addExpense = (expData: Omit<Expense, 'id'>) => {
@@ -4073,6 +4186,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addStockAdjustmentLog,
         recordStockAdjustment,
         clearStockAdjustmentLogs,
+        moveStock,
         deleteStockAdjustmentLog,
         staffMembers,
         shifts,
