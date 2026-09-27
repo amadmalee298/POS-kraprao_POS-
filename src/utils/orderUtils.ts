@@ -1,5 +1,5 @@
 import { AddOnOption, CartItem, Ingredient, Order, SpiceLevel, SystemSettings, MenuItem } from '../types';
-import { calcRecipeItemCostAndDeduction } from './recipeUtils';
+import { calcRecipeItemCostAndDeduction, cartItemRecipeLines } from './recipeUtils';
 import { calculateOrderTotals, TaxCalculationResult } from './tax';
 
 const randomSuffix = (length: number): string => {
@@ -54,14 +54,7 @@ export function computeSaleStockDeductions(items: CartItem[], ingredients: Ingre
 
   items.forEach(cartItem => {
     const qty = cartItem.quantity || 0;
-    (cartItem.menuItem?.recipe || []).forEach(rec => add(rec.ingredientId, rec.amountNeeded, rec.recipeUnit, qty));
-    (cartItem.selectedAddOns || []).forEach(addon => {
-      if (addon.recipe && addon.recipe.length > 0) {
-        addon.recipe.forEach(rec => add(rec.ingredientId, rec.amountNeeded, rec.recipeUnit, qty));
-      } else if (addon.ingredientId && addon.ingredientAmount) {
-        add(addon.ingredientId, addon.ingredientAmount, undefined, qty);
-      }
-    });
+    cartItemRecipeLines(cartItem).forEach(rec => add(rec.ingredientId, rec.amountNeeded, rec.recipeUnit, qty));
   });
 
   return deltas;

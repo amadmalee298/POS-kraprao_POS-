@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
-import { calcRecipeItemCostAndDeduction } from '../utils/recipeUtils';
+import { canonicalUnit, convertAmount, repointRecipe, withRecipeCosts, withRecipeUnits } from '../utils/recipeUtils';
 import { syncAndHealCategories, syncAndHealIngredientCategories } from '../utils/categoryUtils';
 import {
   MenuItem,
@@ -196,10 +196,14 @@ interface POSContextType {
   addMenuItem: (itemData: Omit<MenuItem, 'id'>) => void;
   updateMenuItem: (item: MenuItem) => void;
   deleteMenuItem: (itemId: string) => void;
-  updateMenuItemRecipe: (menuItemId: string, recipe: RecipeIngredient[], costPrice: number) => void;
-  batchUpdateMenuItemRecipes: (updates: { menuItemId: string; recipe: RecipeIngredient[]; costPrice: number }[]) => void;
+  updateMenuItemRecipe: (menuItemId: string, recipe: RecipeIngredient[], costPrice?: number) => void;
+  batchUpdateMenuItemRecipes: (updates: { menuItemId: string; recipe: RecipeIngredient[]; costPrice?: number }[]) => void;
   toggleMenuItemFrequent: (menuItemId: string) => void;
   toggleMenuItemAddOns: (menuItemId: string, allow?: boolean) => void;
+  /** Take a dish off sale (sold out) or back on */
+  setMenuItemSoldOut: (menuItemId: string, soldOut: boolean) => void;
+  /** Merge a duplicate ingredient into another: recipes are repointed, stock is added, the duplicate is removed */
+  mergeIngredients: (keepId: string, duplicateId: string) => { ok: boolean; error?: string };
   restoreDefaultMenuItems: () => void;
 
   // AddOn / Topping CRUD
@@ -1053,12 +1057,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const mergedRecipe = (cm.recipe && cm.recipe.length > 0)
               ? cm.recipe
               : (existing.recipe && existing.recipe.length > 0 ? existing.recipe : []);
-            const mergedSpice = (cm.availableSpiceLevels && cm.availableSpiceLevels.length > 0)
-              ? cm.availableSpiceLevels
-              : existing.availableSpiceLevels;
-            const mergedProteins = (cm.availableProteins && cm.availableProteins.length > 0)
-              ? cm.availableProteins
-              : existing.availableProteins;
+            // An empty list saved on purpose (options removed) must reach other devices too
+            const mergedSpice = Array.isArray(cm.availableSpiceLevels) ? cm.availableSpiceLevels : existing.availableSpiceLevels;
+            const mergedProteins = Array.isArray(cm.availableProteins) ? cm.availableProteins : existing.availableProteins;
             const mergedAllowedAddOns = (cm.allowedAddOnIds && cm.allowedAddOnIds.length > 0)
               ? cm.allowedAddOnIds
               : existing.allowedAddOnIds;
@@ -1071,7 +1072,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               existing.name !== cm.name ||
               existing.category !== cm.category ||
               JSON.stringify(existing.recipe || []) !== JSON.stringify(mergedRecipe) ||
-              JSON.stringify(existing.availableSpiceLevels || []) !== JSON.stringify(mergedSpice || []);
+              JSON.stringify(existing.availableSpiceLevels || []) !== JSON.stringify(mergedSpice || []) ||
+              JSON.stringify(existing.availableProteins || []) !== JSON.stringify(mergedProteins || []) ||
+              !!existing.isSoldOut !== !!cm.isSoldOut;
 
             if (isDifferent) {
               localMap.set(cm.id, {
@@ -1271,7 +1274,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.log('[POS Sync Queue] ℹ️ No pending offline orders in queue.');
       if (isFirebaseAvailable() && !effectiveOffline) {
         setFirebaseSyncState(prev => ({ ...prev, status: 'syncing' }));
-        await syncInventoryToFirestore(ingredients, currentBranch);
+        await flushPendingStock();
+        await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false });
         await syncBranchToFirestore(currentBranch);
         setFirebaseSyncState(prev => ({
           ...prev,
@@ -1296,7 +1300,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (isFirebaseAvailable() && !effectiveOffline) {
       try {
         const batchResult = await syncOrdersBatchToFirestore(pendingOrders, currentBranch);
-        await syncInventoryToFirestore(ingredients, currentBranch);
+        await flushPendingStock();
+        await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false });
         console.log(`[Firebase Service] ☁️ Synced ${batchResult.success} orders and inventory to Firestore.`);
       } catch (err) {
         console.error('[Firebase Service] ❌ Batch sync failed:', err);
@@ -2363,23 +2368,39 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Menu Item CRUD
-  const addMenuItem = (itemData: Omit<MenuItem, 'id'>) => {
-    const newItem: MenuItem = {
-      ...itemData,
-      id: `menu-${Date.now()}`
-    };
+  /** A menu item as it is stored: recipe lines carry units, costs are recalculated from the recipes. */
+  const prepareMenuItem = (item: MenuItem, ings: Ingredient[] = ingredients): MenuItem =>
+    withRecipeCosts(
+      {
+        ...item,
+        recipe: withRecipeUnits(item.recipe || [], ings),
+        availableProteins: item.availableProteins?.map(p => (p.recipe ? { ...p, recipe: withRecipeUnits(p.recipe, ings) } : p))
+      },
+      ings
+    );
 
-    // Unmark from deletedMenuItemIds if previously present
+  /** Save changed menu items: state, local cache and cloud (the cloud write happens outside the state updater). */
+  const commitMenuItems = (changed: MenuItem[]) => {
+    if (changed.length === 0) return;
+    const byId = new Map(changed.map(m => [m.id, m]));
+    const ids = new Set(changed.map(m => m.id.toLowerCase()));
+    const names = new Set(changed.map(m => m.name.trim().toLowerCase()));
+    const now = Date.now();
+    changed.forEach(m => recentLocalMenuUpdatesRef.current.set(m.id, now));
+
+    // Saving an item makes it active again
     setDeletedMenuItemIds(prev => {
-      const next = prev.filter(id => id.toLowerCase() !== newItem.id.toLowerCase() && id.toLowerCase() !== newItem.name.trim().toLowerCase());
+      const next = prev.filter(id => !ids.has(id.toLowerCase()) && !names.has(id.toLowerCase()));
+      if (next.length === prev.length) return prev;
       try { localStorage.setItem('POS_DELETED_MENU_IDS', JSON.stringify(next)); } catch (e) {}
       return next;
     });
 
-    recentLocalMenuUpdatesRef.current.set(newItem.id, Date.now());
-
     setMenuItems(prev => {
-      const next = [...prev, newItem];
+      const next = prev.map(m => byId.get(m.id) || m);
+      changed.forEach(m => {
+        if (!prev.some(p => p.id === m.id)) next.push(m);
+      });
       try {
         localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
         const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -2387,7 +2408,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const parsed = JSON.parse(saved);
           parsed.menuItems = next;
           parsed.deletedMenuItemIds = (parsed.deletedMenuItemIds || []).filter(
-            (id: string) => id.toLowerCase() !== newItem.id.toLowerCase() && id.toLowerCase() !== newItem.name.trim().toLowerCase()
+            (id: string) => !ids.has(id.toLowerCase()) && !names.has(id.toLowerCase())
           );
           localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
         }
@@ -2395,42 +2416,28 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return next;
     });
 
-    syncSingleMenuItemToFirestore(newItem).catch(err => {
-      console.warn('[POS Menu Sync] Failed to sync new menu item to Cloud:', err);
-    });
+    changed.forEach(m =>
+      syncSingleMenuItemToFirestore(m).catch(err => console.warn('[POS Menu Sync] Failed to sync menu item to Cloud:', err))
+    );
+  };
+
+  /**
+   * Menu items whose costs depend on the given ingredients, recalculated with the new ingredient
+   * list (base recipes and protein options).
+   */
+  const recostMenusUsing = (ingredientIds: Set<string>, ings: Ingredient[], source: MenuItem[] = menuItems): MenuItem[] =>
+    source
+      .filter(m =>
+        [...(m.recipe || []), ...(m.availableProteins || []).flatMap(p => p.recipe || [])].some(r => ingredientIds.has(r.ingredientId))
+      )
+      .map(m => prepareMenuItem(m, ings));
+
+  const addMenuItem = (itemData: Omit<MenuItem, 'id'>) => {
+    commitMenuItems([prepareMenuItem({ ...itemData, id: `menu-${Date.now()}` })]);
   };
 
   const updateMenuItem = (item: MenuItem) => {
-    // Unmark from deletedMenuItemIds so this item is never filtered out
-    setDeletedMenuItemIds(prev => {
-      const next = prev.filter(id => id.toLowerCase() !== item.id.toLowerCase() && id.toLowerCase() !== item.name.trim().toLowerCase());
-      try { localStorage.setItem('POS_DELETED_MENU_IDS', JSON.stringify(next)); } catch (e) {}
-      return next;
-    });
-
-    recentLocalMenuUpdatesRef.current.set(item.id, Date.now());
-
-    setMenuItems(prev => {
-      const exists = prev.some(m => m.id === item.id);
-      const next = exists ? prev.map(m => (m.id === item.id ? item : m)) : [...prev, item];
-      try {
-        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          parsed.menuItems = next;
-          parsed.deletedMenuItemIds = (parsed.deletedMenuItemIds || []).filter(
-            (id: string) => id.toLowerCase() !== item.id.toLowerCase() && id.toLowerCase() !== item.name.trim().toLowerCase()
-          );
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
-        }
-      } catch (e) {}
-      return next;
-    });
-
-    syncSingleMenuItemToFirestore(item).catch(err => {
-      console.warn('[POS Menu Sync] Failed to sync updated menu item to Cloud:', err);
-    });
+    commitMenuItems([prepareMenuItem(item)]);
   };
 
   const deleteMenuItem = (itemId: string) => {
@@ -2469,79 +2476,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  const updateMenuItemRecipe = (menuItemId: string, recipe: RecipeIngredient[], costPrice: number) => {
-    setDeletedMenuItemIds(prev => {
-      const next = prev.filter(id => id.toLowerCase() !== menuItemId.toLowerCase());
-      try { localStorage.setItem('POS_DELETED_MENU_IDS', JSON.stringify(next)); } catch (e) {}
-      return next;
-    });
-
-    recentLocalMenuUpdatesRef.current.set(menuItemId, Date.now());
-
-    setMenuItems(prev => {
-      const updatedList = prev.map(m => (m.id === menuItemId ? { ...m, recipe, costPrice } : m));
-      try {
-        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(updatedList));
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          parsed.menuItems = updatedList;
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
-        }
-      } catch (e) {}
-      const target = updatedList.find(m => m.id === menuItemId);
-      if (target) {
-        syncSingleMenuItemToFirestore(target).catch(err => {
-          console.warn('[POS Menu Sync] Failed to sync recipe to Cloud:', err);
-        });
-      }
-      return updatedList;
-    });
+  // The cost passed by older callers is ignored: costs are always recalculated from the recipe
+  const updateMenuItemRecipe = (menuItemId: string, recipe: RecipeIngredient[], _costPrice?: number) => {
+    const item = menuItems.find(m => m.id === menuItemId);
+    if (item) commitMenuItems([prepareMenuItem({ ...item, recipe })]);
   };
 
-  const batchUpdateMenuItemRecipes = (updates: { menuItemId: string; recipe: RecipeIngredient[]; costPrice: number }[]) => {
-    if (!updates || updates.length === 0) return;
-    const updateMap = new Map(updates.map(u => [u.menuItemId, u]));
-    const now = Date.now();
-    updates.forEach(u => recentLocalMenuUpdatesRef.current.set(u.menuItemId, now));
-
-    setDeletedMenuItemIds(prev => {
-      const updateIds = new Set(updates.map(u => u.menuItemId.toLowerCase()));
-      const next = prev.filter(id => !updateIds.has(id.toLowerCase()));
-      try { localStorage.setItem('POS_DELETED_MENU_IDS', JSON.stringify(next)); } catch (e) {}
-      return next;
-    });
-
-    setMenuItems(prev => {
-      const next = prev.map(m => {
-        const u = updateMap.get(m.id);
-        if (u) {
-          return { ...m, recipe: u.recipe, costPrice: u.costPrice };
-        }
-        return m;
-      });
-      try {
-        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          parsed.menuItems = next;
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
-        }
-      } catch (e) {}
-
-      // Sync each updated item to Firestore
-      updates.forEach(u => {
-        const target = next.find(m => m.id === u.menuItemId);
-        if (target) {
-          syncSingleMenuItemToFirestore(target).catch(err => {
-            console.warn('[POS Menu Sync] Failed to sync batch recipe to Cloud:', err);
-          });
-        }
-      });
-
-      return next;
-    });
+  const batchUpdateMenuItemRecipes = (updates: { menuItemId: string; recipe: RecipeIngredient[]; costPrice?: number }[]) => {
+    const byId = new Map(menuItems.map(m => [m.id, m]));
+    commitMenuItems(
+      updates.flatMap(u => {
+        const item = byId.get(u.menuItemId);
+        return item ? [prepareMenuItem({ ...item, recipe: u.recipe })] : [];
+      })
+    );
   };
 
   const toggleMenuItemFrequent = (menuItemId: string) => {
@@ -2592,6 +2540,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
+  const setMenuItemSoldOut = (menuItemId: string, soldOut: boolean) => {
+    const item = menuItems.find(m => m.id === menuItemId);
+    if (item) commitMenuItems([{ ...item, isSoldOut: soldOut }]);
+  };
+
   const toggleMenuItemAddOns = (menuItemId: string, allow?: boolean) => {
     setMenuItems(prev => {
       const next = prev.map(m => {
@@ -2615,6 +2568,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addAddOn = (addonData: Omit<AddOnOption, 'id'>) => {
     const newAddon: AddOnOption = {
       ...addonData,
+      ...(addonData.recipe ? { recipe: withRecipeUnits(addonData.recipe, ingredients) } : {}),
       id: `addon-${Date.now()}`
     };
     setAddOns(prev => {
@@ -2626,7 +2580,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  const updateAddOn = (addon: AddOnOption) => {
+  const updateAddOn = (input: AddOnOption) => {
+    const addon = input.recipe ? { ...input, recipe: withRecipeUnits(input.recipe, ingredients) } : input;
     setAddOns(prev => {
       const next = prev.map(a => (a.id === addon.id ? addon : a));
       if (isFirebaseAvailable() && !effectiveOffline) {
@@ -2752,6 +2707,49 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * cloud copy is changed with atomic increments, so a stale snapshot can neither be pushed
    * over other devices' stock nor bounce back and undo this deduction.
    */
+  // Stock used while offline (or when a cloud write failed), sent later as deltas so it adds to
+  // what other devices deducted meanwhile instead of overwriting their numbers.
+  const PENDING_STOCK_KEY = 'POS_PENDING_STOCK_DELTAS';
+  const readPendingStock = (): Record<string, Record<string, number>> => {
+    try {
+      return JSON.parse(localStorage.getItem(PENDING_STOCK_KEY) || '{}') || {};
+    } catch {
+      return {};
+    }
+  };
+  const addPendingStock = (branchId: string, deltas: Map<string, number>) => {
+    const all = readPendingStock();
+    const forBranch = all[branchId] || {};
+    deltas.forEach((amount, id) => (forBranch[id] = (forBranch[id] || 0) + amount));
+    all[branchId] = forBranch;
+    try {
+      localStorage.setItem(PENDING_STOCK_KEY, JSON.stringify(all));
+    } catch {
+      // storage full: the local stock numbers are still right on this device
+    }
+  };
+  const flushPendingStock = async () => {
+    const all = readPendingStock();
+    const forBranch = all[currentBranch.id];
+    if (!forBranch || Object.keys(forBranch).length === 0) return;
+    const ok = await applyStockDeltasToFirestore(new Map(Object.entries(forBranch)), ingredients, currentBranch);
+    if (!ok) return;
+    const latest = readPendingStock();
+    // Remove exactly what was sent; anything added meanwhile stays queued
+    const rest = latest[currentBranch.id] || {};
+    Object.entries(forBranch).forEach(([id, amount]) => {
+      const left = (rest[id] || 0) - amount;
+      if (Math.abs(left) < 1e-9) delete rest[id];
+      else rest[id] = left;
+    });
+    latest[currentBranch.id] = rest;
+    try {
+      localStorage.setItem(PENDING_STOCK_KEY, JSON.stringify(latest));
+    } catch {
+      // ignore
+    }
+  };
+
   const deductStockForSale = (items: CartItem[], direction: 1 | -1 = 1) => {
     const deltas = computeSaleStockDeductions(items, ingredients);
     if (deltas.size === 0) return;
@@ -2759,12 +2757,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const now = Date.now();
     deltas.forEach((_, id) => recentLocalIngredientUpdatesRef.current.set(id, now));
     setIngredients(prev => applyStockDeductions(prev, deltas));
+    const branch = currentBranch;
     if (!effectiveOffline && isFirebaseAvailable()) {
-      applyStockDeltasToFirestore(deltas, ingredients, currentBranch).catch(err =>
-        console.error('[POS] Failed to push stock deduction to cloud:', err)
-      );
+      applyStockDeltasToFirestore(deltas, ingredients, branch)
+        .then(ok => {
+          if (!ok) addPendingStock(branch.id, deltas);
+        })
+        .catch(err => {
+          console.error('[POS] Failed to push stock deduction to cloud:', err);
+          addPendingStock(branch.id, deltas);
+        });
+    } else {
+      addPendingStock(branch.id, deltas);
     }
-    // Offline: the reconnect sync (syncOfflineQueue) uploads the locally deducted stock levels.
   };
 
   /** Put the ingredients of items that were never cooked back into stock. */
@@ -3232,54 +3237,27 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('[POS Inventory Sync] Failed to sync updated ingredient to Cloud:', err);
     });
 
-    // If unit cost changed, recalculate recipe food costs for affected menu items automatically
-    if (unitCostChanged) {
-      setMenuItems(prev => {
-        const next = prev.map(item => {
-          if (!item.recipe || item.recipe.length === 0) return item;
-          const usesIngredient = item.recipe.some(r => r.ingredientId === cleanIng.id);
-          if (!usesIngredient) return item;
-
-          let recalculatedCost = 0;
-          item.recipe.forEach(r => {
-            const ingObj = ingredients.find(i => i.id === r.ingredientId);
-            const costPerUnit = r.ingredientId === cleanIng.id ? sanitizedCost : (ingObj?.unitCost ?? 0);
-            const lineCost = calcRecipeItemCostAndDeduction(
-              ingObj ? { ...ingObj, unitCost: costPerUnit } : { unit: 'pcs', unitCost: costPerUnit },
-              r.amountNeeded,
-              r.recipeUnit
-            ).lineCost;
-            recalculatedCost += lineCost;
-          });
-
-          return {
-            ...item,
-            costPrice: recalculatedCost
-          };
+    // A unit change must not change what existing recipe lines mean: lines written without a
+    // unit keep the old one. Then costs are recalculated for every dish that uses the ingredient.
+    const unitChanged = prevIng !== undefined && canonicalUnit(prevIng.unit) !== canonicalUnit(cleanIng.unit);
+    const packageChanged = prevIng !== undefined && (prevIng.packageSize || 0) !== (cleanIng.packageSize || 0);
+    if (unitCostChanged || unitChanged || packageChanged) {
+      const nextIngredients = ingredients.map(i => (i.id === cleanIng.id ? cleanIng : i));
+      const stamp = (lines?: RecipeIngredient[]) =>
+        lines?.map(r => (r.ingredientId === cleanIng.id && !r.recipeUnit ? { ...r, recipeUnit: prevIng!.unit } : r));
+      const source = unitChanged
+        ? menuItems.map(m => ({
+            ...m,
+            recipe: stamp(m.recipe) || [],
+            availableProteins: m.availableProteins?.map(p => ({ ...p, recipe: stamp(p.recipe) }))
+          }))
+        : menuItems;
+      commitMenuItems(recostMenusUsing(new Set([cleanIng.id]), nextIngredients, source));
+      if (unitChanged && addOns.some(a => a.recipe?.some(r => r.ingredientId === cleanIng.id && !r.recipeUnit))) {
+        addOns.forEach(a => {
+          if (a.recipe?.some(r => r.ingredientId === cleanIng.id && !r.recipeUnit)) updateAddOn({ ...a, recipe: stamp(a.recipe) });
         });
-
-        try {
-          localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
-          const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            parsed.menuItems = next;
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
-          }
-        } catch (e) {}
-
-        // Mark affected items and sync to Firestore
-        next.forEach(item => {
-          if (item.recipe && item.recipe.some(r => r.ingredientId === cleanIng.id)) {
-            recentLocalMenuUpdatesRef.current.set(item.id, Date.now());
-            syncSingleMenuItemToFirestore(item).catch(err => {
-              console.warn('[POS Menu Sync] Failed to sync recalculated item:', err);
-            });
-          }
-        });
-
-        return next;
-      });
+      }
     }
   };
 
@@ -3305,6 +3283,48 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.warn('[POS Inventory Sync] Failed to delete ingredient from Cloud:', err);
       });
     });
+  };
+
+  const mergeIngredients = (keepId: string, duplicateId: string): { ok: boolean; error?: string } => {
+    const keep = ingredients.find(i => i.id === keepId);
+    const dup = ingredients.find(i => i.id === duplicateId);
+    if (!keep || !dup || keep.id === dup.id) return { ok: false, error: 'เลือกวัตถุดิบ 2 รายการที่ต่างกัน' };
+    const stockToAdd = convertAmount(dup.currentStock || 0, dup.unit, keep.unit);
+    if (stockToAdd === null) return { ok: false, error: `หน่วย ${dup.unit} กับ ${keep.unit} รวมกันไม่ได้` };
+
+    const nextIngredients = ingredients.filter(i => i.id !== dup.id);
+    const changedMenus = menuItems
+      .filter(m => [...(m.recipe || []), ...(m.availableProteins || []).flatMap(p => p.recipe || [])].some(r => r.ingredientId === dup.id) ||
+        (m.availableProteins || []).some(p => p.replacesIngredientIds?.includes(dup.id)))
+      .map(m =>
+        prepareMenuItem(
+          {
+            ...m,
+            recipe: repointRecipe(m.recipe, dup, keep) || [],
+            availableProteins: m.availableProteins?.map(p => ({
+              ...p,
+              recipe: repointRecipe(p.recipe, dup, keep),
+              replacesIngredientIds: p.replacesIngredientIds
+                ? Array.from(new Set(p.replacesIngredientIds.map(id => (id === dup.id ? keep.id : id))))
+                : undefined
+            }))
+          },
+          nextIngredients
+        )
+      );
+    commitMenuItems(changedMenus);
+
+    addOns.forEach(a => {
+      const usesDup = a.recipe?.some(r => r.ingredientId === dup.id) || a.ingredientId === dup.id;
+      if (!usesDup) return;
+      const legacy = a.recipe?.length ? a.recipe : [{ ingredientId: a.ingredientId!, amountNeeded: a.ingredientAmount || 0 }];
+      const recipe = repointRecipe(legacy, dup, keep) || [];
+      updateAddOn({ ...a, recipe, ingredientId: recipe[0]?.ingredientId, ingredientAmount: recipe[0]?.amountNeeded });
+    });
+
+    updateIngredient({ ...keep, currentStock: (keep.currentStock || 0) + stockToAdd });
+    deleteIngredients([dup.id]);
+    return { ok: true };
   };
 
   const toggleIngredientFrequent = (ingredientId: string) => {
@@ -3381,64 +3401,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return next;
     });
 
-    // Create lookup map for updated ingredient costs
-    const ingCostMap = new Map<string, number>();
-    ingredients.forEach(i => ingCostMap.set(i.id, i.id === ingredientId ? cleanUnitCost : i.unitCost));
-
     // 2. Recalculate cost for affected menu items (and update retail price if provided)
-    setMenuItems(prev => {
-      const next = prev.map(item => {
-        if (!item.recipe || item.recipe.length === 0) return item;
-        const usesIngredient = item.recipe.some(r => r.ingredientId === ingredientId);
-        if (!usesIngredient && (!updatedMenuPrices || updatedMenuPrices[item.id] === undefined)) {
-          return item;
-        }
-
-        let recalculatedCost = 0;
-        item.recipe.forEach(r => {
-          const ingObj = ingredients.find(i => i.id === r.ingredientId);
-          const costPerUnit = r.ingredientId === ingredientId ? cleanUnitCost : (ingCostMap.get(r.ingredientId) ?? 0);
-          const lineCost = calcRecipeItemCostAndDeduction(
-            ingObj ? { ...ingObj, unitCost: costPerUnit } : { unit: 'pcs', unitCost: costPerUnit },
-            r.amountNeeded,
-            r.recipeUnit
-          ).lineCost;
-          recalculatedCost += lineCost;
-        });
-
-        const newPrice = (updatedMenuPrices && updatedMenuPrices[item.id] !== undefined)
-          ? updatedMenuPrices[item.id]
-          : item.price;
-
-        return {
-          ...item,
-          costPrice: recalculatedCost,
-          price: newPrice
-        };
-      });
-
-      try {
-        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          parsed.menuItems = next;
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
-        }
-      } catch (e) {}
-
-      // Mark affected items and sync to Firestore
-      next.forEach(item => {
-        if (item.recipe && item.recipe.some(r => r.ingredientId === ingredientId)) {
-          recentLocalMenuUpdatesRef.current.set(item.id, Date.now());
-          syncSingleMenuItemToFirestore(item).catch(err => {
-            console.warn('[POS Menu Sync] Failed to sync recalculated item:', err);
-          });
-        }
-      });
-
-      return next;
+    const nextIngredients = ingredients.map(i => (i.id === ingredientId ? { ...i, unitCost: cleanUnitCost } : i));
+    const recosted = new Map(recostMenusUsing(new Set([ingredientId]), nextIngredients).map(m => [m.id, m]));
+    Object.entries(updatedMenuPrices || {}).forEach(([id, price]) => {
+      const item = recosted.get(id) || menuItems.find(m => m.id === id);
+      if (item) recosted.set(id, { ...item, price });
     });
+    commitMenuItems(Array.from(recosted.values()));
   };
 
   const addStockLot = (lotData: Omit<StockLot, 'id'>) => {
@@ -4037,6 +4007,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         batchUpdateMenuItemRecipes,
         toggleMenuItemFrequent,
         toggleMenuItemAddOns,
+        setMenuItemSoldOut,
+        mergeIngredients,
         restoreDefaultMenuItems,
         addAddOn,
         updateAddOn,

@@ -374,9 +374,12 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
 export async function syncInventoryToFirestore(
   ingredients: Ingredient[],
   branch: Branch,
-  options?: { purgeDeleted?: boolean }
+  options?: { purgeDeleted?: boolean; withStock?: boolean }
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine || ingredients.length === 0) return false;
+  // Stock levels are only overwritten on request: after being offline this device's numbers are
+  // stale, and its sales are sent as deltas instead (applyStockDeltasToFirestore).
+  const withStock = options?.withStock !== false;
   await waitForFirebaseAuth();
 
   try {
@@ -401,7 +404,19 @@ export async function syncInventoryToFirestore(
       }
     }
 
+    // Ingredients the cloud does not have yet still need their starting stock
+    let knownIds: Set<string> | null = null;
+    if (!withStock) {
+      try {
+        const snap = await getDocs(collection(dbInstance, 'branches', branch.id, 'inventory'));
+        knownIds = new Set(snap.docs.map(d => d.id));
+      } catch {
+        knownIds = new Set();
+      }
+    }
+
     ingredients.forEach(ing => {
+      const includeStock = withStock || !knownIds!.has(ing.id);
       if (ing.currentStock <= ing.minStockAlert) {
         lowStockCount++;
       }
@@ -413,7 +428,7 @@ export async function syncInventoryToFirestore(
         {
           ingredientId: ing.id,
           name: ing.name,
-          currentStock: ing.currentStock,
+          ...(includeStock ? { currentStock: ing.currentStock, isLowStock: ing.currentStock <= ing.minStockAlert } : {}),
           minStockAlert: ing.minStockAlert,
           unit: ing.unit,
           unitCost: ing.unitCost,
@@ -421,7 +436,6 @@ export async function syncInventoryToFirestore(
           barcode: ing.barcode || '',
           branchId: branch.id,
           branchName: branch.name,
-          isLowStock: ing.currentStock <= ing.minStockAlert,
           lastUpdated: nowIso,
           updatedAt: serverTimestamp()
         },
@@ -436,14 +450,13 @@ export async function syncInventoryToFirestore(
           id: `${branch.id}_${ing.id}`,
           ingredientId: ing.id,
           name: ing.name,
-          currentStock: ing.currentStock,
+          ...(includeStock ? { currentStock: ing.currentStock, isLowStock: ing.currentStock <= ing.minStockAlert } : {}),
           minStockAlert: ing.minStockAlert,
           unit: ing.unit,
           unitCost: ing.unitCost,
           category: ing.category,
           branchId: branch.id,
           branchName: branch.name,
-          isLowStock: ing.currentStock <= ing.minStockAlert,
           lastUpdated: nowIso,
           updatedAt: serverTimestamp()
         },
@@ -1397,7 +1410,8 @@ export async function fetchMenuItemsFromFirestore(): Promise<MenuItem[]> {
         availableSpiceLevels: Array.isArray(data.availableSpiceLevels) ? data.availableSpiceLevels : undefined,
         availableProteins: Array.isArray(data.availableProteins) ? data.availableProteins : undefined,
         allowAddOns: data.allowAddOns !== undefined ? data.allowAddOns : true,
-        allowedAddOnIds: Array.isArray(data.allowedAddOnIds) ? data.allowedAddOnIds : undefined
+        allowedAddOnIds: Array.isArray(data.allowedAddOnIds) ? data.allowedAddOnIds : undefined,
+        isSoldOut: !!data.isSoldOut
       });
     });
 
@@ -2101,7 +2115,8 @@ export function subscribeToMenuItems(
           availableSpiceLevels: data.availableSpiceLevels,
           availableProteins: data.availableProteins,
           allowAddOns: data.allowAddOns !== undefined ? data.allowAddOns : true,
-          allowedAddOnIds: data.allowedAddOnIds
+          allowedAddOnIds: data.allowedAddOnIds,
+          isSoldOut: !!data.isSoldOut
         });
       });
       onUpdate(items, removedIds);

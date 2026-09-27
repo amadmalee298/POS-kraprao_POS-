@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { countsAsRevenue } from '../../utils/orderUtils';
+import { cartItemUnitCost } from '../../utils/recipeUtils';
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import {
   BarChart3,
@@ -948,7 +949,7 @@ export const AccountingView: React.FC = () => {
     const totalRev = branchOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
     const totalOtherInc = (incomes || []).filter(inc => !inc.branchId || inc.branchId === currentBranch.id).reduce((sum, inc) => sum + (inc.amount || 0), 0);
     const totalCogs = branchOrders.reduce((sum, o) => {
-      return sum + o.items.reduce((iSum, it) => iSum + (it.menuItem.costPrice || (it.menuItem.price * 0.4)) * it.quantity, 0);
+      return sum + o.items.reduce((iSum, it) => iSum + cartItemUnitCost(it) * it.quantity, 0);
     }, 0);
     const totalExp = expenses.filter(e => e.branchId === currentBranch.id).reduce((sum, e) => sum + (e.amount || 0), 0);
     return (totalRev + totalOtherInc) - totalCogs - totalExp;
@@ -1046,7 +1047,7 @@ export const AccountingView: React.FC = () => {
       // Calculate COGS
       let cogs = mOrders.reduce((sum, o) => {
         const orderCogs = o.items.reduce((itemSum, item) => {
-          return itemSum + (item.menuItem.costPrice || item.menuItem.price * 0.4) * item.quantity;
+          return itemSum + cartItemUnitCost(item) * item.quantity;
         }, 0);
         return sum + orderCogs;
       }, 0);
@@ -1282,7 +1283,7 @@ export const AccountingView: React.FC = () => {
       });
 
       const cogs = dayOrders.reduce((sum, o) => {
-        return sum + o.items.reduce((iSum, item) => iSum + (item.menuItem.costPrice || item.menuItem.price * 0.4) * item.quantity, 0);
+        return sum + o.items.reduce((iSum, item) => iSum + cartItemUnitCost(item) * item.quantity, 0);
       }, 0);
 
       const opex = dayExpenses.reduce((sum, e) => sum + e.amount, 0);

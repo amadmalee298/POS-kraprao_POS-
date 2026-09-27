@@ -1,4 +1,5 @@
 import { countsAsRevenue } from '../../utils/orderUtils';
+import { findProteinOption } from '../../utils/recipeUtils';
 import React, { useState, useMemo } from 'react';
 import {
   ResponsiveContainer,
@@ -289,7 +290,8 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     return orderList.reduce((sum, o) => {
       const orderCost = (o.items || []).reduce((iSum, item) => {
         const mi = menuItems.find(m => m.id === item.menuItem.id) || item.menuItem;
-        const unitCost = mi?.costPrice !== undefined && mi.costPrice > 0 ? mi.costPrice : (item.totalPrice * 0.35 / Math.max(1, item.quantity));
+        const unitCost = (mi?.costPrice !== undefined && mi.costPrice > 0 ? mi.costPrice : (item.totalPrice * 0.35 / Math.max(1, item.quantity))) +
+          (findProteinOption(mi || {}, item.proteinChoice?.name)?.costDelta || 0);
         return iSum + (unitCost * item.quantity);
       }, 0);
       return sum + orderCost;
@@ -595,7 +597,8 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         const name = item.menuItem.name || mItem.name || 'เมนูทั่วไป';
         const category = mItem.category || 'อาหาร';
         const key = item.menuItem.id || name;
-        const unitCost = mItem.costPrice !== undefined && mItem.costPrice > 0 ? mItem.costPrice : (item.totalPrice * 0.35 / Math.max(1, item.quantity));
+        const unitCost = (mItem.costPrice !== undefined && mItem.costPrice > 0 ? mItem.costPrice : (item.totalPrice * 0.35 / Math.max(1, item.quantity))) +
+          (findProteinOption(mItem, item.proteinChoice?.name)?.costDelta || 0);
         const totalItemRev = item.totalPrice || (item.unitPrice * item.quantity);
         const totalItemCost = unitCost * item.quantity;
 

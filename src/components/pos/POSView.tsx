@@ -480,14 +480,16 @@ export const POSView: React.FC = () => {
               <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 sm:gap-3">
                 {visibleItems.map(item => {
                   const qty = qtyByMenuId.get(item.id) || 0;
-                  const customisable = hasOptions(item, addOns.length);
+                  const soldOut = !!item.isSoldOut;
+                  const customisable = !soldOut && hasOptions(item, addOns.length);
                   return (
                     <div key={item.id} className="relative">
                       <button
                         type="button"
                         onClick={() => addQuick(item)}
-                        aria-label={`เพิ่ม ${item.name} ราคา ${item.price} บาท`}
-                        className={`w-full h-[118px] sm:h-[124px] text-left p-3 sm:p-3.5 rounded-2xl border flex flex-col justify-between transition active:scale-[0.98] ${
+                        disabled={soldOut}
+                        aria-label={soldOut ? `${item.name} หมด` : `เพิ่ม ${item.name} ราคา ${item.price} บาท`}
+                        className={`w-full h-[118px] sm:h-[124px] text-left p-3 sm:p-3.5 rounded-2xl border flex flex-col justify-between transition active:scale-[0.98] disabled:opacity-45 disabled:active:scale-100 ${
                           qty ? 'bg-[#24160d] border-[#6b3a1a]' : 'bg-[#1a110b] border-[#2d1c12] hover:border-[#4a2c18]'
                         }`}
                       >
@@ -503,7 +505,12 @@ export const POSView: React.FC = () => {
                           )}
                         </span>
                       </button>
-                      {(item.isPopular || item.isFrequent) && category !== HOT && (
+                      {soldOut && (
+                        <span className="absolute top-2 right-2 px-2 py-0.5 rounded-lg bg-[#3a1d14] border border-[#6b2e1f] text-[#ff9b85] text-xs font-bold pointer-events-none">
+                          หมด
+                        </span>
+                      )}
+                      {!soldOut && (item.isPopular || item.isFrequent) && category !== HOT && (
                         <span className="absolute bottom-[42px] right-3 text-[11px] font-bold text-[#ffb07a] pointer-events-none">ขายดี</span>
                       )}
                       {customisable && (
