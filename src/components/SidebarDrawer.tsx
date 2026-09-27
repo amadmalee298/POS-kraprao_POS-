@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ShopAccountStatusButton } from './ShopAccountBanner';
 import {
   X,
   LayoutGrid,
@@ -199,6 +200,8 @@ export const SidebarDrawer: React.FC = () => {
               <span>เชื่อมต่อ</span>
             </span>
           </div>
+
+          <ShopAccountStatusButton className="w-full h-10 px-3 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-[12px] flex items-center gap-2" />
 
           <div className="text-[10px] text-slate-500 font-mono text-center pt-1 border-t border-slate-800/50">
             เวอร์ชันระบบ v1.2.4-องค์กร

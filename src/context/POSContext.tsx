@@ -44,6 +44,7 @@ import {
   syncOrderToFirestore,
   syncOrdersBatchToFirestore,
   syncInventoryToFirestore,
+  publishPublicMenu,
   applyStockDeltasToFirestore,
   syncStockAdjustmentToFirestore,
   syncWasteLogToFirestore,
@@ -57,6 +58,7 @@ import {
   subscribeToCentralIncomes,
   subscribeToRecentCentralOrders,
   fetchCentralOrdersFromFirestore,
+  purgeStubOrderDocs,
   syncIngredientToFirestore,
   deleteIngredientFromFirestore,
   fetchBranchInventoryFromFirestore,
@@ -114,9 +116,13 @@ import {
   applyStockDeductions,
   computeCartTotals,
   mergeCloudOrders,
-  resolveItemsForStock
+  resolveItemsForStock,
+  normalizeOrderId,
+  countsAsRevenue
 } from '../utils/orderUtils';
-import { crc16 } from '../utils/promptpay';
+import { crc16, resolvePromptPayId } from '../utils/promptpay';
+import { buildPublicMenu } from '../utils/publicMenu';
+import { playChime } from '../utils/chime';
 import { SHOP_LOGO_URL, normalizeShopLogoUrl } from '../assets/logo';
 
 export function computeOrderChecksum(order: Order): string {
@@ -237,11 +243,16 @@ interface POSContextType {
     paymentMethod?: PaymentMethod
   ) => Order;
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
+  /** Record payment for an order placed unpaid (customer QR order). Returns the updated order. */
+  settleOrderPayment: (orderId: string, method: PaymentMethod, tenderedAmount: number) => Order | null;
+  /** Publish the customer-visible menu for QR ordering now. */
+  publishCustomerMenu: () => Promise<boolean>;
   cancelOrder: (
     orderId: string,
     reason: string,
     note?: string,
-    cancelledBy?: { userId?: string; userName: string; role: string }
+    cancelledBy?: { userId?: string; userName: string; role: string },
+    options?: { restock?: boolean }
   ) => void;
   updateOrderTaxInfo: (orderId: string, taxInfo: CustomerTaxInfo) => void;
   addTaxInvoiceOrder: (newOrder: Order) => void;
@@ -840,7 +851,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     const todayStr = new Date().toISOString().split('T')[0];
-    const todayOrders = orders.filter(o => o.branchId === currentBranch.id && o.createdAt.startsWith(todayStr) && o.status !== 'cancelled');
+    const todayOrders = orders.filter(o => o.branchId === currentBranch.id && o.createdAt.startsWith(todayStr) && countsAsRevenue(o));
     const todaySales = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
     const lowStock = ingredients.filter(i => i.currentStock <= i.minStockAlert).length;
 
@@ -883,6 +894,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Real-time listener for central orders, expenses, incomes, menu, inventory, and deletions from Firestore
   useEffect(() => {
     if (!isStorageLoaded || !isFirebaseAvailable() || effectiveOffline) return;
+
+    purgeStubOrderDocs().catch(() => undefined);
 
     const unsubOrders = subscribeToRecentCentralOrders(1000, (centralOrderList, removedIds) => {
       let pushBack: Order[] = [];
@@ -2633,25 +2646,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  const playKitchenChime = () => {
-    if (!settings.enableKitchenSound) return;
-    try {
-      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15); // A5
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.5);
-    } catch (err) {
-      console.log('Audio chime error:', err);
-    }
-  };
+  const playKitchenChime = useCallback(() => {
+    if (settings.enableKitchenSound) playChime();
+  }, [settings.enableKitchenSound]);
 
   // Cart Management
   const addToCart = (
@@ -2755,9 +2752,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * cloud copy is changed with atomic increments, so a stale snapshot can neither be pushed
    * over other devices' stock nor bounce back and undo this deduction.
    */
-  const deductStockForSale = (items: CartItem[]) => {
+  const deductStockForSale = (items: CartItem[], direction: 1 | -1 = 1) => {
     const deltas = computeSaleStockDeductions(items, ingredients);
     if (deltas.size === 0) return;
+    if (direction === -1) deltas.forEach((amount, id) => deltas.set(id, -amount));
     const now = Date.now();
     deltas.forEach((_, id) => recentLocalIngredientUpdatesRef.current.set(id, now));
     setIngredients(prev => applyStockDeductions(prev, deltas));
@@ -2768,6 +2766,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     // Offline: the reconnect sync (syncOfflineQueue) uploads the locally deducted stock levels.
   };
+
+  /** Put the ingredients of items that were never cooked back into stock. */
+  const returnStockForItems = (items: CartItem[]) => deductStockForSale(items, -1);
 
   /** Push a new order; if the write fails it is re-queued for the offline sync instead of being marked synced. */
   const pushNewOrderToCloud = (newOrder: Order) => {
@@ -2833,7 +2834,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     deductStockForSale(cart);
     setOrders(prev => [newOrder, ...prev]);
     clearCart();
-    playKitchenChime();
     pushNewOrderToCloud(newOrder);
 
     // Real-Time Notification Trigger: New Order & Low Stock
@@ -2906,7 +2906,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       vatAmount,
       grandTotal,
       paymentMethod,
-      tenderedAmount: grandTotal,
+      // Customer / table orders are paid later at the counter (see settleOrderPayment)
+      paymentStatus: 'unpaid',
+      tenderedAmount: 0,
       changeAmount: 0,
       status: initialStatus,
       createdAt: nowIso,
@@ -2923,7 +2925,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Orders waiting for staff approval do not touch stock yet (see updateOrderStatus)
     if (initialStatus !== 'pending-qr') deductStockForSale(items);
     setOrders(prev => [newOrder, ...prev]);
-    playKitchenChime();
     pushNewOrderToCloud(newOrder);
 
     // Real-Time Notification Trigger: QR / Direct Order
@@ -2941,55 +2942,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return newOrder;
   };
 
-  const updateOrderStatus = (orderId: string, status: OrderStatus) => {
-    const now = new Date().toISOString();
-    let updatedTarget: Order | undefined;
-
-    // Approving a customer's QR order is when its ingredients leave the stock. A rejected
-    // (cancelled) QR order never deducted anything, so nothing needs to be returned.
-    const normalizedId = orderId.replace(/^ord-/, '');
-    const current = orders.find(o => o.id.replace(/^ord-/, '') === normalizedId);
-    if (
-      current?.status === 'pending-qr' &&
-      status !== 'pending-qr' &&
-      status !== 'cancelled' &&
-      !approvedQrStockRef.current.has(normalizedId)
-    ) {
-      approvedQrStockRef.current.add(normalizedId);
-      deductStockForSale(resolveItemsForStock(current.items, menuItems, addOns));
-    }
-
+  /** Write the order list to state and to the local cache in one step. */
+  const commitOrderChange = (orderId: string, updated: Order) => {
+    const key = normalizeOrderId(orderId);
     setOrders(prev => {
-      const next = prev.map(ord => {
-        const isMatch = ord.id === orderId ||
-          ord.id === `ord-${orderId}` ||
-          ord.id.replace(/^ord-/, '') === orderId.replace(/^ord-/, '');
-
-        if (isMatch) {
-          const completedAt = status === 'served' ? (ord.completedAt || now) : ord.completedAt;
-          const cancelledBy = status === 'cancelled' && !ord.cancelledBy ? {
-            userId: currentUser?.id,
-            userName: currentUser?.name || 'ผู้จัดการ',
-            role: currentUser?.role || 'admin',
-            cancelledAt: now
-          } : ord.cancelledBy;
-          const cancelReason = status === 'cancelled' && !ord.cancelReason ? 'ยกเลิกรายการโดยพนักงาน' : ord.cancelReason;
-
-          const updated: Order = {
-            ...ord,
-            status,
-            updatedAt: now,
-            completedAt,
-            cancelledBy,
-            cancelReason,
-            isSynced: !effectiveOffline
-          };
-          updatedTarget = updated;
-          return updated;
-        }
-        return ord;
-      });
-
+      const next = prev.map(ord => (normalizeOrderId(ord.id) === key ? updated : ord));
       // Synchronously write to LocalStorage immediately so page refresh retains state
       try {
         localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(next));
@@ -2997,29 +2954,102 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (saved) {
           const parsed = JSON.parse(saved);
           parsed.orders = next;
-          parsed.savedAt = now;
+          parsed.savedAt = updated.updatedAt;
           localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
         }
       } catch (e) {
         console.warn('[POS Order Sync] Error writing order status to LocalStorage:', e);
       }
-
       return next;
     });
+  };
 
-    // Update Firestore in real-time
-    if (updatedTarget && !effectiveOffline && isFirebaseAvailable()) {
-      const targetId = updatedTarget.id || orderId;
-      updateOrderStatusInFirestore(targetId, status, {
-        completedAt: updatedTarget.completedAt,
-        cancelledBy: updatedTarget.cancelledBy,
-        cancelReason: updatedTarget.cancelReason,
-        cancelNote: updatedTarget.cancelNote
+  const updateOrderStatus = (orderId: string, status: OrderStatus) => {
+    const now = new Date().toISOString();
+    const normalizedId = normalizeOrderId(orderId);
+    // The order is taken from the current list (not from inside the state updater, which React
+    // may run later) so the cloud write below always has it.
+    const current = orders.find(o => normalizeOrderId(o.id) === normalizedId);
+    if (!current || current.status === status) return;
+
+    // Approving a customer's QR order is when its ingredients leave the stock. A rejected
+    // (cancelled) QR order never deducted anything, so nothing needs to be returned.
+    const isQrApproval = current.status === 'pending-qr' && status !== 'pending-qr' && status !== 'cancelled';
+    if (isQrApproval && !approvedQrStockRef.current.has(normalizedId)) {
+      approvedQrStockRef.current.add(normalizedId);
+      deductStockForSale(resolveItemsForStock(current.items, menuItems, addOns));
+    }
+
+    const updated: Order = {
+      ...current,
+      status,
+      updatedAt: now,
+      // Called back from "served": the order is open again
+      completedAt: status === 'served' ? current.completedAt || now : undefined,
+      acceptedAt: isQrApproval ? current.acceptedAt || now : current.acceptedAt,
+      cancelledBy:
+        status === 'cancelled' && !current.cancelledBy
+          ? {
+              userId: currentUser?.id,
+              userName: currentUser?.name || 'ผู้จัดการ',
+              role: currentUser?.role || 'admin',
+              cancelledAt: now
+            }
+          : current.cancelledBy,
+      cancelReason: status === 'cancelled' && !current.cancelReason ? 'ยกเลิกรายการโดยพนักงาน' : current.cancelReason,
+      isSynced: !effectiveOffline
+    };
+    commitOrderChange(current.id, updated);
+
+    if (!effectiveOffline && isFirebaseAvailable()) {
+      updateOrderStatusInFirestore(current.id, status, {
+        completedAt: updated.completedAt,
+        acceptedAt: isQrApproval ? updated.acceptedAt : undefined,
+        cancelledBy: updated.cancelledBy,
+        cancelReason: updated.cancelReason,
+        cancelNote: updated.cancelNote
       }).catch(err => {
         console.warn('[POS Order Sync] Failed to update order status in Firestore:', err);
       });
     }
   };
+
+  const settleOrderPayment = (orderId: string, method: PaymentMethod, tenderedAmount: number): Order | null => {
+    const normalizedId = orderId.replace(/^ord-/, '');
+    const target = orders.find(o => o.id.replace(/^ord-/, '') === normalizedId);
+    if (!target) return null;
+    const now = new Date().toISOString();
+    const tendered = method === 'cash' ? tenderedAmount : target.grandTotal;
+    const settled: Order = {
+      ...target,
+      paymentMethod: method,
+      paymentStatus: 'paid',
+      paidAt: now,
+      tenderedAmount: tendered,
+      changeAmount: method === 'cash' ? Math.max(0, tendered - target.grandTotal) : 0,
+      updatedAt: now,
+      isSynced: !effectiveOffline
+    };
+    setOrders(prev => prev.map(o => (o.id === target.id ? settled : o)));
+    pushNewOrderToCloud(settled);
+    return settled;
+  };
+
+  // Customer QR page reads public_menu/{branch}: republish it whenever the menu, toppings,
+  // categories or price settings change (debounced), so customers never see stale prices.
+  const publishCustomerMenu = useCallback(async () => {
+    if (effectiveOffline || !isFirebaseAvailable()) return false;
+    const menu = buildPublicMenu(menuItems, categories, addOns, settings, currentBranch, resolvePromptPayId(settings, currentBranch));
+    return publishPublicMenu(currentBranch.id, menu);
+  }, [menuItems, categories, addOns, settings, currentBranch, effectiveOffline]);
+
+  useEffect(() => {
+    if (!isStorageLoaded || menuItems.length === 0) return;
+    const t = setTimeout(() => {
+      publishCustomerMenu().catch(() => undefined);
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [isStorageLoaded, publishCustomerMenu, menuItems.length]);
 
   // "Auto-approve QR orders" is a per-device switch: the device that has it on (e.g. the
   // counter tablet) approves customers' QR orders as they arrive, which sends them to the
@@ -3037,7 +3067,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     orderId: string,
     reason: string,
     note?: string,
-    cancelledByInfo?: { userId?: string; userName: string; role: string }
+    cancelledByInfo?: { userId?: string; userName: string; role: string },
+    options?: { restock?: boolean }
   ) => {
     const now = new Date().toISOString();
     const operator = cancelledByInfo || {
@@ -3045,58 +3076,35 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       userName: currentUser?.name || 'ผู้จัดการ',
       role: currentUser?.role || 'admin'
     };
+    const current = orders.find(o => normalizeOrderId(o.id) === normalizeOrderId(orderId));
+    if (!current || current.status === 'cancelled') return;
 
-    let updatedTarget: Order | undefined;
+    // Food that was never cooked goes back to stock. A QR order still waiting for approval
+    // never took anything out.
+    if (options?.restock && current.status !== 'pending-qr') {
+      returnStockForItems(resolveItemsForStock(current.items, menuItems, addOns));
+    }
 
-    setOrders(prev => {
-      const next = prev.map(ord => {
-        if (ord.id === orderId) {
-          const updated: Order = {
-            ...ord,
-            status: 'cancelled',
-            cancelReason: reason,
-            cancelNote: note,
-            cancelledBy: {
-              userId: operator.userId,
-              userName: operator.userName,
-              role: operator.role,
-              cancelledAt: now
-            },
-            updatedAt: now,
-            isSynced: !effectiveOffline
-          };
-          updatedTarget = updated;
-          return updated;
-        }
-        return ord;
-      });
-
-      try {
-        localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(next));
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          parsed.orders = next;
-          parsed.savedAt = now;
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
-        }
-      } catch (e) {}
-
-      return next;
-    });
+    const cancelledBy = {
+      userId: operator.userId,
+      userName: operator.userName,
+      role: operator.role,
+      cancelledAt: now
+    };
+    const updated: Order = {
+      ...current,
+      status: 'cancelled',
+      cancelReason: reason,
+      cancelNote: note,
+      cancelledBy,
+      updatedAt: now,
+      isSynced: !effectiveOffline
+    };
+    commitOrderChange(current.id, updated);
 
     // Real-time Push to Firestore
-    if (updatedTarget && !effectiveOffline && isFirebaseAvailable()) {
-      updateOrderStatusInFirestore(orderId, 'cancelled', {
-        cancelReason: reason,
-        cancelNote: note,
-        cancelledBy: {
-          userId: operator.userId,
-          userName: operator.userName,
-          role: operator.role,
-          cancelledAt: now
-        }
-      }).catch(err => {
+    if (!effectiveOffline && isFirebaseAvailable()) {
+      updateOrderStatusInFirestore(current.id, 'cancelled', { cancelReason: reason, cancelNote: note, cancelledBy }).catch(err => {
         console.warn('[POS Order Sync] Failed to update cancelled order status in Firestore:', err);
       });
     }
@@ -3105,7 +3113,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const triggers = getStoredTriggers();
       const rules = getStoredRules();
-      const targetOrder = orders.find(o => o.id === orderId);
+      const targetOrder = current;
       if (triggers.voidOrder && targetOrder && (targetOrder.grandTotal || 0) >= (rules.minVoidAmount || 0)) {
         const msg = generateVoidOrderMessage(targetOrder, reason, note, operator.userName, currentBranch);
         dispatchNotification(`ยกเลิกบิล (${targetOrder.orderNumber})`, msg).catch(console.error);
@@ -3890,7 +3898,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const closeTime = Date.now();
     const shiftOrders = orders.filter(o => {
       const oTime = new Date(o.createdAt).getTime();
-      return o.branchId === currentBranch.id && o.status !== 'cancelled' && oTime >= openTime && oTime <= closeTime;
+      return o.branchId === currentBranch.id && countsAsRevenue(o) && oTime >= openTime && oTime <= closeTime;
     });
     const totalCashSales = shiftOrders
       .filter(o => o.paymentMethod === 'cash')
@@ -4073,6 +4081,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         createOrder,
         createDirectOrder,
         updateOrderStatus,
+        settleOrderPayment,
+        publishCustomerMenu,
         cancelOrder,
         updateOrderTaxInfo,
         addTaxInvoiceOrder,

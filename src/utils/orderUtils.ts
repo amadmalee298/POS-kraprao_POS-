@@ -80,6 +80,16 @@ export function applyStockDeductions(ingredients: Ingredient[], deltas: Map<stri
 /** Stable identity used to match a local order with its cloud copy (doc ids carry an "ord-" prefix). */
 export const normalizeOrderId = (id: string): string => (id || '').replace(/^ord-/, '');
 
+/**
+ * Older versions wrote every status change a second time to `orders/<id without "ord-">`,
+ * creating stub documents that hold only a status. Merged as orders they wiped the real
+ * order's items, total and branch.
+ */
+export function isStubOrderDoc(docId: string, data: Record<string, unknown> | undefined): boolean {
+  if (!data) return false;
+  return !docId.startsWith('ord-') && !Array.isArray(data.items) && !data.branchId && !data.orderNumber;
+}
+
 /** Round a money amount to satang (2 decimals). */
 export const roundMoney = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
@@ -225,3 +235,13 @@ export function generateQrOrderNumber(table: string): string {
   const safeTable = String(table || '').replace(/[^0-9A-Za-zก-๙-]/g, '').slice(0, 8) || '0';
   return `#Q${safeTable}-${randomSuffix(4)}`;
 }
+
+/** Order not paid yet (customer QR orders until the cashier settles them). */
+export const isUnpaid = (o: Pick<Order, 'paymentStatus'>): boolean => o.paymentStatus === 'unpaid';
+
+/**
+ * Whether an order counts as sales money received: not cancelled, not waiting for approval,
+ * and paid. Every revenue total, cash-drawer figure and report uses this one rule.
+ */
+export const countsAsRevenue = (o: Pick<Order, 'status' | 'paymentStatus'>): boolean =>
+  o.status !== 'cancelled' && o.status !== 'pending-qr' && !isUnpaid(o);

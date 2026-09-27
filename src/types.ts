@@ -107,6 +107,11 @@ export interface Order {
   cancelReason?: string;
   cancelNote?: string;
   isQrOrder?: boolean;
+  /** 'unpaid' for orders placed before payment (customer QR orders). Missing = paid. */
+  paymentStatus?: 'paid' | 'unpaid';
+  paidAt?: string;
+  /** When staff accepted a customer's QR order into the kitchen (the kitchen timer starts here). */
+  acceptedAt?: string;
   orderSource?: 'pos' | 'qr';
 }
 

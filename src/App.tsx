@@ -28,6 +28,8 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { SyncConflictResolverModal } from './components/SyncConflictResolverModal';
+import { QrOrderAlert } from './components/QrOrderAlert';
+import { ShopAccountBanner } from './components/ShopAccountBanner';
 
 const MainLayout: React.FC = () => {
   const {
@@ -109,6 +111,9 @@ const MainLayout: React.FC = () => {
       {/* Main Top Header Navbar */}
       <HeaderNavbar />
 
+      {/* Staff device not signed in with the shop account: cloud sync is blocked by the rules */}
+      {!isLocked && <ShopAccountBanner />}
+
       {/* Slide-out Sidebar Drawer Navigation */}
       <SidebarDrawer />
 
@@ -138,6 +143,8 @@ const MainLayout: React.FC = () => {
         {activeTab === 'settings' && <SettingsView />}
         </React.Suspense>
       </main>
+
+      <QrOrderAlert />
 
       {/* Visual Conflict Resolver Modal for Local vs Cloud Mismatch */}
       <SyncConflictResolverModal

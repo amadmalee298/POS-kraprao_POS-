@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Ban, ShieldCheck, Lock, AlertTriangle, X, Check } from 'lucide-react';
 import { Order } from '../../types';
 import { usePOS } from '../../context/POSContext';
-import { INITIAL_USERS } from '../../data/initialData';
 
 interface CancelOrderModalProps {
   isOpen: boolean;
@@ -27,7 +26,7 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
   order,
   onSuccess
 }) => {
-  const { cancelOrder, currentUser, settings, logSecurityEvent } = usePOS();
+  const { cancelOrder, currentUser, users, logSecurityEvent } = usePOS();
 
   const [selectedReason, setSelectedReason] = useState<string>(CANCEL_REASONS[0]);
   const [customNote, setCustomNote] = useState<string>('');
@@ -35,16 +34,29 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
   // Authorized user logic
   const isDirectlyAuthorized = currentUser.role === 'admin' || currentUser.role === 'manager';
   
-  const managers = INITIAL_USERS.filter(u => u.role === 'admin' || u.role === 'manager');
+  // The shop's real staff list; only people with their own PIN can approve
+  const managers = users.filter(u => (u.role === 'admin' || u.role === 'manager') && !!u.pin);
   const [selectedApproverId, setSelectedApproverId] = useState<string>(
     isDirectlyAuthorized ? currentUser.id : (managers[0]?.id || '')
   );
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string>('');
+  const [restock, setRestock] = useState<boolean | null>(null);
+
+  // The dialog stays mounted between orders: start fresh for each one
+  useEffect(() => {
+    setRestock(null);
+    setPinInput('');
+    setPinError('');
+    setCustomNote('');
+  }, [order?.id]);
 
   if (!isOpen || !order) return null;
 
   const isOtherSelected = selectedReason.includes('อื่นๆ');
+  // Not cooked yet: the ingredients can go back to stock (a QR order awaiting approval took none)
+  const canRestock = order.status !== 'pending-qr';
+  const restockChecked = restock ?? order.status === 'pending';
 
   const handleConfirmCancel = (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,15 +68,13 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
 
     // Check PIN requirement if user is cashier or verifying PIN
     if (!isDirectlyAuthorized) {
-      const targetApprover = INITIAL_USERS.find(u => u.id === selectedApproverId);
+      const targetApprover = managers.find(u => u.id === selectedApproverId) || managers[0];
       if (!targetApprover) {
         setPinError('กรุณาเลือกผู้อนุมัติการยกเลิก');
         return;
       }
 
-      const validPin = targetApprover.pin || (targetApprover.role === 'admin' ? (settings.adminPin || '1234') : (settings.managerPin || '5555'));
-      
-      if (pinInput !== validPin) {
+      if (!pinInput || pinInput !== targetApprover.pin) {
         logSecurityEvent({
           userId: targetApprover.id,
           userName: targetApprover.name,
@@ -101,7 +111,7 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
       userId: approverUserId,
       userName: approverName,
       role: approverRole
-    });
+    }, { restock: canRestock && restockChecked });
 
     if (onSuccess) {
       onSuccess();
@@ -235,6 +245,21 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
               className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-rose-500 resize-none"
             />
           </div>
+
+          {canRestock && (
+            <label className="flex items-center gap-3 bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={restockChecked}
+                onChange={e => setRestock(e.target.checked)}
+                className="w-5 h-5 accent-emerald-500"
+              />
+              <span>
+                คืนวัตถุดิบเข้าสต็อก
+                <span className="block text-[11px] text-slate-400">เลือกเมื่อยังไม่ได้ลงมือทำอาหาร</span>
+              </span>
+            </label>
+          )}
 
           {/* Error Banner */}
           {pinError && (
