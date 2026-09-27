@@ -94,6 +94,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
   // PromptPay countdown
   const [promptpayCountdown, setPromptpayCountdown] = useState(180);
+  // The payment gateway has reported this bill as paid
+  const [gatewayPaid, setGatewayPaid] = useState(false);
 
   // Calculate totals
   const {
@@ -115,6 +117,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       if (initialTable) setTableNumber(initialTable);
       setTenderedAmount(grandTotal);
       setPromptpayCountdown(180);
+      setGatewayPaid(false);
     }
   }, [isOpen, grandTotal, initialPaymentMethod, initialOrderType, initialTable]);
 
@@ -139,9 +142,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setTenderedAmount(prev => prev + amount);
   };
 
-  const handleProcessCheckout = () => {
+  const handleProcessCheckout = (paidByGateway = false) => {
     if (paymentMethod === 'cash' && tenderedAmount < grandTotal) {
       alert(`จำนวนเงินสดรับมาไม่เพียงพอ! ขาดอีก ${grandTotal - tenderedAmount} บาท`);
+      return;
+    }
+    if (
+      paymentMethod === 'promptpay' &&
+      gatewayEnabled(settings) &&
+      !paidByGateway &&
+      !gatewayPaid &&
+      !window.confirm('ระบบยังไม่ได้รับยอดจากการสแกนนี้\nตรวจสลิปหรือแอปธนาคารแล้ว ยืนยันชำระเลยหรือไม่?')
+    ) {
       return;
     }
 
@@ -459,7 +471,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   reference={currentBranch.name}
                   serverUrl={settings.merchantSettings?.serverUrl}
                   onPaid={() => {
-                    if (settings.merchantSettings?.autoConfirmPayment !== false) handleProcessCheckout();
+                    setGatewayPaid(true);
+                    if (settings.merchantSettings?.autoConfirmPayment === true) handleProcessCheckout(true);
                   }}
                   fallback={staticPromptPay}
                 />
@@ -631,7 +644,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             </button>
 
             <button
-              onClick={handleProcessCheckout}
+              onClick={() => handleProcessCheckout()}
               className="py-2.5 sm:py-3 px-3 sm:px-6 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm rounded-xl shadow-lg shadow-emerald-950/60 flex items-center space-x-1.5 sm:space-x-2 transition active:scale-[0.99]"
             >
               <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-300 shrink-0" />

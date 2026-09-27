@@ -16,7 +16,7 @@ export const MerchantConnectionModal: React.FC<MerchantConnectionModalProps> = (
 
   const [enabled, setEnabled] = useState(false);
   const [serverUrl, setServerUrl] = useState('');
-  const [autoConfirm, setAutoConfirm] = useState(true);
+  const [autoConfirm, setAutoConfirm] = useState(false);
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<{ ok: boolean; text: string; livemode?: boolean; email?: string } | null>(null);
 
@@ -24,7 +24,8 @@ export const MerchantConnectionModal: React.FC<MerchantConnectionModalProps> = (
     if (!isOpen) return;
     setEnabled(!!current?.isConnected && current.provider === 'opn');
     setServerUrl(current?.serverUrl || '');
-    setAutoConfirm(current?.autoConfirmPayment !== false);
+    // Staff confirm by default; values saved by the old sample panel do not count
+    setAutoConfirm(current?.provider === 'opn' && current.autoConfirmPayment === true);
     setTest(null);
   }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -129,7 +130,7 @@ export const MerchantConnectionModal: React.FC<MerchantConnectionModalProps> = (
           <div className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
             <div>
               <div className="font-bold">ปิดบิลอัตโนมัติเมื่อได้รับเงิน</div>
-              <div className="text-xs text-slate-400">ปิดไว้ = ระบบขึ้น “ได้รับเงินแล้ว” แล้วพนักงานกดปิดบิลเอง</div>
+              <div className="text-xs text-slate-400">ปิดไว้ (แนะนำ) = ระบบขึ้น “ได้รับเงินแล้ว” แล้วพนักงานกดยืนยันชำระเอง</div>
             </div>
             {toggle(autoConfirm, setAutoConfirm, 'ปิดบิลอัตโนมัติ')}
           </div>

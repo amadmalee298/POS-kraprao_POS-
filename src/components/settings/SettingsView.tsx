@@ -2810,7 +2810,9 @@ export const SettingsView: React.FC = () => {
               <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl">
                 <span className="text-slate-400 text-[10px] font-medium block">เมื่อลูกค้าจ่ายแล้ว</span>
                 <span className="font-bold text-blue-300 text-xs mt-1 block">
-                  {settings.merchantSettings?.autoConfirmPayment !== false ? '⚡ ปิดบิลอัตโนมัติ' : '🖐️ พนักงานกดปิดบิลเอง'}
+                  {settings.merchantSettings?.provider === 'opn' && settings.merchantSettings.autoConfirmPayment === true
+                    ? '⚡ ปิดบิลอัตโนมัติ'
+                    : '🖐️ พนักงานกดยืนยันชำระ'}
                 </span>
               </div>
             </div>

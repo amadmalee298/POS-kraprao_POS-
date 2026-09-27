@@ -120,6 +120,7 @@ export const GatewayPromptPayPanel: React.FC<Props> = ({ amount, reference, serv
           <div className="flex flex-col items-center text-emerald-600">
             <CheckCircle2 className="w-20 h-20" />
             <span className="font-bold text-lg">ได้รับเงินแล้ว</span>
+            <span className="text-xs text-emerald-700">฿{charge.amount.toLocaleString('th-TH')} · กดยืนยันชำระ</span>
           </div>
         )}
         {loading && <Loader2 className="w-10 h-10 text-slate-400 animate-spin" />}
@@ -127,7 +128,7 @@ export const GatewayPromptPayPanel: React.FC<Props> = ({ amount, reference, serv
 
       {charge && !charge.paid && charge.status === 'pending' && (
         <div className="text-sm flex items-center gap-1.5 text-sky-300">
-          <Loader2 className="w-4 h-4 animate-spin" /> รอลูกค้าสแกนจ่าย ระบบยืนยันให้อัตโนมัติ
+          <Loader2 className="w-4 h-4 animate-spin" /> รอลูกค้าสแกนจ่าย ระบบจะแจ้งเมื่อเงินเข้า
         </div>
       )}
       {charge && !charge.paid && charge.status !== 'pending' && (

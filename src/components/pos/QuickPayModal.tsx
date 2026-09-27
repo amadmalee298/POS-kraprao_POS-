@@ -98,6 +98,7 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
 
   const confirm = () => {
     if (!canConfirm) return;
+    if (tab === 'promptpay' && useGateway && !gatewayPaid && !window.confirm('ระบบยังไม่ได้รับยอดจากการสแกนนี้\nตรวจสลิปหรือแอปธนาคารแล้ว ยืนยันชำระเลยหรือไม่?')) return;
     const method: PaymentMethod = tab === 'cash' ? 'cash' : tab === 'promptpay' ? 'promptpay' : otherMethod;
     onConfirm(method, isCash ? received : grandTotal, isCash ? Math.max(0, change) : 0);
   };
@@ -206,7 +207,7 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
             size={200}
             onPaid={() => {
               setGatewayPaid(true);
-              if (settings.merchantSettings?.autoConfirmPayment !== false) onConfirm('promptpay', grandTotal, 0);
+              if (settings.merchantSettings?.autoConfirmPayment === true) onConfirm('promptpay', grandTotal, 0);
             }}
             fallback={staticQr}
           />
@@ -241,8 +242,10 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
               ? `ยืนยัน · ทอน ฿${baht(Math.max(0, change))}`
               : 'แตะยอดเงินที่รับมา'
             : tab === 'promptpay' && gatewayPaid
-              ? 'ปิดบิล (ระบบยืนยันยอดแล้ว)'
-              : 'ได้รับเงินแล้ว'}
+              ? '✓ ได้รับเงินแล้ว · ยืนยันชำระ'
+              : tab === 'promptpay' && useGateway
+                ? 'รอลูกค้าสแกนจ่าย · ยืนยันชำระ'
+                : 'ได้รับเงินแล้ว'}
         </button>
 
         {onOpenFullInvoice && (
