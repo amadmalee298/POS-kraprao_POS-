@@ -110,13 +110,6 @@ import {
 } from '../services/notificationService';
 import { MenuItem, AddOnOption, RecipeIngredient, MenuCategory, CartItem, SpiceLevel, ProteinChoice, Order, CustomerTaxInfo, PaymentMethod, QrPaymentOption } from '../types';
 import { orderVatBreakdown } from '../utils/orderUtils';
-import {
-  syncMenuItemsBatchToFirestore,
-  syncAddOnsToFirestore,
-  syncCategoriesToFirestore,
-  syncSettingsToFirestore,
-  syncBranchToFirestore
-} from '../services/firebaseService';
 import { exportToPDF, exportToPNG, printElement } from '../utils/exportDocument';
 import { AIMenuEngineeringPanel } from './inventory/AIMenuEngineeringPanel';
 import { BulkIngredientCostEditorPanel } from './inventory/BulkIngredientCostEditorPanel';
@@ -225,7 +218,8 @@ export const QrOrderingView: React.FC = () => {
     updateTable,
     deleteTable,
     settings,
-    updateSettings
+    updateSettings,
+    publishCustomerMenu
   } = usePOS();
 
   // Payment Methods Configuration State
@@ -366,19 +360,12 @@ export const QrOrderingView: React.FC = () => {
   const [customizingItem, setCustomizingItem] = useState<MenuItem | null>(null);
   const [customerNickname, setCustomerNickname] = useState<string>('');
 
-  // Push menu, toppings, categories, settings and branch info (non-destructive) for the customer page
+  // Publish the customer-visible menu now (it also republishes automatically after menu changes)
   const [publishState, setPublishState] = useState<'idle' | 'working' | 'done' | 'error'>('idle');
   const handlePublishCustomerMenu = async () => {
     setPublishState('working');
     try {
-      const results = await Promise.all([
-        syncMenuItemsBatchToFirestore(menuItems),
-        syncAddOnsToFirestore(addOns, currentBranch.id),
-        syncCategoriesToFirestore(categories, currentBranch.id),
-        syncSettingsToFirestore(settings, currentBranch.id),
-        syncBranchToFirestore(currentBranch)
-      ]);
-      setPublishState(results.every(Boolean) ? 'done' : 'error');
+      setPublishState((await publishCustomerMenu()) ? 'done' : 'error');
     } catch {
       setPublishState('error');
     }
@@ -594,7 +581,7 @@ export const QrOrderingView: React.FC = () => {
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="text-xs text-slate-300">
           <span className="font-bold text-slate-100 block text-sm">เมนูที่ลูกค้าเห็นเมื่อสแกน QR</span>
-          ลูกค้าเห็นเมนู ราคา และท็อปปิ้งตามที่อัปเดตขึ้น cloud ล่าสุด กดอัปเดตหลังแก้เมนูหรือราคา
+          ระบบอัปเดตเมนูสำหรับลูกค้าให้เองภายในไม่กี่วินาทีหลังแก้เมนูหรือราคา (ต้องเชื่อมบัญชีร้านแล้ว) กดปุ่มนี้เพื่ออัปเดตทันที
           {publishState === 'done' && <span className="block text-emerald-400 font-bold mt-1">อัปเดตเมนูสำหรับลูกค้าแล้ว</span>}
           {publishState === 'error' && <span className="block text-rose-400 font-bold mt-1">อัปเดตไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่</span>}
         </div>

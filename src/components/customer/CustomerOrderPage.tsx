@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Search, X, Plus, Minus, ShoppingBag, Check, Clock, ChefHat, BellRing, AlertCircle, Loader2 } from 'lucide-react';
 import {
   AddOnOption,
-  Branch,
   CartItem,
   MenuItem,
   Order,
@@ -14,7 +13,7 @@ import {
 import {
   fetchCustomerCatalog,
   subscribeToOrderStatus,
-  syncOrderToFirestore,
+  submitCustomerQrOrder,
   CustomerCatalog
 } from '../../services/firebaseService';
 import { calculateOrderTotals } from '../../utils/tax';
@@ -216,7 +215,8 @@ export const CustomerOrderPage: React.FC<{ table: string; branchId: string }> = 
       vatAmount: totals.vatAmount,
       grandTotal: totals.grandTotal,
       paymentMethod: payment,
-      tenderedAmount: totals.grandTotal,
+      paymentStatus: 'unpaid',
+      tenderedAmount: 0,
       changeAmount: 0,
       status: 'pending-qr',
       createdAt: now,
@@ -224,7 +224,7 @@ export const CustomerOrderPage: React.FC<{ table: string; branchId: string }> = 
       isQrOrder: true,
       orderSource: 'qr'
     };
-    const ok = await syncOrderToFirestore(order, { id: catalog.branch.id, name: shopName } as Branch);
+    const ok = await submitCustomerQrOrder(order, { id: catalog.branch.id, name: shopName });
     setSubmitting(false);
     if (!ok) {
       setSubmitError('ส่งออเดอร์ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่ หรือแจ้งพนักงาน');

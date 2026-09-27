@@ -1,3 +1,4 @@
+import { countsAsRevenue } from '../../utils/orderUtils';
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Wallet,
@@ -91,7 +92,7 @@ export const CashShiftManagementPanel: React.FC = () => {
     const nowTime = Date.now();
     const shiftOrders = orders.filter(o => {
       const oTime = new Date(o.createdAt).getTime();
-      return o.branchId === currentBranch.id && o.status !== 'cancelled' && oTime >= openTime && oTime <= nowTime;
+      return o.branchId === currentBranch.id && countsAsRevenue(o) && oTime >= openTime && oTime <= nowTime;
     });
 
     const cashSales = shiftOrders

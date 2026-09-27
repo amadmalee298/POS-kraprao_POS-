@@ -7,6 +7,7 @@
  * All messages extract 100% REAL data from store state (No fake fallback numbers).
  */
 
+import { countsAsRevenue } from '../utils/orderUtils';
 import { apiUrl } from '../utils/apiClient';
 import { Order, Ingredient, Branch, SystemSettings } from '../types';
 
@@ -413,7 +414,7 @@ export function generateDailySummaryMessage(
   const todayOrders = orders.filter(o => {
     const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
     if (branch?.id && o.branchId && o.branchId !== branch.id) return false;
-    return oDate === todayStr && o.status !== 'cancelled';
+    return oDate === todayStr && countsAsRevenue(o);
   });
 
   const todayRevenue = todayOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);

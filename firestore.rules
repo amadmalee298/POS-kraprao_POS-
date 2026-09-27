@@ -1,12 +1,23 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Every POS device signs in (anonymously, or with Google for Sheets export) before it
-    // reads or writes. Requests without a Firebase user are rejected.
+    // Two kinds of visitors:
+    // - Staff devices, signed in with the shop account (e-mail/password). Full access, but only
+    //   for e-mails listed in the document access/staff { emails: ["shop@example.com", ...] }
+    //   (create that document once in the Firebase console, e-mails in lower case).
+    // - Everyone else (customers scanning a table QR code) signs in anonymously and may only read
+    //   the public menu, send a new QR order that waits for approval, and read that order's status.
     // Deploy with: firebase deploy --only firestore:rules
-    // (enable Authentication → Sign-in method → Anonymous in the Firebase console first).
+
     function signedIn() {
       return request.auth != null;
+    }
+
+    function isStaff() {
+      return signedIn()
+        && request.auth.token.email != null
+        && exists(/databases/$(database)/documents/access/staff)
+        && request.auth.token.email.lower() in get(/databases/$(database)/documents/access/staff).data.emails;
     }
 
     // Guard against oversized or garbage documents.
@@ -28,76 +39,104 @@ service cloud.firestore {
         && (!('items' in request.resource.data) || request.resource.data.items.size() <= 200);
     }
 
+    // A customer's QR order: new, unpaid, waiting for staff approval, and of sane size.
+    function isCustomerQrOrder() {
+      let d = request.resource.data;
+      return validOrder()
+        && d.status == 'pending-qr'
+        && d.isQrOrder == true
+        && d.orderSource == 'qr'
+        && d.paymentStatus == 'unpaid'
+        && d.tenderedAmount == 0
+        && d.discountAmount == 0
+        && d.items is list && d.items.size() > 0 && d.items.size() <= 40
+        && d.grandTotal is number && d.grandTotal <= 50000;
+    }
+
     function validMoneyRecord() {
       return reasonableSize() && isNonNegativeNumber('amount');
     }
 
-    match /branches/{branchId} {
+    // Who is staff. Only staff can change the list (the first entry is made in the console).
+    match /access/staff {
+      allow read, write: if isStaff();
+    }
+
+    // Menu shown to customers (no costs or recipes). Written by staff devices.
+    match /public_menu/{branchId} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && reasonableSize();
-      allow delete: if signedIn();
-
-      match /inventory/{ingredientId} {
-        allow read, delete: if signedIn();
-        allow create, update: if signedIn() && reasonableSize();
-      }
-
-      match /status/{statusDoc} {
-        allow read, write: if signedIn();
-      }
-
-      match /config/{configDoc} {
-        allow read, write: if signedIn();
-      }
+      allow write: if isStaff();
     }
 
     match /orders/{orderId} {
-      allow read, delete: if signedIn();
-      allow create, update: if signedIn() && validOrder();
+      allow list: if isStaff();
+      // Customers follow the status of their own QR order (by its unguessable id)
+      allow get: if isStaff() || (signedIn() && resource.data.isQrOrder == true);
+      allow create: if (isStaff() && validOrder()) || (signedIn() && isCustomerQrOrder());
+      allow update: if isStaff() && validOrder();
+      allow delete: if isStaff();
+    }
+
+    match /branches/{branchId} {
+      allow read, delete: if isStaff();
+      allow create, update: if isStaff() && reasonableSize();
+
+      match /inventory/{ingredientId} {
+        allow read, delete: if isStaff();
+        allow create, update: if isStaff() && reasonableSize();
+      }
+
+      match /status/{statusDoc} {
+        allow read, write: if isStaff();
+      }
+
+      match /config/{configDoc} {
+        allow read, write: if isStaff();
+      }
     }
 
     match /expenses/{expenseId} {
-      allow read, delete: if signedIn();
-      allow create, update: if signedIn() && validMoneyRecord();
+      allow read, delete: if isStaff();
+      allow create, update: if isStaff() && validMoneyRecord();
     }
 
     match /incomes/{incomeId} {
-      allow read, delete: if signedIn();
-      allow create, update: if signedIn() && validMoneyRecord();
+      allow read, delete: if isStaff();
+      allow create, update: if isStaff() && validMoneyRecord();
     }
 
     match /menu_items/{itemId} {
-      allow read, delete: if signedIn();
-      allow create, update: if signedIn() && reasonableSize();
+      allow read, delete: if isStaff();
+      allow create, update: if isStaff() && reasonableSize();
     }
 
     match /inventory/{inventoryDoc} {
-      allow read, delete: if signedIn();
-      allow create, update: if signedIn() && reasonableSize();
+      allow read, delete: if isStaff();
+      allow create, update: if isStaff() && reasonableSize();
     }
 
     // Audit-style logs: can be written and re-synced, but not deleted from a device.
     match /stock_adjustments/{logId} {
-      allow read: if signedIn();
-      allow create, update: if signedIn() && reasonableSize();
+      allow read: if isStaff();
+      allow create, update: if isStaff() && reasonableSize();
     }
 
     match /waste_logs/{wasteId} {
-      allow read: if signedIn();
-      allow create, update: if signedIn() && reasonableSize();
+      allow read: if isStaff();
+      allow create, update: if isStaff() && reasonableSize();
     }
 
     match /branch_sync_logs/{syncId} {
-      allow read: if signedIn();
-      allow create, update: if signedIn() && reasonableSize();
+      allow read: if isStaff();
+      allow create, update: if isStaff() && reasonableSize();
     }
 
     match /deleted_records/{recordId} {
-      allow read, write: if signedIn();
+      allow read, write: if isStaff();
     }
 
     match /categories/{categoryDoc} {
-      allow read, write: if signedIn();
+      allow read, write: if isStaff();
     }
 
     // Anything not listed above is denied (no catch-all wildcard).

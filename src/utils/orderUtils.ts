@@ -225,3 +225,13 @@ export function generateQrOrderNumber(table: string): string {
   const safeTable = String(table || '').replace(/[^0-9A-Za-zก-๙-]/g, '').slice(0, 8) || '0';
   return `#Q${safeTable}-${randomSuffix(4)}`;
 }
+
+/** Order not paid yet (customer QR orders until the cashier settles them). */
+export const isUnpaid = (o: Pick<Order, 'paymentStatus'>): boolean => o.paymentStatus === 'unpaid';
+
+/**
+ * Whether an order counts as sales money received: not cancelled, not waiting for approval,
+ * and paid. Every revenue total, cash-drawer figure and report uses this one rule.
+ */
+export const countsAsRevenue = (o: Pick<Order, 'status' | 'paymentStatus'>): boolean =>
+  o.status !== 'cancelled' && o.status !== 'pending-qr' && !isUnpaid(o);

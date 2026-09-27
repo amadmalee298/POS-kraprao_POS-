@@ -18,7 +18,14 @@ import {
   Timestamp,
   DocumentData
 } from 'firebase/firestore';
-import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  signOut,
+  type Auth
+} from 'firebase/auth';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem, CategoryItem, AddOnOption, SystemSettings } from '../types';
@@ -54,6 +61,13 @@ let isInitialized = false;
 // Every read/write/listener waits for this before touching Firestore.
 const AUTH_WAIT_TIMEOUT_MS = 10_000;
 let resolveAuthReady: () => void = () => {};
+let authInstance: Auth | null = null;
+
+export interface FirebaseUserInfo {
+  email: string | null;
+  isAnonymous: boolean;
+}
+const authListeners = new Set<(user: FirebaseUserInfo | null) => void>();
 const authReadyPromise = new Promise<void>(resolve => {
   resolveAuthReady = resolve;
 });
@@ -85,7 +99,9 @@ try {
   console.log(`[Firebase Service] 🔥 Connected to Firebase Project: ${firebaseConfig.projectId} (DB: ${cfg.firestoreDatabaseId || 'default'})`);
 
   const auth = getAuth(app);
+  authInstance = auth;
   onAuthStateChanged(auth, user => {
+    authListeners.forEach(cb => cb(user ? { email: user.email, isAnonymous: user.isAnonymous } : null));
     if (user) {
       resolveAuthReady();
       return;
@@ -210,6 +226,59 @@ export async function syncBranchToFirestore(branch: Branch, additionalStats?: Pa
   }
 }
 
+/** Firestore document for an order (one shape for single writes, batches and QR orders). */
+function buildOrderPayload(order: Order, branch: Pick<Branch, 'id' | 'name'>, nowIso: string) {
+  return cleanForFirestore({
+  id: order.id,
+  orderNumber: order.orderNumber,
+  branchId: branch.id,
+  branchName: branch.name,
+  orderType: order.orderType,
+  tableNumber: order.tableNumber || '',
+  itemsCount: order.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0,
+  items: order.items.map(item => ({
+    cartItemId: item.cartItemId,
+    menuItemId: item.menuItem?.id || '',
+    name: item.menuItem?.name || '',
+    quantity: item.quantity,
+    unitPrice: item.unitPrice,
+    totalPrice: item.totalPrice,
+    spiceLevel: item.spiceLevel || null,
+    proteinChoice: item.proteinChoice?.name || null,
+    selectedAddOns: item.selectedAddOns?.map(a => a.name) || [],
+    specialNotes: item.specialNotes || ''
+  })),
+  subtotal: order.subtotal,
+  discountAmount: order.discountAmount || 0,
+  discountType: order.discountType || 'fixed',
+  discountNote: order.discountNote || '',
+  vatAmount: order.vatAmount || 0,
+  grandTotal: order.grandTotal,
+  paymentMethod: order.paymentMethod,
+  tenderedAmount: order.tenderedAmount ?? order.grandTotal,
+  changeAmount: order.changeAmount ?? 0,
+  status: order.status,
+  createdAt: order.createdAt,
+  completedAt: order.completedAt || (order.status === 'served' ? (order.updatedAt || nowIso) : null),
+  customerTaxInfo: order.customerTaxInfo || null,
+  customerName: order.customerTaxInfo?.companyName || '',
+  customerPhone: order.customerTaxInfo?.phone || '',
+  isFullTaxInvoiceRequested: Boolean(order.isFullTaxInvoiceRequested),
+  isQrOrder: Boolean(order.isQrOrder),
+  orderSource: order.orderSource || (order.isQrOrder ? 'qr' : 'pos'),
+  cancelledBy: order.cancelledBy || null,
+  cancelReason: order.cancelReason || null,
+  cancelNote: order.cancelNote || null,
+  syncedAt: nowIso,
+  isOfflineOrder: false,
+  isSynced: true,
+  updatedAt: serverTimestamp(),
+  checksum: order.checksum || '',
+  paymentStatus: order.paymentStatus || 'paid',
+  paidAt: order.paidAt || null
+});
+}
+
 /**
  * Push a single sales order to central Firebase
  */
@@ -222,54 +291,7 @@ export async function syncOrderToFirestore(order: Order, branch: Branch): Promis
     const orderRef = doc(dbInstance, 'orders', orderDocId);
     const nowIso = new Date().toISOString();
 
-    const orderPayload = cleanForFirestore({
-      id: order.id,
-      orderNumber: order.orderNumber,
-      branchId: branch.id,
-      branchName: branch.name,
-      orderType: order.orderType,
-      tableNumber: order.tableNumber || '',
-      itemsCount: order.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0,
-      items: order.items.map(item => ({
-        cartItemId: item.cartItemId,
-        menuItemId: item.menuItem?.id || '',
-        name: item.menuItem?.name || '',
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        totalPrice: item.totalPrice,
-        spiceLevel: item.spiceLevel || null,
-        proteinChoice: item.proteinChoice?.name || null,
-        selectedAddOns: item.selectedAddOns?.map(a => a.name) || [],
-        specialNotes: item.specialNotes || ''
-      })),
-      subtotal: order.subtotal,
-      discountAmount: order.discountAmount || 0,
-      discountType: order.discountType || 'fixed',
-      discountNote: order.discountNote || '',
-      vatAmount: order.vatAmount || 0,
-      grandTotal: order.grandTotal,
-      paymentMethod: order.paymentMethod,
-      tenderedAmount: order.tenderedAmount ?? order.grandTotal,
-      changeAmount: order.changeAmount ?? 0,
-      status: order.status,
-      createdAt: order.createdAt,
-      completedAt: order.completedAt || (order.status === 'served' ? (order.updatedAt || nowIso) : null),
-      customerTaxInfo: order.customerTaxInfo || null,
-      customerName: order.customerTaxInfo?.companyName || '',
-      customerPhone: order.customerTaxInfo?.phone || '',
-      isFullTaxInvoiceRequested: Boolean(order.isFullTaxInvoiceRequested),
-      isQrOrder: Boolean(order.isQrOrder),
-      orderSource: order.orderSource || (order.isQrOrder ? 'qr' : 'pos'),
-      cancelledBy: order.cancelledBy || null,
-      cancelReason: order.cancelReason || null,
-      cancelNote: order.cancelNote || null,
-      syncedAt: nowIso,
-      isOfflineOrder: false,
-      isSynced: true,
-      updatedAt: serverTimestamp(),
-      checksum: order.checksum || ''
-    });
-
+    const orderPayload = buildOrderPayload(order, branch, nowIso);
     await setDoc(orderRef, orderPayload, { merge: true });
 
     // Update branch live sales stats in central database
@@ -317,53 +339,7 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
       const orderDocId = order.id.startsWith('ord-') ? order.id : `ord-${order.id}`;
       const orderRef = doc(dbInstance!, 'orders', orderDocId);
 
-      const orderPayload = cleanForFirestore({
-        id: order.id,
-        orderNumber: order.orderNumber,
-        branchId: branch.id,
-        branchName: branch.name,
-        orderType: order.orderType,
-        tableNumber: order.tableNumber || '',
-        itemsCount: order.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0,
-        items: order.items.map(item => ({
-          cartItemId: item.cartItemId,
-          menuItemId: item.menuItem?.id || '',
-          name: item.menuItem?.name || '',
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          totalPrice: item.totalPrice,
-          spiceLevel: item.spiceLevel || null,
-          proteinChoice: item.proteinChoice?.name || null,
-          selectedAddOns: item.selectedAddOns?.map(a => a.name) || [],
-          specialNotes: item.specialNotes || ''
-        })),
-        subtotal: order.subtotal,
-        discountAmount: order.discountAmount || 0,
-        discountType: order.discountType || 'fixed',
-        discountNote: order.discountNote || '',
-        vatAmount: order.vatAmount || 0,
-        grandTotal: order.grandTotal,
-        paymentMethod: order.paymentMethod,
-        tenderedAmount: order.tenderedAmount ?? order.grandTotal,
-        changeAmount: order.changeAmount ?? 0,
-        status: order.status,
-        createdAt: order.createdAt,
-        completedAt: order.completedAt || (order.status === 'served' ? (order.updatedAt || nowIso) : null),
-        customerTaxInfo: order.customerTaxInfo || null,
-        customerName: order.customerTaxInfo?.companyName || '',
-        customerPhone: order.customerTaxInfo?.phone || '',
-        isFullTaxInvoiceRequested: Boolean(order.isFullTaxInvoiceRequested),
-        isQrOrder: Boolean(order.isQrOrder),
-        orderSource: order.orderSource || (order.isQrOrder ? 'qr' : 'pos'),
-        cancelledBy: order.cancelledBy || null,
-        cancelReason: order.cancelReason || null,
-        cancelNote: order.cancelNote || null,
-        syncedAt: nowIso,
-        isOfflineOrder: false,
-        isSynced: true,
-        updatedAt: serverTimestamp(),
-        checksum: order.checksum || ''
-      });
+      const orderPayload = buildOrderPayload(order, branch, nowIso);
 
       batch.set(orderRef, orderPayload, { merge: true });
     });
@@ -722,7 +698,9 @@ export function docToOrder(docId: string, data: any): Order {
     cancelReason: data.cancelReason,
     cancelNote: data.cancelNote,
     isQrOrder: Boolean(data.isQrOrder),
-    orderSource: data.orderSource || 'pos'
+    orderSource: data.orderSource || 'pos',
+    paymentStatus: data.paymentStatus === 'unpaid' ? 'unpaid' : 'paid',
+    paidAt: data.paidAt || undefined
   };
 }
 
@@ -2230,44 +2208,29 @@ export interface CustomerCatalog {
 }
 
 /**
- * Everything the customer QR ordering page needs, and nothing else: menu, categories,
- * toppings, shop name / PromptPay and the few settings that affect prices.
- * The customer page never loads orders, accounting or stock.
+ * Everything the customer QR ordering page needs, from the one public document
+ * `public_menu/{branchId}` (no costs, recipes, orders, accounting or stock).
  */
 export async function fetchCustomerCatalog(branchId: string): Promise<CustomerCatalog | null> {
   if (!dbInstance) return null;
   await waitForFirebaseAuth();
   try {
-    const [menuItems, categories, branchSnap, addOnSnap, settingsSnap] = await Promise.all([
-      fetchMenuItemsFromFirestore(),
-      fetchCategoriesFromFirestore(branchId),
-      getDoc(doc(dbInstance, 'branches', branchId)),
-      getDoc(doc(dbInstance, 'branches', branchId, 'config', 'addons')),
-      getDoc(doc(dbInstance, 'branches', branchId, 'config', 'settings'))
-    ]);
-    const b = branchSnap.exists() ? branchSnap.data() : {};
-    const st = settingsSnap.exists() ? settingsSnap.data() : {};
+    const snap = await getDoc(doc(dbInstance, 'public_menu', branchId));
+    if (!snap.exists()) return null;
+    const d = snap.data();
     return {
       branch: {
         id: branchId,
-        name: String(b.name || st.shopName || ''),
-        promptpayMobileOrTaxId: String(b.promptpayMobileOrTaxId || st.promptpayMobileOrTaxId || '')
+        name: String(d.branch?.name || d.settings?.shopName || ''),
+        promptpayMobileOrTaxId: String(d.branch?.promptpayMobileOrTaxId || '')
       },
-      menuItems,
-      categories: categories || [],
-      addOns: addOnSnap.exists() && Array.isArray(addOnSnap.data().addOns) ? (addOnSnap.data().addOns as AddOnOption[]) : [],
-      settings: {
-        shopName: st.shopName,
-        shopLogoUrl: st.shopLogoUrl,
-        enableVat: st.enableVat,
-        vatRate: st.vatRate,
-        vatType: st.vatType,
-        promptpayMobileOrTaxId: st.promptpayMobileOrTaxId,
-        qrPaymentMethods: st.qrPaymentMethods
-      }
+      menuItems: Array.isArray(d.menuItems) ? (d.menuItems as MenuItem[]).map(m => ({ ...m, costPrice: 0, recipe: [] })) : [],
+      categories: Array.isArray(d.categories) ? (d.categories as CategoryItem[]) : [],
+      addOns: Array.isArray(d.addOns) ? (d.addOns as AddOnOption[]) : [],
+      settings: d.settings || {}
     };
   } catch (err) {
-    console.error('[Firebase Service] ❌ Failed to load customer catalog:', err);
+    console.error('[Firebase Service] ❌ Failed to load customer menu:', err);
     return null;
   }
 }
@@ -2284,4 +2247,74 @@ export function subscribeToOrderStatus(
     snap => onUpdate(snap.exists() ? ((snap.data().status as OrderStatus) || null) : null),
     err => console.warn('[Firebase Service] Order status listener error:', err)
   );
+}
+
+/**
+ * A customer's QR order: writes only the order document (customers may not touch branch stats
+ * or anything else under the security rules).
+ */
+export async function submitCustomerQrOrder(order: Order, branch: Pick<Branch, 'id' | 'name'>): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
+  try {
+    const orderDocId = order.id.startsWith('ord-') ? order.id : `ord-${order.id}`;
+    await setDoc(doc(dbInstance, 'orders', orderDocId), buildOrderPayload(order, branch, new Date().toISOString()));
+    return true;
+  } catch (err) {
+    console.error('[Firebase Service] ❌ Failed to submit QR order:', err);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shop account (staff devices)
+// Customers use anonymous sign-in and may only read the public menu and send QR orders.
+// Staff devices sign in once with the shop account; the security rules give full access only
+// to e-mails listed in the `access/staff` document.
+// ---------------------------------------------------------------------------
+
+/** Current Firebase user and future changes. Returns an unsubscribe function. */
+export function onFirebaseUserChange(cb: (user: FirebaseUserInfo | null) => void): () => void {
+  authListeners.add(cb);
+  const u = authInstance?.currentUser;
+  cb(u ? { email: u.email, isAnonymous: u.isAnonymous } : null);
+  return () => {
+    authListeners.delete(cb);
+  };
+}
+
+export async function signInShopAccount(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
+  if (!authInstance) return { ok: false, error: 'ระบบ cloud ยังไม่พร้อม' };
+  try {
+    await signInWithEmailAndPassword(authInstance, email.trim(), password);
+    return { ok: true };
+  } catch (err: any) {
+    const code = String(err?.code || '');
+    if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) {
+      return { ok: false, error: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' };
+    }
+    if (code.includes('too-many-requests')) return { ok: false, error: 'ลองผิดหลายครั้ง กรุณารอสักครู่' };
+    if (code.includes('operation-not-allowed')) {
+      return { ok: false, error: 'ยังไม่ได้เปิด Email/Password ใน Firebase Console → Authentication → Sign-in method' };
+    }
+    if (code.includes('network')) return { ok: false, error: 'เชื่อมต่ออินเทอร์เน็ตไม่ได้' };
+    return { ok: false, error: err?.message || 'เข้าสู่ระบบไม่สำเร็จ' };
+  }
+}
+
+export async function signOutShopAccount(): Promise<void> {
+  if (authInstance) await signOut(authInstance); // the auth listener signs in anonymously again
+}
+
+/** Publish the customer-visible menu (see utils/publicMenu). */
+export async function publishPublicMenu(branchId: string, menu: object): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
+  try {
+    await setDoc(doc(dbInstance, 'public_menu', branchId), cleanForFirestore({ ...menu, updatedAt: serverTimestamp() }));
+    return true;
+  } catch (err) {
+    console.warn('[Firebase Service] Could not publish customer menu:', err);
+    return false;
+  }
 }

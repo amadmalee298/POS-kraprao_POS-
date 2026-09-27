@@ -12,12 +12,14 @@ import {
   Receipt,
   ChevronLeft,
   Percent,
-  FileText
+  FileText,
+  Wallet
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { CartItem, MenuCategory, MenuItem, Order, OrderType } from '../../types';
 import { isItemInCategory } from '../../utils/categoryUtils';
-import { computeCartTotals, defaultSpiceLevel } from '../../utils/orderUtils';
+import { computeCartTotals, defaultSpiceLevel, isUnpaid } from '../../utils/orderUtils';
+import { UnpaidOrdersModal } from './UnpaidOrdersModal';
 import { printReceiptViaWindow } from '../../utils/printReceipt';
 import { CustomizationModal } from './CustomizationModal';
 import { QuickAddModal } from './QuickAddModal';
@@ -78,6 +80,8 @@ export const POSView: React.FC = () => {
     currentOpenShift,
     currentBranch,
     tables,
+    createOrder,
+    settleOrderPayment,
     setIsLocked
   } = usePOS();
 
@@ -102,6 +106,8 @@ export const POSView: React.FC = () => {
   const [isPreBill, setIsPreBill] = useState(false);
   const [done, setDone] = useState<{ order: Order; change: number; printed: boolean } | null>(null);
   const [isReceiptsOpen, setIsReceiptsOpen] = useState(false);
+  const [isUnpaidOpen, setIsUnpaidOpen] = useState(false);
+  const [settling, setSettling] = useState<Order | null>(null);
   const [isShiftOpen, setIsShiftOpen] = useState(false);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [numpadItem, setNumpadItem] = useState<CartItem | null>(null);
@@ -121,6 +127,14 @@ export const POSView: React.FC = () => {
   }, [cart.length]);
 
   const totals = computeCartTotals(cart, discount, settings);
+  // Bills ordered by customers (QR) that still have to be paid at the counter
+  const unpaidOrders = useMemo(
+    () =>
+      orders
+        .filter(o => o.branchId === currentBranch?.id && isUnpaid(o) && o.status !== 'cancelled')
+        .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')),
+    [orders, currentBranch?.id]
+  );
   const qtyByMenuId = useMemo(() => {
     const map = new Map<string, number>();
     cart.forEach(c => map.set(c.menuItem.id, (map.get(c.menuItem.id) || 0) + c.quantity));
@@ -398,6 +412,20 @@ export const POSView: React.FC = () => {
             <span className="hidden lg:inline">{currentOpenShift ? 'กะเปิดอยู่' : 'ยังไม่เปิดกะ'}</span>
             <Banknote className="w-4 h-4 lg:hidden text-[#d9c7b5]" />
           </button>
+          {unpaidOrders.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsUnpaidOpen(true)}
+              className="h-11 px-3 rounded-xl border border-[#6b3a1a] bg-[#2a170d] text-sm font-semibold flex items-center gap-1.5 text-[#ffb07a]"
+              title="บิลที่ลูกค้าสั่งผ่าน QR แล้วยังไม่ได้ชำระ"
+            >
+              <Wallet className="w-4 h-4" />
+              <span className="hidden sm:inline">ค้างชำระ</span>
+              <span className="min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#ff6a13] text-[#1a0d05] text-xs font-bold flex items-center justify-center">
+                {unpaidOrders.length}
+              </span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setIsReceiptsOpen(true)}
@@ -534,12 +562,40 @@ export const POSView: React.FC = () => {
       <QuickPayModal
         isOpen={isPayOpen}
         onClose={() => setIsPayOpen(false)}
-        orderType={orderType}
-        tableNumber={orderType === 'dine-in' ? table : undefined}
-        onCompleted={finishOrder}
+        total={totals.grandTotal}
+        vatAmount={totals.enableVat ? totals.vatAmount : 0}
+        onConfirm={(method, tendered, change) => {
+          const order = createOrder(method, tendered, orderType, orderType === 'dine-in' ? table : undefined);
+          finishOrder(order, change);
+        }}
         onOpenFullInvoice={() => {
           setIsPayOpen(false);
           setIsFullInvoiceOpen(true);
+        }}
+      />
+
+      {/* Settling an unpaid bill (customer QR order) */}
+      <QuickPayModal
+        isOpen={!!settling}
+        onClose={() => setSettling(null)}
+        total={settling?.grandTotal || 0}
+        vatAmount={settling?.vatAmount || 0}
+        subtitle={settling ? `รับชำระ ${settling.orderNumber}${settling.tableNumber ? ` · โต๊ะ ${settling.tableNumber}` : ''}` : undefined}
+        onConfirm={(method, tendered, change) => {
+          if (!settling) return;
+          const paid = settleOrderPayment(settling.id, method, tendered);
+          setSettling(null);
+          if (paid) setDone({ order: paid, change, printed: false });
+        }}
+      />
+
+      <UnpaidOrdersModal
+        isOpen={isUnpaidOpen}
+        orders={unpaidOrders}
+        onClose={() => setIsUnpaidOpen(false)}
+        onSelect={o => {
+          setIsUnpaidOpen(false);
+          setSettling(o);
         }}
       />
 

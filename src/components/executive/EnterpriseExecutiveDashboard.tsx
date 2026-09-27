@@ -1,3 +1,4 @@
+import { countsAsRevenue } from '../../utils/orderUtils';
 import React, { useState, useMemo } from 'react';
 import {
   ResponsiveContainer,
@@ -234,7 +235,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
       if (startDate && oDate && oDate < startDate) return false;
       if (endDate && oDate && oDate > endDate) return false;
       if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
-      return o.status !== 'cancelled';
+      return countsAsRevenue(o);
     });
   }, [orders, startDate, endDate, selectedBranchId]);
 
@@ -253,7 +254,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
       const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
       if (oDate !== todayStr) return false;
       if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
-      return o.status !== 'cancelled';
+      return countsAsRevenue(o);
     });
   }, [orders, selectedBranchId, todayStr]);
 
@@ -268,7 +269,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
       const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
       if (oDate !== yesterdayStr) return false;
       if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
-      return o.status !== 'cancelled';
+      return countsAsRevenue(o);
     });
   }, [orders, selectedBranchId, yesterdayStr]);
 
@@ -404,7 +405,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
       if (pStartStr && oDate && oDate < pStartStr) return false;
       if (pEndStr && oDate && oDate > pEndStr) return false;
       if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
-      return o.status !== 'cancelled';
+      return countsAsRevenue(o);
     });
   }, [orders, startDate, endDate, selectedBranchId]);
 
@@ -481,7 +482,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
           if (oDate !== dStr) return false;
           if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
-          return o.status !== 'cancelled';
+          return countsAsRevenue(o);
         });
         const sales = dayOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
         const cost = calculateOrdersFoodCost(dayOrders);
@@ -509,7 +510,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
           if (oDate < sStr || oDate > eStr) return false;
           if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
-          return o.status !== 'cancelled';
+          return countsAsRevenue(o);
         });
         const sales = wOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
         const cost = calculateOrdersFoodCost(wOrders);
@@ -533,7 +534,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
           if (!oDate.startsWith(prefix)) return false;
           if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
-          return o.status !== 'cancelled';
+          return countsAsRevenue(o);
         });
         const sales = mOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
         const cost = calculateOrdersFoodCost(mOrders);
@@ -555,7 +556,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
           if (!oDate.startsWith(yrStr)) return false;
           if (selectedBranchId !== 'all' && o.branchId && o.branchId !== selectedBranchId) return false;
-          return o.status !== 'cancelled';
+          return countsAsRevenue(o);
         });
         const sales = yrOrders.reduce((s, o) => s + (o.grandTotal || 0), 0);
         const cost = calculateOrdersFoodCost(yrOrders);

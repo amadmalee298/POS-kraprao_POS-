@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { countsAsRevenue } from '../../utils/orderUtils';
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import {
   BarChart3,
@@ -943,7 +944,7 @@ export const AccountingView: React.FC = () => {
   const liveAccountsPayable = totalUnpaidAP;
 
   const liveRetainedEarnings = useMemo(() => {
-    const branchOrders = orders.filter(o => o.branchId === currentBranch.id && o.status === 'served');
+    const branchOrders = orders.filter(o => o.branchId === currentBranch.id && countsAsRevenue(o));
     const totalRev = branchOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
     const totalOtherInc = (incomes || []).filter(inc => !inc.branchId || inc.branchId === currentBranch.id).reduce((sum, inc) => sum + (inc.amount || 0), 0);
     const totalCogs = branchOrders.reduce((sum, o) => {
@@ -954,7 +955,7 @@ export const AccountingView: React.FC = () => {
   }, [orders, expenses, incomes, currentBranch.id]);
 
   const liveCashOnHand = useMemo(() => {
-    const branchOrders = orders.filter(o => o.branchId === currentBranch.id && o.status === 'served');
+    const branchOrders = orders.filter(o => o.branchId === currentBranch.id && countsAsRevenue(o));
     const orderCash = branchOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
     const otherIncCash = (incomes || []).filter(inc => !inc.branchId || inc.branchId === currentBranch.id).reduce((sum, inc) => sum + (inc.amount || 0), 0);
     const expenseCash = expenses.filter(e => e.branchId === currentBranch.id).reduce((sum, e) => sum + (e.amount || 0), 0);
@@ -1026,7 +1027,7 @@ export const AccountingView: React.FC = () => {
 
       // Filter orders for this branch & month
       const mOrders = orders.filter(
-        o => o.branchId === currentBranch.id && o.status === 'served' && isSameMonth(o.createdAt, monthKey)
+        o => o.branchId === currentBranch.id && countsAsRevenue(o) && isSameMonth(o.createdAt, monthKey)
       );
 
       // Filter expenses for this branch & month
@@ -1170,7 +1171,7 @@ export const AccountingView: React.FC = () => {
 
   // Tax Calculations for selected month
   const selectedBranchOrders = orders.filter(
-    o => o.branchId === currentBranch.id && o.status === 'served' && isSameMonth(o.createdAt, selectedMonth)
+    o => o.branchId === currentBranch.id && countsAsRevenue(o) && isSameMonth(o.createdAt, selectedMonth)
   );
   const selectedBranchExpenses = expenses.filter(
     e => (!e.branchId || e.branchId === currentBranch.id) && isSameMonth(e.date, selectedMonth)
@@ -1257,7 +1258,7 @@ export const AccountingView: React.FC = () => {
       const fullDate = `${yearStr}-${monthStr}-${dayStr}`;
 
       const dayOrders = orders.filter(
-        o => o.branchId === currentBranch.id && o.status === 'served' && isSameDay(o.createdAt, fullDate)
+        o => o.branchId === currentBranch.id && countsAsRevenue(o) && isSameDay(o.createdAt, fullDate)
       );
       const dayExpenses = expenses.filter(
         e => (!e.branchId || e.branchId === currentBranch.id) && isSameDay(e.date, fullDate)

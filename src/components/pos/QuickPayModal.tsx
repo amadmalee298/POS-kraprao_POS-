@@ -1,20 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { X, FileText } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { Order, OrderType, PaymentMethod } from '../../types';
-import { computeCartTotals, suggestCashAmounts } from '../../utils/orderUtils';
+import { PaymentMethod } from '../../types';
+import { suggestCashAmounts } from '../../utils/orderUtils';
 import { resolvePromptPayId } from '../../utils/promptpay';
 import { PromptPayQR } from '../common/PromptPayQR';
 
 interface QuickPayModalProps {
   isOpen: boolean;
   onClose: () => void;
-  orderType: OrderType;
-  tableNumber?: string;
-  /** Called with the saved order and the change given (cash only). */
-  onCompleted: (order: Order, change: number) => void;
-  /** Opens the full payment dialog (tax invoice with customer details). */
-  onOpenFullInvoice: () => void;
+  /** Amount to collect */
+  total: number;
+  vatAmount?: number;
+  /** Shown above the amount, e.g. the bill number and table when settling an existing bill */
+  subtitle?: string;
+  /** Called when the cashier confirms: payment method, amount handed over (cash) and change. */
+  onConfirm: (method: PaymentMethod, tendered: number, change: number) => void;
+  /** Opens the full payment dialog (tax invoice with customer details); hidden when omitted. */
+  onOpenFullInvoice?: () => void;
 }
 
 type MethodTab = 'cash' | 'promptpay' | 'other';
@@ -40,17 +43,16 @@ const chip = (active: boolean) =>
 export const QuickPayModal: React.FC<QuickPayModalProps> = ({
   isOpen,
   onClose,
-  orderType,
-  tableNumber,
-  onCompleted,
+  total: grandTotal,
+  vatAmount = 0,
+  subtitle,
+  onConfirm,
   onOpenFullInvoice
 }) => {
-  const { cart, discount, settings, currentBranch, createOrder } = usePOS();
+  const { settings, currentBranch } = usePOS();
   const [tab, setTab] = useState<MethodTab>('cash');
   const [otherMethod, setOtherMethod] = useState<PaymentMethod>('transfer');
   const [received, setReceived] = useState(0);
-
-  const { grandTotal, vatAmount, enableVat } = computeCartTotals(cart, discount, settings);
 
   useEffect(() => {
     if (isOpen) {
@@ -73,14 +75,13 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
 
   const isCash = tab === 'cash';
   const change = received - grandTotal;
-  const canConfirm = cart.length > 0 && (!isCash || received >= grandTotal);
+  const canConfirm = grandTotal > 0 && (!isCash || received >= grandTotal);
   const cashOptions = suggestCashAmounts(grandTotal, 2);
 
   const confirm = () => {
     if (!canConfirm) return;
     const method: PaymentMethod = tab === 'cash' ? 'cash' : tab === 'promptpay' ? 'promptpay' : otherMethod;
-    const order = createOrder(method, isCash ? received : grandTotal, orderType, tableNumber);
-    onCompleted(order, isCash ? Math.max(0, change) : 0);
+    onConfirm(method, isCash ? received : grandTotal, isCash ? Math.max(0, change) : 0);
   };
 
   return (
@@ -97,9 +98,9 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-sm text-[#b3a393]">ยอดที่ต้องชำระ</div>
+            <div className="text-sm text-[#b3a393]">{subtitle || 'ยอดที่ต้องชำระ'}</div>
             <div className="font-num text-5xl font-bold text-[#ff8a3d] leading-tight">฿{baht(grandTotal)}</div>
-            {enableVat && vatAmount > 0 && (
+            {vatAmount > 0 && (
               <div className="text-xs text-[#b3a393]">รวม VAT แล้ว ฿{baht(vatAmount)}</div>
             )}
           </div>
@@ -218,14 +219,16 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
           {isCash ? (canConfirm ? `ยืนยัน · ทอน ฿${baht(Math.max(0, change))}` : 'แตะยอดเงินที่รับมา') : 'ได้รับเงินแล้ว'}
         </button>
 
-        <button
-          type="button"
-          onClick={onOpenFullInvoice}
-          className="self-center h-10 px-3 text-sm text-[#d9a77e] hover:text-[#ffb07a] flex items-center gap-1.5 underline-offset-4 hover:underline"
-        >
-          <FileText className="w-4 h-4" />
-          ลูกค้าขอใบกำกับภาษีเต็มรูป
-        </button>
+        {onOpenFullInvoice && (
+          <button
+            type="button"
+            onClick={onOpenFullInvoice}
+            className="self-center h-10 px-3 text-sm text-[#d9a77e] hover:text-[#ffb07a] flex items-center gap-1.5 underline-offset-4 hover:underline"
+          >
+            <FileText className="w-4 h-4" />
+            ลูกค้าขอใบกำกับภาษีเต็มรูป
+          </button>
+        )}
       </div>
     </div>
   );

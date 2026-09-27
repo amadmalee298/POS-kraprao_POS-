@@ -44,6 +44,7 @@ import {
   syncOrderToFirestore,
   syncOrdersBatchToFirestore,
   syncInventoryToFirestore,
+  publishPublicMenu,
   applyStockDeltasToFirestore,
   syncStockAdjustmentToFirestore,
   syncWasteLogToFirestore,
@@ -114,9 +115,11 @@ import {
   applyStockDeductions,
   computeCartTotals,
   mergeCloudOrders,
-  resolveItemsForStock
+  resolveItemsForStock,
+  countsAsRevenue
 } from '../utils/orderUtils';
-import { crc16 } from '../utils/promptpay';
+import { crc16, resolvePromptPayId } from '../utils/promptpay';
+import { buildPublicMenu } from '../utils/publicMenu';
 import { SHOP_LOGO_URL, normalizeShopLogoUrl } from '../assets/logo';
 
 export function computeOrderChecksum(order: Order): string {
@@ -237,6 +240,10 @@ interface POSContextType {
     paymentMethod?: PaymentMethod
   ) => Order;
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
+  /** Record payment for an order placed unpaid (customer QR order). Returns the updated order. */
+  settleOrderPayment: (orderId: string, method: PaymentMethod, tenderedAmount: number) => Order | null;
+  /** Publish the customer-visible menu for QR ordering now. */
+  publishCustomerMenu: () => Promise<boolean>;
   cancelOrder: (
     orderId: string,
     reason: string,
@@ -840,7 +847,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     const todayStr = new Date().toISOString().split('T')[0];
-    const todayOrders = orders.filter(o => o.branchId === currentBranch.id && o.createdAt.startsWith(todayStr) && o.status !== 'cancelled');
+    const todayOrders = orders.filter(o => o.branchId === currentBranch.id && o.createdAt.startsWith(todayStr) && countsAsRevenue(o));
     const todaySales = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
     const lowStock = ingredients.filter(i => i.currentStock <= i.minStockAlert).length;
 
@@ -2906,7 +2913,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       vatAmount,
       grandTotal,
       paymentMethod,
-      tenderedAmount: grandTotal,
+      // Customer / table orders are paid later at the counter (see settleOrderPayment)
+      paymentStatus: 'unpaid',
+      tenderedAmount: 0,
       changeAmount: 0,
       status: initialStatus,
       createdAt: nowIso,
@@ -3020,6 +3029,43 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     }
   };
+
+  const settleOrderPayment = (orderId: string, method: PaymentMethod, tenderedAmount: number): Order | null => {
+    const normalizedId = orderId.replace(/^ord-/, '');
+    const target = orders.find(o => o.id.replace(/^ord-/, '') === normalizedId);
+    if (!target) return null;
+    const now = new Date().toISOString();
+    const tendered = method === 'cash' ? tenderedAmount : target.grandTotal;
+    const settled: Order = {
+      ...target,
+      paymentMethod: method,
+      paymentStatus: 'paid',
+      paidAt: now,
+      tenderedAmount: tendered,
+      changeAmount: method === 'cash' ? Math.max(0, tendered - target.grandTotal) : 0,
+      updatedAt: now,
+      isSynced: !effectiveOffline
+    };
+    setOrders(prev => prev.map(o => (o.id === target.id ? settled : o)));
+    pushNewOrderToCloud(settled);
+    return settled;
+  };
+
+  // Customer QR page reads public_menu/{branch}: republish it whenever the menu, toppings,
+  // categories or price settings change (debounced), so customers never see stale prices.
+  const publishCustomerMenu = useCallback(async () => {
+    if (effectiveOffline || !isFirebaseAvailable()) return false;
+    const menu = buildPublicMenu(menuItems, categories, addOns, settings, currentBranch, resolvePromptPayId(settings, currentBranch));
+    return publishPublicMenu(currentBranch.id, menu);
+  }, [menuItems, categories, addOns, settings, currentBranch, effectiveOffline]);
+
+  useEffect(() => {
+    if (!isStorageLoaded || menuItems.length === 0) return;
+    const t = setTimeout(() => {
+      publishCustomerMenu().catch(() => undefined);
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [isStorageLoaded, publishCustomerMenu, menuItems.length]);
 
   // "Auto-approve QR orders" is a per-device switch: the device that has it on (e.g. the
   // counter tablet) approves customers' QR orders as they arrive, which sends them to the
@@ -3890,7 +3936,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const closeTime = Date.now();
     const shiftOrders = orders.filter(o => {
       const oTime = new Date(o.createdAt).getTime();
-      return o.branchId === currentBranch.id && o.status !== 'cancelled' && oTime >= openTime && oTime <= closeTime;
+      return o.branchId === currentBranch.id && countsAsRevenue(o) && oTime >= openTime && oTime <= closeTime;
     });
     const totalCashSales = shiftOrders
       .filter(o => o.paymentMethod === 'cash')
@@ -4073,6 +4119,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         createOrder,
         createDirectOrder,
         updateOrderStatus,
+        settleOrderPayment,
+        publishCustomerMenu,
         cancelOrder,
         updateOrderTaxInfo,
         addTaxInvoiceOrder,
