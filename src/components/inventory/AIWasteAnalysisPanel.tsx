@@ -60,7 +60,7 @@ const REASON_MAP: Record<WasteReason, { label: string; bg: string; text: string 
 };
 
 export const AIWasteAnalysisPanel: React.FC = () => {
-  const { ingredients, wasteLogs, addWasteLog, deleteWasteLog, updateIngredientStock } = usePOS();
+  const { ingredients, wasteLogs, addWasteLog } = usePOS();
 
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<WasteAnalysisResult | null>(null);
@@ -628,13 +628,6 @@ export const AIWasteAnalysisPanel: React.FC = () => {
                             -฿{log.totalCostLoss.toLocaleString('th-TH')}
                           </span>
                         </div>
-                        <button
-                          onClick={() => deleteWasteLog(log.id)}
-                          className="p-1.5 rounded-xl hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 transition"
-                          title="ลบบันทึกนี้"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
                       </div>
                     </div>
                   );
