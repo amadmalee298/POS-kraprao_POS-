@@ -1,5 +1,5 @@
 import { countsAsRevenue } from '../../utils/orderUtils';
-import { buildProfitAndLoss, EXPENSE_CATEGORY_LABELS, isVatRegistered, pct } from '../../utils/accounting';
+import { buildProfitAndLoss, EXPENSE_CATEGORY_LABELS, expenseCost, isVatRegistered, pct } from '../../utils/accounting';
 import { cartItemUnitCost } from '../../utils/recipeUtils';
 import { findProteinOption, effectiveUnitCost } from '../../utils/recipeUtils';
 import React, { useState, useMemo } from 'react';
@@ -11,10 +11,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip as RechartsTooltip,
-  Legend,
-  PieChart,
-  Pie,
-  Cell
+  Legend
 } from 'recharts';
 import {
   TrendingUp,
@@ -77,6 +74,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     expenses,
     incomes = [],
     ingredients,
+    ingredientCategories = [],
     branches,
     menuItems,
     currentBranch,
@@ -98,6 +96,9 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   });
   const [endDate, setEndDate] = useState<string>(todayStr);
   const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
+  // Which part of the dashboard is on screen
+  const [showAllSlow, setShowAllSlow] = useState(false);
+  const [view, setView] = useState<'ov' | 'menu' | 'money' | 'people' | 'history'>('ov');
 
   // Sales Overview Granularity (Daily, Weekly, Monthly, Yearly)
   const [salesOverviewPeriod, setSalesOverviewPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'yearly'>('daily');
@@ -693,7 +694,11 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
     ingredients.forEach(ing => {
       const val = (ing.currentStock || 0) * effectiveUnitCost(ing);
-      const cat = ing.category || 'วัตถุดิบทั่วไป';
+      const cat =
+        ingredientCategories.find(c => c.id === ing.category)?.name ||
+        ({ supplies: 'วัสดุสิ้นเปลือง', equipment: 'อุปกรณ์', other: 'อื่นๆ' } as Record<string, string>)[ing.category] ||
+        ing.category ||
+        'วัตถุดิบทั่วไป';
       categoryTotals.set(cat, (categoryTotals.get(cat) || 0) + val);
       totalStockValue += val;
     });
@@ -705,7 +710,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     }
 
     const colors = ['#f59e0b', '#06b6d4', '#10b981', '#eab308', '#a855f7', '#f43f5e', '#ec4899'];
-    return Array.from(categoryTotals.entries()).map(([name, amount], idx) => {
+    return Array.from(categoryTotals.entries()).sort((a, b) => b[1] - a[1]).map(([name, amount], idx) => {
       const percent = Math.round((amount / totalStockValue) * 100);
       return {
         name,
@@ -714,7 +719,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         color: colors[idx % colors.length]
       };
     });
-  }, [ingredients]);
+  }, [ingredients, ingredientCategories]);
 
   // -------------------------------------------------------------
   // 7. Expense Analysis Data (Real from filteredExpenses)
@@ -725,8 +730,9 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
     filteredExpenses.forEach(exp => {
       const cat = EXPENSE_CATEGORY_LABELS[exp.category] || exp.category || 'ค่าใช้จ่ายทั่วไป';
-      catMap.set(cat, (catMap.get(cat) || 0) + (exp.amount || 0));
-      totalExp += exp.amount || 0;
+      const cost = expenseCost(exp, vatRegistered);
+      catMap.set(cat, (catMap.get(cat) || 0) + cost);
+      totalExp += cost;
     });
 
     if (totalExp === 0) {
@@ -743,7 +749,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
       { color: 'bg-purple-500', barColor: '#a855f7' }
     ];
 
-    return Array.from(catMap.entries()).map(([name, amount], idx) => {
+    return Array.from(catMap.entries()).sort((x, y) => y[1] - x[1]).map(([name, amount], idx) => {
       const percent = Math.round((amount / totalExp) * 1000) / 10;
       return {
         name,
@@ -753,7 +759,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         barColor: colors[idx % colors.length].barColor
       };
     });
-  }, [filteredExpenses]);
+  }, [filteredExpenses, vatRegistered]);
 
   // -------------------------------------------------------------
   // 9. Payment Methods & Cash Flow (Real Data)
@@ -1145,6 +1151,27 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             </select>
           </label>
         </div>
+        <div className="flex gap-1 overflow-x-auto no-scrollbar border-t border-slate-800 pt-2" role="tablist" aria-label="หมวดรายงาน">
+          {([
+            ['ov', 'ภาพรวม'],
+            ['menu', 'เมนู'],
+            ['money', 'ต้นทุน & เงิน'],
+            ['people', 'ลูกค้า & ช่วงเวลา'],
+            ['history', 'บิลย้อนหลัง']
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={view === id}
+              onClick={() => setView(id)}
+              className={`h-9 px-3.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition ${
+                view === id ? 'bg-slate-100 text-slate-950' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         {datePreset === 'custom' && (
           <div className="flex items-center gap-2 text-xs">
             <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="flex-1 h-9 px-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-200" />
@@ -1154,6 +1181,8 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         )}
       </div>
 
+      {view === 'ov' && (
+        <>
       {/* Key figures */}
       <div className="space-y-3">
         {/* Sales hero */}
@@ -1263,7 +1292,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div>
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <TrendingUp className="w-4 h-4 text-amber-400" />
-              <span>2. Sales Overview (กราฟวิเคราะห์ยอดขายจากข้อมูลจริง)</span>
+              <span>ยอดขาย กำไร และต้นทุนตามช่วงเวลา</span>
             </h3>
             <p className="text-xs text-slate-400">เปรียบเทียบยอดขาย กำไร ต้นทุน และจำนวนบิลตามช่วงเวลาที่เกิดขึ้นจริง</p>
           </div>
@@ -1347,6 +1376,11 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         </div>
       </div>
 
+        </>
+      )}
+
+      {view === 'menu' && (
+        <>
       {/* ------------------------------------------------------------- */}
       {/* SECTION 3: TOP BEST SELLERS (เมนูขายดีที่สุด) */}
       {/* ------------------------------------------------------------- */}
@@ -1355,7 +1389,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div>
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <Award className="w-4 h-4 text-amber-400" />
-              <span>3. Top Best Sellers (อันดับเมนูขายดีที่สุดจริง)</span>
+              <span>เมนูขายดี</span>
             </h3>
             <p className="text-xs text-slate-400">สรุปยอดขาย จำนวนจาน กำไรสุทธิ และ Food Cost แยกตามรายการเมนูที่บันทึกขายจริง</p>
           </div>
@@ -1444,7 +1478,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <DollarSign className="w-4 h-4 text-emerald-400" />
-              <span>4. เมนูทำกำไรสูงสุด (Top Profit Dishes)</span>
+              <span>เมนูทำกำไรสูงสุด</span>
             </h3>
             <p className="text-xs text-slate-400">เน้นสร้างผลกำไรสุทธิสูงสุดแก่ร้าน (คำนวณจากยอดขายจริง)</p>
           </div>
@@ -1484,7 +1518,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <ShieldAlert className="w-4 h-4 text-rose-400" />
-              <span>5. เมนูขายช้า (Slow Moving Menu)</span>
+              <span>เมนูขายช้า</span>
             </h3>
             <p className="text-xs text-slate-400">เมนูที่มียอดขายน้อยกว่า 5 จาน พร้อมปุ่มแอ็กชันปรับปรุงเข้าเมนูจริง</p>
           </div>
@@ -1495,16 +1529,12 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
                 🎉 ยอดเยี่ยม! เมนูทุกรายการมียอดขายคล่องตัว
               </div>
             ) : (
-              slowMovingItems.map((item) => (
-                <div key={item.id} className="p-3 bg-slate-950 rounded-2xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center space-x-2.5">
-                    <div>
-                      <h4 className="font-bold text-xs text-slate-200">{item.name}</h4>
-                      <div className="flex items-center space-x-2 text-[10px] text-slate-400 font-mono">
-                        <span>ราคา ฿{item.price}</span>
-                        <span>•</span>
-                        <span className="text-rose-400 font-bold">ขายได้ {item.qty} จาน</span>
-                      </div>
+              (showAllSlow ? slowMovingItems : slowMovingItems.slice(0, 5)).map((item) => (
+                <div key={item.id} className="p-3 bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h4 className="font-bold text-xs text-slate-200 truncate">{item.name}</h4>
+                    <div className="text-[11px] text-slate-400 whitespace-nowrap">
+                      ฿{item.price} · <span className="text-rose-400 font-bold">ขายได้ {item.qty} จาน</span>
                     </div>
                   </div>
 
@@ -1534,11 +1564,21 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
                 </div>
               ))
             )}
+            {slowMovingItems.length > 5 && (
+              <button type="button" onClick={() => setShowAllSlow(v => !v)} className="w-full h-10 rounded-xl border border-slate-800 text-xs text-slate-300">
+                {showAllSlow ? 'แสดงน้อยลง' : `ดูทั้งหมด ${slowMovingItems.length} เมนู`}
+              </button>
+            )}
           </div>
         </div>
 
       </div>
 
+        </>
+      )}
+
+      {view === 'money' && (
+        <>
       {/* ------------------------------------------------------------- */}
       {/* SECTION 6: FOOD COST DASHBOARD */}
       {/* ------------------------------------------------------------- */}
@@ -1547,43 +1587,18 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div>
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <PieChartIcon className="w-4 h-4 text-orange-400" />
-              <span>6. Food Cost & Stock Dashboard (สัดส่วนมูลค่าสต็อกวัตถุดิบจริง)</span>
+              <span>มูลค่าสต็อกวัตถุดิบ</span>
             </h3>
             <p className="text-xs text-slate-400">สัดส่วนมูลค่าวัตถุดิบที่มีอยู่ในคลังแยกตามประเภท</p>
           </div>
 
-          <div className="bg-slate-950 px-3 py-1.5 rounded-2xl border border-slate-800 text-xs font-mono">
-            <span className="text-slate-400">Food Cost วันนี้: </span>
-            <strong className="text-orange-400 font-bold text-sm">{todayFoodCostPct}%</strong>
+          <div className="bg-slate-950 px-3 py-1.5 rounded-2xl border border-slate-800 text-xs">
+            <span className="text-slate-400">มูลค่ารวม </span>
+            <strong className="text-orange-300 font-bold text-sm font-mono">฿{foodCostPieData.reduce((t, x) => t + x.amount, 0).toLocaleString('th-TH')}</strong>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-          {/* Donut Chart */}
-          <div className="h-60 w-full flex items-center justify-center">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={foodCostPieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={85}
-                  paddingAngle={4}
-                  dataKey="value"
-                >
-                  {foodCostPieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <RechartsTooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '12px' }}
-                  formatter={(val: any) => [`${val}%`, 'สัดส่วน']}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-
+        <div>
           {/* Breakdown List */}
           <div className="space-y-3">
             {foodCostPieData.map(fc => (
@@ -1611,9 +1626,9 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         <div className="border-b border-slate-800 pb-3">
           <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
             <Sliders className="w-4 h-4 text-purple-400" />
-            <span>7. วิเคราะห์ค่าใช้จ่ายจริง (Expense Analysis)</span>
+            <span>ค่าใช้จ่ายตามหมวด</span>
           </h3>
-          <p className="text-xs text-slate-400">แบ่งสัดส่วนค่าใช้จ่ายดำเนินงานทั้งหมดจากบันทึกรายจ่ายจริง</p>
+          <p className="text-xs text-slate-400">จากรายจ่ายที่บันทึกในหน้าการเงิน{vatRegistered ? ' (ยอดก่อน VAT ที่ขอคืนได้)' : ''}</p>
         </div>
 
         {expenseCategories.length === 0 ? (
@@ -1627,7 +1642,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
                 <div key={exp.name} className="space-y-1">
                   <div className="flex justify-between text-xs text-slate-300">
                     <span className="font-semibold">{exp.name}</span>
-                    <span className="font-mono font-bold text-slate-100">฿{exp.amount.toLocaleString()} ({exp.percent}%)</span>
+                    <span className="font-mono font-bold text-slate-100">฿{exp.amount.toLocaleString('th-TH', { maximumFractionDigits: 2 })} ({exp.percent}%)</span>
                   </div>
                   <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden">
                     <div className={`h-full ${exp.color} transition-all duration-500`} style={{ width: `${Math.min(100, exp.percent)}%` }} />
@@ -1638,14 +1653,17 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
             <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3 flex flex-col justify-center">
               <div className="flex justify-between items-center text-xs text-slate-400">
-                <span>รวมค่าใช้จ่ายจริงทั้งหมด:</span>
+                <span>รวมรายจ่ายที่บันทึก</span>
                 <strong className="text-rose-400 font-mono text-base font-black">
-                  ฿{periodExpenses.toLocaleString()}
+                  ฿{expenseCategories.reduce((t, e) => t + e.amount, 0).toLocaleString('th-TH', { maximumFractionDigits: 2 })}
                 </strong>
               </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                💡 ติดตามและตรวจสอบรายการค่าใช้จ่ายเพื่อควบคุมต้นทุนดำเนินงานให้อยู่ในงบประมาณที่กำหนด
-              </p>
+              {periodPL.expenses.raw_material > 0 && (
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  รวมค่าซื้อวัตถุดิบ ฿{periodPL.expenses.raw_material.toLocaleString('th-TH', { maximumFractionDigits: 2 })} ซึ่งเข้าสต็อก จึงไม่อยู่ใน “ค่าใช้จ่ายขายและบริหาร” ของงบกำไรขาดทุน
+                  (คิดเป็นต้นทุนเมื่อขายอาหารแล้ว)
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -1661,7 +1679,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <FileText className="w-4 h-4 text-emerald-400" />
-              <span>8. กำไรขาดทุนจริง (P&L Statement)</span>
+              <span>งบกำไรขาดทุนย่อ</span>
             </h3>
             <p className="text-xs text-slate-400">สรุปงบกำไรขาดทุนจริงตามช่วงเวลาที่เลือก</p>
           </div>
@@ -1674,28 +1692,28 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
             <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex justify-between items-center text-rose-400">
               <span>(-) ต้นทุนขาย</span>
-              <span>-฿{periodFoodCost.toLocaleString()}</span>
+              <span>{signedBaht(-periodFoodCost)}</span>
             </div>
 
             <div className="p-3 bg-amber-950/30 rounded-xl border border-amber-800/50 flex justify-between items-center font-bold text-amber-300">
               <span>(=) กำไรขั้นต้น (Gross Profit)</span>
-              <span className="text-sm">฿{periodGrossProfit.toLocaleString()}</span>
+              <span className="text-sm">{signedBaht(periodGrossProfit)}</span>
             </div>
 
             <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex justify-between items-center text-rose-400">
               <span>(-) ค่าใช้จ่ายขายและบริหาร</span>
-              <span>-฿{periodExpenses.toLocaleString()}</span>
+              <span>{signedBaht(-periodExpenses)}</span>
             </div>
             {periodPL.otherIncome > 0 && (
               <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex justify-between items-center text-emerald-300">
                 <span>(+) รายได้อื่น</span>
-                <span>+฿{periodPL.otherIncome.toLocaleString()}</span>
+                <span>+{signedBaht(periodPL.otherIncome)}</span>
               </div>
             )}
 
             <div className="p-3 bg-emerald-950/60 rounded-xl border border-emerald-500/40 flex justify-between items-center font-black text-emerald-400 text-sm">
               <span>(=) กำไรก่อนภาษีเงินได้</span>
-              <span className="text-base">฿{periodNetProfit.toLocaleString()}</span>
+              <span className="text-base">{signedBaht(periodNetProfit)}</span>
             </div>
           </div>
         </div>
@@ -1705,7 +1723,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <Landmark className="w-4 h-4 text-cyan-400" />
-              <span>9. Cash Flow (กระแสเงินสดจริง)</span>
+              <span>เงินเข้า-ออก</span>
             </h3>
             <p className="text-xs text-slate-400">เงินเข้า เงินออก และสัดส่วนช่องทางชำระเงินจริง</p>
           </div>
@@ -1722,7 +1740,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
               <span className="text-slate-400 text-[10px]">กระแสเงินสดสุทธิ</span>
               <p className={`font-bold text-sm ${periodCashIn - periodCashOut >= 0 ? 'text-cyan-400' : 'text-rose-400'}`}>
-                ฿{(periodCashIn - periodCashOut).toLocaleString()}
+                {signedBaht(periodCashIn - periodCashOut)}
               </p>
             </div>
             <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
@@ -1752,6 +1770,11 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
       </div>
 
+        </>
+      )}
+
+      {view === 'people' && (
+        <>
       {/* ------------------------------------------------------------- */}
       {/* SECTION 10 & 11: CUSTOMER ANALYTICS & PEAK HOURS HEATMAP */}
       {/* ------------------------------------------------------------- */}
@@ -1762,7 +1785,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <Users className="w-4 h-4 text-sky-400" />
-              <span>10. ประเภทคำสั่งซื้อ (Order Types Analytics)</span>
+              <span>ประเภทออเดอร์</span>
             </h3>
             <p className="text-xs text-slate-400">สัดส่วนการสั่งซื้อ ทานที่ร้าน สั่งกลับบ้าน และเดลิเวอรี</p>
           </div>
@@ -1793,7 +1816,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           <div className="border-b border-slate-800 pb-3">
             <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
               <Flame className="w-4 h-4 text-orange-400" />
-              <span>11. วิเคราะห์เวลาขายดีจริง (Peak Hours Heatmap)</span>
+              <span>ช่วงเวลาขายดี</span>
             </h3>
             <p className="text-xs text-slate-400">ช่วงเวลาที่มีออเดอร์หนาแน่น คำนวณจากเวลาสั่งซื้อจริง</p>
           </div>
@@ -1818,6 +1841,11 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
       </div>
 
+        </>
+      )}
+
+      {view === 'ov' && (
+        <>
       {/* ------------------------------------------------------------- */}
       {/* SECTION 12: AI INSIGHT (กล่องคำแนะนำอัจฉริยะ) */}
       {/* ------------------------------------------------------------- */}
@@ -1827,7 +1855,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             <Sparkles className="w-6 h-6 animate-pulse stroke-[2.5]" />
           </span>
           <div>
-            <h3 className="text-base font-black text-emerald-300">12. AI Insight (การวิเคราะห์คำแนะนำอัจฉริยะ)</h3>
+            <h3 className="text-base font-black text-emerald-300">คำแนะนำจากข้อมูลร้าน</h3>
             <p className="text-xs text-emerald-200/80">ประมวลผลจากข้อมูลการขายและสต็อกจริงในระบบ</p>
           </div>
         </div>
@@ -1854,7 +1882,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
 
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="text-base font-black text-slate-100">13. KPI สุขภาพธุรกิจ (Business Health Score)</h3>
+                <h3 className="text-base font-black text-slate-100">คะแนนสุขภาพธุรกิจ</h3>
                 <span className="text-amber-400 text-xs">
                   {businessHealthScore >= 90 ? '★★★★★' : businessHealthScore >= 70 ? '★★★★☆' : '★★★☆☆'}
                 </span>
@@ -1903,6 +1931,11 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
         </div>
       </div>
 
+        </>
+      )}
+
+      {view === 'history' && (
+        <>
       {/* ------------------------------------------------------------- */}
       {/* SECTION 14: HISTORICAL ORDERS & RECEIPTS LOG */}
       {/* ------------------------------------------------------------- */}
@@ -1914,7 +1947,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="text-base font-black text-slate-100">14. ประวัติรายการบิลและออเดอร์ย้อนหลัง (Historical Orders & Receipts Log)</h3>
+                <h3 className="text-base font-black text-slate-100">บิลและออเดอร์ย้อนหลัง</h3>
                 <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold">
                   {periodLabel}
                 </span>
@@ -2037,8 +2070,44 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           </div>
         </div>
 
+        {/* Orders as cards on phones */}
+        <div className="sm:hidden space-y-2">
+          {paginatedOrders.length === 0 ? (
+            <div className="py-10 text-center text-slate-500 text-xs rounded-2xl border border-slate-800">ไม่พบบิลในช่วงเวลานี้</div>
+          ) : (
+            paginatedOrders.map(order => {
+              const d = order.createdAt ? new Date(order.createdAt) : new Date();
+              const cancelled = order.status === 'cancelled';
+              const place = order.tableNumber ? `โต๊ะ ${order.tableNumber}` : order.orderType === 'delivery' ? 'เดลิเวอรี' : order.orderType === 'takeaway' ? 'กลับบ้าน' : 'หน้าร้าน';
+              const pay = ({ cash: 'เงินสด', promptpay: 'พร้อมเพย์', credit: 'บัตร', transfer: 'โอน', truemoney: 'TrueMoney' } as Record<string, string>)[order.paymentMethod] || order.paymentMethod || '';
+              return (
+                <button
+                  key={order.id}
+                  type="button"
+                  onClick={() => setSelectedOrderForDetail(order)}
+                  className={`w-full text-left p-3 rounded-2xl border border-slate-800 bg-slate-950 ${cancelled ? 'opacity-60' : ''}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-amber-300 text-xs">#{order.orderNumber || order.id.slice(-6)}</span>
+                    <span className={`font-mono font-black text-sm ${cancelled ? 'line-through text-slate-500' : 'text-slate-100'}`}>
+                      ฿{(order.grandTotal || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    {d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })} {d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} · {place} · {pay}
+                    {cancelled && <span className="text-rose-300"> · ยกเลิก</span>}
+                  </div>
+                  <div className="text-[11px] text-slate-300 truncate mt-1">
+                    {order.items?.map(i => `${i.menuItem?.name || 'รายการ'} ×${i.quantity}`).join(', ') || '-'}
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+
         {/* Orders Table */}
-        <div className="overflow-x-auto rounded-2xl border border-slate-800">
+        <div className="hidden sm:block overflow-x-auto rounded-2xl border border-slate-800">
           <table className="w-full text-left text-xs text-slate-300">
             <thead className="bg-slate-950 text-slate-400 uppercase font-semibold border-b border-slate-800 text-[10px] tracking-wider">
               <tr>
@@ -2234,6 +2303,9 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
           </div>
         )}
       </div>
+
+        </>
+      )}
 
       {/* ------------------------------------------------------------- */}
       {/* ORDER DETAIL & RECEIPT MODAL */}
