@@ -1,13 +1,21 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
-import App from './App.tsx';
+import { StrictMode, lazy, Suspense } from 'react';
+import { createRoot } from 'react-dom/client';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { readTableFromUrl } from './components/customer/tableLink.ts';
 import './index.css';
+
+// A table QR code (?table=5&b=<branch>) opens the customer ordering page: no login, no staff
+// screens, and the staff app (with all its shop data) is never loaded on the customer's phone.
+const tableLink = readTableFromUrl(window.location.search);
+const App = lazy(() => import('./App.tsx'));
+const CustomerOrderPage = lazy(() => import('./components/customer/CustomerOrderPage.tsx'));
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <Suspense fallback={<div style={{ minHeight: '100dvh', background: '#0d0704' }} />}>
+        {tableLink ? <CustomerOrderPage table={tableLink.table} branchId={tableLink.branchId} /> : <App />}
+      </Suspense>
     </ErrorBoundary>
   </StrictMode>,
 );

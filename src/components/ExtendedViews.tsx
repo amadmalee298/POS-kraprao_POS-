@@ -3,7 +3,7 @@ import { calcRecipeItemCostAndDeduction, getAvailableRecipeUnits } from '../util
 import { isItemInCategory } from '../utils/categoryUtils';
 import { SHOP_LOGO_URL } from '../assets/logo';
 import { compressImageFile } from '../utils/imageCompressor';
-import { generatePromptPayPayload, generateQRCodeDataURL } from '../utils/promptpay';
+import { generatePromptPayPayload, generateQRCodeDataURL, resolvePromptPayId } from '../utils/promptpay';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -110,6 +110,13 @@ import {
 } from '../services/notificationService';
 import { MenuItem, AddOnOption, RecipeIngredient, MenuCategory, CartItem, SpiceLevel, ProteinChoice, Order, CustomerTaxInfo, PaymentMethod, QrPaymentOption } from '../types';
 import { orderVatBreakdown } from '../utils/orderUtils';
+import {
+  syncMenuItemsBatchToFirestore,
+  syncAddOnsToFirestore,
+  syncCategoriesToFirestore,
+  syncSettingsToFirestore,
+  syncBranchToFirestore
+} from '../services/firebaseService';
 import { exportToPDF, exportToPNG, printElement } from '../utils/exportDocument';
 import { AIMenuEngineeringPanel } from './inventory/AIMenuEngineeringPanel';
 import { BulkIngredientCostEditorPanel } from './inventory/BulkIngredientCostEditorPanel';
@@ -121,20 +128,34 @@ export const ExecutiveDashboardView: React.FC = () => {
   return <EnterpriseExecutiveDashboard onNavigateToTab={setActiveTab} />;
 };
 
-// Helper functions for real scannable QR generation
-const getTableOrderUrl = (table: string) => {
-  if (typeof window === 'undefined') return `https://ais-dev-kroxy3zk34mzybefraqwyj-164832963000.asia-southeast1.run.app/?table=${table}`;
-  const origin = window.location.origin;
-  const pathname = window.location.pathname;
-  return `${origin}${pathname}?table=${table}`;
+/** Link printed on a table's QR code: opens the customer ordering page for that table and branch. */
+const getTableOrderUrl = (table: string, branchId?: string) => {
+  const base = typeof window === 'undefined' ? '' : `${window.location.origin}${window.location.pathname}`;
+  const params = new URLSearchParams({ table });
+  if (branchId) params.set('b', branchId);
+  return `${base}?${params.toString()}`;
 };
 
-const getQrCodeImgSrc = (table: string, size = 300) => {
-  const targetUrl = getTableOrderUrl(table);
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(targetUrl)}&color=070b14&bgcolor=ffffff&margin=1`;
+/** QR code rendered in the browser (no third-party QR service sees the link or payment data). */
+const QrCodeImage: React.FC<{ text: string; alt: string; className?: string; size?: number }> = ({ text, alt, className, size = 300 }) => {
+  const [src, setSrc] = React.useState('');
+  React.useEffect(() => {
+    let alive = true;
+    if (!text) {
+      setSrc('');
+      return;
+    }
+    generateQRCodeDataURL(text, size).then(url => {
+      if (alive) setSrc(url);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [text, size]);
+  return src ? <img src={src} alt={alt} className={className} /> : <div className={className} />;
 };
 
-// PromptPay QR is rendered locally: the payment payload is never sent to a third-party QR service
+// PromptPay QR with the amount; shows a warning instead of a QR when no valid PromptPay ID is set
 const PromptPayQrImage: React.FC<{ amount: number; promptPayId?: string; alt: string; className?: string }> = ({
   amount,
   promptPayId,
@@ -142,24 +163,10 @@ const PromptPayQrImage: React.FC<{ amount: number; promptPayId?: string; alt: st
   className
 }) => {
   const payload = generatePromptPayPayload(promptPayId || '', amount);
-  const [src, setSrc] = React.useState('');
-  React.useEffect(() => {
-    let alive = true;
-    if (!payload) {
-      setSrc('');
-      return;
-    }
-    generateQRCodeDataURL(payload, 220).then(url => {
-      if (alive) setSrc(url);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [payload]);
   if (!payload) {
     return <div className="text-[10px] font-bold text-rose-600 p-2 max-w-[140px]">ยังไม่ได้ตั้งค่าเบอร์พร้อมเพย์ที่ถูกต้อง</div>;
   }
-  return src ? <img src={src} alt={alt} className={className} /> : <div className={className} />;
+  return <QrCodeImage text={payload} alt={alt} className={className} size={220} />;
 };
 
 const renderPaymentMethodBadge = (pm?: PaymentMethod) => {
@@ -228,7 +235,7 @@ export const QrOrderingView: React.FC = () => {
       name: 'พร้อมเพย์ QR',
       type: 'promptpay',
       enabled: true,
-      accountNumber: settings.promptpayMobileOrTaxId || settings.promptPayId || '081-234-5678',
+      accountNumber: resolvePromptPayId(settings, currentBranch),
       accountName: settings.shopName || 'ร้านครัวกะเพรา POS',
       instructions: 'สแกนคิวอาร์โค้ดเพื่อโอนชำระเงินผ่านแอปพลิเคชันธนาคารทุกธนาคาร'
     },
@@ -236,8 +243,9 @@ export const QrOrderingView: React.FC = () => {
       id: 'truemoney',
       name: 'TrueMoney Wallet',
       type: 'truemoney',
-      enabled: true,
-      accountNumber: settings.promptpayMobileOrTaxId || '081-234-5678',
+      // Off until the shop enters its own TrueMoney number
+      enabled: false,
+      accountNumber: '',
       accountName: settings.shopName || 'ร้านครัวกะเพรา POS',
       instructions: 'โอนชำระเงินผ่านแอป TrueMoney Wallet'
     },
@@ -245,8 +253,9 @@ export const QrOrderingView: React.FC = () => {
       id: 'linepay',
       name: 'Rabbit LINE Pay',
       type: 'linepay',
-      enabled: true,
-      accountNumber: 'RLP-987654321',
+      // Off until the shop enters its own Rabbit LINE Pay account
+      enabled: false,
+      accountNumber: '',
       accountName: settings.shopName || 'ร้านครัวกะเพรา POS',
       instructions: 'สแกนชำระเงินผ่าน Rabbit LINE Pay หรือ LINE App'
     },
@@ -357,19 +366,26 @@ export const QrOrderingView: React.FC = () => {
   const [customizingItem, setCustomizingItem] = useState<MenuItem | null>(null);
   const [customerNickname, setCustomerNickname] = useState<string>('');
 
-  // Auto-open table ordering modal if ?table= parameter exists in URL (e.g. scanned from real camera)
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const tableParam = params.get('table') || params.get('qr');
-      if (tableParam) {
-        handleOpenSim(tableParam);
-      }
+  // Push menu, toppings, categories, settings and branch info (non-destructive) for the customer page
+  const [publishState, setPublishState] = useState<'idle' | 'working' | 'done' | 'error'>('idle');
+  const handlePublishCustomerMenu = async () => {
+    setPublishState('working');
+    try {
+      const results = await Promise.all([
+        syncMenuItemsBatchToFirestore(menuItems),
+        syncAddOnsToFirestore(addOns, currentBranch.id),
+        syncCategoriesToFirestore(categories, currentBranch.id),
+        syncSettingsToFirestore(settings, currentBranch.id),
+        syncBranchToFirestore(currentBranch)
+      ]);
+      setPublishState(results.every(Boolean) ? 'done' : 'error');
+    } catch {
+      setPublishState('error');
     }
-  }, []);
+  };
 
   const handleCopyLink = (table: string) => {
-    const url = getTableOrderUrl(table);
+    const url = getTableOrderUrl(table, currentBranch.id);
     navigator.clipboard.writeText(url).then(() => {
       setCopiedTable(table);
       setTimeout(() => setCopiedTable(null), 2500);
@@ -544,21 +560,10 @@ export const QrOrderingView: React.FC = () => {
     return matchCategory && matchSearch;
   });
 
-  const proteinOptions: { name: ProteinChoice; extraPrice: number }[] = [
-    { name: 'หมูสับ', extraPrice: 0 },
-    { name: 'ไก่ชิ้น', extraPrice: 0 },
-    { name: 'หมูกรอบ', extraPrice: 25 },
-    { name: 'เนื้อสไลส์', extraPrice: 25 },
-    { name: 'กุ้ง+หมึก', extraPrice: 30 },
-  ];
-
-  const spiceLevels: SpiceLevel[] = ['ไม่เผ็ด', 'เผ็ดน้อย', 'เผ็ดปานกลาง', 'เผ็ดมาก', 'เผ็ดหูดับ'];
-
   // Orders for verification card
   const pendingQrOrders = orders.filter(o => o.status === 'pending-qr');
   const approvedQrOrders = orders.filter(
-    o => (o.status === 'pending' || o.status === 'cooking') && 
-    (o.discountNote?.includes('ลูกค้า') || o.discountNote?.includes('QR'))
+    o => (o.status === 'pending' || o.status === 'cooking') && o.isQrOrder
   );
 
   return (
@@ -585,12 +590,32 @@ export const QrOrderingView: React.FC = () => {
           </div>
         </div>
 
-        {/* Auto Approve Toggle Card */}
+        {/* Customer menu publishing: the QR ordering page reads the menu from the cloud */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="text-xs text-slate-300">
+          <span className="font-bold text-slate-100 block text-sm">เมนูที่ลูกค้าเห็นเมื่อสแกน QR</span>
+          ลูกค้าเห็นเมนู ราคา และท็อปปิ้งตามที่อัปเดตขึ้น cloud ล่าสุด กดอัปเดตหลังแก้เมนูหรือราคา
+          {publishState === 'done' && <span className="block text-emerald-400 font-bold mt-1">อัปเดตเมนูสำหรับลูกค้าแล้ว</span>}
+          {publishState === 'error' && <span className="block text-rose-400 font-bold mt-1">อัปเดตไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่</span>}
+        </div>
+        <button
+          type="button"
+          onClick={handlePublishCustomerMenu}
+          disabled={publishState === 'working'}
+          className="h-11 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm shrink-0 disabled:opacity-60"
+        >
+          {publishState === 'working' ? 'กำลังอัปเดต…' : 'อัปเดตเมนูสำหรับลูกค้า'}
+        </button>
+      </div>
+
+      {/* Auto Approve Toggle Card */}
         <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3 flex items-center justify-between space-x-4 shrink-0">
           <div className="text-xs">
-            <span className="text-slate-200 font-bold block">อนุมัติอัตโนมัติ (Auto-Approve):</span>
+            <span className="text-slate-200 font-bold block">เครื่องนี้อนุมัติออเดอร์ QR อัตโนมัติ:</span>
             <span className="text-[10px] text-slate-400">
-              {autoApproveQR ? 'ส่งเข้าครัวทันทีเมื่อสั่ง' : 'ต้องให้พนักงานกดยืนยัน'}
+              {autoApproveQR
+                ? 'เปิดอยู่: ออเดอร์ลูกค้าเข้าครัวทันที (เปิดไว้เครื่องเดียว เช่น แท็บเล็ตเคาน์เตอร์)'
+                : 'ปิดอยู่: พนักงานต้องกดยืนยันก่อนเข้าครัว'}
             </span>
           </div>
           <button
@@ -1155,8 +1180,8 @@ export const QrOrderingView: React.FC = () => {
                 className="bg-slate-50 p-3 rounded-xl border border-slate-200 inline-block mx-auto shadow-sm cursor-pointer relative group"
                 title="คลิกเพื่อสั่งอาหาร"
               >
-                <img
-                  src={getQrCodeImgSrc(selectedPrintTable, 300)}
+                <QrCodeImage
+                  text={getTableOrderUrl(selectedPrintTable, currentBranch.id)}
                   alt={`QR Code โต๊ะ ${selectedPrintTable}`}
                   className="w-40 h-40 object-contain mx-auto"
                 />
@@ -1177,7 +1202,7 @@ export const QrOrderingView: React.FC = () => {
             {/* Copy Link Bar */}
             <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between text-xs text-slate-300">
               <span className="truncate text-[10px] font-mono text-slate-400 max-w-[200px]">
-                {getTableOrderUrl(selectedPrintTable)}
+                {getTableOrderUrl(selectedPrintTable, currentBranch.id)}
               </span>
               <button
                 onClick={() => handleCopyLink(selectedPrintTable)}
