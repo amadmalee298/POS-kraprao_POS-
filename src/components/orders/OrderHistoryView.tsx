@@ -28,6 +28,7 @@ import {
   FileText
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
+import { countsAsRevenue } from '../../utils/orderUtils';
 import { Order, PaymentMethod } from '../../types';
 import { printReceiptViaWindow } from '../../utils/printReceipt';
 import { isFirebaseAvailable } from '../../services/firebaseService';
@@ -111,7 +112,9 @@ export const OrderHistoryView: React.FC = () => {
       result = result.filter(o => new Date(o.createdAt).getTime() >= thirtyDaysAgo);
     } else if (dateFilter === 'custom' && (customStartDate || customEndDate)) {
       result = result.filter(o => {
-        const orderDate = new Date(o.createdAt).toISOString().split('T')[0];
+        // Local day (toISOString would give the UTC day: orders after midnight would land on the day before)
+        const d = new Date(o.createdAt);
+        const orderDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         if (customStartDate && customEndDate) {
           return orderDate >= customStartDate && orderDate <= customEndDate;
         } else if (customStartDate) {
@@ -155,7 +158,9 @@ export const OrderHistoryView: React.FC = () => {
   // Statistics
   const stats = useMemo(() => {
     const totalOrders = filteredOrders.length;
-    const completedOrders = filteredOrders.filter(o => o.status === 'served');
+    // Same rule as every other report: paid and not cancelled (a paid order still cooking counts,
+    // an unpaid one does not)
+    const completedOrders = filteredOrders.filter(countsAsRevenue);
     const totalRevenue = completedOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
     const avgTicket = completedOrders.length > 0 ? totalRevenue / completedOrders.length : 0;
     const customerInvoicesCount = filteredOrders.filter(o => o.customerTaxInfo?.companyName).length;
@@ -224,8 +229,15 @@ export const OrderHistoryView: React.FC = () => {
       'ยอดรวมก่อนหัก (฿)',
       'ส่วนลด (฿)',
       'ภาษีมูลค่าเพิ่ม (฿)',
-      'ยอดสุทธิ (฿)'
+      'ยอดสุทธิ (฿)',
+      'การชำระเงิน',
+      'เลขที่ใบกำกับภาษี'
     ];
+    // Quote every text cell (doubling inner quotes) and stop spreadsheet formulas (=, +, -, @)
+    const cell = (v: unknown) => {
+      const text = String(v ?? '');
+      return `"${(/^[=+\-@]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`;
+    };
 
     const rows = filteredOrders.map(o => {
       const branchName = branches.find(b => b.id === o.branchId)?.name || o.branchId;
@@ -234,21 +246,23 @@ export const OrderHistoryView: React.FC = () => {
         .join(' | ') || '';
 
       return [
-        `"${o.orderNumber || o.id}"`,
-        `"${new Date(o.createdAt).toLocaleString('th-TH')}"`,
-        `"${o.completedAt ? new Date(o.completedAt).toLocaleString('th-TH') : '-'}"`,
-        `"${branchName}"`,
-        `"${o.tableNumber || '-'}"`,
-        `"${o.status}"`,
-        `"${o.paymentMethod}"`,
-        `"${o.customerTaxInfo?.companyName || '-'}"`,
-        `"${o.customerTaxInfo?.taxId || '-'}"`,
-        `"${o.customerTaxInfo?.phone || '-'}"`,
-        `"${itemsStr}"`,
+        cell(o.orderNumber || o.id),
+        cell(new Date(o.createdAt).toLocaleString('th-TH')),
+        cell(o.completedAt ? new Date(o.completedAt).toLocaleString('th-TH') : '-'),
+        cell(branchName),
+        cell(o.tableNumber || '-'),
+        cell(o.status),
+        cell(o.paymentMethod),
+        cell(o.customerTaxInfo?.companyName || '-'),
+        cell(o.customerTaxInfo?.taxId || '-'),
+        cell(o.customerTaxInfo?.phone || '-'),
+        cell(itemsStr),
         o.subtotal || o.grandTotal,
         o.discountAmount || 0,
         o.vatAmount || 0,
-        o.grandTotal
+        o.grandTotal,
+        cell(o.paymentStatus === 'unpaid' ? 'ยังไม่ชำระ' : 'ชำระแล้ว'),
+        cell(o.taxInvoiceNo || '-')
       ].join(',');
     });
 
@@ -742,6 +756,9 @@ export const OrderHistoryView: React.FC = () => {
                       <td className="py-3 px-4 text-right whitespace-nowrap">
                         <div className="font-mono font-black text-amber-400 text-sm">
                           ฿{(ord.grandTotal || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                          {ord.paymentStatus === 'unpaid' && ord.status !== 'cancelled' && (
+                            <span className="block text-[10px] font-bold text-amber-400">ยังไม่ชำระ</span>
+                          )}
                         </div>
                         {ord.discountAmount && ord.discountAmount > 0 ? (
                           <div className="text-[10px] text-rose-400 font-mono">

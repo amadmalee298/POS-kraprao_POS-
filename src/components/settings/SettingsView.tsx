@@ -66,6 +66,7 @@ import { CashShiftManagementPanel } from './CashShiftManagementPanel';
 import { SecurityLogPanel } from './SecurityLogPanel';
 import { QrPaymentOption, StaffMember, StaffPermissions } from '../../types';
 import { SHOP_LOGO_URL } from '../../assets/logo';
+import { findManagerByPin } from '../../utils/pins';
 
 const DEFAULT_QR_METHODS: QrPaymentOption[] = [
   {
@@ -130,6 +131,7 @@ export const SettingsView: React.FC = () => {
     syncOfflineQueue,
     staffMembers,
     currentUser,
+    users,
     addStaffMember,
     updateStaffMember,
     deleteStaffMember,
@@ -188,8 +190,9 @@ export const SettingsView: React.FC = () => {
   const [vatType, setVatType] = useState<'inclusive' | 'exclusive' | 'none'>(settings.vatType || 'inclusive');
   const [kdsWarnMin, setKdsWarnMin] = useState(settings.kdsWarningMinutes || 10);
   const [kdsSourceFilter, setKdsSourceFilter] = useState<'all' | 'qr_only'>(settings.kdsOrderSourceFilter || 'all');
-  const [adminPin, setAdminPin] = useState(settings.adminPin || '1234');
-  const [managerPin, setManagerPin] = useState(settings.managerPin || '5555');
+  // Optional shop-wide PINs; empty = only owner/manager accounts' own PINs are accepted
+  const [adminPin, setAdminPin] = useState(settings.adminPin || '');
+  const [managerPin, setManagerPin] = useState(settings.managerPin || '');
 
   // Manager Role Authorization State
   const [isManagerAuthorized, setIsManagerAuthorized] = useState(false);
@@ -215,7 +218,7 @@ export const SettingsView: React.FC = () => {
     name: '',
     role: 'พนักงานเสิร์ฟ',
     phone: '',
-    pin: '1234',
+    pin: '',
     status: 'active',
     permissions: {
       canAccessPOS: true,
@@ -239,12 +242,11 @@ export const SettingsView: React.FC = () => {
 
   const handleVerifyManagerPin = (e: React.FormEvent) => {
     e.preventDefault();
-    const validManagerPin = managerPin || settings.managerPin || '5555';
-    const validAdminPin = adminPin || settings.adminPin || '1234';
+    const approver = findManagerByPin(authPinInput, users, settings);
 
-    if (authPinInput === validManagerPin || authPinInput === validAdminPin) {
+    if (approver) {
       logSecurityEvent({
-        userName: 'ผู้จัดการ / เจ้าของร้าน',
+        userName: approver.name,
         userRole: 'manager',
         action: 'Manager PIN Authorization',
         status: 'SUCCESS',
@@ -262,7 +264,7 @@ export const SettingsView: React.FC = () => {
         status: 'FAILED',
         details: 'ป้อนรหัส Manager/Admin PIN ไม่ถูกต้องในหน้าตั้งค่า'
       });
-      setAuthError('รหัส PIN ไม่ถูกต้อง! กรุณากรอกรหัส Manager PIN (5555) หรือ Admin PIN (1234)');
+      setAuthError('รหัส PIN ไม่ถูกต้อง กรุณาใช้ PIN ของเจ้าของร้านหรือผู้จัดการ');
     }
   };
 
@@ -272,7 +274,8 @@ export const SettingsView: React.FC = () => {
       name: '',
       role: 'พนักงานเสิร์ฟ',
       phone: '',
-      pin: '1234',
+      // Each new employee gets their own random PIN (a shared 1234 lets anyone log in as them)
+      pin: Math.floor(1000 + Math.random() * 9000).toString(),
       status: 'active',
       permissions: {
         canAccessPOS: true,
@@ -295,7 +298,7 @@ export const SettingsView: React.FC = () => {
       name: staff.name,
       role: staff.role,
       phone: staff.phone || '',
-      pin: staff.pin || '1234',
+      pin: staff.pin || '',
       status: staff.status || 'active',
       permissions: staff.permissions || {
         canAccessPOS: true,
@@ -346,7 +349,19 @@ export const SettingsView: React.FC = () => {
     e.preventDefault();
     if (!editingEmployee.name.trim()) return;
 
-    const pinToSave = editingEmployee.pin.trim() || '1234';
+    const pinToSave = editingEmployee.pin.trim();
+    if (!/^\d{4,6}$/.test(pinToSave)) {
+      alert('PIN ต้องเป็นตัวเลข 4-6 หลัก');
+      return;
+    }
+    if (['1234', '0000', '1111', '5555'].includes(pinToSave)) {
+      alert('PIN นี้เดาง่ายเกินไป กรุณาใช้ PIN อื่น');
+      return;
+    }
+    if (staffMembers.some(st => st.id !== editingEmployee.id && st.pin === pinToSave)) {
+      alert('PIN นี้มีพนักงานคนอื่นใช้แล้ว');
+      return;
+    }
 
     if (editingEmployee.id) {
       const existing = staffMembers.find(s => s.id === editingEmployee.id);
@@ -478,10 +493,7 @@ export const SettingsView: React.FC = () => {
 
   const handleExecuteFactoryReset = (e: React.FormEvent) => {
     e.preventDefault();
-    const validManagerPin = managerPin || settings.managerPin || '5555';
-    const validAdminPin = adminPin || settings.adminPin || '1234';
-
-    if (resetPinInput === validManagerPin || resetPinInput === validAdminPin) {
+    if (findManagerByPin(resetPinInput, users, settings)) {
       logSecurityEvent({
         userName: 'ผู้จัดการ / เจ้าของร้าน',
         userRole: 'manager',
@@ -507,7 +519,7 @@ export const SettingsView: React.FC = () => {
         status: 'FAILED',
         details: 'ป้อนรหัส PIN ผิดพลาดขณะพยายามทำ Reset'
       });
-      setResetPinError('รหัส PIN ไม่ถูกต้อง! กรุณากรอก Manager PIN (5555) หรือ Admin PIN (1234)');
+      setResetPinError('รหัส PIN ไม่ถูกต้อง กรุณาใช้ PIN ของเจ้าของร้านหรือผู้จัดการ');
     }
   };
 
@@ -930,7 +942,7 @@ export const SettingsView: React.FC = () => {
                   <p className="text-xs text-slate-300 mt-0.5">
                     {isManagerAuthorized
                       ? 'คุณมีสิทธิ์ในการสร้าง เปลี่ยนแปลงรหัส PIN สุ่มรหัสใหม่ และระงับสิทธิ์การใช้งานของพนักงานทุกคน'
-                      : 'กรุณายืนยันรหัส Manager PIN (5555) หรือ Admin PIN (1234) เพื่อรับสิทธิ์สร้าง แก้ไข หรือระงับรหัสผ่านพนักงาน'}
+                      : 'กรุณายืนยันด้วย PIN ของเจ้าของร้านหรือผู้จัดการ เพื่อสร้าง แก้ไข หรือระงับรหัสผ่านพนักงาน'}
                   </p>
                 </div>
               </div>
@@ -973,7 +985,7 @@ export const SettingsView: React.FC = () => {
                     maxLength={4}
                     value={adminPin}
                     onChange={e => setAdminPin(e.target.value)}
-                    placeholder="1234"
+                    placeholder="ไม่ตั้ง = ใช้ PIN ของบัญชีเจ้าของร้าน"
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-amber-400 font-mono font-bold text-center tracking-widest text-base focus:border-amber-500"
                   />
                 </div>
@@ -985,7 +997,7 @@ export const SettingsView: React.FC = () => {
                     maxLength={4}
                     value={managerPin}
                     onChange={e => setManagerPin(e.target.value)}
-                    placeholder="5555"
+                    placeholder="ไม่ตั้ง = ใช้ PIN ของบัญชีผู้จัดการ"
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-amber-400 font-mono font-bold text-center tracking-widest text-base focus:border-amber-500"
                   />
                 </div>
@@ -1216,7 +1228,7 @@ export const SettingsView: React.FC = () => {
                               <span className="text-[10px] text-slate-400 block font-medium">รหัส PIN 4 หลัก</span>
                               <div className="flex items-center space-x-1.5 mt-0.5">
                                 <span className="font-mono font-extrabold text-amber-300 text-base tracking-widest">
-                                  {showPin ? (staff.pin || '1234') : '••••'}
+                                  {showPin ? (staff.pin || 'ยังไม่ตั้ง') : '••••'}
                                 </span>
                                 <button
                                   type="button"

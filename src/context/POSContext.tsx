@@ -78,6 +78,8 @@ import {
   subscribeToMenuItems,
   subscribeToBranchInventory,
   subscribeToStockHistory,
+  subscribeToBranchDoc,
+  claimDailyJob,
   subscribeToDeletedRecords
 } from '../services/firebaseService';
 import {
@@ -136,6 +138,10 @@ interface DiscountState {
   amount: number;
   type: 'fixed' | 'percent';
   note?: string;
+  /** Coupon the discount came from */
+  couponCode?: string;
+  /** CRM member credited with this bill */
+  member?: { id: string; name: string };
 }
 
 /** One stock change: positive adds (received), negative removes (waste, correction). */
@@ -269,7 +275,7 @@ interface POSContextType {
     cancelledBy?: { userId?: string; userName: string; role: string },
     options?: { restock?: boolean }
   ) => void;
-  updateOrderTaxInfo: (orderId: string, taxInfo: CustomerTaxInfo) => void;
+  updateOrderTaxInfo: (orderId: string, taxInfo: CustomerTaxInfo, extra?: { taxInvoiceNo?: string; withholdingTax?: number }) => void;
   addTaxInvoiceOrder: (newOrder: Order) => void;
 
   // Inventory operations
@@ -722,6 +728,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [wasteLogs, setWasteLogs] = useState<WasteLog[]>(INITIAL_WASTE_LOGS);
   const [stockAdjustmentLogs, setStockAdjustmentLogs] = useState<StockAdjustmentLog[]>(INITIAL_STOCK_ADJUSTMENT_LOGS);
 
+  const lastLocalSettingsEditRef = useRef(0);
+
   // History written while offline, sent on reconnect
   const pendingStockLogsRef = useRef<StockAdjustmentLog[]>([]);
   const pendingWasteLogsRef = useRef<WasteLog[]>([]);
@@ -886,8 +894,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return;
     }
 
-    const todayStr = new Date().toISOString().split('T')[0];
-    const todayOrders = orders.filter(o => o.branchId === currentBranch.id && o.createdAt.startsWith(todayStr) && countsAsRevenue(o));
+    // Today in local time (an ISO timestamp's date is UTC, 7 hours behind Thailand)
+    const todayStr = new Date().toDateString();
+    const todayOrders = orders.filter(o => o.branchId === currentBranch.id && new Date(o.createdAt).toDateString() === todayStr && countsAsRevenue(o));
     const todaySales = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
     const lowStock = ingredients.filter(i => i.currentStock <= i.minStockAlert).length;
 
@@ -1220,6 +1229,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     });
 
+    // Shop settings saved on another device (VAT, receipt, PromptPay...). PINs never travel through
+    // the cloud, and the kitchen sound stays a per-device choice.
+    const unsubSettings = subscribeToBranchDoc(branchTargetId, 'settings', data => {
+      if (!data) return;
+      if (Date.now() - lastLocalSettingsEditRef.current < 5000) return;
+      const { updatedAt: _u, lastUpdatedIso: _l, adminPin: _a, managerPin: _m, enableKitchenSound: _k, ...cloud } = data as Record<string, unknown>;
+      setSettings(prev => {
+        const next = { ...prev, ...(cloud as Partial<SystemSettings>) };
+        return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+      });
+    });
+
     // Shared stock history (receiving, counts, corrections, waste) from every device
     const mergeHistory = <T extends { id: string }>(prev: T[], cloud: T[], time: (x: T) => string): T[] => {
       const byId = new Map(prev.map(x => [x.id, x]));
@@ -1285,6 +1306,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       unsubMenus();
       unsubInventory();
       unsubHistory();
+      unsubSettings();
       unsubTombstones();
     };
   }, [isStorageLoaded, effectiveOffline, currentBranch?.id, deletedMenuItemIds.length, deletedIngredientIds.length]);
@@ -1303,14 +1325,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const currentHours = String(now.getHours()).padStart(2, '0');
         const currentMinutes = String(now.getMinutes()).padStart(2, '0');
         const currentTimeStr = `${currentHours}:${currentMinutes}`;
-        const todayStr = now.toISOString().split('T')[0];
+        // Local day (the ISO date is UTC)
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
         const lastSentDate = localStorage.getItem('kaprao_last_daily_summary_date');
         // If current time reached summary time and hasn't been sent yet today
         if (currentTimeStr >= summaryTime && lastSentDate !== todayStr) {
           localStorage.setItem('kaprao_last_daily_summary_date', todayStr);
-          const msg = generateDailySummaryMessage(orders, ingredients, currentBranch, settings);
-          dispatchNotification('สรุปยอดขายประจำวันอัตโนมัติ (Daily Summary)', msg, { force: true }).catch(console.error);
+          // Only one of the shop's open devices sends it (otherwise every tablet sends a copy)
+          claimDailyJob(currentBranch.id, 'daily_summary', todayStr).then(mine => {
+            if (!mine) return;
+            const msg = generateDailySummaryMessage(orders, ingredients, currentBranch, settings);
+            dispatchNotification('สรุปยอดขายประจำวันอัตโนมัติ (Daily Summary)', msg, { force: true }).catch(console.error);
+          });
         }
       } catch (err) {
         console.warn('[Notification Schedule] Check error:', err);
@@ -2325,6 +2352,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (currentBranch.id === updatedBranch.id) {
       setCurrentBranch(updatedBranch);
     }
+    // Branch details (name, address, tax ID, PromptPay) are what other devices and the customer
+    // QR page show, so they are saved to the cloud too
+    if (isFirebaseAvailable() && !effectiveOffline) syncBranchToFirestore(updatedBranch).catch(console.warn);
   };
 
   const addBranch = (branchData: Omit<Branch, 'id'>) => {
@@ -2334,12 +2364,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     setBranches(prev => [...prev, newBranch]);
     setCurrentBranch(newBranch);
+    if (isFirebaseAvailable() && !effectiveOffline) syncBranchToFirestore(newBranch).catch(console.warn);
   };
 
   const deleteBranch = (branchId: string) => {
+    // The shop always keeps at least one branch (every sale and setting belongs to one)
+    if (branches.length <= 1) return;
     setBranches(prev => {
       const filtered = prev.filter(b => b.id !== branchId);
-      if (currentBranch.id === branchId && filtered.length > 0) {
+      if (filtered.length === 0) return prev;
+      if (currentBranch.id === branchId) {
         setCurrentBranch(filtered[0]);
       }
       return filtered;
@@ -2381,6 +2415,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateSettings = (newSettings: Partial<SystemSettings>) => {
+    lastLocalSettingsEditRef.current = Date.now();
     let newPromptPay = newSettings.promptpayMobileOrTaxId || newSettings.promptPayId;
     if (!newPromptPay && newSettings.qrPaymentMethods) {
       const pmPromptPay = newSettings.qrPaymentMethods.find(m => m.type === 'promptpay');
@@ -2889,12 +2924,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       orderNumber,
       branchId: currentBranch.id,
       orderType,
-      tableNumber: orderType === 'dine-in' ? tableNumber || 'T-01' : undefined,
+      tableNumber: orderType === 'dine-in' ? tableNumber || undefined : undefined,
       items: [...cart],
       subtotal: rawSubtotal,
       discountAmount: calculatedDiscount,
       discountType: discount.type,
       discountNote: discount.note,
+      couponCode: discount.couponCode,
+      memberId: discount.member?.id,
+      memberName: discount.member?.name,
       vatAmount,
       grandTotal,
       paymentMethod,
@@ -3205,24 +3243,26 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  const updateOrderTaxInfo = (orderId: string, taxInfo: CustomerTaxInfo) => {
-    setOrders(prev =>
-      prev.map(ord => {
-        if (ord.id === orderId) {
-          return {
-            ...ord,
-            customerTaxInfo: taxInfo,
-            isFullTaxInvoiceRequested: true,
-            updatedAt: new Date().toISOString()
-          };
-        }
-        return ord;
-      })
-    );
+  /** Issue (or correct) the full tax invoice details of an existing sale; saved to the cloud too. */
+  const updateOrderTaxInfo = (orderId: string, taxInfo: CustomerTaxInfo, extra?: { taxInvoiceNo?: string; withholdingTax?: number }) => {
+    const current = orders.find(o => o.id === orderId);
+    if (!current) return;
+    const updated: Order = {
+      ...current,
+      customerTaxInfo: taxInfo,
+      isFullTaxInvoiceRequested: true,
+      taxInvoiceNo: extra?.taxInvoiceNo || current.taxInvoiceNo,
+      withholdingTax: extra?.withholdingTax ?? current.withholdingTax,
+      updatedAt: new Date().toISOString()
+    };
+    commitOrderChange(orderId, updated);
+    pushNewOrderToCloud(updated);
   };
 
+  /** A sale made outside the till (e.g. catering) recorded with its receipt / tax invoice. */
   const addTaxInvoiceOrder = (newOrder: Order) => {
     setOrders(prev => [newOrder, ...prev]);
+    pushNewOrderToCloud(newOrder);
   };
 
   // Helper to persist ingredients locally to both separate key and master state

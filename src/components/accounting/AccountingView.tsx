@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { countsAsRevenue } from '../../utils/orderUtils';
+import { countsAsRevenue, orderVatBreakdown } from '../../utils/orderUtils';
+import { useSharedList } from '../../hooks/useSharedList';
 import { cartItemUnitCost } from '../../utils/recipeUtils';
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import {
@@ -309,7 +310,9 @@ const getLocalDateString = (d: Date = new Date()): string => {
 
 const isSameDay = (dateOrIso: string | undefined, targetDateStr: string): boolean => {
   if (!dateOrIso || !targetDateStr) return false;
-  if (dateOrIso.startsWith(targetDateStr)) return true;
+  // A plain date ("2026-09-27") is compared as written. A timestamp is compared by its local day:
+  // "2026-09-27T20:00:00Z" is the 28th in Thailand and must not also count on the 27th.
+  if (!dateOrIso.includes('T')) return dateOrIso.startsWith(targetDateStr);
   try {
     const d = new Date(dateOrIso);
     if (!isNaN(d.getTime())) {
@@ -321,7 +324,7 @@ const isSameDay = (dateOrIso: string | undefined, targetDateStr: string): boolea
 
 const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boolean => {
   if (!dateOrIso || !targetMonthStr) return false;
-  if (dateOrIso.startsWith(targetMonthStr)) return true;
+  if (!dateOrIso.includes('T')) return dateOrIso.startsWith(targetMonthStr);
   try {
     const d = new Date(dateOrIso);
     if (!isNaN(d.getTime())) {
@@ -796,83 +799,17 @@ export const AccountingView: React.FC = () => {
   const [isEditBalanceModalOpen, setIsEditBalanceModalOpen] = useState(false);
   const [editBalanceForm, setEditBalanceForm] = useState({ ...balanceData });
 
-  // Accounts Receivable (ลูกหนี้การค้า - AR) State
-  const [arList, setArList] = useState<AccountsReceivableItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('POS_AR_LIST');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Clean out legacy mock fixtures if any
-        if (Array.isArray(parsed) && parsed.some((p: any) => p.id === 'ar-001' && p.customerName.includes('กรุงเทพโซลูชันส์'))) {
-          return [];
-        }
-        return parsed;
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
-
-  React.useEffect(() => {
-    try {
-      localStorage.setItem('POS_AR_LIST', JSON.stringify(arList));
-    } catch (e) {
-      console.error('Failed to save arList to localStorage', e);
-    }
-  }, [arList]);
-
-  // Accounts Payable (เจ้าหนี้การค้า - AP) State
-  const [apList, setApList] = useState<AccountsPayableItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('POS_AP_LIST');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Clean out legacy mock fixtures if any
-        if (Array.isArray(parsed) && parsed.some((p: any) => p.id === 'ap-001' && p.supplierName.includes('ซีพี เอฟเอส'))) {
-          return [];
-        }
-        return parsed;
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
-
-  React.useEffect(() => {
-    try {
-      localStorage.setItem('POS_AP_LIST', JSON.stringify(apList));
-    } catch (e) {
-      console.error('Failed to save apList to localStorage', e);
-    }
-  }, [apList]);
-
-  // Cash Flow Entries (Investing & Financing) State
-  const [cashFlowEntries, setCashFlowEntries] = useState<CashFlowEntry[]>(() => {
-    try {
-      const saved = localStorage.getItem('POS_CASH_FLOW_ENTRIES');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Clean out legacy mock fixtures if any
-        if (Array.isArray(parsed) && parsed.some((p: any) => p.id === 'cf-001' && p.title.includes('ซื้อตู้แช่ทรงยืน'))) {
-          return [];
-        }
-        return parsed;
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
-
-  React.useEffect(() => {
-    try {
-      localStorage.setItem('POS_CASH_FLOW_ENTRIES', JSON.stringify(cashFlowEntries));
-    } catch (e) {
-      console.error('Failed to save cashFlowEntries to localStorage', e);
-    }
-  }, [cashFlowEntries]);
+  // Receivables, payables and investing/financing entries: shared by every device of the branch
+  // (older versions stored them per device, and some first installs carried sample records)
+  const [arList, setArList] = useSharedList<AccountsReceivableItem>('accounts_receivable', 'POS_AR_LIST', list =>
+    list.some((p: any) => p.id === 'ar-001' && String(p.customerName || '').includes('กรุงเทพโซลูชันส์')) ? [] : list
+  );
+  const [apList, setApList] = useSharedList<AccountsPayableItem>('accounts_payable', 'POS_AP_LIST', list =>
+    list.some((p: any) => p.id === 'ap-001' && String(p.supplierName || '').includes('ซีพี เอฟเอส')) ? [] : list
+  );
+  const [cashFlowEntries, setCashFlowEntries] = useSharedList<CashFlowEntry>('cash_flow_entries', 'POS_CASH_FLOW_ENTRIES', list =>
+    list.some((p: any) => p.id === 'cf-001' && String(p.title || '').includes('ซื้อตู้แช่ทรงยืน')) ? [] : list
+  );
 
   // AR / AP Filter and Modals
   const [arApSubTab, setArApSubTab] = useState<'ar' | 'ap' | 'aging'>('ar');
@@ -1041,8 +978,15 @@ export const AccountingView: React.FC = () => {
         inc => (!inc.branchId || inc.branchId === currentBranch.id) && isSameMonth(inc.date, monthKey)
       );
 
-      // POS Sales
-      let posSales = mOrders.reduce((sum, o) => sum + o.grandTotal, 0);
+      // Sales net of VAT (VAT is owed to the Revenue Department, not income), split by channel
+      let posSales = 0;
+      let deliverySales = 0;
+      let cateringSales = 0;
+      mOrders.forEach(o => {
+        const net = orderVatBreakdown(o).base;
+        if (o.orderType === 'delivery') deliverySales += net;
+        else posSales += net;
+      });
 
       // Calculate COGS
       let cogs = mOrders.reduce((sum, o) => {
@@ -1073,19 +1017,6 @@ export const AccountingView: React.FC = () => {
         }
       });
 
-      // Pure Real data calculation
-      let deliverySales = 0;
-      let cateringSales = 0;
-
-      // Extract delivery & catering orders if any
-      mOrders.forEach(o => {
-        if ((o as any).type === 'delivery') {
-          deliverySales += o.grandTotal || 0;
-        } else if ((o as any).type === 'catering') {
-          cateringSales += o.grandTotal || 0;
-        }
-      });
-
       // Distribute recorded incomes to appropriate buckets
       let cateringIncome = 0;
       let deliverySubsidyIncome = 0;
@@ -1107,7 +1038,9 @@ export const AccountingView: React.FC = () => {
 
       const totalRevenue = posSales + deliverySales + cateringSales + otherIncome;
       const grossProfit = totalRevenue - cogs;
-      const totalOpex = rent + salary + utilities + rawMaterialExpense + suppliesExpense + marketing + otherExpense;
+      // Ingredient purchases are not added again here: the cost of what was sold is already in COGS
+      // (recipe cost of each dish). Counting both would charge every ingredient twice.
+      const totalOpex = rent + salary + utilities + suppliesExpense + marketing + otherExpense;
       const netProfit = grossProfit - totalOpex;
       const netMarginPct = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
@@ -1273,20 +1206,17 @@ export const AccountingView: React.FC = () => {
       let cateringSales = 0;
 
       dayOrders.forEach(o => {
-        if ((o as any).type === 'delivery') {
-          deliverySales += o.grandTotal || 0;
-        } else if ((o as any).type === 'catering') {
-          cateringSales += o.grandTotal || 0;
-        } else {
-          posSales += o.grandTotal || 0;
-        }
+        const net = orderVatBreakdown(o).base;
+        if (o.orderType === 'delivery') deliverySales += net;
+        else posSales += net;
       });
 
       const cogs = dayOrders.reduce((sum, o) => {
         return sum + o.items.reduce((iSum, item) => iSum + cartItemUnitCost(item) * item.quantity, 0);
       }, 0);
 
-      const opex = dayExpenses.reduce((sum, e) => sum + e.amount, 0);
+      // Ingredient purchases are covered by COGS (see the monthly figures)
+      const opex = dayExpenses.filter(e => !['raw_material', 'ingredients'].includes(e.category)).reduce((sum, e) => sum + e.amount, 0);
 
       let cateringIncome = 0;
       let deliverySubsidyIncome = 0;
@@ -1310,7 +1240,7 @@ export const AccountingView: React.FC = () => {
 
       // Variable Costs: COGS + Delivery GP fees (25% on delivery) + Variable OPEX
       const variableOpex = dayExpenses
-        .filter(e => ['raw_material', 'ingredients', 'packaging', 'supplies', 'marketing'].includes(e.category))
+        .filter(e => ['packaging', 'supplies', 'marketing'].includes(e.category))
         .reduce((sum, e) => sum + e.amount, 0);
       const deliveryGpFee = Math.round(deliverySales * 0.25);
       const variableCosts = cogs + deliveryGpFee + variableOpex;
@@ -1365,7 +1295,7 @@ export const AccountingView: React.FC = () => {
 
   // Donut Chart Data: Expenses & Costs Breakdown
   const expenseDonutData = [
-    { name: 'ต้นทุนวัตถุดิบ (COGS)', value: rangeTotals.cogs + rangeTotals.rawMaterialExpense },
+    { name: 'ต้นทุนวัตถุดิบ (COGS)', value: rangeTotals.cogs },
     { name: 'ซัพพลาย/ของใช้สิ้นเปลือง', value: rangeTotals.suppliesExpense },
     { name: 'ค่าเช่าสถานที่', value: rangeTotals.rent },
     { name: 'ค่าแรง/เงินเดือน', value: rangeTotals.salary },
@@ -2637,9 +2567,18 @@ export const AccountingView: React.FC = () => {
                       <span className="font-mono">{rangeTotals.marketing.toLocaleString()} ฿</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
+                      <span>ค่าวัสดุสิ้นเปลือง/บรรจุภัณฑ์ (Supplies)</span>
+                      <span className="font-mono">{rangeTotals.suppliesExpense.toLocaleString()} ฿</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-slate-800/60">
                       <span>ค่าเบ็ดเตล็ดและอื่นๆ (Other Expenses)</span>
                       <span className="font-mono">{rangeTotals.otherExpense.toLocaleString()} ฿</span>
                     </div>
+                    {rangeTotals.rawMaterialExpense > 0 && (
+                      <p className="text-[11px] text-slate-500 pt-1">
+                        จ่ายซื้อวัตถุดิบ {rangeTotals.rawMaterialExpense.toLocaleString()} ฿ ไม่นับซ้ำในส่วนนี้ เพราะต้นทุนของที่ขายไปคิดไว้ใน COGS แล้ว
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex justify-between py-1.5 font-bold text-rose-400 border-b border-slate-800">
@@ -6272,7 +6211,7 @@ export const AccountingView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  placeholder="เช่น บริษัท เอสซีจี ดีเวลลอปเม้นท์ จำกัด"
+                  placeholder="ชื่อลูกค้าหรือบริษัท"
                   value={newARForm.customerName}
                   onChange={e => setNewARForm({ ...newARForm, customerName: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100"

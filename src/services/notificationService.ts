@@ -86,6 +86,51 @@ export const DEFAULT_RULES: NotificationRules = {
 // LocalStorage Persistence Helpers
 // ==========================================
 
+/**
+ * Notification settings are shared by the shop's devices (branches/{id}/config/notifications):
+ * NotificationSettingsSync registers the cloud saver and applies the cloud copy here, so a new
+ * order on any device notifies with the same bot and rules.
+ */
+let cloudSaver: ((config: SharedNotificationConfig) => void) | null = null;
+
+export interface SharedNotificationConfig {
+  credentials: NotificationCredentials;
+  triggers: NotificationTriggers;
+  rules: NotificationRules;
+}
+
+export function setNotificationCloudSaver(saver: ((config: SharedNotificationConfig) => void) | null) {
+  cloudSaver = saver;
+}
+
+const pushToCloud = () => {
+  if (cloudSaver) cloudSaver({ credentials: getStoredCredentials(), triggers: getStoredTriggers(), rules: getStoredRules() });
+};
+
+/** Apply settings saved by another device (does not echo back to the cloud). */
+export function applySharedNotificationConfig(config: Partial<SharedNotificationConfig> | null | undefined) {
+  if (!config) return;
+  try {
+    const c = config.credentials;
+    if (c) {
+      localStorage.setItem(STORAGE_KEYS.TELEGRAM_TOKEN, c.telegramToken || '');
+      localStorage.setItem(STORAGE_KEYS.TELEGRAM_CHAT_ID, c.telegramChatId || '');
+      localStorage.setItem(STORAGE_KEYS.LINE_TOKEN, c.lineToken || '');
+      localStorage.setItem(STORAGE_KEYS.LINE_TARGET_ID, c.lineTargetId || '');
+    }
+    if (config.triggers) localStorage.setItem(STORAGE_KEYS.TRIGGERS, JSON.stringify(config.triggers));
+    if (config.rules) localStorage.setItem(STORAGE_KEYS.RULES, JSON.stringify(config.rules));
+  } catch {
+    // storage unavailable: this device keeps its own settings
+  }
+}
+
+/** Whether this device has any notification settings worth sharing (first device to connect). */
+export function hasLocalNotificationConfig(): boolean {
+  const c = getStoredCredentials();
+  return !!(c.telegramToken || c.lineToken);
+}
+
 export function getStoredCredentials(): NotificationCredentials {
   return {
     telegramToken: localStorage.getItem(STORAGE_KEYS.TELEGRAM_TOKEN) || '',
@@ -108,6 +153,7 @@ export function saveStoredCredentials(creds: Partial<NotificationCredentials>) {
   if (creds.lineTargetId !== undefined) {
     localStorage.setItem(STORAGE_KEYS.LINE_TARGET_ID, creds.lineTargetId.trim());
   }
+  pushToCloud();
 }
 
 export function getStoredTriggers(): NotificationTriggers {
@@ -122,6 +168,7 @@ export function getStoredTriggers(): NotificationTriggers {
 
 export function saveStoredTriggers(triggers: NotificationTriggers) {
   localStorage.setItem(STORAGE_KEYS.TRIGGERS, JSON.stringify(triggers));
+  pushToCloud();
 }
 
 export function getStoredRules(): NotificationRules {
@@ -136,6 +183,7 @@ export function getStoredRules(): NotificationRules {
 
 export function saveStoredRules(rules: NotificationRules) {
   localStorage.setItem(STORAGE_KEYS.RULES, JSON.stringify(rules));
+  pushToCloud();
 }
 
 export function getStoredLogs(): NotificationLogItem[] {
@@ -154,7 +202,7 @@ export function addStoredLog(item: Omit<NotificationLogItem, 'id' | 'time' | 'da
     const newLog: NotificationLogItem = {
       id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
       time: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      date: 'วันนี้',
+      date: new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }),
       ...item,
     };
     const updated = [newLog, ...logs].slice(0, 30);
@@ -366,7 +414,7 @@ export async function dispatchNotification(
       channel: 'LINE',
       event: eventTitle,
       status: lineRes.success ? 'ส่งสำเร็จ (200 OK)' : `ล้มเหลว (${lineRes.error})`,
-      recipient: 'LINE Notify Group',
+      recipient: `LINE: ${creds.lineTargetId || '-'}`,
     });
   }
 
