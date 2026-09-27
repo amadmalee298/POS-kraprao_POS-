@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, Lock, ShieldAlert, KeyRound, Check } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
+import { isTypingInField } from '../utils/keyboard';
 import { User } from '../types';
 
 interface PinModalProps {
@@ -88,19 +89,11 @@ export const PinModal: React.FC<PinModalProps> = ({
       setPin(nextPin);
       setError('');
       if (nextPin.length === 4) {
-        // Check if matching selected user or another user
-        let userToAuth = selectedUser;
-        if (selectedUser.pin !== nextPin && !targetUser) {
-          const matched = users.find(u => u.pin === nextPin);
-          if (matched) {
-            userToAuth = matched;
-            setSelectedUser(matched);
-          }
-        }
-        setTimeout(() => verifyPin(nextPin, userToAuth), 100);
+        // Verify against the selected person only (never switch to whoever has this PIN)
+        setTimeout(() => verifyPin(nextPin, selectedUser), 100);
       }
     }
-  }, [pin, selectedUser, targetUser, users, verifyPin]);
+  }, [pin, selectedUser, verifyPin]);
 
   const handleDelete = useCallback(() => {
     setPin(prev => prev.slice(0, -1));
@@ -121,6 +114,7 @@ export const PinModal: React.FC<PinModalProps> = ({
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isTypingInField(e)) return;
       if (e.key >= '0' && e.key <= '9') {
         e.preventDefault();
         handleNumClick(e.key);
