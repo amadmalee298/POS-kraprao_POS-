@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { calcRecipeItemCostAndDeduction, getAvailableRecipeUnits } from '../utils/recipeUtils';
+import { calcRecipeItemCostAndDeduction, canonicalUnit, convertAmount, getAvailableRecipeUnits, isShortOfStock, recipeCost } from '../utils/recipeUtils';
+import { ProteinOptionsEditor } from './menu/ProteinOptionsEditor';
+import { RecipeAuditPanel } from './menu/RecipeAuditPanel';
 import { isItemInCategory } from '../utils/categoryUtils';
 import { SHOP_LOGO_URL } from '../assets/logo';
 import { compressImageFile } from '../utils/imageCompressor';
@@ -108,7 +110,7 @@ import {
   NotificationTriggerRules,
   NotificationTriggers
 } from '../services/notificationService';
-import { MenuItem, AddOnOption, RecipeIngredient, MenuCategory, CartItem, SpiceLevel, ProteinChoice, Order, CustomerTaxInfo, PaymentMethod, QrPaymentOption } from '../types';
+import { MenuItem, AddOnOption, RecipeIngredient, MenuCategory, CartItem, SpiceLevel, ProteinChoice, ProteinOption, Order, CustomerTaxInfo, PaymentMethod, QrPaymentOption } from '../types';
 import { orderVatBreakdown } from '../utils/orderUtils';
 import { exportToPDF, exportToPNG, printElement } from '../utils/exportDocument';
 import { AIMenuEngineeringPanel } from './inventory/AIMenuEngineeringPanel';
@@ -1904,6 +1906,8 @@ export const QrOrderingView: React.FC = () => {
 };
 
 // 3. Menu, Toppings & Recipe Costing View (เมนู, Toppings และสูตรตัดสต๊อก)
+const ALL_SPICE_LEVELS: SpiceLevel[] = ['ไม่เผ็ด', 'เผ็ดน้อย', 'เผ็ดปานกลาง', 'เผ็ดมาก', 'เผ็ดหูดับ'];
+
 export const RecipeCostingView: React.FC = () => {
   const {
     menuItems,
@@ -1922,6 +1926,7 @@ export const RecipeCostingView: React.FC = () => {
     batchUpdateMenuItemRecipes,
     toggleMenuItemFrequent,
     toggleMenuItemAddOns,
+    setMenuItemSoldOut,
     restoreDefaultMenuItems,
     addAddOn,
     updateAddOn,
@@ -1940,6 +1945,7 @@ export const RecipeCostingView: React.FC = () => {
   });
 
   const [saveSuccessToast, setSaveSuccessToast] = useState<string | null>(null);
+  const tracksStock = ingredients.some(i => i.currentStock > 0);
 
   const [activeSubTab, setActiveSubTab] = useState<'menu' | 'toppings' | 'recipes' | 'bulk_edit' | 'ai_engineering'>('bulk_edit');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
@@ -1959,6 +1965,9 @@ export const RecipeCostingView: React.FC = () => {
   const [menuFormImage, setMenuFormImage] = useState('');
   const [menuFormDescription, setMenuFormDescription] = useState('');
   const [menuFormAllowAddOns, setMenuFormAllowAddOns] = useState<boolean>(true);
+  const [menuFormSpice, setMenuFormSpice] = useState<SpiceLevel[]>([]);
+  const [menuFormProteins, setMenuFormProteins] = useState<ProteinOption[]>([]);
+  const [menuFormSoldOut, setMenuFormSoldOut] = useState(false);
 
   // Topping Modal State
   const [isToppingModalOpen, setIsToppingModalOpen] = useState(false);
@@ -1992,12 +2001,16 @@ export const RecipeCostingView: React.FC = () => {
   // Selected Menu Item for Recipe view
   const currentRecipeMenuItem = menuItems.find(m => m.id === selectedRecipeMenuItemId) || menuItems[0];
 
-  // Sync editableRecipe when selected menu item changes
+  // Unsaved edits in the recipe editor; saved changes (from here or another device) are shown otherwise
+  const recipeDirtyRef = React.useRef(false);
+  const savedRecipeKey = JSON.stringify(currentRecipeMenuItem?.recipe || []);
   useEffect(() => {
-    if (currentRecipeMenuItem) {
-      setEditableRecipe(currentRecipeMenuItem.recipe ? [...currentRecipeMenuItem.recipe] : []);
-    }
+    recipeDirtyRef.current = false;
+    setEditableRecipe(currentRecipeMenuItem?.recipe ? [...currentRecipeMenuItem.recipe] : []);
   }, [selectedRecipeMenuItemId]);
+  useEffect(() => {
+    if (!recipeDirtyRef.current) setEditableRecipe(currentRecipeMenuItem?.recipe ? [...currentRecipeMenuItem.recipe] : []);
+  }, [savedRecipeKey]);
 
   // Handlers for Menu Item
   const handleOpenAddMenu = () => {
@@ -2008,6 +2021,9 @@ export const RecipeCostingView: React.FC = () => {
     setMenuFormImage('https://images.unsplash.com/photo-1562967914-608f82629710?w=600&auto=format&fit=crop');
     setMenuFormDescription('');
     setMenuFormAllowAddOns(true);
+    setMenuFormSpice([...ALL_SPICE_LEVELS]);
+    setMenuFormProteins([]);
+    setMenuFormSoldOut(false);
     setIsMenuModalOpen(true);
   };
 
@@ -2019,12 +2035,24 @@ export const RecipeCostingView: React.FC = () => {
     setMenuFormImage(item.image);
     setMenuFormDescription(item.description);
     setMenuFormAllowAddOns(item.allowAddOns !== false);
+    setMenuFormSpice(item.availableSpiceLevels || []);
+    setMenuFormProteins(item.availableProteins ? item.availableProteins.map(p => ({ ...p })) : []);
+    setMenuFormSoldOut(!!item.isSoldOut);
     setIsMenuModalOpen(true);
   };
 
   const handleSaveMenu = (e: React.FormEvent) => {
     e.preventDefault();
     if (!menuFormName.trim()) return;
+    const proteins = menuFormProteins
+      .filter(p => p.name.trim())
+      .map(p => ({ ...p, name: p.name.trim(), recipe: p.recipe?.filter(r => r.amountNeeded > 0) }));
+    // Empty lists are saved as such so removing all options reaches other devices
+    const options = {
+      availableSpiceLevels: ALL_SPICE_LEVELS.filter(l => menuFormSpice.includes(l)),
+      availableProteins: proteins,
+      isSoldOut: menuFormSoldOut
+    };
 
     if (editingMenuItem) {
       updateMenuItem({
@@ -2034,7 +2062,8 @@ export const RecipeCostingView: React.FC = () => {
         price: Number(menuFormPrice),
         image: menuFormImage || 'https://images.unsplash.com/photo-1562967914-608f82629710?w=600&auto=format&fit=crop',
         description: menuFormDescription,
-        allowAddOns: menuFormAllowAddOns
+        allowAddOns: menuFormAllowAddOns,
+        ...options
       });
       setSaveSuccessToast(`บันทึกเมนู "${menuFormName.trim()}" เรียบร้อยแล้ว`);
       setTimeout(() => setSaveSuccessToast(null), 3500);
@@ -2044,15 +2073,15 @@ export const RecipeCostingView: React.FC = () => {
         nameEn: menuFormName.trim(),
         category: menuFormCategory,
         price: Number(menuFormPrice),
-        costPrice: 20,
+        costPrice: 0,
         image: menuFormImage || 'https://images.unsplash.com/photo-1562967914-608f82629710?w=600&auto=format&fit=crop',
         description: menuFormDescription,
         allowAddOns: menuFormAllowAddOns,
-        recipe: [
-          { ingredientId: ingredients[0]?.id || 'ing-pork-minced', amountNeeded: 100 }
-        ]
+        ...options,
+        // The recipe is entered in the recipe tab; a made-up default would deduct the wrong stock
+        recipe: []
       });
-      setSaveSuccessToast(`เพิ่มเมนูใหม่ "${menuFormName.trim()}" เรียบร้อยแล้ว`);
+      setSaveSuccessToast(`เพิ่มเมนูใหม่ "${menuFormName.trim()}" แล้ว อย่าลืมใส่สูตรในแท็บสูตรอาหาร เพื่อให้ตัดสต็อก`);
       setTimeout(() => setSaveSuccessToast(null), 3500);
     }
     setIsMenuModalOpen(false);
@@ -2100,10 +2129,10 @@ export const RecipeCostingView: React.FC = () => {
     const ing = ingredients.find(i => i.id === toppingSelectedIngToAdd);
     let defaultUnit = ing?.unit || 'pcs';
     let defaultAmount = 1;
-    if (['kg', 'กิโลกรัม', 'กก.'].includes(ing?.unit || '')) {
+    if (canonicalUnit(ing?.unit) === 'kg') {
       defaultUnit = 'g';
       defaultAmount = 50;
-    } else if (['l', 'liter', 'ลิตร'].includes(ing?.unit || '')) {
+    } else if (canonicalUnit(ing?.unit) === 'l') {
       defaultUnit = 'ml';
       defaultAmount = 10;
     }
@@ -2122,12 +2151,8 @@ export const RecipeCostingView: React.FC = () => {
         if (r.ingredientId !== ingredientId) return r;
         const ing = ingredients.find(i => i.id === ingredientId);
         const oldUnit = r.recipeUnit || ing?.unit || 'pcs';
-        let newAmount = r.amountNeeded;
-
-        if (oldUnit === 'kg' && newUnit === 'g') newAmount = r.amountNeeded * 1000;
-        else if (oldUnit === 'g' && newUnit === 'kg') newAmount = r.amountNeeded / 1000;
-        else if (oldUnit === 'l' && newUnit === 'ml') newAmount = r.amountNeeded * 1000;
-        else if (oldUnit === 'ml' && newUnit === 'l') newAmount = r.amountNeeded / 1000;
+        // Handles Thai unit names too (e.g. "กิโลกรัม" → g)
+        const newAmount = convertAmount(r.amountNeeded, oldUnit, newUnit) ?? r.amountNeeded;
 
         return {
           ...r,
@@ -2184,37 +2209,36 @@ export const RecipeCostingView: React.FC = () => {
     const ing = ingredients.find(i => i.id === ingredientId);
     let defaultAmount = 100;
     let defaultUnit = ing?.unit || 'g';
-    if (['kg', 'กิโลกรัม', 'กก.'].includes(ing?.unit || '')) {
+    if (canonicalUnit(ing?.unit) === 'kg') {
       defaultUnit = 'g';
       defaultAmount = 150;
-    } else if (['l', 'liter', 'ลิตร'].includes(ing?.unit || '')) {
+    } else if (canonicalUnit(ing?.unit) === 'l') {
       defaultUnit = 'ml';
       defaultAmount = 10;
     } else if (['pcs', 'ชิ้น', 'ฟอง', 'ลูก'].includes(ing?.unit || '')) {
       defaultUnit = ing?.unit || 'pcs';
       defaultAmount = 1;
     }
+    recipeDirtyRef.current = true;
     setEditableRecipe(prev => [...prev, { ingredientId, amountNeeded: defaultAmount, recipeUnit: defaultUnit }]);
   };
 
   const handleUpdateRecipeAmount = (ingredientId: string, amountNeeded: number) => {
+    recipeDirtyRef.current = true;
     setEditableRecipe(prev =>
       prev.map(r => (r.ingredientId === ingredientId ? { ...r, amountNeeded: Math.max(0, amountNeeded) } : r))
     );
   };
 
   const handleUpdateRecipeUnit = (ingredientId: string, newUnit: string) => {
+    recipeDirtyRef.current = true;
     setEditableRecipe(prev =>
       prev.map(r => {
         if (r.ingredientId !== ingredientId) return r;
         const ing = ingredients.find(i => i.id === ingredientId);
         const oldUnit = r.recipeUnit || ing?.unit || 'pcs';
-        let newAmount = r.amountNeeded;
-
-        if (oldUnit === 'kg' && newUnit === 'g') newAmount = r.amountNeeded * 1000;
-        else if (oldUnit === 'g' && newUnit === 'kg') newAmount = r.amountNeeded / 1000;
-        else if (oldUnit === 'l' && newUnit === 'ml') newAmount = r.amountNeeded * 1000;
-        else if (oldUnit === 'ml' && newUnit === 'l') newAmount = r.amountNeeded / 1000;
+        // Handles Thai unit names too (e.g. "กิโลกรัม" → g)
+        const newAmount = convertAmount(r.amountNeeded, oldUnit, newUnit) ?? r.amountNeeded;
 
         return {
           ...r,
@@ -2230,15 +2254,10 @@ export const RecipeCostingView: React.FC = () => {
     setEditableRecipe(nextRecipe);
 
     // Calculate updated recipe cost immediately
-    let calculatedCost = 0;
-    nextRecipe.forEach(r => {
-      const ing = ingredients.find(i => i.id === r.ingredientId);
-      if (ing) {
-        calculatedCost += calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).lineCost;
-      }
-    });
+    const calculatedCost = recipeCost(nextRecipe, ingredients);
 
     if (currentRecipeMenuItem) {
+      recipeDirtyRef.current = false;
       updateMenuItemRecipe(currentRecipeMenuItem.id, nextRecipe, calculatedCost);
       const targetIng = ingredients.find(i => i.id === ingredientId);
       setSaveSuccessToast(`ลบวัตถุดิบ "${targetIng?.name || ingredientId}" ออกจากสูตรของ "${currentRecipeMenuItem.name}" เรียบร้อยแล้ว`);
@@ -2250,6 +2269,7 @@ export const RecipeCostingView: React.FC = () => {
     if (!currentRecipeMenuItem) return;
     if (confirm(`คุณต้องการลบวัตถุดิบทั้งหมดออกจากสูตรของ "${currentRecipeMenuItem.name}" หรือไม่?`)) {
       setEditableRecipe([]);
+      recipeDirtyRef.current = false;
       updateMenuItemRecipe(currentRecipeMenuItem.id, [], 0);
       setSaveSuccessToast(`ล้างวัตถุดิบทั้งหมดในสูตรของ "${currentRecipeMenuItem.name}" เรียบร้อยแล้ว`);
       setTimeout(() => setSaveSuccessToast(null), 3500);
@@ -2258,14 +2278,9 @@ export const RecipeCostingView: React.FC = () => {
 
   const handleSaveRecipe = () => {
     if (!currentRecipeMenuItem) return;
-    let calculatedCost = 0;
-    editableRecipe.forEach(r => {
-      const ing = ingredients.find(i => i.id === r.ingredientId);
-      if (ing) {
-        calculatedCost += calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).lineCost;
-      }
-    });
+    const calculatedCost = recipeCost(editableRecipe, ingredients);
 
+    recipeDirtyRef.current = false;
     updateMenuItemRecipe(currentRecipeMenuItem.id, editableRecipe, calculatedCost);
     setSaveSuccessToast(`บันทึกสูตรอาหาร "${currentRecipeMenuItem.name}" เรียบร้อยแล้ว (คำนวณต้นทุน ฿${calculatedCost.toFixed(2)})`);
     setTimeout(() => setSaveSuccessToast(null), 4000);
@@ -2352,15 +2367,10 @@ export const RecipeCostingView: React.FC = () => {
         newRecipeList = Array.from(existingMap.values());
       }
 
-      let calculatedCost = 0;
-      newRecipeList.forEach(r => {
-        const ing = ingredients.find(i => i.id === r.ingredientId);
-        if (ing) {
-          calculatedCost += calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).lineCost;
-        }
-      });
+      const calculatedCost = recipeCost(newRecipeList, ingredients);
 
       setEditableRecipe(newRecipeList);
+      recipeDirtyRef.current = false;
       updateMenuItemRecipe(currentRecipeMenuItem.id, newRecipeList, calculatedCost);
       setIsCopyRecipeModalOpen(false);
       setSaveSuccessToast(`คัดลอกสูตรจาก "${srcItem.name}" มาใส่ "${currentRecipeMenuItem.name}" สำเร็จ (${newRecipeList.length} วัตถุดิบ, ต้นทุน ฿${calculatedCost.toFixed(2)})`);
@@ -2393,13 +2403,7 @@ export const RecipeCostingView: React.FC = () => {
           finalRecipe = Array.from(map.values());
         }
 
-        let calculatedCost = 0;
-        finalRecipe.forEach(r => {
-          const ing = ingredients.find(i => i.id === r.ingredientId);
-          if (ing) {
-            calculatedCost += calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).lineCost;
-          }
-        });
+        const calculatedCost = recipeCost(finalRecipe, ingredients);
 
         batchUpdates.push({ menuItemId: targetId, recipe: finalRecipe, costPrice: calculatedCost });
       });
@@ -2427,10 +2431,7 @@ export const RecipeCostingView: React.FC = () => {
     : menuItems.filter(m => isItemInCategory(m, selectedCategoryFilter, categories));
 
   // Calculated recipe cost
-  const totalRecipeCalculatedCost = editableRecipe.reduce((sum, r) => {
-    const ing = ingredients.find(i => i.id === r.ingredientId);
-    return sum + (ing ? calcRecipeItemCostAndDeduction(ing, r.amountNeeded, r.recipeUnit).lineCost : 0);
-  }, 0);
+  const totalRecipeCalculatedCost = recipeCost(editableRecipe, ingredients);
 
   const recipeMargin = currentRecipeMenuItem ? currentRecipeMenuItem.price - totalRecipeCalculatedCost : 0;
   const recipeMarginPercent = currentRecipeMenuItem && currentRecipeMenuItem.price > 0
@@ -2577,6 +2578,19 @@ export const RecipeCostingView: React.FC = () => {
       {/* SUB TAB 1: MENU ITEMS */}
       {activeSubTab === 'menu' && (
         <div className="space-y-4">
+          <RecipeAuditPanel
+            onEditMenu={(id, kind) => {
+              const item = menuItems.find(m => m.id === id);
+              if (!item) return;
+              if (kind === 'protein-no-recipe') {
+                handleOpenEditMenu(item);
+              } else {
+                // Recipe problems are fixed in the recipe editor
+                setSelectedRecipeMenuItemId(item.id);
+                setActiveSubTab('recipes');
+              }
+            }}
+          />
           {/* Category Filter Pills */}
           <div className="flex flex-wrap gap-2">
             <button
@@ -2608,6 +2622,8 @@ export const RecipeCostingView: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredMenuItems.map(item => {
               const margin = item.price - item.costPrice;
+              // Only meaningful when the shop keeps stock counts
+              const shortOfStock = tracksStock && !item.isSoldOut && isShortOfStock(item, ingredients);
               const marginPercent = item.price > 0 ? ((margin / item.price) * 100).toFixed(1) : '0';
 
               return (
@@ -2664,6 +2680,27 @@ export const RecipeCostingView: React.FC = () => {
                       <div className="text-sm text-emerald-400 font-extrabold font-mono">฿{item.price}</div>
                     </div>
                   </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMenuItemSoldOut(item.id, !item.isSoldOut)}
+                      aria-pressed={!!item.isSoldOut}
+                      className={`flex-1 h-10 rounded-xl border text-xs font-bold ${
+                        item.isSoldOut ? 'bg-rose-500/20 border-rose-500/50 text-rose-200' : 'bg-slate-950 border-slate-800 text-emerald-300'
+                      }`}
+                    >
+                      {item.isSoldOut ? 'หมด — แตะเพื่อเปิดขาย' : 'เปิดขายอยู่ — แตะเมื่อหมด'}
+                    </button>
+                    {!item.recipe?.length && (
+                      <span className="text-[10px] text-amber-300 font-bold shrink-0">ยังไม่มีสูตร</span>
+                    )}
+                  </div>
+                  {shortOfStock && (
+                    <p className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2 py-1">
+                      วัตถุดิบในสต็อกไม่พอทำ 1 จาน ตรวจสต็อก หรือกด "หมด"
+                    </p>
+                  )}
 
                   <p className="text-xs text-slate-400 line-clamp-2 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/50">
                     {item.description || 'ไม่มีคำอธิบาย'}
@@ -2923,7 +2960,7 @@ export const RecipeCostingView: React.FC = () => {
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0 flex-1">
                             <div className="font-bold text-slate-100 text-sm truncate">
-                              {ing ? ing.name : rec.ingredientId}
+                              {ing ? ing.name : <span className="text-rose-300">⚠️ วัตถุดิบถูกลบแล้ว ({rec.ingredientId}) — ไม่ถูกตัดสต็อก</span>}
                             </div>
                             <div className="text-[11px] text-slate-400 font-mono mt-0.5">
                               ต้นทุนสต๊อก: <span className="text-amber-300 font-semibold">{ing ? `฿${ing.unitCost} / ${ing.unit}` : '-'}</span>
@@ -2957,7 +2994,7 @@ export const RecipeCostingView: React.FC = () => {
                               />
                               {availableUnits.length > 1 ? (
                                 <select
-                                  value={rec.recipeUnit || (availableUnits.some(u => u.val === ing?.unit) ? ing?.unit : availableUnits[0]?.val)}
+                                  value={canonicalUnit(rec.recipeUnit || ing?.unit) || availableUnits[0]?.val}
                                   onChange={e => handleUpdateRecipeUnit(rec.ingredientId, e.target.value)}
                                   className="bg-slate-950 border border-slate-700 text-amber-300 font-bold text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-500"
                                 >
@@ -3033,7 +3070,7 @@ export const RecipeCostingView: React.FC = () => {
                         return (
                           <tr key={rec.ingredientId} className="hover:bg-slate-800/40 transition">
                             <td className="p-3 font-semibold text-slate-100">
-                              {ing ? ing.name : rec.ingredientId}
+                              {ing ? ing.name : <span className="text-rose-300">⚠️ วัตถุดิบถูกลบแล้ว ({rec.ingredientId}) — ไม่ถูกตัดสต็อก</span>}
                             </td>
                             <td className="p-3 font-mono text-slate-400">
                               {ing ? `฿${ing.unitCost} / ${ing.unit}` : '-'}
@@ -3050,7 +3087,7 @@ export const RecipeCostingView: React.FC = () => {
                                 />
                                 {availableUnits.length > 1 ? (
                                   <select
-                                    value={rec.recipeUnit || (availableUnits.some(u => u.val === ing?.unit) ? ing?.unit : availableUnits[0]?.val)}
+                                    value={canonicalUnit(rec.recipeUnit || ing?.unit) || availableUnits[0]?.val}
                                     onChange={e => handleUpdateRecipeUnit(rec.ingredientId, e.target.value)}
                                     className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-amber-300 font-bold focus:outline-none focus:border-amber-500"
                                   >
@@ -3363,7 +3400,7 @@ export const RecipeCostingView: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSaveMenu} className="p-5 space-y-4 text-xs text-slate-200">
+            <form onSubmit={handleSaveMenu} className="p-5 space-y-4 text-xs text-slate-200 max-h-[80vh] overflow-y-auto">
               <div>
                 <label className="block text-slate-400 font-bold mb-1">ชื่อเมนู *</label>
                 <input
@@ -3547,6 +3584,48 @@ export const RecipeCostingView: React.FC = () => {
                 </button>
               </div>
 
+              {/* Spice levels offered */}
+              <div className="space-y-1.5">
+                <label className="block text-slate-400 font-bold">ระดับความเผ็ดที่ให้เลือก</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {ALL_SPICE_LEVELS.map(level => {
+                    const on = menuFormSpice.includes(level);
+                    return (
+                      <button
+                        key={level}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => setMenuFormSpice(prev => (on ? prev.filter(l => l !== level) : [...prev, level]))}
+                        className={`px-2.5 py-1.5 rounded-lg border ${on ? 'bg-orange-500/20 border-orange-500/50 text-orange-200' : 'border-slate-700 text-slate-400'}`}
+                      >
+                        {level}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-slate-500">ไม่เลือกเลย = เมนูนี้ไม่ต้องถามความเผ็ด (เช่น เครื่องดื่ม)</p>
+              </div>
+
+              {/* Protein choices and their ingredients */}
+              <div className="space-y-1.5">
+                <label className="block text-slate-400 font-bold">ตัวเลือกเนื้อสัตว์ (ตัดสต็อกตามที่เลือก)</label>
+                <ProteinOptionsEditor
+                  value={menuFormProteins}
+                  onChange={setMenuFormProteins}
+                  ingredients={ingredients}
+                  baseRecipe={editingMenuItem?.recipe || []}
+                />
+              </div>
+
+              {/* Sold out */}
+              <label className="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-xl cursor-pointer">
+                <span>
+                  <span className="text-xs font-bold text-slate-100 block">เมนูหมด (ปิดขายชั่วคราว)</span>
+                  <span className="text-[10px] text-slate-400">หน้าร้านและลูกค้าที่สแกน QR จะสั่งเมนูนี้ไม่ได้</span>
+                </span>
+                <input type="checkbox" checked={menuFormSoldOut} onChange={e => setMenuFormSoldOut(e.target.checked)} className="w-5 h-5 accent-rose-500" />
+              </label>
+
               <div className="pt-3 border-t border-slate-800 flex justify-end space-x-2">
                 <button
                   type="button"
@@ -3641,7 +3720,7 @@ export const RecipeCostingView: React.FC = () => {
                             />
                             {availableUnits.length > 1 ? (
                               <select
-                                value={rec.recipeUnit || (availableUnits.some(u => u.val === ing.unit) ? ing.unit : availableUnits[0]?.val)}
+                                value={canonicalUnit(rec.recipeUnit || ing?.unit) || availableUnits[0]?.val}
                                 onChange={e => handleUpdateToppingRecipeUnit(rec.ingredientId, e.target.value)}
                                 className="bg-slate-900 border border-slate-700 rounded-lg px-1 py-1 text-[11px] text-amber-300 font-bold focus:outline-none focus:border-amber-500"
                               >
@@ -3922,7 +4001,7 @@ export const RecipeCostingView: React.FC = () => {
                                     className="w-4 h-4 rounded text-cyan-500 bg-slate-900 border-slate-700 focus:ring-0 focus:ring-offset-0"
                                   />
                                   <span className="font-bold truncate text-xs">
-                                    {ing ? ing.name : rec.ingredientId}
+                                    {ing ? ing.name : <span className="text-rose-300">⚠️ วัตถุดิบถูกลบแล้ว ({rec.ingredientId}) — ไม่ถูกตัดสต็อก</span>}
                                   </span>
                                 </div>
                                 <div className="flex items-center space-x-2.5 shrink-0 text-right font-mono text-xs">

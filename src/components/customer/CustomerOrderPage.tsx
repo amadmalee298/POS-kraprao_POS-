@@ -369,7 +369,8 @@ export const CustomerOrderPage: React.FC<{ table: string; branchId: string }> = 
               key={item.id}
               type="button"
               onClick={() => openDraft(item)}
-              className="w-full text-left flex items-center gap-3 py-3 border-b border-[#22150d]"
+              disabled={!!item.isSoldOut}
+              className="w-full text-left flex items-center gap-3 py-3 border-b border-[#22150d] disabled:opacity-45"
             >
               <span className="flex-1 min-w-0">
                 <span className="block text-base font-semibold leading-snug">{item.name}</span>
@@ -377,6 +378,9 @@ export const CustomerOrderPage: React.FC<{ table: string; branchId: string }> = 
                 {item.isPopular && <span className="text-[12px] font-bold text-[#ffb07a]">ขายดี</span>}
               </span>
               <span className="font-num text-lg font-semibold text-[#ff8a3d]">฿{baht(item.price)}</span>
+              {item.isSoldOut ? (
+                <span className="w-11 shrink-0 text-center text-sm font-bold text-[#ff9b85]">หมด</span>
+              ) : (
               <span
                 aria-hidden="true"
                 className={`w-11 h-11 shrink-0 rounded-xl flex items-center justify-center font-num text-lg font-bold ${
@@ -385,6 +389,7 @@ export const CustomerOrderPage: React.FC<{ table: string; branchId: string }> = 
               >
                 {inCart || <Plus className="w-5 h-5" />}
               </span>
+              )}
             </button>
           );
         })}

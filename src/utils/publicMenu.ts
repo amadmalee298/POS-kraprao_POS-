@@ -7,7 +7,7 @@ import type { AddOnOption, Branch, CategoryItem, MenuItem, SystemSettings } from
  */
 export interface PublicMenu {
   branch: { id: string; name: string; promptpayMobileOrTaxId: string };
-  menuItems: Pick<
+  menuItems: (Pick<
     MenuItem,
     | 'id'
     | 'name'
@@ -18,10 +18,10 @@ export interface PublicMenu {
     | 'image'
     | 'isPopular'
     | 'availableSpiceLevels'
-    | 'availableProteins'
     | 'allowAddOns'
     | 'allowedAddOnIds'
-  >[];
+    | 'isSoldOut'
+  > & { availableProteins?: { name: string; extraPrice: number }[] })[];
   categories: Pick<CategoryItem, 'id' | 'name'>[];
   addOns: Pick<AddOnOption, 'id' | 'name' | 'price'>[];
   settings: Pick<SystemSettings, 'shopName' | 'enableVat' | 'vatRate' | 'vatType'> & { shopLogoUrl?: string };
@@ -54,9 +54,11 @@ export function buildPublicMenu(
         image: m.image && !m.image.startsWith('data:') ? m.image : '',
         isPopular: !!m.isPopular,
         availableSpiceLevels: m.availableSpiceLevels,
-        availableProteins: m.availableProteins,
+        // Names and prices only: protein recipes and costs stay private
+        availableProteins: m.availableProteins?.map(p => ({ name: p.name, extraPrice: p.extraPrice })),
         allowAddOns: m.allowAddOns,
-        allowedAddOnIds: m.allowedAddOnIds
+        allowedAddOnIds: m.allowedAddOnIds,
+        isSoldOut: m.isSoldOut ? true : undefined
       })
     ),
     categories: categories.map(c => ({ id: c.id, name: c.name })),

@@ -8,7 +8,20 @@ export interface CategoryItem {
 
 export type SpiceLevel = 'ไม่เผ็ด' | 'เผ็ดน้อย' | 'เผ็ดปานกลาง' | 'เผ็ดมาก' | 'เผ็ดหูดับ';
 
-export type ProteinChoice = 'หมูสับ' | 'หมูกรอบ' | 'เนื้อสไลส์' | 'ไก่ชิ้น' | 'กุ้ง+หมึก' | 'เป็ดกรอบ' | 'เต้าหู้ไข่';
+/** Protein name offered on a dish, e.g. 'หมูสับ', 'หมูกรอบ' (shops define their own). */
+export type ProteinChoice = string;
+
+/** A protein choice on a menu item, with what it does to the recipe. */
+export interface ProteinOption {
+  name: ProteinChoice;
+  extraPrice: number;
+  /** Ingredients this protein adds per dish */
+  recipe?: RecipeIngredient[];
+  /** Base recipe ingredients it replaces (e.g. minced pork when crispy pork is chosen) */
+  replacesIngredientIds?: string[];
+  /** Cost difference against the base recipe; kept up to date when recipes or prices change */
+  costDelta?: number;
+}
 
 export interface AddOnOption {
   id: string;
@@ -38,7 +51,9 @@ export interface MenuItem {
   isFrequent?: boolean; // รายการใช้บ่อย (หมุดปักให้อยู่ด้านบน)
   recipe: RecipeIngredient[];
   availableSpiceLevels?: SpiceLevel[];
-  availableProteins?: { name: ProteinChoice; extraPrice: number }[];
+  availableProteins?: ProteinOption[];
+  /** Taken off sale by staff (sold out today) */
+  isSoldOut?: boolean;
   allowAddOns?: boolean; // When true or undefined, toppings can be selected for this item; if false, toppings are disabled
   allowedAddOnIds?: string[]; // Optional specific list of enabled topping IDs for this menu item
 }
