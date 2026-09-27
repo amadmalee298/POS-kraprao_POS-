@@ -38,6 +38,17 @@ export const claimableInputVat = (e: Pick<Expense, 'includeVat' | 'vatAmount'>, 
 /** Recorded incomes that are part of selling food (revenue from sales) rather than other income */
 export const SALES_INCOME_CATEGORIES: IncomeCategory[] = ['catering', 'delivery_subsidy'];
 
+/** Thai names of expense categories */
+export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
+  raw_material: 'ซื้อวัตถุดิบ',
+  salary: 'เงินเดือนและค่าแรง',
+  rent: 'ค่าเช่า',
+  utilities: 'ค่าน้ำ ค่าไฟ ค่าแก๊ส',
+  supplies: 'วัสดุสิ้นเปลืองและบรรจุภัณฑ์',
+  marketing: 'โฆษณาและการตลาด',
+  other: 'ค่าใช้จ่ายอื่น'
+};
+
 /** Selling and administrative expense lines, in statement order */
 export const SGA_CATEGORIES: ExpenseCategory[] = ['salary', 'rent', 'utilities', 'supplies', 'marketing', 'other'];
 
@@ -67,6 +78,7 @@ export interface ProfitAndLoss {
 }
 
 export interface BookFilter {
+  /** 'all' for every branch */
   branchId: string;
   /** Keeps records whose date (YYYY-MM-DD or ISO) passes; omit for all time */
   inPeriod?: (date: string) => boolean;
@@ -96,7 +108,8 @@ export function buildProfitAndLoss(
   vatRegistered: boolean
 ): ProfitAndLoss {
   const inPeriod = filter.inPeriod || (() => true);
-  const ownBranch = (id?: string) => !id || id === filter.branchId;
+  const all = filter.branchId === 'all';
+  const ownBranch = (id?: string) => all || !id || id === filter.branchId;
 
   let storeSales = 0;
   let deliverySales = 0;
@@ -107,7 +120,7 @@ export function buildProfitAndLoss(
   let orderCount = 0;
 
   for (const o of data.orders) {
-    if (o.branchId !== filter.branchId || !countsAsRevenue(o) || !inPeriod(o.createdAt)) continue;
+    if ((!all && o.branchId !== filter.branchId) || !countsAsRevenue(o) || !inPeriod(o.createdAt)) continue;
     orderCount++;
     const { base, vat } = orderVatBreakdown(o);
     outputVat += vat;
