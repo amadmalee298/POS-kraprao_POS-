@@ -682,8 +682,12 @@ export interface PendingReceipt {
     warnings: string[];
     verified: boolean;
     confidenceScore: number;
+    /** Lines read from the bill (used to receive the goods into stock) */
+    lineItems?: { name: string; quantity?: number; amount: number }[];
   };
   error?: string;
+  /** Stock lots created when the bill was approved */
+  stockAdded?: { ingredientId: string; quantity: number; cost: number }[];
   decidedBy?: string;
   decidedAt?: string;
   recordId?: string; // expense or income created on approval

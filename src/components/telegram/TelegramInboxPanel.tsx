@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ImageIcon, Loader2, RefreshCw, Send, XCircle } from 'lucide-react';
-import type { ExpenseCategory, IncomeCategory, PendingReceipt } from '../../types';
+import { AlertTriangle, CheckCircle2, ImageIcon, Loader2, Package, RefreshCw, Send, XCircle } from 'lucide-react';
+import type { ExpenseCategory, IncomeCategory, Ingredient, PendingReceipt } from '../../types';
 import { usePOS } from '../../context/POSContext';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
 import { baht, captionTitle, downloadTelegramFile, telegramCall } from '../../services/telegramInbox';
 import { vercelBase } from '../../services/receiptScan';
-import { EXPENSE_CATEGORY_LABELS, round2, vatInside, vatRateOf } from '../../utils/accounting';
+import { EXPENSE_CATEGORY_LABELS, isVatRegistered, round2, vatInside, vatRateOf } from '../../utils/accounting';
+import { allocateCosts, BillItem, buildIntakeRows, IntakeRow, matchIngredient, parseItemsFromText } from '../../utils/stockIntake';
 import { compressBase64Image } from '../../utils/imageCompressor';
 import { readTelegramReceipt } from './TelegramInboxPoller';
 
@@ -20,15 +21,30 @@ type Form = {
   includeVat: boolean;
   refNumber: string;
   note: string;
+  /** Goods to receive into stock (undefined = as read from the bill) */
+  stock?: IntakeRow[];
+};
+
+/** Items on the bill: typed in the caption ("กุ้ง 3กก ปลาหมึก 2กก") or read by the AI */
+const billItems = (p: PendingReceipt): BillItem[] => {
+  const typed = parseItemsFromText(p.caption || '');
+  if (typed.length) return typed;
+  return (p.data?.lineItems || []).map(li => ({ name: li.name, quantity: li.quantity, amount: li.amount }));
 };
 
 const APPROVER_ROLES = ['admin', 'manager'];
 
-const formFor = (p: PendingReceipt): Form => ({
+const formFor = (p: PendingReceipt, ingredients: Ingredient[]): Form => ({
   kind: p.kind,
   title: p.data?.title || captionTitle(p.caption || '') || 'บิลจาก Telegram',
   date: p.data?.date || p.receivedAt.slice(0, 10),
-  category: p.data?.category || 'other',
+  // Items in the caption that are the shop's ingredients mean a raw-material purchase
+  category:
+    p.data?.category && p.data.category !== 'other'
+      ? p.data.category
+      : parseItemsFromText(p.caption || '').some(it => matchIngredient(it.name, ingredients))
+        ? 'raw_material'
+        : p.data?.category || 'other',
   incomeCategory: 'other',
   amount: p.data?.amount || 0,
   includeVat: !!p.data?.includeVat,
@@ -41,7 +57,7 @@ const formFor = (p: PendingReceipt): Form => ({
  * approve it into the books (expense or other income), or reject it.
  */
 export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory, string> }> = ({ incomeLabels }) => {
-  const { settings, currentBranch, currentUser, addExpense, addIncome } = usePOS();
+  const { settings, currentBranch, currentUser, addExpense, addIncome, ingredients, addStockLot } = usePOS();
   const [items, setItems] = useTelegramInbox();
   const [forms, setForms] = useState<Record<string, Form>>({});
   const [images, setImages] = useState<Record<string, string>>({});
@@ -56,7 +72,26 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const waiting = useMemo(() => items.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading'), [items]);
   const history = useMemo(() => items.filter(p => p.status === 'approved' || p.status === 'rejected').slice(0, 50), [items]);
 
-  const form = (p: PendingReceipt) => forms[p.id] || formFor(p);
+  const form = (p: PendingReceipt) => forms[p.id] || formFor(p, ingredients);
+  const vatRegistered = isVatRegistered(settings);
+  const ingredientById = useMemo(() => new Map(ingredients.map(i => [i.id, i])), [ingredients]);
+  const sortedIngredients = useMemo(() => [...ingredients].sort((a, b) => a.name.localeCompare(b.name, 'th')), [ingredients]);
+
+  // Raw-material purchases go into stock when approved
+  const receivesStock = (f: Form) => f.kind === 'expense' && f.category === 'raw_material';
+  /** What the stock cost the shop: before VAT when the VAT is claimed back */
+  const stockCost = (f: Form) => (vatRegistered && f.includeVat ? f.amount - vatInside(f.amount, vatRate) : f.amount);
+  const stockRows = (p: PendingReceipt, f: Form) =>
+    allocateCosts(f.stock ?? buildIntakeRows(billItems(p), ingredients, 0), ingredients, stockCost(f));
+  const editRow = (p: PendingReceipt, key: string, change: Partial<IntakeRow>) => {
+    const f = form(p);
+    edit(p, { stock: stockRows(p, f).map(r => (r.key === key ? { ...r, ...change } : r)) });
+  };
+  const addRow = (p: PendingReceipt) => {
+    const f = form(p);
+    const rows = stockRows(p, f);
+    edit(p, { stock: [...rows, { key: `row-${Date.now()}`, label: '', ingredientId: '', quantity: 0, cost: 0, unitMismatch: false, selected: true }] });
+  };
   const edit = (p: PendingReceipt, change: Partial<Form>) => setForms(prev => ({ ...prev, [p.id]: { ...form(p), ...change } }));
   const patch = (id: string, change: Partial<PendingReceipt>) => setItems(prev => prev.map(p => (p.id === id ? { ...p, ...change } : p)));
 
@@ -113,6 +148,23 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           slipImageName: image ? `telegram-${p.messageId}.jpg` : undefined
         });
       }
+      let stockAdded: PendingReceipt['stockAdded'];
+      if (receivesStock(f)) {
+        const rows = stockRows(p, f).filter(r => r.selected && r.ingredientId && r.quantity > 0);
+        rows.forEach((row, i) => {
+          addStockLot({
+            ingredientId: row.ingredientId,
+            lotNumber: `TG-${p.messageId}-${i + 1}`,
+            quantity: row.quantity,
+            unitCost: round2(row.cost / row.quantity),
+            receivedDate: f.date,
+            expiryDate: '',
+            supplier: p.data?.vendorName || p.senderName || 'Telegram',
+            notes: `บิลจาก Telegram: ${f.title.trim()}`
+          });
+        });
+        stockAdded = rows.map(r => ({ ingredientId: r.ingredientId, quantity: r.quantity, cost: r.cost }));
+      }
       const base = p.data || { vendorName: '', warnings: [], verified: false, confidenceScore: 0, vatAmount: 0, netAmount: 0 };
       patch(p.id, {
         status: 'approved',
@@ -120,10 +172,14 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         decidedBy: currentUser?.name,
         decidedAt: new Date().toISOString(),
         recordId,
+        stockAdded,
         // What was actually recorded, for the history list
         data: { ...base, title: f.title.trim(), date: f.date, category: f.category, amount: round2(f.amount), includeVat: f.includeVat, vatAmount, netAmount: round2(f.amount - vatAmount), refNumber: f.refNumber.trim(), note: f.note }
       });
-      reply(p, `✅ อนุมัติแล้วโดย ${currentUser?.name || 'ผู้จัดการ'}\nบันทึกเป็น${f.kind === 'expense' ? 'ค่าใช้จ่าย' : 'รายรับ'} ${f.title.trim()} ${baht(f.amount)}`);
+      const stockText = stockAdded?.length
+        ? `\n📦 เข้าสต็อก: ${stockAdded.map(s => `${ingredientById.get(s.ingredientId)?.name || ''} +${s.quantity} ${ingredientById.get(s.ingredientId)?.unit || ''}`).join(', ')}`
+        : '';
+      reply(p, `✅ อนุมัติแล้วโดย ${currentUser?.name || 'ผู้จัดการ'}\nบันทึกเป็น${f.kind === 'expense' ? 'ค่าใช้จ่าย' : 'รายรับ'} ${f.title.trim()} ${baht(f.amount)}${stockText}`);
     } finally {
       setBusy(null);
     }
@@ -301,6 +357,77 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                 </label>
               </div>
 
+              {receivesStock(f) && (() => {
+                const rows = stockRows(p, f);
+                const chosen = rows.filter(r => r.selected && r.ingredientId && r.quantity > 0);
+                return (
+                  <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-3 space-y-2">
+                    <div className="font-bold text-emerald-200 flex items-center gap-1.5">
+                      <Package className="w-4 h-4" /> รับเข้าสต็อกเมื่ออนุมัติ ({chosen.length} รายการ)
+                    </div>
+                    {rows.length === 0 && (
+                      <p className="text-slate-400">
+                        ไม่พบรายการสินค้าในบิล พิมพ์ใต้รูปแบบ “กุ้ง 3กก ปลาหมึก 2กก” หรือกด “+ เพิ่มรายการ”
+                      </p>
+                    )}
+                    {rows.map(row => {
+                      const ing = ingredientById.get(row.ingredientId);
+                      return (
+                        <div key={row.key} className="grid grid-cols-[auto_1fr] gap-2 items-start">
+                          <input
+                            type="checkbox"
+                            aria-label="รับเข้าสต็อก"
+                            checked={row.selected}
+                            onChange={e => editRow(p, row.key, { selected: e.target.checked })}
+                            className="w-4 h-4 mt-2.5"
+                          />
+                          <div className="space-y-1">
+                            {row.label && <div className="text-slate-400">ในบิล: {row.label}</div>}
+                            <div className="grid grid-cols-[1fr_90px] gap-2">
+                              <select
+                                value={row.ingredientId}
+                                onChange={e => editRow(p, row.key, { ingredientId: e.target.value, selected: !!e.target.value, unitMismatch: false })}
+                                className={field}
+                                aria-label="วัตถุดิบ"
+                              >
+                                <option value="">เลือกวัตถุดิบ...</option>
+                                {sortedIngredients.map(i => (
+                                  <option key={i.id} value={i.id}>
+                                    {i.name} ({i.unit})
+                                  </option>
+                                ))}
+                              </select>
+                              <label className="relative">
+                                <span className="sr-only">จำนวน</span>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="any"
+                                  value={row.quantity || ''}
+                                  onChange={e => editRow(p, row.key, { quantity: Number(e.target.value), unitMismatch: false })}
+                                  className={`${field} pr-9 font-mono`}
+                                />
+                                <span className="absolute right-2 top-2 text-slate-500">{ing?.unit || ''}</span>
+                              </label>
+                            </div>
+                            {row.unitMismatch && <div className="text-amber-300">หน่วยในบิลแปลงเป็น {ing?.unit} ไม่ได้ ตรวจจำนวนอีกครั้ง</div>}
+                            {row.selected && row.ingredientId && row.quantity > 0 && (
+                              <div className="text-slate-500">ต้นทุน {baht(row.cost)} · {baht(row.cost / row.quantity)} ต่อ {ing?.unit}</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <button type="button" onClick={() => addRow(p)} className="h-9 px-3 rounded-xl border border-slate-700 text-slate-300">
+                      + เพิ่มรายการ
+                    </button>
+                    <p className="text-[11px] text-slate-500">
+                      ต้นทุน{vatRegistered && f.includeVat ? 'ก่อน VAT' : ''}รวม {baht(stockCost(f))} แบ่งตามราคาในบิล หรือตามมูลค่าวัตถุดิบเมื่อบิลไม่ได้แยกราคา
+                    </p>
+                  </div>
+                );
+              })()}
+
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
                   type="button"
@@ -348,7 +475,10 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                       {p.decidedBy} · {p.decidedAt ? new Date(p.decidedAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }) : ''}
                     </span>
                   </span>
-                  <span className="font-mono">{p.data ? baht(p.data.amount) : ''}</span>
+                  <span className="font-mono text-right">
+                    {p.data ? baht(p.data.amount) : ''}
+                    {p.stockAdded?.length ? <span className="block text-emerald-400 font-sans">📦 {p.stockAdded.length} รายการเข้าสต็อก</span> : null}
+                  </span>
                 </li>
               ))}
             </ul>
