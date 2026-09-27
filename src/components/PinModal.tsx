@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, Lock, ShieldAlert, KeyRound, Check } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
+import { isTypingInField } from '../utils/keyboard';
 import { User } from '../types';
 
 interface PinModalProps {
@@ -121,6 +122,7 @@ export const PinModal: React.FC<PinModalProps> = ({
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isTypingInField(e)) return;
       if (e.key >= '0' && e.key <= '9') {
         e.preventDefault();
         handleNumClick(e.key);

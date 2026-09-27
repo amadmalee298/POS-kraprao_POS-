@@ -19,6 +19,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
+import { isTypingInField } from '../utils/keyboard';
 
 const MAX_PIN_ATTEMPTS = 5;
 const LOCKOUT_BASE_MS = 30_000;
@@ -345,9 +346,11 @@ export const LoginScreen: React.FC = () => {
 
   // Physical keyboard listener for hardware PIN pad entry
   useEffect(() => {
-    if (loginMode !== 'pin') return;
+    // The on-screen keypad owns the keyboard only while no dialog is open
+    if (loginMode !== 'pin' || showForgotModal) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isTypingInField(e)) return;
       if (e.key >= '0' && e.key <= '9') {
         e.preventDefault();
         handleNumClick(e.key);
@@ -365,7 +368,7 @@ export const LoginScreen: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [loginMode, pin, handleNumClick, handleDelete, handleClear, executePinLogin]);
+  }, [loginMode, showForgotModal, pin, handleNumClick, handleDelete, handleClear, executePinLogin]);
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -713,6 +716,9 @@ export const LoginScreen: React.FC = () => {
                   </label>
                   <input
                     type="password"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="off"
                     maxLength={4}
                     value={newPin}
                     onChange={e => setNewPin(e.target.value.replace(/\D/g, ''))}
@@ -728,6 +734,9 @@ export const LoginScreen: React.FC = () => {
                   </label>
                   <input
                     type="password"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="off"
                     maxLength={4}
                     value={confirmNewPin}
                     onChange={e => setConfirmNewPin(e.target.value.replace(/\D/g, ''))}
@@ -770,6 +779,10 @@ export const LoginScreen: React.FC = () => {
                   </label>
                   <input
                     type="password"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="off"
+                    maxLength={4}
                     value={managerAuthPin}
                     onChange={e => setManagerAuthPin(e.target.value)}
                     className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 text-sm focus:outline-none focus:border-orange-500"
