@@ -18,6 +18,12 @@ export interface NotificationCredentials {
   lineToken: string;
   /** LINE userId (U...) or groupId (C...) that receives push messages */
   lineTargetId: string;
+  /**
+   * Address of a LINE relay (e.g. https://xxx.vercel.app/api/notify/line). LINE cannot be called
+   * from a browser, so a static site (GitHub Pages) sends through a relay. Empty = this site's
+   * own /api/notify/line.
+   */
+  lineRelayUrl?: string;
 }
 
 export interface NotificationTriggers {
@@ -56,6 +62,7 @@ const STORAGE_KEYS = {
   TELEGRAM_CHAT_ID: 'kaprao_telegram_chat_id',
   LINE_TOKEN: 'kaprao_line_token',
   LINE_TARGET_ID: 'kaprao_line_target_id',
+  LINE_RELAY_URL: 'kaprao_line_relay_url',
   TRIGGERS: 'kaprao_notification_triggers',
   RULES: 'kaprao_notification_rules',
   LOGS: 'kaprao_notification_logs',
@@ -117,6 +124,7 @@ export function applySharedNotificationConfig(config: Partial<SharedNotification
       localStorage.setItem(STORAGE_KEYS.TELEGRAM_CHAT_ID, c.telegramChatId || '');
       localStorage.setItem(STORAGE_KEYS.LINE_TOKEN, c.lineToken || '');
       localStorage.setItem(STORAGE_KEYS.LINE_TARGET_ID, c.lineTargetId || '');
+      localStorage.setItem(STORAGE_KEYS.LINE_RELAY_URL, c.lineRelayUrl || '');
     }
     if (config.triggers) localStorage.setItem(STORAGE_KEYS.TRIGGERS, JSON.stringify(config.triggers));
     if (config.rules) localStorage.setItem(STORAGE_KEYS.RULES, JSON.stringify(config.rules));
@@ -137,6 +145,7 @@ export function getStoredCredentials(): NotificationCredentials {
     telegramChatId: localStorage.getItem(STORAGE_KEYS.TELEGRAM_CHAT_ID) || '',
     lineToken: localStorage.getItem(STORAGE_KEYS.LINE_TOKEN) || '',
     lineTargetId: localStorage.getItem(STORAGE_KEYS.LINE_TARGET_ID) || '',
+    lineRelayUrl: localStorage.getItem(STORAGE_KEYS.LINE_RELAY_URL) || '',
   };
 }
 
@@ -152,6 +161,9 @@ export function saveStoredCredentials(creds: Partial<NotificationCredentials>) {
   }
   if (creds.lineTargetId !== undefined) {
     localStorage.setItem(STORAGE_KEYS.LINE_TARGET_ID, creds.lineTargetId.trim());
+  }
+  if (creds.lineRelayUrl !== undefined) {
+    localStorage.setItem(STORAGE_KEYS.LINE_RELAY_URL, creds.lineRelayUrl.trim());
   }
   pushToCloud();
 }
@@ -300,10 +312,19 @@ export async function sendTelegramMessage(
   }
 }
 
+/** Where LINE messages are sent from: the configured relay, or this site's own server route. */
+export function lineRelayEndpoint(relayUrl?: string): string {
+  const url = (relayUrl ?? getStoredCredentials().lineRelayUrl ?? '').trim().replace(/\/+$/, '');
+  if (!url) return apiUrl('/api/notify/line');
+  // Accept the site address alone (https://xxx.vercel.app) as well as the full endpoint
+  return /\/api\/notify\/line$/.test(url) ? url : `${url}/api/notify/line`;
+}
+
 export async function sendLineMessage(
   token: string,
   message: string,
-  targetId: string = ''
+  targetId: string = '',
+  relayUrl?: string
 ): Promise<SendResult> {
   const cleanToken = token.trim();
   const cleanTarget = targetId.trim();
@@ -317,7 +338,7 @@ export async function sendLineMessage(
   }
 
   try {
-    const res = await fetch(apiUrl('/api/notify/line'), {
+    const res = await fetch(lineRelayEndpoint(relayUrl), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -407,7 +428,7 @@ export async function dispatchNotification(
 
   // Send LINE
   if ((channel === 'both' || channel === 'line') && creds.lineToken) {
-    const lineRes = await sendLineMessage(creds.lineToken, fullMessage, creds.lineTargetId);
+    const lineRes = await sendLineMessage(creds.lineToken, fullMessage, creds.lineTargetId, creds.lineRelayUrl);
     results.push(lineRes);
 
     addStoredLog({
