@@ -2,6 +2,22 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { countsAsRevenue, orderVatBreakdown } from '../../utils/orderUtils';
 import { useSharedList } from '../../hooks/useSharedList';
 import { cartItemUnitCost } from '../../utils/recipeUtils';
+import {
+  buildBalanceSheet,
+  buildCashFlow,
+  buildProfitAndLoss,
+  claimableInputVat,
+  expenseCost,
+  isVatRegistered,
+  money,
+  monthOf,
+  pct,
+  round2,
+  vatInside,
+  vatRateOf,
+  withLiveStatus,
+  downloadCsv
+} from '../../utils/accounting';
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import {
   BarChart3,
@@ -96,9 +112,14 @@ interface MonthlyFinancialData {
   deliverySales: number;
   cateringSales: number;
   otherIncome: number;
+  /** Sales + other income */
   totalRevenue: number;
+  /** Revenue from sales and services (before VAT) */
+  salesRevenue: number;
   cogs: number; // Cost of goods sold
+  estimatedCogs: number;
   grossProfit: number;
+  operatingProfit: number;
   rent: number;
   salary: number;
   utilities: number;
@@ -337,7 +358,7 @@ const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boo
 };
 
 export const AccountingView: React.FC = () => {
-  const { orders, expenses, incomes = [], addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [] } = usePOS();
+  const { orders, expenses, incomes = [], settings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [] } = usePOS();
 
   const {
     sortedIngredients,
@@ -376,6 +397,8 @@ export const AccountingView: React.FC = () => {
   }, [selectedMonth]);
 
   const [timeHorizon, setTimeHorizon] = useState<TimeHorizon>('selected');
+  const vatRegistered = isVatRegistered(settings);
+  const vatRate = vatRateOf(settings);
   const [activeTab, setActiveTab] = useState<ViewTab>('overview');
 
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
@@ -443,7 +466,8 @@ export const AccountingView: React.FC = () => {
   const [expTitleSelect, setExpTitleSelect] = useState('');
   const [expAmount, setExpAmount] = useState<number>(0);
   const [expCategory, setExpCategory] = useState<ExpenseCategory>('raw_material');
-  const [expIncludeVat, setExpIncludeVat] = useState(true);
+  // Input VAT can be claimed only with a full tax invoice; market and street purchases have none
+  const [expIncludeVat, setExpIncludeVat] = useState(false);
   const [expRefNumber, setExpRefNumber] = useState('');
   const [expNote, setExpNote] = useState('');
   const [expReceiptImage, setExpReceiptImage] = useState<string | null>(null);
@@ -762,54 +786,40 @@ export const AccountingView: React.FC = () => {
   const [isDayDetailModalOpen, setIsDayDetailModalOpen] = useState(false);
 
   // Balance Sheet State & Edit Form
-  const [balanceData, setBalanceData] = useState(() => {
+  // Opening figures and adjustments of the balance sheet, shared by every device of the branch
+  const [balanceDocs, setBalanceDocs] = useSharedList<Record<string, number>>('balance_sheet_setup', 'POS_BALANCE_SHEET_SETUP');
+  const balanceData = useMemo<Record<string, number>>(() => {
+    if (balanceDocs[0]) return balanceDocs[0];
     try {
-      const saved = localStorage.getItem('POS_BALANCE_DATA');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Clear mock data if it matches old sample
-        if (parsed.cashOnHand === 147947 || parsed.shareCapital === 150000) {
-          return {
-            shareCapital: 0,
-            equipmentAssets: 0,
-          };
-        }
-        return parsed;
-      }
-      return {
-        shareCapital: 0,
-        equipmentAssets: 0,
-      };
+      // Figures from older versions, kept on this device only
+      const legacy = JSON.parse(localStorage.getItem('POS_BALANCE_DATA') || 'null');
+      if (legacy && legacy.shareCapital !== 150000) return { shareCapital: legacy.shareCapital || 0, equipmentAssets: legacy.equipmentAssets || 0 };
     } catch {
-      return {
-        shareCapital: 0,
-        equipmentAssets: 0,
-      };
+      // ignore
     }
-  });
-
-  React.useEffect(() => {
-    try {
-      localStorage.setItem('POS_BALANCE_DATA', JSON.stringify(balanceData));
-    } catch (e) {
-      console.error('Failed to save balanceData to localStorage', e);
-    }
-  }, [balanceData]);
+    return { shareCapital: 0, equipmentAssets: 0 };
+  }, [balanceDocs]);
+  const setBalanceData = (next: Record<string, number>) => setBalanceDocs([next]);
 
   const [isEditBalanceModalOpen, setIsEditBalanceModalOpen] = useState(false);
   const [editBalanceForm, setEditBalanceForm] = useState({ ...balanceData });
 
   // Receivables, payables and investing/financing entries: shared by every device of the branch
   // (older versions stored them per device, and some first installs carried sample records)
-  const [arList, setArList] = useSharedList<AccountsReceivableItem>('accounts_receivable', 'POS_AR_LIST', list =>
+  const [arListRaw, setArList] = useSharedList<AccountsReceivableItem>('accounts_receivable', 'POS_AR_LIST', list =>
     list.some((p: any) => p.id === 'ar-001' && String(p.customerName || '').includes('กรุงเทพโซลูชันส์')) ? [] : list
   );
-  const [apList, setApList] = useSharedList<AccountsPayableItem>('accounts_payable', 'POS_AP_LIST', list =>
+  const [apListRaw, setApList] = useSharedList<AccountsPayableItem>('accounts_payable', 'POS_AP_LIST', list =>
     list.some((p: any) => p.id === 'ap-001' && String(p.supplierName || '').includes('ซีพี เอฟเอส')) ? [] : list
   );
   const [cashFlowEntries, setCashFlowEntries] = useSharedList<CashFlowEntry>('cash_flow_entries', 'POS_CASH_FLOW_ENTRIES', list =>
     list.some((p: any) => p.id === 'cf-001' && String(p.title || '').includes('ซื้อตู้แช่ทรงยืน')) ? [] : list
   );
+
+  // Status follows the due date and payments, so a bill becomes overdue on its own
+  const todayKey = getLocalDateString();
+  const arList = useMemo(() => arListRaw.map(item => withLiveStatus(item, todayKey)), [arListRaw, todayKey]);
+  const apList = useMemo(() => apListRaw.map(item => withLiveStatus(item, todayKey)), [apListRaw, todayKey]);
 
   // AR / AP Filter and Modals
   const [arApSubTab, setArApSubTab] = useState<'ar' | 'ap' | 'aging'>('ar');
@@ -881,29 +891,26 @@ export const AccountingView: React.FC = () => {
   const liveAccountsReceivable = totalUnpaidAR;
   const liveAccountsPayable = totalUnpaidAP;
 
-  const liveRetainedEarnings = useMemo(() => {
-    const branchOrders = orders.filter(o => o.branchId === currentBranch.id && countsAsRevenue(o));
-    const totalRev = branchOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-    const totalOtherInc = (incomes || []).filter(inc => !inc.branchId || inc.branchId === currentBranch.id).reduce((sum, inc) => sum + (inc.amount || 0), 0);
-    const totalCogs = branchOrders.reduce((sum, o) => {
-      return sum + o.items.reduce((iSum, it) => iSum + cartItemUnitCost(it) * it.quantity, 0);
-    }, 0);
-    const totalExp = expenses.filter(e => e.branchId === currentBranch.id).reduce((sum, e) => sum + (e.amount || 0), 0);
-    return (totalRev + totalOtherInc) - totalCogs - totalExp;
-  }, [orders, expenses, incomes, currentBranch.id]);
+  // All-time books of this branch (retained earnings and VAT not yet remitted)
+  const allTimePL = useMemo(
+    () => buildProfitAndLoss({ orders, expenses, incomes: incomes || [] }, { branchId: currentBranch.id }, vatRegistered),
+    [orders, expenses, incomes, currentBranch.id, vatRegistered]
+  );
+  const liveRetainedEarnings = allTimePL.profitBeforeTax;
 
+  // Cash actually moved (VAT included: it passes through the shop's till and bank)
   const liveCashOnHand = useMemo(() => {
-    const branchOrders = orders.filter(o => o.branchId === currentBranch.id && countsAsRevenue(o));
-    const orderCash = branchOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-    const otherIncCash = (incomes || []).filter(inc => !inc.branchId || inc.branchId === currentBranch.id).reduce((sum, inc) => sum + (inc.amount || 0), 0);
-    const expenseCash = expenses.filter(e => e.branchId === currentBranch.id).reduce((sum, e) => sum + (e.amount || 0), 0);
-    const arCollected = arList.filter(a => !a.branchId || a.branchId === currentBranch.id).reduce((sum, item) => sum + (item.paidAmount || 0), 0);
-    const apDisbursed = apList.filter(a => !a.branchId || a.branchId === currentBranch.id).reduce((sum, item) => sum + (item.paidAmount || 0), 0);
-    const cfNet = cashFlowEntries.filter(c => !c.branchId || c.branchId === currentBranch.id).reduce((sum, e) => sum + (e.flowType === 'inflow' ? e.amount : -e.amount), 0);
+    const ownBranch = (id?: string) => !id || id === currentBranch.id;
+    const orderCash = orders.filter(o => o.branchId === currentBranch.id && countsAsRevenue(o)).reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+    const otherIncCash = (incomes || []).filter(inc => ownBranch(inc.branchId)).reduce((sum, inc) => sum + (inc.amount || 0), 0);
+    const expenseCash = expenses.filter(e => ownBranch(e.branchId)).reduce((sum, e) => sum + (e.amount || 0), 0);
+    const arCollected = arList.filter(a => ownBranch(a.branchId)).reduce((sum, item) => sum + (item.paidAmount || 0), 0);
+    const apDisbursed = apList.filter(a => ownBranch(a.branchId)).reduce((sum, item) => sum + (item.paidAmount || 0), 0);
+    const cfNet = cashFlowEntries.filter(c => ownBranch(c.branchId)).reduce((sum, e) => sum + (e.flowType === 'inflow' ? e.amount : -e.amount), 0);
     const shareCap = balanceData.shareCapital || 0;
     const equip = balanceData.equipmentAssets || 0;
-    const net = orderCash + otherIncCash - expenseCash + arCollected - apDisbursed + cfNet + shareCap - equip;
-    return Math.max(0, net);
+    // Negative cash is shown as it is: it means money went out that the POS never saw come in
+    return round2(orderCash + otherIncCash - expenseCash + arCollected - apDisbursed + cfNet + shareCap - equip);
   }, [orders, expenses, incomes, arList, apList, cashFlowEntries, currentBranch.id, balanceData.shareCapital, balanceData.equipmentAssets]);
 
   const activeCashOnHand = balanceData.overrideCashOnHand !== undefined ? balanceData.overrideCashOnHand : liveCashOnHand;
@@ -914,13 +921,23 @@ export const AccountingView: React.FC = () => {
   const activeEquipmentAssets = balanceData.equipmentAssets || 0;
   const activeShareCapital = balanceData.shareCapital || 0;
 
-  const totalAssets = useMemo(() => {
-    return activeCashOnHand + activeAccountsReceivable + activeInventoryAsset + activeEquipmentAssets;
-  }, [activeCashOnHand, activeAccountsReceivable, activeInventoryAsset, activeEquipmentAssets]);
-
-  const totalLiabilitiesAndEquity = useMemo(() => {
-    return activeAccountsPayable + activeShareCapital + activeRetainedEarnings;
-  }, [activeAccountsPayable, activeShareCapital, activeRetainedEarnings]);
+  const activeVatPayable = balanceData.overrideVatPayable !== undefined ? balanceData.overrideVatPayable : Math.max(0, allTimePL.vatPayable);
+  const balanceSheet = useMemo(
+    () =>
+      buildBalanceSheet({
+        cash: activeCashOnHand,
+        receivables: activeAccountsReceivable,
+        inventory: activeInventoryAsset,
+        equipment: activeEquipmentAssets,
+        payables: activeAccountsPayable,
+        vatPayable: vatRegistered ? activeVatPayable : 0,
+        ownerCapital: activeShareCapital,
+        retainedEarnings: activeRetainedEarnings
+      }),
+    [activeCashOnHand, activeAccountsReceivable, activeInventoryAsset, activeEquipmentAssets, activeAccountsPayable, activeVatPayable, vatRegistered, activeShareCapital, activeRetainedEarnings]
+  );
+  const totalAssets = balanceSheet.totalAssets;
+  const totalLiabilitiesAndEquity = balanceSheet.totalLiabilitiesAndEquity;
 
   // 1. Generate List of Months according to Time Horizon
   const monthsList = useMemo(() => {
@@ -960,113 +977,38 @@ export const AccountingView: React.FC = () => {
   const monthlyData: MonthlyFinancialData[] = useMemo(() => {
     return monthsList.map(monthKey => {
       const [y, m] = monthKey.split('-');
-      const monthIdx = parseInt(m, 10) - 1;
-      const label = `${MONTH_NAMES_TH[monthIdx]} ${y}`;
-
-      // Filter orders for this branch & month
-      const mOrders = orders.filter(
-        o => o.branchId === currentBranch.id && countsAsRevenue(o) && isSameMonth(o.createdAt, monthKey)
+      const label = `${MONTH_NAMES_TH[parseInt(m, 10) - 1]} ${y}`;
+      const pl = buildProfitAndLoss(
+        { orders, expenses, incomes: incomes || [] },
+        { branchId: currentBranch.id, inPeriod: d => monthOf(d) === monthKey },
+        vatRegistered
       );
-
-      // Filter expenses for this branch & month
-      const mExpenses = expenses.filter(
-        e => (!e.branchId || e.branchId === currentBranch.id) && isSameMonth(e.date, monthKey)
-      );
-
-      // Filter incomes for this branch & month
-      const mIncomes = (incomes || []).filter(
-        inc => (!inc.branchId || inc.branchId === currentBranch.id) && isSameMonth(inc.date, monthKey)
-      );
-
-      // Sales net of VAT (VAT is owed to the Revenue Department, not income), split by channel
-      let posSales = 0;
-      let deliverySales = 0;
-      let cateringSales = 0;
-      mOrders.forEach(o => {
-        const net = orderVatBreakdown(o).base;
-        if (o.orderType === 'delivery') deliverySales += net;
-        else posSales += net;
-      });
-
-      // Calculate COGS
-      let cogs = mOrders.reduce((sum, o) => {
-        const orderCogs = o.items.reduce((itemSum, item) => {
-          return itemSum + cartItemUnitCost(item) * item.quantity;
-        }, 0);
-        return sum + orderCogs;
-      }, 0);
-
-      // Categorized expenses
-      let rent = 0;
-      let salary = 0;
-      let utilities = 0;
-      let rawMaterialExpense = 0;
-      let suppliesExpense = 0;
-      let marketing = 0;
-      let otherExpense = 0;
-
-      mExpenses.forEach(e => {
-        switch (e.category) {
-          case 'rent': rent += e.amount; break;
-          case 'salary': salary += e.amount; break;
-          case 'utilities': utilities += e.amount; break;
-          case 'raw_material': rawMaterialExpense += e.amount; break;
-          case 'supplies': suppliesExpense += e.amount; break;
-          case 'marketing': marketing += e.amount; break;
-          case 'other': default: otherExpense += e.amount; break;
-        }
-      });
-
-      // Distribute recorded incomes to appropriate buckets
-      let cateringIncome = 0;
-      let deliverySubsidyIncome = 0;
-      let otherIncome = 0;
-
-      mIncomes.forEach(inc => {
-        const amt = inc.amount || 0;
-        if (inc.category === 'catering') {
-          cateringIncome += amt;
-        } else if (inc.category === 'delivery_subsidy') {
-          deliverySubsidyIncome += amt;
-        } else {
-          otherIncome += amt;
-        }
-      });
-
-      deliverySales += deliverySubsidyIncome;
-      cateringSales += cateringIncome;
-
-      const totalRevenue = posSales + deliverySales + cateringSales + otherIncome;
-      const grossProfit = totalRevenue - cogs;
-      // Ingredient purchases are not added again here: the cost of what was sold is already in COGS
-      // (recipe cost of each dish). Counting both would charge every ingredient twice.
-      const totalOpex = rent + salary + utilities + suppliesExpense + marketing + otherExpense;
-      const netProfit = grossProfit - totalOpex;
-      const netMarginPct = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
-
       return {
         monthKey,
         monthLabel: label,
-        posSales,
-        deliverySales,
-        cateringSales,
-        otherIncome: otherIncome + cateringIncome + deliverySubsidyIncome,
-        totalRevenue,
-        cogs,
-        grossProfit,
-        rent,
-        salary,
-        utilities,
-        rawMaterialExpense,
-        suppliesExpense,
-        marketing,
-        otherExpense,
-        totalOpex,
-        netProfit,
-        netMarginPct
+        posSales: pl.storeSales,
+        deliverySales: pl.deliverySales,
+        cateringSales: pl.cateringSales,
+        otherIncome: pl.otherIncome,
+        totalRevenue: pl.totalIncome,
+        salesRevenue: pl.salesRevenue,
+        cogs: pl.cogs,
+        estimatedCogs: pl.estimatedCogs,
+        grossProfit: pl.grossProfit,
+        operatingProfit: pl.operatingProfit,
+        rent: pl.expenses.rent,
+        salary: pl.expenses.salary,
+        utilities: pl.expenses.utilities,
+        rawMaterialExpense: pl.expenses.raw_material,
+        suppliesExpense: pl.expenses.supplies,
+        marketing: pl.expenses.marketing,
+        otherExpense: pl.expenses.other,
+        totalOpex: pl.sga,
+        netProfit: pl.profitBeforeTax,
+        netMarginPct: pct(pl.profitBeforeTax, pl.totalIncome)
       };
     });
-  }, [monthsList, orders, expenses, incomes, currentBranch.id]);
+  }, [monthsList, orders, expenses, incomes, currentBranch.id, vatRegistered]);
 
   // Selected Month Current Snapshot Metrics
   const currentMonthFinancials = useMemo(() => {
@@ -1078,6 +1020,9 @@ export const AccountingView: React.FC = () => {
     return monthlyData.reduce(
       (acc, d) => {
         acc.totalRevenue += d.totalRevenue;
+        acc.salesRevenue += d.salesRevenue;
+        acc.estimatedCogs += d.estimatedCogs;
+        acc.operatingProfit += d.operatingProfit;
         acc.posSales += d.posSales;
         acc.deliverySales += d.deliverySales;
         acc.cateringSales += d.cateringSales;
@@ -1096,12 +1041,24 @@ export const AccountingView: React.FC = () => {
         return acc;
       },
       {
-        totalRevenue: 0, posSales: 0, deliverySales: 0, cateringSales: 0, otherIncome: 0,
+        totalRevenue: 0, salesRevenue: 0, estimatedCogs: 0, operatingProfit: 0, posSales: 0, deliverySales: 0, cateringSales: 0, otherIncome: 0,
         cogs: 0, grossProfit: 0, rent: 0, salary: 0, utilities: 0, rawMaterialExpense: 0, suppliesExpense: 0,
         marketing: 0, otherExpense: 0, totalOpex: 0, netProfit: 0
       }
     );
   }, [monthlyData]);
+
+  // Cash flow of the months on screen
+  const inRange = (d: string) => monthsList.includes(monthOf(d));
+  const cashFlow = useMemo(
+    () =>
+      buildCashFlow(
+        { orders, expenses, incomes: incomes || [], receivables: arList, payables: apList, entries: cashFlowEntries },
+        { branchId: currentBranch.id, inPeriod: d => monthsList.includes(monthOf(d)) }
+      ),
+    [orders, expenses, incomes, arList, apList, cashFlowEntries, currentBranch.id, monthsList]
+  );
+  const periodCashFlowEntries = cashFlowEntries.filter(e => (!e.branchId || e.branchId === currentBranch.id) && inRange(e.date));
 
   // Tax Calculations for selected month
   const selectedBranchOrders = orders.filter(
@@ -1111,8 +1068,8 @@ export const AccountingView: React.FC = () => {
     e => (!e.branchId || e.branchId === currentBranch.id) && isSameMonth(e.date, selectedMonth)
   );
 
-  const totalSalesVat = selectedBranchOrders.reduce((sum, o) => sum + o.vatAmount, 0);
-  const totalExpenseVat = selectedBranchExpenses.reduce((sum, e) => sum + e.vatAmount, 0);
+  const totalSalesVat = round2(selectedBranchOrders.reduce((sum, o) => sum + orderVatBreakdown(o).vat, 0));
+  const totalExpenseVat = round2(selectedBranchExpenses.reduce((sum, e) => sum + claimableInputVat(e, vatRegistered), 0));
   const netVatPayable = totalSalesVat - totalExpenseVat;
 
   // Incomes for selected branch & selected month (or all if period filter is 'all')
@@ -1201,59 +1158,26 @@ export const AccountingView: React.FC = () => {
         inc => (!inc.branchId || inc.branchId === currentBranch.id) && isSameDay(inc.date, fullDate)
       );
 
-      let posSales = 0;
-      let deliverySales = 0;
-      let cateringSales = 0;
-
-      dayOrders.forEach(o => {
-        const net = orderVatBreakdown(o).base;
-        if (o.orderType === 'delivery') deliverySales += net;
-        else posSales += net;
-      });
-
-      const cogs = dayOrders.reduce((sum, o) => {
-        return sum + o.items.reduce((iSum, item) => iSum + cartItemUnitCost(item) * item.quantity, 0);
-      }, 0);
-
-      // Ingredient purchases are covered by COGS (see the monthly figures)
-      const opex = dayExpenses.filter(e => !['raw_material', 'ingredients'].includes(e.category)).reduce((sum, e) => sum + e.amount, 0);
-
-      let cateringIncome = 0;
-      let deliverySubsidyIncome = 0;
-      let otherIncome = 0;
-
-      dayIncomes.forEach(inc => {
-        const amt = inc.amount || 0;
-        if (inc.category === 'catering') {
-          cateringIncome += amt;
-        } else if (inc.category === 'delivery_subsidy') {
-          deliverySubsidyIncome += amt;
-        } else {
-          otherIncome += amt;
-        }
-      });
-
-      deliverySales += deliverySubsidyIncome;
-      cateringSales += cateringIncome;
-
-      const totalRevenue = posSales + deliverySales + cateringSales + otherIncome;
-
-      // Variable Costs: COGS + Delivery GP fees (25% on delivery) + Variable OPEX
-      const variableOpex = dayExpenses
-        .filter(e => ['packaging', 'supplies', 'marketing'].includes(e.category))
-        .reduce((sum, e) => sum + e.amount, 0);
-      const deliveryGpFee = Math.round(deliverySales * 0.25);
-      const variableCosts = cogs + deliveryGpFee + variableOpex;
-
-      // Fixed Costs: Overhead (rent, salary, utilities)
-      const fixedCosts = dayExpenses
-        .filter(e => !['raw_material', 'ingredients', 'packaging', 'supplies', 'marketing'].includes(e.category))
-        .reduce((sum, e) => sum + e.amount, 0);
-
-      const grossProfit = totalRevenue - cogs;
+      const pl = buildProfitAndLoss(
+        { orders: dayOrders, expenses: dayExpenses, incomes: dayIncomes },
+        { branchId: currentBranch.id },
+        vatRegistered
+      );
+      const posSales = pl.storeSales;
+      const deliverySales = pl.deliverySales;
+      const cateringSales = pl.cateringSales;
+      const otherIncome = pl.otherIncome;
+      const totalRevenue = pl.totalIncome;
+      const cogs = pl.cogs;
+      const opex = pl.sga;
+      // Variable costs: cost of sales plus costs that grow with sales (supplies, marketing)
+      const variableCosts = cogs + pl.expenses.supplies + pl.expenses.marketing;
+      // Fixed costs: rent, salaries, utilities and other overheads
+      const fixedCosts = pl.expenses.rent + pl.expenses.salary + pl.expenses.utilities + pl.expenses.other;
+      const grossProfit = pl.grossProfit;
       const contributionMargin = totalRevenue - variableCosts;
-      const netProfit = grossProfit - opex;
-      const netMarginPct = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+      const netProfit = pl.profitBeforeTax;
+      const netMarginPct = pct(netProfit, totalRevenue);
 
       daysArr.push({
         date: fullDate,
@@ -1261,7 +1185,7 @@ export const AccountingView: React.FC = () => {
         posSales,
         deliverySales,
         cateringSales,
-        otherIncome: otherIncome + cateringIncome + deliverySubsidyIncome,
+        otherIncome,
         totalRevenue,
         cogs,
         opex,
@@ -1277,7 +1201,7 @@ export const AccountingView: React.FC = () => {
       });
     }
     return daysArr;
-  }, [selectedMonth, orders, expenses, incomes, currentBranch.id]);
+  }, [selectedMonth, orders, expenses, incomes, currentBranch.id, vatRegistered]);
 
   const filteredDailyFinancials = useMemo(() => {
     if (!dailySearchQuery.trim()) return dailyFinancials;
@@ -1312,8 +1236,8 @@ export const AccountingView: React.FC = () => {
     let vatAmount = 0;
     let netAmount = expAmount;
     if (expIncludeVat) {
-      vatAmount = (expAmount * 7) / 107;
-      netAmount = expAmount - vatAmount;
+      vatAmount = vatInside(expAmount, vatRate);
+      netAmount = round2(expAmount - vatAmount);
     }
 
     const chosenDate = expDate || getLocalDateString();
@@ -1333,7 +1257,7 @@ export const AccountingView: React.FC = () => {
       receiptImageName: expReceiptName || undefined
     });
 
-    setSaveExpenseSuccess(`บันทึกค่าใช้จ่าย "${expTitle.trim()}" จำนวน ฿${expAmount.toLocaleString()} (${chosenDate}) เรียบร้อยแล้ว`);
+    setSaveExpenseSuccess(`บันทึกค่าใช้จ่าย "${expTitle.trim()}" จำนวน ฿${money(expAmount)} (${chosenDate}) เรียบร้อยแล้ว`);
     setTimeout(() => {
       setSaveExpenseSuccess(null);
     }, 5000);
@@ -1346,7 +1270,9 @@ export const AccountingView: React.FC = () => {
           const matchedIng = ingredients.find(i => i.id === entry.ingredientId);
           if (matchedIng) {
             const qty = entry.quantity > 0 ? entry.quantity : 1;
-            const calcUnitCost = Number((expAmount / validEntries.length / qty).toFixed(2));
+            // Stock is valued at cost: before VAT when the shop claims input VAT back
+            const costBasis = vatRegistered && expIncludeVat ? expAmount - vatInside(expAmount, vatRate) : expAmount;
+            const calcUnitCost = Number((costBasis / validEntries.length / qty).toFixed(2));
 
             let lotNote = `เพิ่มจากบันทึกค่าใช้จ่าย: ${expTitle.trim()}`;
             if (entry.usePackage && entry.packageUnit && entry.packageSize) {
@@ -1417,7 +1343,7 @@ export const AccountingView: React.FC = () => {
     }
     setActiveTab('incomes');
 
-    setSaveIncomeSuccess(`บันทึกรายรับ "${incTitle.trim()}" จำนวน ฿${incAmount.toLocaleString()} เรียบร้อยแล้ว`);
+    setSaveIncomeSuccess(`บันทึกรายรับ "${incTitle.trim()}" จำนวน ฿${money(incAmount)} เรียบร้อยแล้ว`);
     setTimeout(() => setSaveIncomeSuccess(null), 5000);
 
     setIsAddIncomeOpen(false);
@@ -1454,7 +1380,7 @@ export const AccountingView: React.FC = () => {
       setSelectedMonth(entryMonth);
     }
 
-    setSaveIncomeSuccess(`อัปเดตรายรับ "${editIncForm.title.trim()}" จำนวน ฿${editIncForm.amount.toLocaleString()} เรียบร้อยแล้ว`);
+    setSaveIncomeSuccess(`อัปเดตรายรับ "${editIncForm.title.trim()}" จำนวน ฿${money(editIncForm.amount)} เรียบร้อยแล้ว`);
     setTimeout(() => setSaveIncomeSuccess(null), 5000);
 
     setIsEditIncomeOpen(false);
@@ -1531,12 +1457,6 @@ export const AccountingView: React.FC = () => {
       status: newStatus,
       payments: newPayments
     } : item));
-
-    // Increase Cash on Hand
-    setBalanceData(prev => ({
-      ...prev,
-      cashOnHand: prev.cashOnHand + payAmt
-    }));
 
     setSelectedARForPay(null);
     setPayForm({ amount: 0, paymentMethod: 'promptpay', note: '' });
@@ -1615,12 +1535,6 @@ export const AccountingView: React.FC = () => {
       payments: newPayments
     } : item));
 
-    // Decrease Cash on Hand
-    setBalanceData(prev => ({
-      ...prev,
-      cashOnHand: Math.max(0, prev.cashOnHand - payAmt)
-    }));
-
     setSelectedAPForPay(null);
     setPayForm({ amount: 0, paymentMethod: 'promptpay', note: '' });
   };
@@ -1668,46 +1582,44 @@ export const AccountingView: React.FC = () => {
   };
 
   const handleExportCSV = () => {
-    const headers = ['ประเภท', 'เลขที่/อ้างอิง', 'วันที่', 'หมวดหมู่/รายการ', 'ยอดเงินรวม (บาท)', 'VAT 7%', 'ยอดสุทธิ'];
-    const rows: string[][] = [];
+    const headers = ['ประเภท', 'เลขที่/อ้างอิง', 'วันที่', 'รายการ', 'หมวดบัญชี', 'ยอดรวม VAT (บาท)', `VAT ${vatRate}%`, 'ยอดก่อน VAT / ต้นทุน (บาท)'];
+    const rows: (string | number)[][] = [];
+    const inMonths = (d: string) => monthsList.includes(monthOf(d));
+    const own = (id?: string) => !id || id === currentBranch.id;
 
-    // Add Sales
-    selectedBranchOrders.forEach(o => {
-      rows.push([
-        'รายรับ (ยอดขาย POS)',
-        o.orderNumber,
-        o.createdAt.split('T')[0],
-        `ขายอาหาร (${o.paymentMethod})`,
-        o.grandTotal.toFixed(2),
-        o.vatAmount.toFixed(2),
-        (o.grandTotal - o.vatAmount).toFixed(2)
-      ]);
-    });
+    orders
+      .filter(o => o.branchId === currentBranch.id && countsAsRevenue(o) && inMonths(o.createdAt))
+      .forEach(o => {
+        const { vat, base } = orderVatBreakdown(o);
+        rows.push(['รายได้จากการขาย', o.orderNumber, getLocalDateString(new Date(o.createdAt)), `ขายอาหาร (${o.paymentMethod})`, o.orderType === 'delivery' ? 'ขายเดลิเวอรี' : 'ขายหน้าร้าน', o.grandTotal.toFixed(2), vat.toFixed(2), base.toFixed(2)]);
+      });
+    (incomes || [])
+      .filter(inc => own(inc.branchId) && inMonths(inc.date))
+      .forEach(inc => {
+        const isSales = inc.category === 'catering' || inc.category === 'delivery_subsidy';
+        rows.push([isSales ? 'รายได้จากการขาย' : 'รายได้อื่น', inc.refNumber || '-', inc.date, inc.title, incomeCategoryLabels[inc.category] || inc.category, inc.amount.toFixed(2), '0.00', inc.amount.toFixed(2)]);
+      });
+    expenses
+      .filter(e => own(e.branchId) && inMonths(e.date))
+      .forEach(e => {
+        const kind = e.category === 'raw_material' ? 'ซื้อวัตถุดิบ (สินค้าคงเหลือ)' : 'ค่าใช้จ่ายขายและบริหาร';
+        rows.push([kind, e.refNumber || '-', e.date, e.title, categoryLabels[e.category] || e.category, (-e.amount).toFixed(2), claimableInputVat(e, vatRegistered).toFixed(2), (-expenseCost(e, vatRegistered)).toFixed(2)]);
+      });
 
-    // Add Expenses
-    selectedBranchExpenses.forEach(e => {
-      rows.push([
-        'รายจ่าย (OPEX)',
-        e.refNumber || 'EXP-REF',
-        e.date,
-        `${e.title} (${categoryLabels[e.category]})`,
-        (-e.amount).toFixed(2),
-        e.vatAmount.toFixed(2),
-        (-e.netAmount).toFixed(2)
-      ]);
-    });
+    const t = rangeTotals;
+    rows.push([]);
+    rows.push(['สรุปงบกำไรขาดทุน', '', '', '', '', '', '', '']);
+    ([
+      ['รายได้จากการขายและบริการ', t.salesRevenue],
+      ['หัก ต้นทุนขาย', -t.cogs],
+      ['กำไรขั้นต้น', t.grossProfit],
+      ['หัก ค่าใช้จ่ายในการขายและบริหาร', -t.totalOpex],
+      ['กำไรจากการดำเนินงาน', t.operatingProfit],
+      ['บวก รายได้อื่น', t.otherIncome],
+      ['กำไร (ขาดทุน) ก่อนภาษีเงินได้', t.netProfit]
+    ] as [string, number][]).forEach(([label, v]) => rows.push(['', '', '', label, '', '', '', v.toFixed(2)]));
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,\uFEFF' +
-      [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `PL_Accounting_${currentBranch.id}_${selectedMonth}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv(`งบกำไรขาดทุน_${currentBranch.name}_${monthsList[0]}_${monthsList[monthsList.length - 1]}.csv`, headers, rows);
   };
 
   const handleExportIncomeCSV = () => {
@@ -1727,17 +1639,7 @@ export const AccountingView: React.FC = () => {
       ]);
     });
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,\uFEFF' +
-      [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Other_Income_${currentBranch.id}_${selectedMonth}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv(`Other_Income_${currentBranch.id}_${selectedMonth}.csv`, headers, rows);
   };
 
   const handlePrintPL = () => {
@@ -1769,32 +1671,14 @@ export const AccountingView: React.FC = () => {
     const headers = ['วันที่', 'ประเภทกิจกรรม', 'ทิศทางเงินสด', 'รายการ/คำอธิบาย', 'เงินสดเข้า (+)', 'เงินสดออก (-)', 'กระแสเงินสดสุทธิ (บาท)'];
     const rows: string[][] = [];
 
-    // Operating Inflows (POS / Delivery / Catering / Income)
-    rows.push([
-      endOfMonthDate,
-      'กิจกรรมดำเนินงาน (Operating)',
-      'รับชำระเงินสดหน้าร้าน/เดลิเวอรี/จัดเลี้ยง',
-      'ยอดขายอาหารและบริการรวมประจำเดือน',
-      rangeTotals.totalRevenue.toFixed(2),
-      '0.00',
-      rangeTotals.totalRevenue.toFixed(2)
-    ]);
-
-    // Operating Outflows (COGS & OPEX)
-    const totalOpOutflow = rangeTotals.cogs + rangeTotals.totalOpex;
-    rows.push([
-      endOfMonthDate,
-      'กิจกรรมดำเนินงาน (Operating)',
-      'จ่ายชำระค่าวัตถุดิบและค่าใช้จ่ายดำเนินงาน',
-      'ต้นทุนวัตถุดิบ COGS + OPEX',
-      '0.00',
-      totalOpOutflow.toFixed(2),
-      (-totalOpOutflow).toFixed(2)
-    ]);
+    // Operating activities (direct method)
+    rows.push([monthsList[0] + ' ถึง ' + endOfMonthDate, 'กิจกรรมดำเนินงาน', 'รับ', 'เงินสดรับจากการขาย (รวม VAT)', cashFlow.receiptsFromSales.toFixed(2), '0.00', cashFlow.receiptsFromSales.toFixed(2)]);
+    rows.push([monthsList[0] + ' ถึง ' + endOfMonthDate, 'กิจกรรมดำเนินงาน', 'รับ', 'เงินสดรับจากรายได้อื่น', cashFlow.receiptsOther.toFixed(2), '0.00', cashFlow.receiptsOther.toFixed(2)]);
+    rows.push([monthsList[0] + ' ถึง ' + endOfMonthDate, 'กิจกรรมดำเนินงาน', 'จ่าย', 'เงินสดจ่ายค่าวัตถุดิบและค่าใช้จ่าย (รวม VAT)', '0.00', cashFlow.paidExpenses.toFixed(2), (-cashFlow.paidExpenses).toFixed(2)]);
 
     // AR Collections
     arList.forEach(ar => {
-      ar.payments.forEach(p => {
+      ar.payments.filter(p => inRange(p.date)).forEach(p => {
         rows.push([
           p.date,
           'กิจกรรมดำเนินงาน (Operating)',
@@ -1809,7 +1693,7 @@ export const AccountingView: React.FC = () => {
 
     // AP Payments
     apList.forEach(ap => {
-      ap.payments.forEach(p => {
+      ap.payments.filter(p => inRange(p.date)).forEach(p => {
         rows.push([
           p.date,
           'กิจกรรมดำเนินงาน (Operating)',
@@ -1823,7 +1707,7 @@ export const AccountingView: React.FC = () => {
     });
 
     // Investing & Financing Entries
-    cashFlowEntries.forEach(entry => {
+    periodCashFlowEntries.forEach(entry => {
       const actLabel = entry.activityType === 'investing' ? 'กิจกรรมลงทุน (Investing)' : 'กิจกรรมจัดหาเงิน (Financing)';
       const isIn = entry.flowType === 'inflow';
       rows.push([
@@ -1837,17 +1721,7 @@ export const AccountingView: React.FC = () => {
       ]);
     });
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,\uFEFF' +
-      [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `CashFlow_Statement_${currentBranch.id}_${selectedMonth}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv(`CashFlow_Statement_${currentBranch.id}_${selectedMonth}.csv`, headers, rows);
   };
 
   const handleDownloadCashFlowPDF = async () => {
@@ -2146,21 +2020,21 @@ export const AccountingView: React.FC = () => {
             <div className="space-y-1">
               <div className="flex items-center space-x-2">
                 <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded text-[10px] font-bold uppercase tracking-wider">
-                  OFFICIAL FINANCIAL REPORT
+                  รายงานการเงิน
                 </span>
                 <span className="text-xs text-slate-400 font-mono">สาขา: {currentBranch.name}</span>
               </div>
               <h2 className="text-base sm:text-xl font-extrabold text-slate-100 flex items-center space-x-2">
                 <Building2 className="w-5 h-5 text-sky-400" />
-                <span>รายงานงบกำไรขาดทุน & วิเคราะห์การเงิน ({selectedMonth})</span>
+                <span>งบกำไรขาดทุน {timeHorizon === 'selected' ? selectedMonth : `${monthsList[0]} ถึง ${monthsList[monthsList.length - 1]}`}</span>
               </h2>
               <p className="text-xs text-slate-400">
-                ข้อมูลสรุปจากระบบบริหารจัดการร้านอาหาร Talad Thai POS & Accounting System
+                {settings.shopName || currentBranch.name} · สรุปจากยอดขายและรายการที่บันทึกในระบบ
               </p>
             </div>
             <div className="text-right text-xs text-slate-400 font-mono space-y-0.5 bg-slate-950 p-2.5 rounded-xl border border-slate-800 w-full sm:w-auto">
               <div><strong className="text-slate-300">รอบเดือน:</strong> {selectedMonth}</div>
-              <div><strong className="text-slate-300">กำไรสุทธิสุทธิ:</strong> <span className={rangeTotals.netProfit >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>฿{rangeTotals.netProfit.toLocaleString()}</span></div>
+              <div><strong className="text-slate-300">กำไรก่อนภาษี:</strong> <span className={rangeTotals.netProfit >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>฿{money(rangeTotals.netProfit)}</span></div>
               <div className="text-[10px] text-slate-500">พิมพ์เมื่อ: {new Date().toLocaleDateString('th-TH')}</div>
             </div>
           </div>
@@ -2170,15 +2044,15 @@ export const AccountingView: React.FC = () => {
           <div className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex items-center justify-between">
             <div>
               <span className="text-xs font-semibold text-slate-400 block">
-                {timeHorizon === 'selected' ? 'ยอดรวมรายได้ทุกช่องทาง' : `รายได้รวม (${monthsList.length} เดือน)`}
+                {timeHorizon === 'selected' ? 'รายได้รวม (ก่อน VAT)' : `รายได้รวม ${monthsList.length} เดือน (ก่อน VAT)`}
               </span>
               <span className="text-xl sm:text-2xl font-extrabold text-emerald-400 font-mono mt-0.5 block">
-                {rangeTotals.totalRevenue.toLocaleString()} ฿
+                {money(rangeTotals.totalRevenue)} ฿
               </span>
               <div className="flex items-center space-x-1.5 text-[10px] text-slate-400 mt-0.5">
-                <span>POS: ฿{rangeTotals.posSales.toLocaleString()}</span>
+                <span>ขาย: ฿{money(rangeTotals.salesRevenue)}</span>
                 <span>•</span>
-                <span>อื่นๆ: ฿{(rangeTotals.totalRevenue - rangeTotals.posSales).toLocaleString()}</span>
+                <span>รายได้อื่น: ฿{money(rangeTotals.otherIncome)}</span>
               </div>
             </div>
             <div className="p-2.5 sm:p-3 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20 shrink-0 ml-2">
@@ -2189,12 +2063,12 @@ export const AccountingView: React.FC = () => {
           {/* COGS */}
           <div className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex items-center justify-between">
             <div>
-              <span className="text-xs font-semibold text-slate-400 block">ต้นทุนวัตถุดิบอาหาร (COGS)</span>
+              <span className="text-xs font-semibold text-slate-400 block">ต้นทุนขาย (วัตถุดิบ)</span>
               <span className="text-xl sm:text-2xl font-extrabold text-orange-400 font-mono mt-0.5 block">
-                {rangeTotals.cogs.toLocaleString()} ฿
+                {money(rangeTotals.cogs)} ฿
               </span>
               <span className="text-[10px] text-slate-400 mt-0.5 block">
-                สัดส่วน: {rangeTotals.totalRevenue > 0 ? ((rangeTotals.cogs / rangeTotals.totalRevenue) * 100).toFixed(1) : 0}% ของรายได้
+                {pct(rangeTotals.cogs, rangeTotals.salesRevenue)}% ของยอดขาย{rangeTotals.estimatedCogs > 0 ? ' · บางเมนูเป็นค่าประมาณ' : ''}
               </span>
             </div>
             <div className="p-2.5 sm:p-3 bg-orange-500/10 text-orange-400 rounded-xl border border-orange-500/20 shrink-0 ml-2">
@@ -2205,12 +2079,12 @@ export const AccountingView: React.FC = () => {
           {/* OPEX */}
           <div className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex items-center justify-between">
             <div>
-              <span className="text-xs font-semibold text-slate-400 block">ค่าใช้จ่ายการดำเนินงาน (OPEX)</span>
+              <span className="text-xs font-semibold text-slate-400 block">ค่าใช้จ่ายขายและบริหาร</span>
               <span className="text-xl sm:text-2xl font-extrabold text-rose-400 font-mono mt-0.5 block">
-                {rangeTotals.totalOpex.toLocaleString()} ฿
+                {money(rangeTotals.totalOpex)} ฿
               </span>
               <span className="text-[10px] text-slate-400 mt-0.5 block">
-                ค่าเช่า/เงินเดือน/น้ำไฟ/โฆษณา
+                เงินเดือน ค่าเช่า น้ำไฟ วัสดุ โฆษณา
               </span>
             </div>
             <div className="p-2.5 sm:p-3 bg-rose-500/10 text-rose-400 rounded-xl border border-rose-500/20 shrink-0 ml-2">
@@ -2221,13 +2095,13 @@ export const AccountingView: React.FC = () => {
           {/* Net Operating Profit */}
           <div className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex items-center justify-between">
             <div>
-              <span className="text-xs font-semibold text-slate-400 block">กำไรสุทธิรวมปลายงวด (Net)</span>
+              <span className="text-xs font-semibold text-slate-400 block">กำไร (ขาดทุน) ก่อนภาษี</span>
               <span
                 className={`text-xl sm:text-2xl font-extrabold font-mono mt-0.5 block ${
                   rangeTotals.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'
                 }`}
               >
-                {rangeTotals.netProfit.toLocaleString()} ฿
+                {money(rangeTotals.netProfit)} ฿
               </span>
               <span className="text-[10px] text-slate-400 mt-0.5 block">
                 รอบบิล: {timeHorizon === 'selected' ? selectedMonth : `สะสม ${monthsList.length} เดือน`}
@@ -2296,10 +2170,10 @@ export const AccountingView: React.FC = () => {
                       }}
                       formatter={(value: any, name: any) => {
                         const valNum = Number(value) || 0;
-                        if (name === 'totalRevenue') return [`฿${valNum.toLocaleString()}`, 'รายได้รวม'];
-                        if (name === 'totalOpexPlusCogs') return [`฿${valNum.toLocaleString()}`, 'ต้นทุน + ค่าใช้จ่าย'];
-                        if (name === 'netProfit') return [`฿${valNum.toLocaleString()}`, 'กำไรสุทธิ (Net)'];
-                        return [`฿${valNum.toLocaleString()}`, name];
+                        if (name === 'totalRevenue') return [`฿${money(valNum)}`, 'รายได้รวม'];
+                        if (name === 'totalOpexPlusCogs') return [`฿${money(valNum)}`, 'ต้นทุน + ค่าใช้จ่าย'];
+                        if (name === 'netProfit') return [`฿${money(valNum)}`, 'กำไรสุทธิ (Net)'];
+                        return [`฿${money(valNum)}`, name];
                       }}
                     />
                     <Bar
@@ -2344,7 +2218,7 @@ export const AccountingView: React.FC = () => {
                     </p>
                   </div>
                   <span className="font-mono text-emerald-400 font-bold text-xs">
-                    ฿{rangeTotals.totalRevenue.toLocaleString()}
+                    ฿{money(rangeTotals.totalRevenue)}
                   </span>
                 </div>
 
@@ -2375,7 +2249,7 @@ export const AccountingView: React.FC = () => {
                           color: '#fff',
                           fontSize: '11px'
                         }}
-                        formatter={(val: any) => `฿${Number(val).toLocaleString()}`}
+                        formatter={(val: any) => `฿${money(Number(val))}`}
                       />
                     </RePieChart>
                   </ResponsiveContainer>
@@ -2393,7 +2267,7 @@ export const AccountingView: React.FC = () => {
                         </div>
                         <div className="text-right shrink-0 font-mono ml-2">
                           <span className="text-slate-200 font-bold block text-xs">{pct}%</span>
-                          <span className="text-[10px] text-slate-500">฿{item.value.toLocaleString()}</span>
+                          <span className="text-[10px] text-slate-500">฿{money(item.value)}</span>
                         </div>
                       </div>
                     );
@@ -2414,7 +2288,7 @@ export const AccountingView: React.FC = () => {
                     </p>
                   </div>
                   <span className="font-mono text-rose-400 font-bold text-xs">
-                    ฿{(rangeTotals.cogs + rangeTotals.totalOpex).toLocaleString()}
+                    ฿{money((rangeTotals.cogs + rangeTotals.totalOpex))}
                   </span>
                 </div>
 
@@ -2445,7 +2319,7 @@ export const AccountingView: React.FC = () => {
                           color: '#fff',
                           fontSize: '11px'
                         }}
-                        formatter={(val: any) => `฿${Number(val).toLocaleString()}`}
+                        formatter={(val: any) => `฿${money(Number(val))}`}
                       />
                     </RePieChart>
                   </ResponsiveContainer>
@@ -2464,7 +2338,7 @@ export const AccountingView: React.FC = () => {
                         </div>
                         <div className="text-right shrink-0 font-mono ml-2">
                           <span className="text-slate-200 font-bold block text-xs">{pct}%</span>
-                          <span className="text-[10px] text-slate-500">฿{item.value.toLocaleString()}</span>
+                          <span className="text-[10px] text-slate-500">฿{money(item.value)}</span>
                         </div>
                       </div>
                     );
@@ -2483,7 +2357,7 @@ export const AccountingView: React.FC = () => {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-2">
                 <div>
                   <h2 className="text-base sm:text-xl font-bold text-slate-100">
-                    งบสรุปกำไรขาดทุนรายละเอียด (P&L Sheet)
+                    งบกำไรขาดทุน
                   </h2>
                   <p className="text-xs text-slate-400 mt-0.5">
                     สาขา: <span className="text-sky-300 font-semibold">{currentBranch.name}</span> | รอบเวลา: {timeHorizon === 'selected' ? selectedMonth : `สะสม ${monthsList.length} เดือน`}
@@ -2495,117 +2369,110 @@ export const AccountingView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Formatted Statement Hierarchy */}
+              {/* Profit and loss in the TFRS for NPAEs layout */}
               <div className="space-y-3 sm:space-y-4 text-xs">
-                {/* 1. Revenue Section */}
-                <div className="space-y-1.5 sm:space-y-2">
-                  <div className="flex items-center justify-between font-bold text-xs sm:text-sm text-slate-100 bg-slate-950 p-2.5 sm:p-3 rounded-xl border border-slate-800">
-                    <span>1. รายรับและรายได้รวม (Total Revenue)</span>
-                    <span className="font-mono text-emerald-400 text-sm sm:text-base ml-2">
-                      {rangeTotals.totalRevenue.toLocaleString()} ฿
-                    </span>
-                  </div>
+                <p className="text-[11px] text-slate-400">
+                  หน่วย: บาท · {vatRegistered ? `ยอดขายและค่าใช้จ่ายแสดงก่อนภาษีมูลค่าเพิ่ม (VAT ${vatRate}%)` : 'ร้านไม่ได้จดทะเบียน VAT: ค่าใช้จ่ายรวม VAT ที่จ่ายไป'} · เกณฑ์คงค้างตามวันที่ขาย/วันที่บันทึก
+                </p>
 
+                <div className="space-y-1.5">
+                  <div className="font-bold text-sm text-slate-100">รายได้</div>
                   <div className="pl-2 sm:pl-4 space-y-1 text-slate-300">
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ยอดขายอาหารหน้าร้าน POS สุทธิ</span>
-                      <span className="font-mono">{rangeTotals.posSales.toLocaleString()} ฿</span>
+                      <span>รายได้จากการขายหน้าร้าน (ทานที่ร้าน/กลับบ้าน)</span>
+                      <span className="font-mono">{money(rangeTotals.posSales)}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span className="text-sky-400">ยอดขายผ่านแอป Delivery (GP)</span>
-                      <span className="font-mono text-sky-400">+{rangeTotals.deliverySales.toLocaleString()} ฿</span>
+                      <span>รายได้จากการขายเดลิเวอรี</span>
+                      <span className="font-mono">{money(rangeTotals.deliverySales)}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span className="text-indigo-400">รายได้บริการจัดเลี้ยง (Catering)</span>
-                      <span className="font-mono text-indigo-400">+{rangeTotals.cateringSales.toLocaleString()} ฿</span>
+                      <span>รายได้จากบริการจัดเลี้ยง</span>
+                      <span className="font-mono">{money(rangeTotals.cateringSales)}</span>
                     </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span className="text-amber-400">รายได้ค่าเช่าพื้นที่/ป้ายโฆษณา</span>
-                      <span className="font-mono text-amber-400">+{rangeTotals.otherIncome.toLocaleString()} ฿</span>
+                    <div className="flex justify-between py-1.5 font-bold text-slate-100">
+                      <span>รวมรายได้จากการขายและบริการ</span>
+                      <span className="font-mono">{money(rangeTotals.salesRevenue)}</span>
                     </div>
                   </div>
                 </div>
 
-                {/* 2. COGS & Gross Profit */}
-                <div className="space-y-1.5 sm:space-y-2 pt-1">
+                <div className="space-y-1.5">
                   <div className="flex justify-between py-1.5 text-slate-300 border-b border-slate-800">
-                    <span>หัก ต้นทุนวัตถุดิบอาหาร (COGS)</span>
-                    <span className="font-mono text-rose-400">
-                      - {rangeTotals.cogs.toLocaleString()} ฿
-                    </span>
+                    <span>หัก ต้นทุนขาย (ต้นทุนวัตถุดิบของอาหารที่ขาย)</span>
+                    <span className="font-mono">({money(rangeTotals.cogs)})</span>
                   </div>
-
-                  <div className="flex items-center justify-between font-bold text-xs sm:text-sm bg-indigo-950/40 border border-indigo-500/30 p-2.5 sm:p-3 rounded-xl text-indigo-200">
-                    <span>กำไรขั้นต้น (Gross Profit)</span>
-                    <span className="font-mono font-bold text-sm sm:text-base text-indigo-300 ml-2">
-                      {rangeTotals.grossProfit.toLocaleString()} ฿
-                    </span>
+                  {rangeTotals.estimatedCogs > 0 && (
+                    <p className="text-[11px] text-amber-300">
+                      ต้นทุน ฿{money(rangeTotals.estimatedCogs)} เป็นค่าประมาณ (40% ของราคาขาย) เพราะเมนูนั้นยังไม่มีสูตร/ต้นทุน ใส่สูตรในหน้าเมนูเพื่อให้ตัวเลขถูกต้อง
+                    </p>
+                  )}
+                  <div className="flex items-center justify-between font-bold text-sm bg-indigo-950/40 border border-indigo-500/30 p-2.5 sm:p-3 rounded-xl text-indigo-200">
+                    <span>กำไรขั้นต้น <span className="font-normal text-[11px] opacity-80">({pct(rangeTotals.grossProfit, rangeTotals.salesRevenue)}% ของยอดขาย)</span></span>
+                    <span className="font-mono">{money(rangeTotals.grossProfit)}</span>
                   </div>
                 </div>
 
-                {/* 3. Operating Expenses (OPEX) */}
-                <div className="space-y-1.5 sm:space-y-2 pt-1">
-                  <div className="font-bold text-xs sm:text-sm text-slate-100 bg-slate-950 p-2.5 sm:p-3 rounded-xl border border-slate-800">
-                    2. ค่าใช้จ่ายดำเนินงาน (OPEX)
-                  </div>
-
+                <div className="space-y-1.5">
+                  <div className="font-bold text-sm text-slate-100">หัก ค่าใช้จ่ายในการขายและบริหาร</div>
                   <div className="pl-2 sm:pl-4 space-y-1 text-slate-300">
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าเช่าสถานที่ (Rent)</span>
-                      <span className="font-mono">{rangeTotals.rent.toLocaleString()} ฿</span>
+                      <span>เงินเดือนและค่าแรง</span>
+                      <span className="font-mono">{money(rangeTotals.salary)}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าแรง/เงินเดือนพนักงาน (Payroll)</span>
-                      <span className="font-mono">{rangeTotals.salary.toLocaleString()} ฿</span>
+                      <span>ค่าเช่า</span>
+                      <span className="font-mono">{money(rangeTotals.rent)}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าน้ำ/ค่าไฟ/แก๊สหุงต้ม (Utilities)</span>
-                      <span className="font-mono">{rangeTotals.utilities.toLocaleString()} ฿</span>
+                      <span>ค่าน้ำ ค่าไฟ ค่าแก๊ส</span>
+                      <span className="font-mono">{money(rangeTotals.utilities)}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าโฆษณาและการตลาด (Marketing)</span>
-                      <span className="font-mono">{rangeTotals.marketing.toLocaleString()} ฿</span>
+                      <span>วัสดุสิ้นเปลืองและบรรจุภัณฑ์</span>
+                      <span className="font-mono">{money(rangeTotals.suppliesExpense)}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าวัสดุสิ้นเปลือง/บรรจุภัณฑ์ (Supplies)</span>
-                      <span className="font-mono">{rangeTotals.suppliesExpense.toLocaleString()} ฿</span>
+                      <span>ค่าโฆษณาและการตลาด</span>
+                      <span className="font-mono">{money(rangeTotals.marketing)}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าเบ็ดเตล็ดและอื่นๆ (Other Expenses)</span>
-                      <span className="font-mono">{rangeTotals.otherExpense.toLocaleString()} ฿</span>
+                      <span>ค่าใช้จ่ายอื่น</span>
+                      <span className="font-mono">{money(rangeTotals.otherExpense)}</span>
                     </div>
                     {rangeTotals.rawMaterialExpense > 0 && (
                       <p className="text-[11px] text-slate-500 pt-1">
-                        จ่ายซื้อวัตถุดิบ {rangeTotals.rawMaterialExpense.toLocaleString()} ฿ ไม่นับซ้ำในส่วนนี้ เพราะต้นทุนของที่ขายไปคิดไว้ใน COGS แล้ว
+                        ค่าซื้อวัตถุดิบ ฿{money(rangeTotals.rawMaterialExpense)} ไม่อยู่ในส่วนนี้: วัตถุดิบเป็นสินค้าคงเหลือ และถูกรับรู้เป็นต้นทุนขายเมื่ออาหารถูกขาย
                       </p>
                     )}
-                  </div>
-
-                  <div className="flex justify-between py-1.5 font-bold text-rose-400 border-b border-slate-800">
-                    <span>รวมค่าใช้จ่ายดำเนินงาน (Total OPEX)</span>
-                    <span className="font-mono">- {rangeTotals.totalOpex.toLocaleString()} ฿</span>
+                    <div className="flex justify-between py-1.5 font-bold text-slate-100">
+                      <span>รวมค่าใช้จ่ายในการขายและบริหาร</span>
+                      <span className="font-mono">({money(rangeTotals.totalOpex)})</span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Net Operating Income Result */}
-                <div className="pt-2">
-                  <div
-                    className={`p-3.5 sm:p-4 rounded-2xl border flex items-center justify-between font-bold text-sm sm:text-base ${
-                      rangeTotals.netProfit >= 0
-                        ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200'
-                        : 'bg-rose-950/60 border-rose-500/50 text-rose-200'
-                    }`}
-                  >
-                    <div>
-                      <span>กำไรสุทธิรวม (Net Operating Income)</span>
-                      <span className="block text-[10px] sm:text-xs font-normal opacity-80 mt-0.5">
-                        อัตรากำไรสุทธิ (Net Margin): {rangeTotals.totalRevenue > 0 ? ((rangeTotals.netProfit / rangeTotals.totalRevenue) * 100).toFixed(1) : 0}%
-                      </span>
-                    </div>
-                    <span className="font-mono font-black text-lg sm:text-2xl ml-2">
-                      {rangeTotals.netProfit.toLocaleString()} ฿
+                <div className="flex justify-between py-1.5 font-bold text-slate-100 border-t border-slate-700">
+                  <span>กำไร (ขาดทุน) จากการดำเนินงาน</span>
+                  <span className="font-mono">{money(rangeTotals.operatingProfit)}</span>
+                </div>
+                <div className="flex justify-between py-1 text-slate-300">
+                  <span>บวก รายได้อื่น (ดอกเบี้ย ค่าเช่า ขายเศษวัสดุ/ทรัพย์สิน ฯลฯ)</span>
+                  <span className="font-mono">{money(rangeTotals.otherIncome)}</span>
+                </div>
+
+                <div
+                  className={`p-3.5 sm:p-4 rounded-2xl border flex items-center justify-between font-bold text-sm sm:text-base ${
+                    rangeTotals.netProfit >= 0 ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200' : 'bg-rose-950/60 border-rose-500/50 text-rose-200'
+                  }`}
+                >
+                  <div>
+                    <span>กำไร (ขาดทุน) ก่อนภาษีเงินได้</span>
+                    <span className="block text-[10px] sm:text-xs font-normal opacity-80 mt-0.5">
+                      อัตรากำไร {pct(rangeTotals.netProfit, rangeTotals.totalRevenue)}% ของรายได้รวม · ภาษีเงินได้คำนวณตามแบบ ภ.ง.ด.50/51 (นิติบุคคล) หรือ ภ.ง.ด.90/94 (บุคคลธรรมดา)
                     </span>
                   </div>
+                  <span className="font-mono font-black text-lg sm:text-2xl ml-2">{money(rangeTotals.netProfit)}</span>
                 </div>
               </div>
             </div>
@@ -2621,16 +2488,16 @@ export const AccountingView: React.FC = () => {
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2">
                     <span className="px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded text-[10px] font-bold uppercase tracking-wider">
-                      OFFICIAL BALANCE SHEET
+                      งบแสดงฐานะการเงิน
                     </span>
                     <span className="text-xs text-slate-400 font-mono">สาขา: {currentBranch.name}</span>
                   </div>
                   <h2 className="text-lg sm:text-xl font-bold text-slate-100 flex items-center space-x-2">
                     <Scale className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-400" />
-                    <span>งบแสดงฐานะการเงิน (Balance Sheet)</span>
+                    <span>งบแสดงฐานะการเงิน ณ วันนี้</span>
                   </h2>
                   <p className="text-xs text-slate-400">
-                    ตรวจสอบความมั่งคั่งร้านด้วย สมการบัญชี: สินทรัพย์ = หหนี้สิน + ส่วนของเจ้าของ
+                    สมการบัญชี: สินทรัพย์ = หนี้สิน + ส่วนของเจ้าของ
                   </p>
                 </div>
 
@@ -2655,169 +2522,149 @@ export const AccountingView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Accounting Equation Equilibrium Status Banner */}
+              {/* Accounting equation check */}
               <div
-                className={`p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
-                  totalAssets === totalLiabilitiesAndEquity
-                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
-                    : 'bg-amber-950/40 border-amber-500/40 text-amber-300'
+                role="status"
+                className={`p-3.5 rounded-xl border text-xs ${
+                  balanceSheet.balanced ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200' : 'bg-amber-950/40 border-amber-500/40 text-amber-200'
                 }`}
               >
-                <div className="flex items-center space-x-3">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                  <div>
-                    <div className="font-bold text-xs sm:text-sm">
-                      {totalAssets === totalLiabilitiesAndEquity
-                        ? 'สมการบัญชีสมดุลถูกต้อง: สินทรัพย์ = หนี้สิน + ส่วนของทุน'
-                        : 'สมการบัญชีไม่สมดุล (กรุณาตรวจสอบการปรับปรุงรายการ)'}
-                    </div>
-                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                      สินทรัพย์รวม (฿{totalAssets.toLocaleString()}) = หนี้สินรวม (฿{activeAccountsPayable.toLocaleString()}) + ทุนรวม (฿{(activeShareCapital + activeRetainedEarnings).toLocaleString()})
-                    </div>
-                  </div>
+                <div className="font-bold text-sm flex items-center gap-2">
+                  {balanceSheet.balanced ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertTriangle className="w-5 h-5 shrink-0" />}
+                  {balanceSheet.balanced ? 'สมดุล: สินทรัพย์ = หนี้สิน + ส่วนของเจ้าของ' : `ยังไม่สมดุล ต่างกัน ฿${money(balanceSheet.unreconciled)}`}
                 </div>
-                <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 font-mono text-xs font-extrabold rounded-lg border border-emerald-500/30 whitespace-nowrap">
-                  สมดุล 100%
-                </span>
+                <div className="font-mono mt-1 opacity-80">
+                  ฿{money(balanceSheet.totalAssets)} = ฿{money(balanceSheet.totalLiabilities)} + ฿{money(balanceSheet.totalEquity)}
+                </div>
+                {!balanceSheet.balanced && (
+                  <p className="mt-1.5 text-amber-100/80">
+                    ส่วนต่างมาจากรายการที่ระบบไม่มีข้อมูล เช่น สต็อกและเงินสดตั้งต้นก่อนเริ่มใช้ระบบ เงินที่เจ้าของถอนไปใช้ส่วนตัว หรือการซื้อวัตถุดิบที่ไม่ได้บันทึก
+                    กด “ปรับปรุงตัวเลขบัญชี” เพื่อใส่ยอดเงินสด/ธนาคารที่นับได้จริงและทุนตั้งต้น
+                  </p>
+                )}
               </div>
+              {liveCashOnHand < 0 && balanceData.overrideCashOnHand === undefined && (
+                <p className="text-xs text-rose-300">
+                  เงินสดที่คำนวณได้ติดลบ: มีรายจ่ายมากกว่ารายรับที่บันทึกไว้ ให้ใส่ทุน/เงินตั้งต้น หรือยอดเงินสดที่นับได้จริง
+                </p>
+              )}
 
-              {/* Main 2 Column Grid: Assets vs Liabilities & Equity */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                {/* ASSETS SECTION */}
-                <div className="p-4 sm:p-5 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-4">
-                  <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
-                    <h3 className="text-base font-bold text-emerald-400 flex items-center space-x-2">
-                      <span>สินทรัพย์ (Assets)</span>
-                    </h3>
-                    <span className="text-xs text-slate-400 font-mono">ฝั่งเดบิต (Dr.)</span>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 text-xs">
+                {/* Assets */}
+                <div className="p-4 sm:p-5 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-1">
+                  <h3 className="text-base font-bold text-emerald-400 pb-2 border-b border-slate-800">สินทรัพย์</h3>
+                  <div className="text-slate-400 font-bold pt-2">สินทรัพย์หมุนเวียน</div>
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
+                      <div>
+                        <div className="text-slate-100">เงินสดและเงินฝากธนาคาร {balanceData.overrideCashOnHand !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
+                        <div className="text-[10px] text-slate-500">รับจากการขายและรายได้อื่น หักรายจ่ายที่บันทึก รวมเงินทุน</div>
+                      </div>
+                      <div className={`font-mono font-bold ${balanceSheet.cash < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.cash)}</div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
+                      <div>
+                        <div className="text-slate-100">ลูกหนี้การค้า {balanceData.overrideAccountsReceivable !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
+                        <div className="text-[10px] text-slate-500">ยอดค้างรับตามใบแจ้งหนี้ในแท็บลูกหนี้/เจ้าหนี้</div>
+                      </div>
+                      <div className={`font-mono font-bold ${balanceSheet.receivables < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.receivables)}</div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
+                      <div>
+                        <div className="text-slate-100">สินค้าคงเหลือ {balanceData.overrideInventoryAsset !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
+                        <div className="text-[10px] text-slate-500">วัตถุดิบในคลัง ณ ปัจจุบัน × ต้นทุนต่อหน่วย</div>
+                      </div>
+                      <div className={`font-mono font-bold ${balanceSheet.inventory < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.inventory)}</div>
+                    </div>
+                  <div className="flex justify-between py-1.5 font-bold text-slate-200">
+                    <span>รวมสินทรัพย์หมุนเวียน</span>
+                    <span className="font-mono">{money(balanceSheet.currentAssets)}</span>
                   </div>
-
-                  <div className="space-y-2.5 text-xs">
-                    <div className="flex items-center justify-between p-3 bg-slate-900/90 rounded-xl border border-slate-800/80 hover:border-slate-700 transition">
+                  <div className="text-slate-400 font-bold pt-2">สินทรัพย์ไม่หมุนเวียน</div>
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
                       <div>
-                        <div className="font-bold text-slate-100">เงินสดในมือ / ในบัญชีธนาคารร้าน (Cash on Hand)</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">เงินสดพร้อมใช้ในตู้เซฟและบัญชีธนาคารหลัก</div>
+                        <div className="text-slate-100">อุปกรณ์และเครื่องใช้ (สุทธิ)</div>
+                        <div className="text-[10px] text-slate-500">เครื่องครัว ตู้แช่ เตา อุปกรณ์ร้าน หลังหักค่าเสื่อมราคา</div>
                       </div>
-                      <div className="font-mono font-extrabold text-sm text-slate-100">
-                        {activeCashOnHand.toLocaleString()}฿
-                      </div>
+                      <div className={`font-mono font-bold ${balanceSheet.equipment < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.equipment)}</div>
                     </div>
-
-                    <div className="flex items-center justify-between p-3 bg-slate-900/90 rounded-xl border border-slate-800/80 hover:border-slate-700 transition">
-                      <div>
-                        <div className="font-bold text-slate-100">ลูกหนี้การค้าคงค้าง (Accounts Receivable - AR)</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">ยอดรอโอนจากแพลตฟอร์มเดลิเวอรี (Grab / Lineman / Shopee)</div>
-                      </div>
-                      <div className="font-mono font-extrabold text-sm text-emerald-400">
-                        +{activeAccountsReceivable.toLocaleString()}฿
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between p-3 bg-slate-900/90 rounded-xl border border-slate-800/80 hover:border-slate-700 transition">
-                      <div>
-                        <div className="font-bold text-slate-100">มูลค่าคลังวัตถุดิบคงเหลือ (Inventory Asset)</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">มูลค่าสต็อกวัตถุดิบและบรรจุภัณฑ์คงคลัง ณ ปัจจุบัน</div>
-                      </div>
-                      <div className="font-mono font-extrabold text-sm text-slate-100">
-                        {activeInventoryAsset.toLocaleString()}฿
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between p-3 bg-slate-900/90 rounded-xl border border-slate-800/80 hover:border-slate-700 transition">
-                      <div>
-                        <div className="font-bold text-slate-100">อุปกรณ์และเครื่องใช้จัดเตรียมครัว (Equipment & Assets)</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">เครื่องครัว ตู้เย็น เตาอบ อุปกรณ์ POS และสินทรัพย์ถาวร</div>
-                      </div>
-                      <div className="font-mono font-extrabold text-sm text-slate-100">
-                        {activeEquipmentAssets.toLocaleString()}฿
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Subtotal Total Assets */}
-                  <div className="pt-3 border-t border-slate-800 flex items-center justify-between p-3.5 bg-emerald-950/30 border border-emerald-500/30 rounded-xl text-emerald-400">
-                    <span className="font-bold text-sm">รวมสินทรัพย์ทั้งหมด (Total Assets)</span>
-                    <span className="font-mono font-black text-lg sm:text-xl">
-                      {totalAssets.toLocaleString()}฿
-                    </span>
+                  <div className="flex items-center justify-between p-3 mt-2 bg-emerald-950/30 border border-emerald-500/30 rounded-xl text-emerald-300 font-bold">
+                    <span>รวมสินทรัพย์</span>
+                    <span className="font-mono text-base">{money(balanceSheet.totalAssets)}</span>
                   </div>
                 </div>
 
-                {/* LIABILITIES & EQUITY SECTION */}
-                <div className="p-4 sm:p-5 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-4">
-                  <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
-                    <h3 className="text-base font-bold text-rose-400 flex items-center space-x-2">
-                      <span>หนี้สินและทุน (Liabilities & Equity)</span>
-                    </h3>
-                    <span className="text-xs text-slate-400 font-mono">ฝั่งเครดิต (Cr.)</span>
+                {/* Liabilities and equity */}
+                <div className="p-4 sm:p-5 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-1">
+                  <h3 className="text-base font-bold text-rose-300 pb-2 border-b border-slate-800">หนี้สินและส่วนของเจ้าของ</h3>
+                  <div className="text-slate-400 font-bold pt-2">หนี้สินหมุนเวียน</div>
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
+                      <div>
+                        <div className="text-slate-100">เจ้าหนี้การค้า {balanceData.overrideAccountsPayable !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
+                        <div className="text-[10px] text-slate-500">ยอดค้างจ่ายตามบิลในแท็บลูกหนี้/เจ้าหนี้</div>
+                      </div>
+                      <div className={`font-mono font-bold ${balanceSheet.payables < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.payables)}</div>
+                    </div>
+                  {vatRegistered && (
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
+                      <div>
+                        <div className="text-slate-100">ภาษีมูลค่าเพิ่มค้างนำส่ง {balanceData.overrideVatPayable !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
+                        <div className="text-[10px] text-slate-500">ภาษีขาย หัก ภาษีซื้อ สะสม (ปรับเป็น 0 หลังยื่น ภ.พ.30 และชำระแล้ว)</div>
+                      </div>
+                      <div className={`font-mono font-bold ${balanceSheet.vatPayable < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.vatPayable)}</div>
+                    </div>
+                  )}
+                  <div className="flex justify-between py-1.5 font-bold text-slate-200">
+                    <span>รวมหนี้สิน</span>
+                    <span className="font-mono">{money(balanceSheet.totalLiabilities)}</span>
                   </div>
-
-                  <div className="space-y-2.5 text-xs">
-                    <div className="flex items-center justify-between p-3 bg-slate-900/90 rounded-xl border border-slate-800/80 hover:border-slate-700 transition">
+                  <div className="text-slate-400 font-bold pt-2">ส่วนของเจ้าของ</div>
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
                       <div>
-                        <div className="font-bold text-slate-100">เจ้าหนี้การค้าคงค้าง (Accounts Payable - AP)</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">ยอดค้างชำระค่าวัตถุดิบคู่ค้า รอเคลียร์รอบบิล</div>
+                        <div className="text-slate-100">ทุน</div>
+                        <div className="text-[10px] text-slate-500">เงินที่เจ้าของนำมาลงทุนในร้าน</div>
                       </div>
-                      <div className="font-mono font-extrabold text-sm text-rose-400">
-                        +{activeAccountsPayable.toLocaleString()}฿
-                      </div>
+                      <div className={`font-mono font-bold ${balanceSheet.ownerCapital < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.ownerCapital)}</div>
                     </div>
-
-                    <div className="flex items-center justify-between p-3 bg-slate-900/90 rounded-xl border border-slate-800/80 hover:border-slate-700 transition">
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
                       <div>
-                        <div className="font-bold text-slate-100">ทุนจดทะเบียนเริ่มต้นร้าน (Share Capital)</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">เงินทุนจดทะเบียนเริ่มต้นประกอบกิจการ</div>
+                        <div className="text-slate-100">กำไร (ขาดทุน) สะสม {balanceData.overrideRetainedEarnings !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
+                        <div className="text-[10px] text-slate-500">กำไรก่อนภาษีสะสมจากงบกำไรขาดทุนทุกงวด</div>
                       </div>
-                      <div className="font-mono font-extrabold text-sm text-slate-100">
-                        {activeShareCapital.toLocaleString()}฿
-                      </div>
+                      <div className={`font-mono font-bold ${balanceSheet.retainedEarnings < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.retainedEarnings)}</div>
                     </div>
-
-                    <div className="flex items-center justify-between p-3 bg-slate-900/90 rounded-xl border border-slate-800/80 hover:border-slate-700 transition">
-                      <div>
-                        <div className="font-bold text-slate-100">กำไรสะสมปรับปรุง (Retained Earnings)</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">กำไรสุทธิสะสมยกมาจากการดำเนินงานในอดีต</div>
-                      </div>
-                      <div className="font-mono font-extrabold text-sm text-slate-100">
-                        {activeRetainedEarnings.toLocaleString()}฿
-                      </div>
-                    </div>
+                  <div className="flex justify-between py-1.5 font-bold text-slate-200">
+                    <span>รวมส่วนของเจ้าของ</span>
+                    <span className="font-mono">{money(balanceSheet.totalEquity)}</span>
                   </div>
-
-                  {/* Subtotal Total Liabilities & Equity */}
-                  <div className="pt-3 border-t border-slate-800 flex items-center justify-between p-3.5 bg-rose-950/30 border border-rose-500/30 rounded-xl text-rose-400">
-                    <span className="font-bold text-sm">รวมหนี้สินและส่วนของทุน (Total Liabilities & Equity)</span>
-                    <span className="font-mono font-black text-lg sm:text-xl">
-                      {totalLiabilitiesAndEquity.toLocaleString()}฿
-                    </span>
+                  <div className="flex items-center justify-between p-3 mt-2 bg-rose-950/30 border border-rose-500/30 rounded-xl text-rose-200 font-bold">
+                    <span>รวมหนี้สินและส่วนของเจ้าของ</span>
+                    <span className="font-mono text-base">{money(balanceSheet.totalLiabilitiesAndEquity)}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Financial Ratios Summary Card */}
+              {/* Ratios */}
               <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800/90 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                 <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block">อัตราส่วนสภาพคล่อง (Current Ratio)</span>
+                  <span className="text-slate-400 text-[11px] block">อัตราส่วนทุนหมุนเวียน (สินทรัพย์หมุนเวียน ÷ หนี้สินหมุนเวียน)</span>
                   <span className="font-mono font-extrabold text-sky-400 text-base block">
-                    {((activeCashOnHand + activeAccountsReceivable + activeInventoryAsset) / (activeAccountsPayable || 1)).toFixed(2)}x
+                    {balanceSheet.currentRatio === null ? 'ไม่มีหนี้สิน' : `${balanceSheet.currentRatio.toFixed(2)} เท่า`}
                   </span>
-                  <span className="text-[10px] text-slate-500 block">เกณฑ์มาตรฐานร้านอาหาร: &gt; 1.5x (สภาพคล่องแข็งแกร่ง)</span>
+                  <span className="text-[10px] text-slate-500 block">มากกว่า 1 เท่า = มีสินทรัพย์พอจ่ายหนี้ระยะสั้น</span>
                 </div>
-
                 <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block">อัตราส่วนหนี้สินต่อทุน (D/E Ratio)</span>
+                  <span className="text-slate-400 text-[11px] block">หนี้สินต่อส่วนของเจ้าของ (D/E)</span>
                   <span className="font-mono font-extrabold text-emerald-400 text-base block">
-                    {(activeAccountsPayable / ((activeShareCapital + activeRetainedEarnings) || 1)).toFixed(2)}x
+                    {balanceSheet.debtToEquity === null ? 'ส่วนของเจ้าของติดลบหรือเป็นศูนย์' : `${balanceSheet.debtToEquity.toFixed(2)} เท่า`}
                   </span>
-                  <span className="text-[10px] text-slate-500 block">ภาระหนี้สินต่ำมากเมื่อเทียบกับทุน (&lt; 0.5x)</span>
+                  <span className="text-[10px] text-slate-500 block">ยิ่งต่ำ ยิ่งพึ่งพาเงินกู้/เครดิตน้อย</span>
                 </div>
-
                 <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block">เงินทุนหมุนเวียนสุทธิ (Net Working Capital)</span>
-                  <span className="font-mono font-extrabold text-indigo-400 text-base block">
-                    ฿{(activeCashOnHand + activeAccountsReceivable + activeInventoryAsset - activeAccountsPayable).toLocaleString()}
+                  <span className="text-slate-400 text-[11px] block">เงินทุนหมุนเวียนสุทธิ</span>
+                  <span className={`font-mono font-extrabold text-base block ${balanceSheet.workingCapital < 0 ? 'text-rose-400' : 'text-indigo-300'}`}>
+                    ฿{money(balanceSheet.workingCapital)}
                   </span>
-                  <span className="text-[10px] text-slate-500 block">สินทรัพย์หมุนเวียนหักหนี้สินระยะสั้น</span>
+                  <span className="text-[10px] text-slate-500 block">สินทรัพย์หมุนเวียน หัก หนี้สินหมุนเวียน</span>
                 </div>
               </div>
             </div>
@@ -2879,65 +2726,37 @@ export const AccountingView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Cash Flow Key Metrics Cards (6 KPI Grid) */}
+              {/* Cash flow summary of the period */}
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs">
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">1. ดำเนินงาน (CFFO)</span>
-                  <span className={`font-mono font-bold text-sm block ${rangeTotals.totalRevenue - (rangeTotals.cogs + rangeTotals.totalOpex) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    ฿{(rangeTotals.totalRevenue - (rangeTotals.cogs + rangeTotals.totalOpex)).toLocaleString()}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block truncate">เงินสดจากขาย - รายจ่าย</span>
+                  <span className="text-slate-400 text-[11px] block truncate">1. กิจกรรมดำเนินงาน</span>
+                  <span className={`font-mono font-bold text-sm block ${cashFlow.operating >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>฿{money(cashFlow.operating)}</span>
+                  <span className="text-[10px] text-slate-500 block truncate">รับจากขาย หัก จ่ายค่าใช้จ่าย</span>
                 </div>
-
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">2. การลงทุน (CFFI)</span>
-                  <span className="font-mono font-bold text-sky-400 text-sm block">
-                    ฿{(cashFlowEntries.filter(e => e.activityType === 'investing' && e.flowType === 'inflow').reduce((sum, e) => sum + e.amount, 0) -
-                       cashFlowEntries.filter(e => e.activityType === 'investing' && e.flowType === 'outflow').reduce((sum, e) => sum + e.amount, 0)).toLocaleString()}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block truncate">ซื้ออุปกรณ์/เครื่องครัว</span>
+                  <span className="text-slate-400 text-[11px] block truncate">2. กิจกรรมลงทุน</span>
+                  <span className={`font-mono font-bold text-sm block ${cashFlow.investing >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>฿{money(cashFlow.investing)}</span>
+                  <span className="text-[10px] text-slate-500 block truncate">ซื้อ/ขายอุปกรณ์</span>
                 </div>
-
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">3. จัดหาเงิน (CFFF)</span>
-                  <span className="font-mono font-bold text-indigo-400 text-sm block">
-                    ฿{(cashFlowEntries.filter(e => e.activityType === 'financing' && e.flowType === 'inflow').reduce((sum, e) => sum + e.amount, 0) -
-                       cashFlowEntries.filter(e => e.activityType === 'financing' && e.flowType === 'outflow').reduce((sum, e) => sum + e.amount, 0)).toLocaleString()}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block truncate">เงินเพิ่มทุน / เงินกู้</span>
+                  <span className="text-slate-400 text-[11px] block truncate">3. กิจกรรมจัดหาเงิน</span>
+                  <span className={`font-mono font-bold text-sm block ${cashFlow.financing >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>฿{money(cashFlow.financing)}</span>
+                  <span className="text-[10px] text-slate-500 block truncate">เงินลงทุน เงินกู้ ถอนใช้ส่วนตัว</span>
                 </div>
-
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">เงินสดสุทธิประจำเดือน</span>
-                  <span className="font-mono font-black text-base text-emerald-400 block">
-                    ฿{(
-                      (rangeTotals.totalRevenue - (rangeTotals.cogs + rangeTotals.totalOpex)) +
-                      (cashFlowEntries.filter(e => e.activityType === 'investing' && e.flowType === 'inflow').reduce((s, e) => s + e.amount, 0) -
-                       cashFlowEntries.filter(e => e.activityType === 'investing' && e.flowType === 'outflow').reduce((s, e) => s + e.amount, 0)) +
-                      (cashFlowEntries.filter(e => e.activityType === 'financing' && e.flowType === 'inflow').reduce((s, e) => s + e.amount, 0) -
-                       cashFlowEntries.filter(e => e.activityType === 'financing' && e.flowType === 'outflow').reduce((s, e) => s + e.amount, 0))
-                    ).toLocaleString()}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block truncate">Net Cash Flow</span>
+                  <span className="text-slate-400 text-[11px] block truncate">เงินสดเพิ่ม (ลด) สุทธิ</span>
+                  <span className={`font-mono font-bold text-sm block ${cashFlow.netChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>฿{money(cashFlow.netChange)}</span>
+                  <span className="text-[10px] text-slate-500 block truncate">1 + 2 + 3</span>
                 </div>
-
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">Free Cash Flow (FCF)</span>
-                  <span className="font-mono font-bold text-amber-400 text-sm block">
-                    ฿{(
-                      (rangeTotals.totalRevenue - (rangeTotals.cogs + rangeTotals.totalOpex)) -
-                      cashFlowEntries.filter(e => e.activityType === 'investing' && e.flowType === 'outflow').reduce((s, e) => s + e.amount, 0)
-                    ).toLocaleString()}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block truncate">กระแสเงินสดอิสระ</span>
+                  <span className="text-slate-400 text-[11px] block truncate">กระแสเงินสดอิสระ</span>
+                  <span className={`font-mono font-bold text-sm block ${cashFlow.freeCashFlow >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>฿{money(cashFlow.freeCashFlow)}</span>
+                  <span className="text-[10px] text-slate-500 block truncate">ดำเนินงาน หัก ซื้ออุปกรณ์</span>
                 </div>
-
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">เงินสดปลายงวด</span>
-                  <span className="font-mono font-bold text-sky-300 text-sm block">
-                    ฿{activeCashOnHand.toLocaleString()}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block truncate">Cash Balance</span>
+                  <span className="text-slate-400 text-[11px] block truncate">เงินสดคงเหลือ ณ วันนี้</span>
+                  <span className="font-mono font-bold text-sky-300 text-sm block">฿{money(activeCashOnHand)}</span>
+                  <span className="text-[10px] text-slate-500 block truncate">จากงบแสดงฐานะการเงิน</span>
                 </div>
               </div>
             </div>
@@ -2946,44 +2765,38 @@ export const AccountingView: React.FC = () => {
             <div ref={cashFlowReportRef} id="cashflow-report-content" className="space-y-4">
               {/* Detailed 3 Activity Breakdown */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                {/* 1. Operating Activities */}
+                {/* 1. Operating Activities (direct method) */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
                   <div className="border-b border-slate-800 pb-2 flex items-center justify-between">
                     <h3 className="font-bold text-slate-100 text-xs sm:text-sm flex items-center space-x-1.5">
                       <ShoppingBag className="w-4 h-4 text-emerald-400" />
-                      <span>1. กิจกรรมดำเนินงาน (Operating)</span>
+                      <span>1. กิจกรรมดำเนินงาน</span>
                     </h3>
                   </div>
                   <div className="space-y-2 text-xs">
                     <div className="flex justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                      <span>กระแสเงินสดรับจากยอดขาย POS & Delivery</span>
-                      <span className="font-mono font-bold text-emerald-400">+฿{rangeTotals.totalRevenue.toLocaleString()}</span>
+                      <span>เงินสดรับจากการขาย (รวม VAT)</span>
+                      <span className="font-mono font-bold text-emerald-400">+฿{money(cashFlow.receiptsFromSales)}</span>
                     </div>
                     <div className="flex justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                      <span>เงินสดรับจากการเก็บหนี้ลูกหนี้การค้า (AR)</span>
-                      <span className="font-mono font-bold text-emerald-400">
-                        +฿{arList.reduce((sum, item) => sum + item.paidAmount, 0).toLocaleString()}
-                      </span>
+                      <span>เงินสดรับจากรายได้อื่นที่บันทึก</span>
+                      <span className="font-mono font-bold text-emerald-400">+฿{money(cashFlow.receiptsOther)}</span>
                     </div>
                     <div className="flex justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                      <span>กระแสเงินสดจ่ายค่าวัตถุดิบอาหาร (COGS)</span>
-                      <span className="font-mono font-bold text-rose-400">-฿{rangeTotals.cogs.toLocaleString()}</span>
+                      <span>เงินสดรับชำระจากลูกหนี้</span>
+                      <span className="font-mono font-bold text-emerald-400">+฿{money(cashFlow.receiptsFromReceivables)}</span>
                     </div>
                     <div className="flex justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                      <span>กระแสเงินสดจ่ายค่าใช้จ่ายดำเนินงาน (OPEX)</span>
-                      <span className="font-mono font-bold text-rose-400">-฿{rangeTotals.totalOpex.toLocaleString()}</span>
+                      <span>เงินสดจ่ายค่าวัตถุดิบและค่าใช้จ่าย (รวม VAT)</span>
+                      <span className="font-mono font-bold text-rose-400">-฿{money(cashFlow.paidExpenses)}</span>
                     </div>
                     <div className="flex justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                      <span>เงินสดจ่ายชำระหนี้ซัพพลายเออร์ (AP)</span>
-                      <span className="font-mono font-bold text-rose-400">
-                        -฿{apList.reduce((sum, item) => sum + item.paidAmount, 0).toLocaleString()}
-                      </span>
+                      <span>เงินสดจ่ายชำระเจ้าหนี้</span>
+                      <span className="font-mono font-bold text-rose-400">-฿{money(cashFlow.paidPayables)}</span>
                     </div>
                     <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-xs p-2 bg-emerald-950/30 rounded-lg border border-emerald-500/30 text-emerald-300">
                       <span>เงินสดสุทธิจากกิจกรรมดำเนินงาน</span>
-                      <span className="font-mono">
-                        ฿{(rangeTotals.totalRevenue - (rangeTotals.cogs + rangeTotals.totalOpex)).toLocaleString()}
-                      </span>
+                      <span className="font-mono">฿{money(cashFlow.operating)}</span>
                     </div>
                   </div>
                 </div>
@@ -2997,19 +2810,19 @@ export const AccountingView: React.FC = () => {
                     </h3>
                   </div>
                   <div className="space-y-2 text-xs">
-                    {cashFlowEntries.filter(e => e.activityType === 'investing').length === 0 ? (
+                    {periodCashFlowEntries.filter(e => e.activityType === 'investing').length === 0 ? (
                       <div className="p-4 bg-slate-950 rounded-lg text-center text-slate-500 text-xs">
                         ไม่มีรายการลงทุนในงวดนี้
                       </div>
                     ) : (
-                      cashFlowEntries.filter(e => e.activityType === 'investing').map(e => (
+                      periodCashFlowEntries.filter(e => e.activityType === 'investing').map(e => (
                         <div key={e.id} className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
                           <div>
                             <div className="font-bold text-slate-200">{e.title}</div>
                             <div className="text-[10px] text-slate-400">{e.date} | {e.category}</div>
                           </div>
                           <span className={`font-mono font-bold ${e.flowType === 'inflow' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {e.flowType === 'inflow' ? '+' : '-'}฿{e.amount.toLocaleString()}
+                            {e.flowType === 'inflow' ? '+' : '-'}฿{money(e.amount)}
                           </span>
                         </div>
                       ))
@@ -3017,8 +2830,7 @@ export const AccountingView: React.FC = () => {
                     <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-xs p-2 bg-sky-950/30 rounded-lg border border-sky-500/30 text-sky-300">
                       <span>เงินสดสุทธิจากกิจกรรมลงทุน</span>
                       <span className="font-mono">
-                        ฿{(cashFlowEntries.filter(e => e.activityType === 'investing' && e.flowType === 'inflow').reduce((s, e) => s + e.amount, 0) -
-                           cashFlowEntries.filter(e => e.activityType === 'investing' && e.flowType === 'outflow').reduce((s, e) => s + e.amount, 0)).toLocaleString()}
+                        ฿{money(cashFlow.investing)}
                       </span>
                     </div>
                   </div>
@@ -3033,19 +2845,19 @@ export const AccountingView: React.FC = () => {
                     </h3>
                   </div>
                   <div className="space-y-2 text-xs">
-                    {cashFlowEntries.filter(e => e.activityType === 'financing').length === 0 ? (
+                    {periodCashFlowEntries.filter(e => e.activityType === 'financing').length === 0 ? (
                       <div className="p-4 bg-slate-950 rounded-lg text-center text-slate-500 text-xs">
                         ไม่มีรายการจัดหาเงินในงวดนี้
                       </div>
                     ) : (
-                      cashFlowEntries.filter(e => e.activityType === 'financing').map(e => (
+                      periodCashFlowEntries.filter(e => e.activityType === 'financing').map(e => (
                         <div key={e.id} className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
                           <div>
                             <div className="font-bold text-slate-200">{e.title}</div>
                             <div className="text-[10px] text-slate-400">{e.date} | {e.category}</div>
                           </div>
                           <span className={`font-mono font-bold ${e.flowType === 'inflow' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {e.flowType === 'inflow' ? '+' : '-'}฿{e.amount.toLocaleString()}
+                            {e.flowType === 'inflow' ? '+' : '-'}฿{money(e.amount)}
                           </span>
                         </div>
                       ))
@@ -3053,8 +2865,7 @@ export const AccountingView: React.FC = () => {
                     <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-xs p-2 bg-indigo-950/30 rounded-lg border border-indigo-500/30 text-indigo-300">
                       <span>เงินสดสุทธิจากกิจกรรมจัดหาเงิน</span>
                       <span className="font-mono">
-                        ฿{(cashFlowEntries.filter(e => e.activityType === 'financing' && e.flowType === 'inflow').reduce((s, e) => s + e.amount, 0) -
-                           cashFlowEntries.filter(e => e.activityType === 'financing' && e.flowType === 'outflow').reduce((s, e) => s + e.amount, 0)).toLocaleString()}
+                        ฿{money(cashFlow.financing)}
                       </span>
                     </div>
                   </div>
@@ -3068,7 +2879,7 @@ export const AccountingView: React.FC = () => {
                     <FileSpreadsheet className="w-4 h-4 text-sky-400" />
                     <span>ตารางสรุปสมุดกระแสเงินสดเข้า-ออกรายวัน (Cash Flow Movement Ledger)</span>
                   </h3>
-                  <span className="text-xs text-slate-400 font-mono">จำนวน {cashFlowEntries.length + 2} รายการ</span>
+                  <span className="text-xs text-slate-400 font-mono">จำนวน {periodCashFlowEntries.length + 2} รายการ</span>
                 </div>
 
                 <div className="overflow-x-auto rounded-xl border border-slate-800">
@@ -3093,14 +2904,14 @@ export const AccountingView: React.FC = () => {
                           </span>
                         </td>
                         <td className="py-2.5 px-3 font-medium text-slate-200">
-                          ยอดขายสดหน้าร้าน + เดลิเวอรี + งานจัดเลี้ยงสะสม
+                          รับจากการขาย รายได้อื่น และลูกหนี้ (รวมทั้งงวด)
                         </td>
                         <td className="py-2.5 px-3 font-mono text-right text-emerald-400 font-bold">
-                          ฿{rangeTotals.totalRevenue.toLocaleString()}
+                          ฿{money(cashFlow.receiptsFromSales + cashFlow.receiptsOther + cashFlow.receiptsFromReceivables)}
                         </td>
-                        <td className="py-2.5 px-3 font-mono text-right text-slate-500">฿0</td>
+                        <td className="py-2.5 px-3 font-mono text-right text-slate-500">-</td>
                         <td className="py-2.5 px-3 font-mono text-right text-emerald-400 font-bold">
-                          +฿{rangeTotals.totalRevenue.toLocaleString()}
+                          +฿{money(cashFlow.receiptsFromSales + cashFlow.receiptsOther + cashFlow.receiptsFromReceivables)}
                         </td>
                         <td className="py-2.5 px-3 text-center text-slate-500">-</td>
                       </tr>
@@ -3113,19 +2924,19 @@ export const AccountingView: React.FC = () => {
                           </span>
                         </td>
                         <td className="py-2.5 px-3 font-medium text-slate-200">
-                          จ่ายค่าวัตถุดิบอาหาร (COGS) และค่าใช้จ่ายดำเนินงาน (OPEX)
+                          จ่ายค่าวัตถุดิบ ค่าใช้จ่าย และเจ้าหนี้ (รวมทั้งงวด)
                         </td>
-                        <td className="py-2.5 px-3 font-mono text-right text-slate-500">฿0</td>
+                        <td className="py-2.5 px-3 font-mono text-right text-slate-500">-</td>
                         <td className="py-2.5 px-3 font-mono text-right text-rose-400 font-bold">
-                          ฿{(rangeTotals.cogs + rangeTotals.totalOpex).toLocaleString()}
+                          ฿{money(cashFlow.paidExpenses + cashFlow.paidPayables)}
                         </td>
                         <td className="py-2.5 px-3 font-mono text-right text-rose-400 font-bold">
-                          -฿{(rangeTotals.cogs + rangeTotals.totalOpex).toLocaleString()}
+                          -฿{money(cashFlow.paidExpenses + cashFlow.paidPayables)}
                         </td>
                         <td className="py-2.5 px-3 text-center text-slate-500">-</td>
                       </tr>
 
-                      {cashFlowEntries.map(e => (
+                      {periodCashFlowEntries.map(e => (
                         <tr key={e.id} className="hover:bg-slate-800/40 transition">
                           <td className="py-2.5 px-3 font-mono">{e.date}</td>
                           <td className="py-2.5 px-3">
@@ -3140,13 +2951,13 @@ export const AccountingView: React.FC = () => {
                             <div className="text-[10px] text-slate-400">{e.category} {e.note ? `• ${e.note}` : ''}</div>
                           </td>
                           <td className="py-2.5 px-3 font-mono text-right font-bold text-emerald-400">
-                            {e.flowType === 'inflow' ? `฿${e.amount.toLocaleString()}` : '-'}
+                            {e.flowType === 'inflow' ? `฿${money(e.amount)}` : '-'}
                           </td>
                           <td className="py-2.5 px-3 font-mono text-right font-bold text-rose-400">
-                            {e.flowType === 'outflow' ? `฿${e.amount.toLocaleString()}` : '-'}
+                            {e.flowType === 'outflow' ? `฿${money(e.amount)}` : '-'}
                           </td>
                           <td className={`py-2.5 px-3 font-mono text-right font-bold ${e.flowType === 'inflow' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {e.flowType === 'inflow' ? '+' : '-'}฿{e.amount.toLocaleString()}
+                            {e.flowType === 'inflow' ? '+' : '-'}฿{money(e.amount)}
                           </td>
                           <td className="py-2.5 px-3 text-center">
                             <button
@@ -3224,7 +3035,7 @@ export const AccountingView: React.FC = () => {
                   <HandCoins className="w-4 h-4 text-emerald-400" />
                   <span>ลูกหนี้การค้า (AR)</span>
                   <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 rounded font-mono text-[10px]">
-                    ฿{totalUnpaidAR.toLocaleString()}
+                    ฿{money(totalUnpaidAR)}
                   </span>
                 </button>
 
@@ -3239,7 +3050,7 @@ export const AccountingView: React.FC = () => {
                   <Building2 className="w-4 h-4 text-rose-400" />
                   <span>เจ้าหนี้การค้า (AP)</span>
                   <span className="px-1.5 py-0.5 bg-rose-500/20 text-rose-300 rounded font-mono text-[10px]">
-                    ฿{totalUnpaidAP.toLocaleString()}
+                    ฿{money(totalUnpaidAP)}
                   </span>
                 </button>
 
@@ -3264,21 +3075,21 @@ export const AccountingView: React.FC = () => {
                     <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
                       <span className="text-slate-400 block">ยอดลูกหนี้ค้างชำระรวม</span>
                       <span className="text-lg font-mono font-bold text-emerald-400 block mt-1">
-                        ฿{totalUnpaidAR.toLocaleString()}
+                        ฿{money(totalUnpaidAR)}
                       </span>
                     </div>
 
                     <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
                       <span className="text-slate-400 block">ลูกหนี้เกินกำหนดชำระ (Overdue)</span>
                       <span className="text-lg font-mono font-bold text-rose-400 block mt-1">
-                        ฿{arList.filter(item => item.status === 'overdue').reduce((sum, item) => sum + item.remainingAmount, 0).toLocaleString()}
+                        ฿{money(arList.filter(item => item.status === 'overdue').reduce((sum, item) => sum + item.remainingAmount, 0))}
                       </span>
                     </div>
 
                     <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
                       <span className="text-slate-400 block">ยอดรับชำระแล้วสะสม</span>
                       <span className="text-lg font-mono font-bold text-sky-400 block mt-1">
-                        ฿{arList.reduce((sum, item) => sum + item.paidAmount, 0).toLocaleString()}
+                        ฿{money(arList.reduce((sum, item) => sum + item.paidAmount, 0))}
                       </span>
                     </div>
                   </div>
@@ -3307,9 +3118,9 @@ export const AccountingView: React.FC = () => {
                             </td>
                             <td className="py-2.5 px-3 font-mono font-semibold text-sky-400">{item.invoiceNumber}</td>
                             <td className="py-2.5 px-3 font-mono">{item.dueDate}</td>
-                            <td className="py-2.5 px-3 font-mono text-right">฿{item.originalAmount.toLocaleString()}</td>
-                            <td className="py-2.5 px-3 font-mono text-right text-emerald-400 font-semibold">฿{item.paidAmount.toLocaleString()}</td>
-                            <td className="py-2.5 px-3 font-mono text-right text-rose-400 font-bold">฿{item.remainingAmount.toLocaleString()}</td>
+                            <td className="py-2.5 px-3 font-mono text-right">฿{money(item.originalAmount)}</td>
+                            <td className="py-2.5 px-3 font-mono text-right text-emerald-400 font-semibold">฿{money(item.paidAmount)}</td>
+                            <td className="py-2.5 px-3 font-mono text-right text-rose-400 font-bold">฿{money(item.remainingAmount)}</td>
                             <td className="py-2.5 px-3 text-center">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                 item.status === 'paid'
@@ -3358,21 +3169,21 @@ export const AccountingView: React.FC = () => {
                     <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
                       <span className="text-slate-400 block">ยอดเจ้าหนี้ค้างชำระรวม</span>
                       <span className="text-lg font-mono font-bold text-rose-400 block mt-1">
-                        ฿{totalUnpaidAP.toLocaleString()}
+                        ฿{money(totalUnpaidAP)}
                       </span>
                     </div>
 
                     <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
                       <span className="text-slate-400 block">เจ้าหนี้เกินกำหนดชำระ (Overdue)</span>
                       <span className="text-lg font-mono font-bold text-rose-500 block mt-1">
-                        ฿{apList.filter(item => item.status === 'overdue').reduce((sum, item) => sum + item.remainingAmount, 0).toLocaleString()}
+                        ฿{money(apList.filter(item => item.status === 'overdue').reduce((sum, item) => sum + item.remainingAmount, 0))}
                       </span>
                     </div>
 
                     <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
                       <span className="text-slate-400 block">ยอดจ่ายชำระแล้วสะสม</span>
                       <span className="text-lg font-mono font-bold text-sky-400 block mt-1">
-                        ฿{apList.reduce((sum, item) => sum + item.paidAmount, 0).toLocaleString()}
+                        ฿{money(apList.reduce((sum, item) => sum + item.paidAmount, 0))}
                       </span>
                     </div>
                   </div>
@@ -3407,9 +3218,9 @@ export const AccountingView: React.FC = () => {
                               </span>
                             </td>
                             <td className="py-2.5 px-3 font-mono">{item.dueDate}</td>
-                            <td className="py-2.5 px-3 font-mono text-right">฿{item.originalAmount.toLocaleString()}</td>
-                            <td className="py-2.5 px-3 font-mono text-right text-emerald-400 font-semibold">฿{item.paidAmount.toLocaleString()}</td>
-                            <td className="py-2.5 px-3 font-mono text-right text-rose-400 font-bold">฿{item.remainingAmount.toLocaleString()}</td>
+                            <td className="py-2.5 px-3 font-mono text-right">฿{money(item.originalAmount)}</td>
+                            <td className="py-2.5 px-3 font-mono text-right text-emerald-400 font-semibold">฿{money(item.paidAmount)}</td>
+                            <td className="py-2.5 px-3 font-mono text-right text-rose-400 font-bold">฿{money(item.remainingAmount)}</td>
                             <td className="py-2.5 px-3 text-center">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                 item.status === 'paid'
@@ -3467,21 +3278,21 @@ export const AccountingView: React.FC = () => {
                     <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
                       <h4 className="font-bold text-emerald-400 text-xs flex items-center justify-between border-b border-slate-800 pb-2">
                         <span>อายุหนี้ลูกหนี้การค้า (AR Aging)</span>
-                        <span className="font-mono">รวม ฿{totalUnpaidAR.toLocaleString()}</span>
+                        <span className="font-mono">รวม ฿{money(totalUnpaidAR)}</span>
                       </h4>
 
                       <div className="space-y-2">
                         <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 flex justify-between">
                           <span>ไม่เกินกำหนด (0 - 15 วัน)</span>
                           <span className="font-mono font-bold text-emerald-400">
-                            ฿{arList.filter(i => i.status === 'unpaid').reduce((s, i) => s + i.remainingAmount, 0).toLocaleString()}
+                            ฿{money(arList.filter(i => i.status === 'unpaid').reduce((s, i) => s + i.remainingAmount, 0))}
                           </span>
                         </div>
 
                         <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 flex justify-between">
                           <span>เกินกำหนด 1 - 30 วัน</span>
                           <span className="font-mono font-bold text-amber-400">
-                            ฿{arList.filter(i => i.status === 'overdue' || i.status === 'partial').reduce((s, i) => s + i.remainingAmount, 0).toLocaleString()}
+                            ฿{money(arList.filter(i => i.status === 'overdue' || i.status === 'partial').reduce((s, i) => s + i.remainingAmount, 0))}
                           </span>
                         </div>
 
@@ -3496,21 +3307,21 @@ export const AccountingView: React.FC = () => {
                     <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
                       <h4 className="font-bold text-rose-400 text-xs flex items-center justify-between border-b border-slate-800 pb-2">
                         <span>อายุหนี้เจ้าหนี้การค้า (AP Aging)</span>
-                        <span className="font-mono">รวม ฿{totalUnpaidAP.toLocaleString()}</span>
+                        <span className="font-mono">รวม ฿{money(totalUnpaidAP)}</span>
                       </h4>
 
                       <div className="space-y-2">
                         <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 flex justify-between">
                           <span>ยังไม่ถึงกำหนดชำระ (Current Term)</span>
                           <span className="font-mono font-bold text-sky-400">
-                            ฿{apList.filter(i => i.status === 'unpaid').reduce((s, i) => s + i.remainingAmount, 0).toLocaleString()}
+                            ฿{money(apList.filter(i => i.status === 'unpaid').reduce((s, i) => s + i.remainingAmount, 0))}
                           </span>
                         </div>
 
                         <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 flex justify-between">
                           <span>เกินกำหนด 1 - 7 วัน (พิจารณารีบเคลียร์)</span>
                           <span className="font-mono font-bold text-rose-400">
-                            ฿{apList.filter(i => i.status === 'overdue').reduce((s, i) => s + i.remainingAmount, 0).toLocaleString()}
+                            ฿{money(apList.filter(i => i.status === 'overdue').reduce((s, i) => s + i.remainingAmount, 0))}
                           </span>
                         </div>
 
@@ -3552,7 +3363,7 @@ export const AccountingView: React.FC = () => {
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2">
                     <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded text-[10px] font-bold uppercase tracking-wider">
-                      OFFICIAL OTHER REVENUE & INCOME LOG
+                      สมุดรายได้อื่น
                     </span>
                     <span className="text-xs text-slate-400 font-mono">สาขา: {currentBranch.name}</span>
                   </div>
@@ -3980,7 +3791,7 @@ export const AccountingView: React.FC = () => {
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2">
                     <span className="px-2 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded text-[10px] font-bold uppercase tracking-wider">
-                      OFFICIAL EXPENSE REPORT
+                      สมุดค่าใช้จ่าย
                     </span>
                     <span className="text-xs text-slate-400 font-mono">สาขา: {currentBranch.name}</span>
                   </div>
@@ -4011,29 +3822,35 @@ export const AccountingView: React.FC = () => {
                 </div>
               </div>
 
-              {/* VAT 7% Tax Summary Metric Cards */}
+              {/* VAT for the month (ภ.พ.30) */}
+              {!vatRegistered && (
+                <p className="text-xs text-slate-400">ร้านตั้งค่าว่าไม่ได้จดทะเบียนภาษีมูลค่าเพิ่ม: ไม่มีภาษีขาย และภาษีซื้อรวมอยู่ในค่าใช้จ่าย</p>
+              )}
+              {vatRegistered && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-4 text-xs">
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 space-y-1">
-                  <span className="text-slate-400 text-xs block">ภาษีขาย (Output VAT 7%):</span>
+                  <span className="text-slate-400 text-xs block">ภาษีขาย {vatRate}% เดือน {selectedMonth}</span>
                   <span className="text-base sm:text-lg font-bold text-amber-400 font-mono block">
-                    +{totalSalesVat.toFixed(2)} ฿
+                    {money(totalSalesVat)} ฿
                   </span>
                 </div>
 
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 space-y-1">
-                  <span className="text-slate-400 text-xs block">ภาษีซื้อ (Input VAT 7%):</span>
+                  <span className="text-slate-400 text-xs block">หัก ภาษีซื้อ (มีใบกำกับภาษีเต็มรูป)</span>
                   <span className="text-base sm:text-lg font-bold text-rose-400 font-mono block">
-                    -{totalExpenseVat.toFixed(2)} ฿
+                    ({money(totalExpenseVat)}) ฿
                   </span>
                 </div>
 
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 space-y-1">
-                  <span className="text-slate-400 text-xs block">ภาษีมูลค่าเพิ่มนำส่งสุทธิ (ภ.พ.30):</span>
+                  <span className="text-slate-400 text-xs block">{netVatPayable >= 0 ? 'ภาษีที่ต้องชำระ (ภ.พ.30)' : 'ภาษีชำระเกิน (ขอคืน/ยกไป)'}</span>
                   <span className="text-base sm:text-lg font-bold text-sky-400 font-mono block">
-                    {netVatPayable.toFixed(2)} ฿
+                    {money(Math.abs(netVatPayable))} ฿
                   </span>
+                  <span className="text-[10px] text-slate-500 block">ยื่นภายในวันที่ 15 ของเดือนถัดไป (ยื่นออนไลน์ได้ถึงวันที่ 23)</span>
                 </div>
               </div>
+              )}
             </div>
 
             {/* Expense Table Section with Search & Filter Controls */}
@@ -4102,7 +3919,7 @@ export const AccountingView: React.FC = () => {
                   <strong className="text-slate-200 font-mono">{selectedBranchExpenses.length}</strong> รายการ
                 </span>
                 <span className="font-mono text-rose-300">
-                  รวมมูลค่าตามตัวกรอง: <strong>{filteredTotals.gross.toLocaleString()} ฿</strong>
+                  รวมมูลค่าตามตัวกรอง: <strong>{money(filteredTotals.gross)} ฿</strong>
                 </span>
               </div>
 
@@ -4133,10 +3950,10 @@ export const AccountingView: React.FC = () => {
                         </div>
                         <div className="text-right">
                           <div className="font-mono font-bold text-rose-300 text-sm">
-                            {exp.amount.toLocaleString()} ฿
+                            {money(exp.amount)} ฿
                           </div>
                           <div className="text-[10px] font-mono text-slate-400">
-                            ก่อนภาษี: ฿{exp.netAmount.toLocaleString()} | VAT: ฿{exp.vatAmount.toFixed(2)}
+                            ก่อนภาษี: ฿{money(exp.netAmount)} | VAT: ฿{exp.vatAmount.toFixed(2)}
                           </div>
                         </div>
                       </div>
@@ -4424,7 +4241,7 @@ export const AccountingView: React.FC = () => {
                     <ShoppingBag className="w-4 h-4 text-emerald-400" />
                     <span>รายย่อยช่องทางรายได้ (Revenue Streams Detail)</span>
                   </span>
-                  <span className="font-mono text-emerald-400 text-xs">฿{rangeTotals.totalRevenue.toLocaleString()}</span>
+                  <span className="font-mono text-emerald-400 text-xs">฿{money(rangeTotals.totalRevenue)}</span>
                 </h3>
 
                 <div className="space-y-2 text-xs">
@@ -4434,7 +4251,7 @@ export const AccountingView: React.FC = () => {
                       <div className="text-[10px] text-slate-400">ชำระด้วย เงินสด, โอน PromptPay, บัตรเครดิต</div>
                     </div>
                     <div className="text-right font-mono">
-                      <div className="font-bold text-emerald-400">฿{rangeTotals.posSales.toLocaleString()}</div>
+                      <div className="font-bold text-emerald-400">฿{money(rangeTotals.posSales)}</div>
                       <div className="text-[10px] text-slate-400">
                         {rangeTotals.totalRevenue > 0 ? ((rangeTotals.posSales / rangeTotals.totalRevenue) * 100).toFixed(1) : 0}%
                       </div>
@@ -4447,7 +4264,7 @@ export const AccountingView: React.FC = () => {
                       <div className="text-[10px] text-slate-400">Grab, Lineman, ShopeeFood (หัก GP แล้ว)</div>
                     </div>
                     <div className="text-right font-mono">
-                      <div className="font-bold text-sky-400">฿{rangeTotals.deliverySales.toLocaleString()}</div>
+                      <div className="font-bold text-sky-400">฿{money(rangeTotals.deliverySales)}</div>
                       <div className="text-[10px] text-slate-400">
                         {rangeTotals.totalRevenue > 0 ? ((rangeTotals.deliverySales / rangeTotals.totalRevenue) * 100).toFixed(1) : 0}%
                       </div>
@@ -4460,7 +4277,7 @@ export const AccountingView: React.FC = () => {
                       <div className="text-[10px] text-slate-400">อาหารกล่อง, ออกบู้ธนอกสถานที่</div>
                     </div>
                     <div className="text-right font-mono">
-                      <div className="font-bold text-indigo-400">฿{rangeTotals.cateringSales.toLocaleString()}</div>
+                      <div className="font-bold text-indigo-400">฿{money(rangeTotals.cateringSales)}</div>
                       <div className="text-[10px] text-slate-400">
                         {rangeTotals.totalRevenue > 0 ? ((rangeTotals.cateringSales / rangeTotals.totalRevenue) * 100).toFixed(1) : 0}%
                       </div>
@@ -4473,7 +4290,7 @@ export const AccountingView: React.FC = () => {
                       <div className="text-[10px] text-slate-400">สปอนเซอร์ & ค่าโฆษณาหน้าร้าน</div>
                     </div>
                     <div className="text-right font-mono">
-                      <div className="font-bold text-amber-400">฿{rangeTotals.otherIncome.toLocaleString()}</div>
+                      <div className="font-bold text-amber-400">฿{money(rangeTotals.otherIncome)}</div>
                       <div className="text-[10px] text-slate-400">
                         {rangeTotals.totalRevenue > 0 ? ((rangeTotals.otherIncome / rangeTotals.totalRevenue) * 100).toFixed(1) : 0}%
                       </div>
@@ -4489,7 +4306,7 @@ export const AccountingView: React.FC = () => {
                     <TrendingDown className="w-4 h-4 text-rose-400" />
                     <span>จำแนกหมวดหมู่รายจ่าย (OPEX Audit Detail)</span>
                   </span>
-                  <span className="font-mono text-rose-400 text-xs">฿{(rangeTotals.cogs + rangeTotals.totalOpex).toLocaleString()}</span>
+                  <span className="font-mono text-rose-400 text-xs">฿{money((rangeTotals.cogs + rangeTotals.totalOpex))}</span>
                 </h3>
 
                 <div className="space-y-2 text-xs">
@@ -4499,7 +4316,7 @@ export const AccountingView: React.FC = () => {
                       <div className="text-[10px] text-slate-400">เนื้อสัตว์, ผัก, เครื่องปรุง, บรรจุภัณฑ์</div>
                     </div>
                     <div className="text-right font-mono">
-                      <div className="font-bold text-orange-400">฿{rangeTotals.cogs.toLocaleString()}</div>
+                      <div className="font-bold text-orange-400">฿{money(rangeTotals.cogs)}</div>
                       <div className="text-[10px] text-slate-400">
                         {rangeTotals.totalRevenue > 0 ? ((rangeTotals.cogs / rangeTotals.totalRevenue) * 100).toFixed(1) : 0}% ของรายได้
                       </div>
@@ -4512,7 +4329,7 @@ export const AccountingView: React.FC = () => {
                       <div className="text-[10px] text-slate-400">ค่าเช่าร้านประจำเดือน</div>
                     </div>
                     <div className="text-right font-mono">
-                      <div className="font-bold text-sky-400">฿{rangeTotals.rent.toLocaleString()}</div>
+                      <div className="font-bold text-sky-400">฿{money(rangeTotals.rent)}</div>
                       <div className="text-[10px] text-slate-400">
                         {rangeTotals.totalRevenue > 0 ? ((rangeTotals.rent / rangeTotals.totalRevenue) * 100).toFixed(1) : 0}% ของรายได้
                       </div>
@@ -4525,7 +4342,7 @@ export const AccountingView: React.FC = () => {
                       <div className="text-[10px] text-slate-400">เงินเดือน, ค่า OT, ประกันสังคม</div>
                     </div>
                     <div className="text-right font-mono">
-                      <div className="font-bold text-purple-400">฿{rangeTotals.salary.toLocaleString()}</div>
+                      <div className="font-bold text-purple-400">฿{money(rangeTotals.salary)}</div>
                       <div className="text-[10px] text-slate-400">
                         {rangeTotals.totalRevenue > 0 ? ((rangeTotals.salary / rangeTotals.totalRevenue) * 100).toFixed(1) : 0}% ของรายได้
                       </div>
@@ -4538,7 +4355,7 @@ export const AccountingView: React.FC = () => {
                       <div className="text-[10px] text-slate-400">ค่าสาธารณูปโภคประจำเดือน</div>
                     </div>
                     <div className="text-right font-mono">
-                      <div className="font-bold text-yellow-400">฿{rangeTotals.utilities.toLocaleString()}</div>
+                      <div className="font-bold text-yellow-400">฿{money(rangeTotals.utilities)}</div>
                       <div className="text-[10px] text-slate-400">
                         {rangeTotals.totalRevenue > 0 ? ((rangeTotals.utilities / rangeTotals.totalRevenue) * 100).toFixed(1) : 0}% ของรายได้
                       </div>
@@ -4595,19 +4412,19 @@ export const AccountingView: React.FC = () => {
                           {day.date} <span className="text-[10px] text-slate-500">(วันที่ {day.dayNum})</span>
                         </td>
                         <td className="py-2.5 px-3 font-mono text-right font-bold text-emerald-400">
-                          ฿{day.totalRevenue.toLocaleString()}
+                          ฿{money(day.totalRevenue)}
                         </td>
                         <td className="py-2.5 px-3 font-mono text-right text-orange-400">
-                          ฿{day.variableCosts.toLocaleString()}
+                          ฿{money(day.variableCosts)}
                         </td>
                         <td className="py-2.5 px-3 font-mono text-right text-rose-400">
-                          ฿{day.fixedCosts.toLocaleString()}
+                          ฿{money(day.fixedCosts)}
                         </td>
                         <td className="py-2.5 px-3 font-mono text-right font-semibold text-sky-300">
-                          ฿{day.contributionMargin.toLocaleString()}
+                          ฿{money(day.contributionMargin)}
                         </td>
                         <td className={`py-2.5 px-3 font-mono font-bold text-right ${day.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          ฿{day.netProfit.toLocaleString()}
+                          ฿{money(day.netProfit)}
                         </td>
                         <td className="py-2.5 px-3 text-center">
                           <span
@@ -4656,7 +4473,7 @@ export const AccountingView: React.FC = () => {
                   <span>รายงานรายละเอียดธุรกรรมวันที่ {selectedDetailDay.date}</span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  สาขา: {currentBranch.name} | ยอดขายรวม: ฿{selectedDetailDay.totalRevenue.toLocaleString()} | กำไรสุทธิ: ฿{selectedDetailDay.netProfit.toLocaleString()}
+                  สาขา: {currentBranch.name} | ยอดขายรวม: ฿{money(selectedDetailDay.totalRevenue)} | กำไรสุทธิ: ฿{money(selectedDetailDay.netProfit)}
                 </p>
               </div>
               <button
@@ -4673,25 +4490,25 @@ export const AccountingView: React.FC = () => {
                 <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800">
                   <span className="text-[10px] text-slate-400 block">รายได้รวม</span>
                   <span className="font-mono font-bold text-emerald-400 text-sm">
-                    ฿{selectedDetailDay.totalRevenue.toLocaleString()}
+                    ฿{money(selectedDetailDay.totalRevenue)}
                   </span>
                 </div>
                 <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800">
                   <span className="text-[10px] text-slate-400 block">ต้นทุน COGS</span>
                   <span className="font-mono font-bold text-orange-400 text-sm">
-                    ฿{selectedDetailDay.cogs.toLocaleString()}
+                    ฿{money(selectedDetailDay.cogs)}
                   </span>
                 </div>
                 <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800">
                   <span className="text-[10px] text-slate-400 block">ค่าใช้จ่าย OPEX</span>
                   <span className="font-mono font-bold text-rose-400 text-sm">
-                    ฿{selectedDetailDay.opex.toLocaleString()}
+                    ฿{money(selectedDetailDay.opex)}
                   </span>
                 </div>
                 <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800">
                   <span className="text-[10px] text-slate-400 block">กำไรสุทธิ</span>
                   <span className={`font-mono font-bold text-sm ${selectedDetailDay.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    ฿{selectedDetailDay.netProfit.toLocaleString()}
+                    ฿{money(selectedDetailDay.netProfit)}
                   </span>
                 </div>
               </div>
@@ -4703,7 +4520,7 @@ export const AccountingView: React.FC = () => {
                     <span>รายการค่าใช้จ่ายประจำวัน ({selectedDetailDay.dayExpenses?.length || 0} รายการ)</span>
                   </h4>
                   <div className="flex items-center space-x-2">
-                    <span className="font-mono text-rose-400 font-bold">฿{selectedDetailDay.opex.toLocaleString()}</span>
+                    <span className="font-mono text-rose-400 font-bold">฿{money(selectedDetailDay.opex)}</span>
                     <button
                       onClick={() => openAddExpenseModal(selectedDetailDay.date)}
                       className="px-2 py-0.5 bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded text-[10px] font-bold transition flex items-center space-x-1 active:scale-95"
@@ -4735,7 +4552,7 @@ export const AccountingView: React.FC = () => {
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
-                          <div className="font-mono text-rose-400 font-bold">฿{e.amount.toLocaleString()}</div>
+                          <div className="font-mono text-rose-400 font-bold">฿{money(e.amount)}</div>
                           {e.receiptImage && (
                             <button
                               onClick={() => setSelectedReceiptPreview({
@@ -4768,7 +4585,7 @@ export const AccountingView: React.FC = () => {
                   </h4>
                   <div className="flex items-center space-x-2">
                     <span className="font-mono text-emerald-400 font-bold">
-                      ฿{(selectedDetailDay.dayIncomes || []).reduce((s: number, i: any) => s + (i.amount || 0), 0).toLocaleString()}
+                      ฿{money((selectedDetailDay.dayIncomes || []).reduce((s: number, i: any) => s + (i.amount || 0), 0))}
                     </span>
                     <button
                       onClick={() => openAddIncomeModal(selectedDetailDay.date)}
@@ -4799,7 +4616,7 @@ export const AccountingView: React.FC = () => {
                           {inc.payerName && <span className="ml-2 text-[10px] text-slate-400">จาก: {inc.payerName}</span>}
                         </div>
                         <div className="flex items-center space-x-2">
-                          <div className="font-mono text-emerald-400 font-bold">฿{inc.amount.toLocaleString()}</div>
+                          <div className="font-mono text-emerald-400 font-bold">฿{money(inc.amount)}</div>
                           {inc.slipImage && (
                             <button
                               onClick={() => setSelectedReceiptPreview({
@@ -4828,7 +4645,7 @@ export const AccountingView: React.FC = () => {
               <div className="space-y-2">
                 <h4 className="font-bold text-slate-200 text-xs flex items-center justify-between border-b border-slate-800 pb-1">
                   <span>ออเดอร์ขายหน้าร้าน POS ({selectedDetailDay.dayOrders?.length || 0} ออเดอร์)</span>
-                  <span className="font-mono text-emerald-400">฿{selectedDetailDay.posSales.toLocaleString()}</span>
+                  <span className="font-mono text-emerald-400">฿{money(selectedDetailDay.posSales)}</span>
                 </h4>
                 {!selectedDetailDay.dayOrders || selectedDetailDay.dayOrders.length === 0 ? (
                   <div className="p-3 bg-slate-950 rounded-xl text-center text-slate-500 text-xs">
@@ -4842,7 +4659,7 @@ export const AccountingView: React.FC = () => {
                           <span className="font-mono font-bold text-sky-400">{o.orderNumber}</span>
                           <span className="ml-2 text-slate-300">{o.paymentMethod}</span>
                         </div>
-                        <div className="font-mono text-emerald-400 font-bold">฿{o.grandTotal.toLocaleString()}</div>
+                        <div className="font-mono text-emerald-400 font-bold">฿{money(o.grandTotal)}</div>
                       </div>
                     ))}
                   </div>
@@ -4999,7 +4816,13 @@ export const AccountingView: React.FC = () => {
                   className="w-4 h-4 rounded border-slate-800 bg-slate-950 text-rose-600 focus:ring-rose-500"
                 />
                 <label htmlFor="includeVatCheck" className="text-slate-300 font-medium cursor-pointer text-xs">
-                  รวมภาษีมูลค่าเพิ่ม VAT 7%
+                  มีใบกำกับภาษีเต็มรูป (ยอดนี้รวม VAT {vatRate}%)
+                  {expIncludeVat && expAmount > 0 && (
+                    <span className="block text-[11px] text-slate-400 font-normal">
+                      ก่อน VAT ฿{money(expAmount - vatInside(expAmount, vatRate))} · VAT ฿{money(vatInside(expAmount, vatRate))}
+                      {vatRegistered ? ' · ขอคืนเป็นภาษีซื้อได้' : ' · ร้านไม่ได้จด VAT จึงนับเป็นค่าใช้จ่ายทั้งหมด'}
+                    </span>
+                  )}
                 </label>
               </div>
 
@@ -5314,7 +5137,7 @@ export const AccountingView: React.FC = () => {
                                       สูตรคำนวณ: <span className="text-amber-300 font-mono font-bold">{entry.packageQty !== undefined ? entry.packageQty : 1} {pkgUnit}</span> × <span className="text-emerald-300 font-mono font-bold">{pkgSize} {baseUnit}</span>
                                     </span>
                                     <span className="text-emerald-300 font-bold font-mono">
-                                      = เข้าสต็อก {entry.quantity.toLocaleString()} {baseUnit}
+                                      = เข้าสต็อก {money(entry.quantity)} {baseUnit}
                                     </span>
                                   </div>
                                 </div>
@@ -5947,124 +5770,88 @@ export const AccountingView: React.FC = () => {
 
       {/* EDIT BALANCE SHEET MODAL */}
       {isEditBalanceModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4" onClick={() => setIsEditBalanceModalOpen(false)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="ปรับปรุงงบแสดงฐานะการเงิน"
+            onClick={e => e.stopPropagation()}
+            className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl text-xs"
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-slate-100 text-base flex items-center space-x-2">
+              <h3 className="font-bold text-slate-100 text-base flex items-center gap-2">
                 <Calculator className="w-5 h-5 text-emerald-400" />
-                <span>ปรับปรุงรายการงบแสดงฐานะการเงิน (Balance Sheet)</span>
+                ปรับปรุงงบแสดงฐานะการเงิน
               </h3>
-              <button
-                onClick={() => setIsEditBalanceModalOpen(false)}
-                className="text-slate-400 hover:text-slate-200 p-1"
-              >
+              <button type="button" onClick={() => setIsEditBalanceModalOpen(false)} aria-label="ปิด" className="text-slate-400 hover:text-slate-200 p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
+            <p className="text-slate-400">
+              ช่องที่เว้นว่างใช้ตัวเลขที่ระบบคำนวณ ใส่ตัวเลขเมื่อมียอดจริงที่ตรวจนับหรือกระทบยอดแล้ว เช่น เงินสดที่นับได้ ยอดในสมุดบัญชีธนาคาร
+            </p>
 
             <form
-              onSubmit={(e) => {
+              onSubmit={e => {
                 e.preventDefault();
                 setBalanceData({ ...editBalanceForm });
                 setIsEditBalanceModalOpen(false);
               }}
-              className="space-y-4 text-xs"
+              className="space-y-3"
             >
-              <div className="space-y-3">
-                <h4 className="font-bold text-emerald-400 text-xs border-b border-slate-800 pb-1">
-                  1. ฝั่งสินทรัพย์ (Assets)
-                </h4>
+              {(
+                [
+                  ['สินทรัพย์', 'overrideCashOnHand', 'เงินสดและเงินฝากธนาคาร', liveCashOnHand],
+                  ['สินทรัพย์', 'overrideAccountsReceivable', 'ลูกหนี้การค้า', liveAccountsReceivable],
+                  ['สินทรัพย์', 'overrideInventoryAsset', 'สินค้าคงเหลือ (วัตถุดิบ)', liveInventoryAsset],
+                  ['สินทรัพย์', 'equipmentAssets', 'อุปกรณ์และเครื่องใช้ (สุทธิหลังค่าเสื่อมราคา)', null],
+                  ['หนี้สิน', 'overrideAccountsPayable', 'เจ้าหนี้การค้า', liveAccountsPayable],
+                  ['หนี้สิน', 'overrideVatPayable', 'ภาษีมูลค่าเพิ่มค้างนำส่ง', Math.max(0, allTimePL.vatPayable)],
+                  ['ส่วนของเจ้าของ', 'shareCapital', 'ทุน (เงินที่เจ้าของนำมาลงทุน)', null],
+                  ['ส่วนของเจ้าของ', 'overrideRetainedEarnings', 'กำไรสะสม', liveRetainedEarnings]
+                ] as [string, string, string, number | null][]
+              )
+                .filter(([, key]) => key !== 'overrideVatPayable' || vatRegistered)
+                .map(([group, key, label, systemValue]) => {
+                  const value = (editBalanceForm as any)[key];
+                  return (
+                    <label key={key} className="block">
+                      <span className="flex justify-between text-slate-300 mb-1">
+                        <span>
+                          <span className="text-slate-500">{group} · </span>
+                          {label}
+                        </span>
+                        {systemValue !== null && <span className="text-slate-500 font-mono">ระบบ: ฿{money(systemValue)}</span>}
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.01"
+                        value={value === undefined || value === null ? '' : value}
+                        placeholder={systemValue !== null ? 'ใช้ตัวเลขจากระบบ' : '0'}
+                        onChange={e => {
+                          const raw = e.target.value;
+                          setEditBalanceForm((prev: any) => {
+                            const next = { ...prev };
+                            if (raw === '') {
+                              if (systemValue !== null) delete next[key];
+                              else next[key] = 0;
+                            } else next[key] = Number(raw);
+                            return next;
+                          });
+                        }}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
+                      />
+                    </label>
+                  );
+                })}
 
-                <div>
-                  <label className="block text-slate-300 mb-1">เงินสดในมือ / เงินฝากธนาคารร้าน (บาท)</label>
-                  <input
-                    type="number"
-                    value={editBalanceForm.cashOnHand}
-                    onChange={(e) => setEditBalanceForm({ ...editBalanceForm, cashOnHand: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 mb-1">ลูกหนี้การค้าคงค้าง (Accounts Receivable - AR) (บาท)</label>
-                  <input
-                    type="number"
-                    value={editBalanceForm.accountsReceivable}
-                    onChange={(e) => setEditBalanceForm({ ...editBalanceForm, accountsReceivable: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 mb-1">มูลค่าคลังวัตถุดิบคงเหลือ (Inventory Asset) (บาท)</label>
-                  <input
-                    type="number"
-                    value={editBalanceForm.inventoryAsset}
-                    onChange={(e) => setEditBalanceForm({ ...editBalanceForm, inventoryAsset: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 mb-1">อุปกรณ์และเครื่องใช้ครัว (Equipment & Assets) (บาท)</label>
-                  <input
-                    type="number"
-                    value={editBalanceForm.equipmentAssets}
-                    onChange={(e) => setEditBalanceForm({ ...editBalanceForm, equipmentAssets: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-3 pt-2">
-                <h4 className="font-bold text-rose-400 text-xs border-b border-slate-800 pb-1">
-                  2. ฝั่งหนี้สินและส่วนของเจ้าของ (Liabilities & Equity)
-                </h4>
-
-                <div>
-                  <label className="block text-slate-300 mb-1">เจ้าหนี้การค้าคงค้าง (Accounts Payable - AP) (บาท)</label>
-                  <input
-                    type="number"
-                    value={editBalanceForm.accountsPayable}
-                    onChange={(e) => setEditBalanceForm({ ...editBalanceForm, accountsPayable: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-rose-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 mb-1">ทุนจดทะเบียนเริ่มต้น (Share Capital) (บาท)</label>
-                  <input
-                    type="number"
-                    value={editBalanceForm.shareCapital}
-                    onChange={(e) => setEditBalanceForm({ ...editBalanceForm, shareCapital: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-rose-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 mb-1">กำไรสะสมปรับปรุง (Retained Earnings) (บาท)</label>
-                  <input
-                    type="number"
-                    value={editBalanceForm.retainedEarnings}
-                    onChange={(e) => setEditBalanceForm({ ...editBalanceForm, retainedEarnings: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-rose-500"
-                  />
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-slate-800 flex items-center justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditBalanceModalOpen(false)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-medium transition text-xs"
-                >
+              <div className="pt-2 flex gap-2">
+                <button type="button" onClick={() => setIsEditBalanceModalOpen(false)} className="flex-1 h-11 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl">
                   ยกเลิก
                 </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition text-xs shadow-lg active:scale-95"
-                >
-                  บันทึกการปรับปรุงตัวเลข
+                <button type="submit" className="flex-[2] h-11 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl">
+                  บันทึก
                 </button>
               </div>
             </form>
