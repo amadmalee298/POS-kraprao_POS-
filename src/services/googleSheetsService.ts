@@ -41,10 +41,34 @@ export const auth = sheetsAuth();
  */
 export const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 
-const provider = new GoogleAuthProvider();
-SCOPES.forEach(scope => provider.addScope(scope));
-// Always show the permission screen: a skipped screen can hand back a token without Drive access
-provider.setCustomParameters({ prompt: 'consent select_account' });
+// The first sign-in always shows the permission screen (a skipped screen can hand back a token
+// without Drive access); after the shop has granted it, reconnecting is one tap on the account.
+const GRANTED_KEY = 'POS_GSHEETS_GRANTED';
+const SESSION_KEY = 'POS_GSHEETS_SESSION';
+
+const readStore = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const writeStore = (key: string, value: string | null) => {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    // kept for this page only
+  }
+};
+
+const makeProvider = () => {
+  const provider = new GoogleAuthProvider();
+  SCOPES.forEach(scope => provider.addScope(scope));
+  const email = readStore(GRANTED_KEY);
+  provider.setCustomParameters(email ? { prompt: 'select_account', login_hint: email } : { prompt: 'consent select_account' });
+  return provider;
+};
 
 /** What to tell the user when Google gave a token without permission to write the file */
 export const MISSING_SCOPE_MESSAGE =
@@ -65,10 +89,53 @@ export async function hasDriveFileScope(accessToken: string): Promise<boolean> {
 /** Google's "insufficient scopes" API error */
 export const isScopeError = (message: string) => /insufficient authentication scopes|insufficientPermissions|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(message || '');
 
-// In-memory token & user caching (Crucial: NEVER store in localStorage/sessionStorage)
+/*
+ * The Google token is kept on this device until it expires (Google gives it for one hour), so a
+ * page reload or the phone reopening the tab does not sign the shop out. It only reaches the
+ * spreadsheets this app created (drive.file) and is removed on sign-out.
+ */
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 let cachedGoogleUser: any | null = null;
+let tokenExpiresAt = 0;
+
+const TOKEN_MARGIN_MS = 2 * 60 * 1000;
+
+function rememberSession(token: string, user: any, expiresInSec = 3600) {
+  cachedAccessToken = token;
+  cachedGoogleUser = user ? { uid: user.uid, displayName: user.displayName, email: user.email, photoURL: user.photoURL } : null;
+  tokenExpiresAt = Date.now() + expiresInSec * 1000 - TOKEN_MARGIN_MS;
+  writeStore(SESSION_KEY, JSON.stringify({ token, user: cachedGoogleUser, expiresAt: tokenExpiresAt }));
+  if (cachedGoogleUser?.email) writeStore(GRANTED_KEY, cachedGoogleUser.email);
+}
+
+function forgetSession() {
+  cachedAccessToken = null;
+  cachedGoogleUser = null;
+  tokenExpiresAt = 0;
+  writeStore(SESSION_KEY, null);
+}
+
+// Pick up the session this device already has
+(() => {
+  try {
+    const saved = JSON.parse(readStore(SESSION_KEY) || 'null');
+    if (saved?.token && saved.expiresAt > Date.now()) {
+      cachedAccessToken = saved.token;
+      cachedGoogleUser = saved.user;
+      tokenExpiresAt = saved.expiresAt;
+    } else if (saved) {
+      writeStore(SESSION_KEY, null);
+    }
+  } catch {
+    writeStore(SESSION_KEY, null);
+  }
+})();
+
+const tokenValid = () => !!cachedAccessToken && Date.now() < tokenExpiresAt;
+
+/** The Google account this device connected before (to offer a one-tap reconnect) */
+export const getRememberedGoogleEmail = (): string | null => readStore(GRANTED_KEY);
 
 export const getCurrentDomain = (): string => {
   if (typeof window !== 'undefined') {
@@ -136,10 +203,10 @@ export const requestAccessTokenViaGis = async (): Promise<{ user: any; accessTok
 
           const token = tokenResponse.access_token;
           if (!(await hasDriveFileScope(token))) {
+            writeStore(GRANTED_KEY, null);
             reject(new Error(MISSING_SCOPE_MESSAGE));
             return;
           }
-          cachedAccessToken = token;
 
           // Fetch user info from Google OAuth2 Userinfo endpoint
           let userInfo: any = { name: 'Google User', email: '' };
@@ -162,7 +229,7 @@ export const requestAccessTokenViaGis = async (): Promise<{ user: any; accessTok
             providerId: 'google.com'
           };
 
-          cachedGoogleUser = userObj;
+          rememberSession(token, userObj, Number(tokenResponse.expires_in) || 3600);
           resolve({ user: userObj, accessToken: token });
         },
         error_callback: (err: any) => {
@@ -171,7 +238,8 @@ export const requestAccessTokenViaGis = async (): Promise<{ user: any; accessTok
         }
       });
 
-      client.requestAccessToken({ prompt: 'consent' });
+      const email = readStore(GRANTED_KEY);
+      client.requestAccessToken(email ? { prompt: '', login_hint: email } : { prompt: 'consent' });
     } catch (err) {
       console.error('[GIS OAuth] initTokenClient failed:', err);
       reject(err);
@@ -185,14 +253,12 @@ export const initGoogleAuth = (
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
-      cachedGoogleUser = user;
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+      if (tokenValid()) {
+        if (onAuthSuccess) onAuthSuccess(cachedGoogleUser || user, cachedAccessToken!);
       } else if (!isSigningIn) {
         if (onAuthFailure) onAuthFailure();
       }
-    } else if (!cachedAccessToken) {
-      cachedGoogleUser = null;
+    } else if (!tokenValid()) {
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -209,7 +275,7 @@ export const googleSignIn = async (forceGis = false): Promise<{ user: any; acces
     }
 
     try {
-      const result = await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, makeProvider());
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (!credential?.accessToken) {
         throw new Error('ไม่สามารถรับ Access Token จาก Google OAuth ได้');
@@ -217,11 +283,12 @@ export const googleSignIn = async (forceGis = false): Promise<{ user: any; acces
 
       if (!(await hasDriveFileScope(credential.accessToken))) {
         await signOut(auth).catch(() => {});
+        // Ask with the permission screen next time
+        writeStore(GRANTED_KEY, null);
         throw new Error(MISSING_SCOPE_MESSAGE);
       }
-      cachedAccessToken = credential.accessToken;
-      cachedGoogleUser = result.user;
-      return { user: result.user, accessToken: cachedAccessToken };
+      rememberSession(credential.accessToken, result.user);
+      return { user: cachedGoogleUser, accessToken: credential.accessToken };
     } catch (firebaseErr: any) {
       console.warn('[Google OAuth] Firebase popup error:', firebaseErr?.code, firebaseErr?.message);
 
@@ -254,22 +321,22 @@ export const googleSignIn = async (forceGis = false): Promise<{ user: any; acces
 };
 
 export const setManualAccessToken = (token: string, email?: string) => {
-  cachedAccessToken = token.trim();
-  cachedGoogleUser = {
+  rememberSession(token.trim(), {
     uid: 'manual-token-user',
     displayName: email ? email.split('@')[0] : 'Authorized Google User',
-    email: email || 'user@gmail.com',
+    email: email || '',
     photoURL: ''
-  };
+  });
 };
 
+/** The token while it is still valid (null once Google's hour is up) */
 export const getGoogleAccessToken = async (): Promise<string | null> => {
-  return cachedAccessToken;
+  if (tokenValid()) return cachedAccessToken;
+  if (cachedAccessToken) forgetSession();
+  return null;
 };
 
-export const getGoogleUser = (): any | null => {
-  return cachedGoogleUser;
-};
+export const getGoogleUser = (): any | null => (tokenValid() ? cachedGoogleUser : null);
 
 export const googleSignOut = async () => {
   try {
@@ -277,8 +344,8 @@ export const googleSignOut = async () => {
   } catch (e) {
     // Ignore if not signed into Firebase
   }
-  cachedAccessToken = null;
-  cachedGoogleUser = null;
+  forgetSession();
+  writeStore(GRANTED_KEY, null);
 };
 
 export interface GoogleDriveFile {

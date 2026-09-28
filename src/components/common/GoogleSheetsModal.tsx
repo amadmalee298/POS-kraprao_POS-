@@ -29,6 +29,7 @@ import {
   googleSignOut,
   getGoogleAccessToken,
   getGoogleUser,
+  getRememberedGoogleEmail,
   setManualAccessToken,
   getCurrentDomain,
   listUserSpreadsheets,
@@ -52,6 +53,22 @@ interface GoogleSheetsModalProps {
   defaultDataset?: 'all' | 'sales' | 'inventory' | 'recipes' | 'movements';
 }
 
+const LAST_FILE_KEY = 'POS_GSHEETS_LAST_FILE';
+const readLastFile = (): string => {
+  try {
+    return localStorage.getItem(LAST_FILE_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+const rememberLastFile = (id: string) => {
+  try {
+    localStorage.setItem(LAST_FILE_KEY, id);
+  } catch {
+    // remembered for this visit only
+  }
+};
+
 export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   isOpen,
   onClose,
@@ -67,6 +84,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     settings
   } = usePOS();
   const vatRate = typeof settings.vatRate === 'number' ? settings.vatRate : 7;
+  const rememberedEmail = getRememberedGoogleEmail();
 
   const [googleUser, setGoogleUser] = useState<any | null>(getGoogleUser());
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -83,8 +101,9 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   // Spreadsheets list & target selection
   const [spreadsheets, setSpreadsheets] = useState<GoogleDriveFile[]>([]);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
-  const [targetMode, setTargetMode] = useState<'new' | 'existing'>('new');
-  const [selectedSpreadsheetId, setSelectedSpreadsheetId] = useState<string>('');
+  // Keep writing to the shop's file: the last one used is remembered on this device
+  const [targetMode, setTargetMode] = useState<'new' | 'existing'>(() => (readLastFile() ? 'existing' : 'new'));
+  const [selectedSpreadsheetId, setSelectedSpreadsheetId] = useState<string>(() => readLastFile());
   const [newSheetTitle, setNewSheetTitle] = useState<string>(
     `ครัวกะเพรา POS - ${currentBranch.name} (${new Date().toLocaleDateString('th-TH')})`
   );
@@ -144,7 +163,11 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     try {
       const files = await listUserSpreadsheets(token);
       setSpreadsheets(files);
-      if (files.length > 0 && !selectedSpreadsheetId) {
+      const last = readLastFile();
+      if (last && files.some(f => f.id === last)) {
+        setSelectedSpreadsheetId(last);
+        setTargetMode('existing');
+      } else if (files.length > 0 && !selectedSpreadsheetId) {
         setSelectedSpreadsheetId(files[0].id);
       }
     } catch (err: any) {
@@ -269,6 +292,9 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
         syncLogs.push(`📝 ส่งออกประวัติสต็อกและของเสีย (Movements): ${count} รายการ`);
       }
 
+      rememberLastFile(targetId);
+      setSelectedSpreadsheetId(targetId);
+      setTargetMode('existing');
       setSyncResult({
         success: true,
         url: sheetUrl,
@@ -287,6 +313,12 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
         setAccessToken(null);
         setAuthError(MISSING_SCOPE_MESSAGE);
         setSyncResult({ success: false, message: MISSING_SCOPE_MESSAGE });
+      } else if (/invalid authentication credentials|UNAUTHENTICATED|\b401\b/i.test(err?.message || '')) {
+        // Google's one-hour access ended: reconnect is one tap on the same account
+        await googleSignOut();
+        setGoogleUser(null);
+        setAccessToken(null);
+        setSyncResult({ success: false, message: 'การเชื่อมต่อ Google หมดเวลา กด “เชื่อมต่อใหม่” แล้วส่งออกอีกครั้ง' });
       } else {
         setSyncResult({
           success: false,
@@ -364,7 +396,9 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                   </div>
                 ) : (
                   <p className="text-slate-300 text-xs">
-                    ยังไม่ได้เชื่อมต่อบัญชี Google กด Sign in เพื่อให้ระบบสร้างและอัปเดตไฟล์ Google Sheets ของร้าน (ขอสิทธิ์เฉพาะไฟล์ที่ระบบสร้างเอง ไม่เห็นไฟล์อื่นใน Drive และไม่กระทบบัญชีร้านที่ใช้อยู่)
+                    {rememberedEmail
+                      ? `การเชื่อมต่อ Google (${rememberedEmail}) หมดเวลาแล้ว (Google ให้ใช้ครั้งละ 1 ชั่วโมง) กด “เชื่อมต่อใหม่” แล้วเลือกบัญชีเดิม ไม่ต้องอนุญาตซ้ำ`
+                      : 'ยังไม่ได้เชื่อมต่อบัญชี Google กด Sign in เพื่อให้ระบบสร้างและอัปเดตไฟล์ Google Sheets ของร้าน (ขอสิทธิ์เฉพาะไฟล์ที่ระบบสร้างเอง ไม่เห็นไฟล์อื่นใน Drive และไม่กระทบบัญชีร้านที่ใช้อยู่)'}
                   </p>
                 )}
               </div>
@@ -393,7 +427,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                       <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
                       <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
                     </svg>
-                    <span>{isAuthenticating ? 'กำลังเชื่อมต่อ...' : 'Sign in with Google'}</span>
+                    <span>{isAuthenticating ? 'กำลังเชื่อมต่อ...' : rememberedEmail ? 'เชื่อมต่อใหม่' : 'Sign in with Google'}</span>
                   </button>
                 )}
               </div>
