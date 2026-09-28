@@ -457,6 +457,7 @@ export interface SystemSettings {
   merchantSettings?: MerchantConnectionSettings;
   /** Google Sheets through an Apps Script in the shop's spreadsheet: no Google sign-in on the devices */
   sheetsScript?: SheetsScriptSettings;
+  payroll?: PayrollSettings;
   /** Years over which equipment bought is depreciated (straight line); default 5 */
   equipmentUsefulLifeYears?: number;
   requirePinOnEveryLogin?: boolean; // บังคับใส่รหัสพนักงานทุกครั้งที่เข้าสู่ระบบ
@@ -487,6 +488,29 @@ export interface StaffMember {
   status: 'active' | 'inactive';
   pin?: string;
   permissions?: StaffPermissions;
+  /** How the person is paid (missing = by the hour, using hourlyRate) */
+  payType?: 'hourly' | 'daily' | 'monthly';
+  dailyRate?: number; // THB per day worked
+  monthlySalary?: number; // THB per month
+  /** Social security (ประกันสังคม) is taken from the pay */
+  socialSecurity?: boolean;
+}
+
+/** A bonus or deduction for one person in one month (e.g. ค่าเบิกล่วงหน้า) */
+export interface PayrollAdjustment {
+  id: string;
+  staffId: string;
+  month: string; // YYYY-MM
+  kind: 'bonus' | 'deduction';
+  amount: number;
+  note: string;
+}
+
+export interface PayrollSettings {
+  ssoRate: number; // % of wage, e.g. 5
+  ssoMaxWage: number; // wage ceiling the rate applies to
+  ssoMinWage: number; // wage floor
+  lateGraceMinutes: number;
 }
 
 export type ShiftType = 'morning' | 'evening' | 'fullday' | 'night' | 'off' | 'custom';

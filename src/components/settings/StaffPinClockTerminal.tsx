@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { StaffMember, ShiftEntry } from '../../types';
+import { addHours } from '../../utils/payroll';
 
 interface StaffPinClockTerminalProps {
   onClose?: () => void;
@@ -177,13 +178,14 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
         staffName: authenticatedStaff.name,
         date: todayStr,
         dayOfWeek: currentDayOfWeek,
-        shiftType: 'fullday',
-        scheduledStart: '08:00',
-        scheduledEnd: '17:00',
+        // Not on the roster today: the shift starts when they clock in (never counted as late)
+        shiftType: 'custom',
+        scheduledStart: timeInHHMM,
+        scheduledEnd: addHours(timeInHHMM, 8),
         scheduledHours: 8,
         clockInTime: timeInHHMM,
         status: 'clocked_in',
-        notes: `[PIN Authorized Clock-In at ${fullLogTimestamp}]`
+        notes: `[PIN Authorized Clock-In at ${fullLogTimestamp}] ลงเวลานอกตารางงาน`
       });
     }
 
@@ -210,15 +212,14 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
     const timeOutHHMM = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
     const fullLogTimestamp = `${todayStr} ${timeStrFull}`;
 
-    // Calculate actual worked hours if clockInTime exists
-    let actualHours = 8;
+    // Hours between clock-in and clock-out (a shift past midnight included); none without a clock-in
+    let actualHours = 0;
     if (currentStaffShift?.clockInTime) {
       const [inH, inM] = currentStaffShift.clockInTime.split(':').map(Number);
       const [outH, outM] = timeOutHHMM.split(':').map(Number);
-      const totalMinutes = (outH * 60 + outM) - (inH * 60 + inM);
-      if (totalMinutes > 0) {
-        actualHours = Number((totalMinutes / 60).toFixed(2));
-      }
+      let totalMinutes = (outH * 60 + outM) - (inH * 60 + inM);
+      if (totalMinutes < 0) totalMinutes += 24 * 60;
+      actualHours = Number((totalMinutes / 60).toFixed(2));
     }
 
     if (currentStaffShift) {
@@ -235,15 +236,15 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
         staffName: authenticatedStaff.name,
         date: todayStr,
         dayOfWeek: currentDayOfWeek,
-        shiftType: 'fullday',
-        scheduledStart: '08:00',
-        scheduledEnd: '17:00',
-        scheduledHours: 8,
-        clockInTime: '08:00',
+        shiftType: 'custom',
+        scheduledStart: timeOutHHMM,
+        scheduledEnd: timeOutHHMM,
+        scheduledHours: 0,
+        // No clock-in was recorded: no hours are made up; the manager fixes the time in the history
         clockOutTime: timeOutHHMM,
-        actualHours,
+        actualHours: 0,
         status: 'completed',
-        notes: `[PIN Authorized Clock-Out at ${fullLogTimestamp}]`
+        notes: `[PIN Authorized Clock-Out at ${fullLogTimestamp}] ไม่พบเวลาเข้างาน ให้ผู้จัดการแก้เวลาในประวัติลงเวลา`
       });
     }
 

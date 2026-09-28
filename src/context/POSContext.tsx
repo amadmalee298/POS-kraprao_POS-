@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { averageCostAfterPrep } from '../utils/prep';
 import { localDay } from '../utils/stockHistory';
 import { effectivePermissions } from '../utils/access';
+import { useCloudMergedList } from '../hooks/useCloudMergedList';
 import { canonicalUnit, convertAmount, effectiveUnitCost, repointRecipe, withRecipeCosts, withRecipeUnits } from '../utils/recipeUtils';
 import { syncAndHealCategories, syncAndHealIngredientCategories } from '../utils/categoryUtils';
 import {
@@ -2206,6 +2207,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     console.log('[POS Startup] ☁️ Pulling central orders from Firestore...');
     pullCloudOrders();
   }, [isStorageLoaded, pullCloudOrders]);
+
+  // Staff cards and work shifts (clock-ins) are shared by every device of the branch, so the
+  // timeclock on one device and the payroll on another see the same records
+  useCloudMergedList({ key: 'staff_members', branchId: currentBranch?.id, items: staffMembers, setItems: setStaffMembers, enabled: isStorageLoaded, offline: effectiveOffline });
+  useCloudMergedList({
+    key: 'staff_shifts',
+    branchId: currentBranch?.id,
+    items: shifts,
+    setItems: setShifts,
+    enabled: isStorageLoaded,
+    offline: effectiveOffline,
+    // The last ~13 months travel between devices (a year of shifts stays well under the document limit)
+    cloudFilter: sh => !sh.date || sh.date >= new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10)
+  });
 
   // Synchronize users state with staffMembers automatically so PIN screen and login reflect latest staff edits
   useEffect(() => {

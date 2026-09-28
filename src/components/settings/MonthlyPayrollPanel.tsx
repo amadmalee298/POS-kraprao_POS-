@@ -1,0 +1,287 @@
+import React, { useMemo, useState } from 'react';
+import { BookOpenCheck, Download, Pencil, Plus, Printer, Trash2, X } from 'lucide-react';
+import { usePOS } from '../../context/POSContext';
+import { useSharedList } from '../../hooks/useSharedList';
+import type { PayrollAdjustment, StaffMember } from '../../types';
+import { downloadCsv } from '../../utils/accounting';
+import { localDay } from '../../utils/stockHistory';
+import { MonthlyPay, monthlyPayroll, payrollSettings } from '../../utils/payroll';
+
+const baht = (n: number) => `฿${(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const PAY_TYPE_TH = { hourly: 'รายชั่วโมง', daily: 'รายวัน', monthly: 'รายเดือน' } as const;
+const monthName = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
+const lastDay = (m: string) => {
+  const [y, mo] = m.split('-').map(Number);
+  return `${m}-${String(new Date(y, mo, 0).getDate()).padStart(2, '0')}`;
+};
+
+const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+
+function printPayslip(p: MonthlyPay, month: string, shopName: string, adjustments: PayrollAdjustment[]) {
+  const w = window.open('', '_blank', 'width=420,height=640');
+  if (!w) return;
+  const row = (l: string, v: string) => `<tr><td>${esc(l)}</td><td style="text-align:right">${esc(v)}</td></tr>`;
+  const adj = adjustments
+    .filter(a => a.staffId === p.staffId && a.month === month)
+    .map(a => row(`${a.kind === 'bonus' ? 'เพิ่ม' : 'หัก'}: ${a.note || '-'}`, `${a.kind === 'bonus' ? '' : '−'}${baht(a.amount)}`))
+    .join('');
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>สลิปเงินเดือน ${esc(p.name)}</title>
+<style>body{font-family:sans-serif;padding:16px;color:#111}h2,h3{margin:4px 0}table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 0;border-bottom:1px solid #eee}.t td{font-weight:bold;border-top:2px solid #111}</style></head><body>
+<h2>${esc(shopName)}</h2><h3>สลิปเงินเดือน ${esc(monthName(month))}</h3>
+<p>${esc(p.name)} · ${esc(p.role)}<br>${esc(PAY_TYPE_TH[p.payType])} (${esc(p.rateText)})</p>
+<table>${row('วันทำงาน', `${p.daysWorked} วัน · ${p.hours} ชม.`)}${row('ชั่วโมง OT', `${p.otHours} ชม.`)}${row('มาสาย', `${p.lateCount} ครั้ง (${p.lateMinutes} นาที)`)}${row('ขาดงาน', `${p.absentCount} วัน`)}
+${row('ค่าจ้าง', baht(p.basePay))}${row('ค่าล่วงเวลา (OT)', baht(p.otPay))}${adj}${p.sso ? row('หักประกันสังคม', `−${baht(p.sso)}`) : ''}
+<tr class="t"><td>รับสุทธิ</td><td style="text-align:right">${esc(baht(p.net))}</td></tr></table>
+<p style="margin-top:32px;font-size:12px">ลงชื่อผู้รับเงิน ............................................ วันที่ ............</p>
+<script>window.onload=()=>window.print()</script></body></html>`);
+  w.document.close();
+}
+
+export const MonthlyPayrollPanel: React.FC = () => {
+  const { staffMembers, shifts, updateStaffMember, settings, updateSettings, expenses, addExpense, currentBranch } = usePOS();
+  const today = localDay(new Date().toISOString());
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const [adjustments, setAdjustments] = useSharedList<PayrollAdjustment>('payroll_adjustments', 'POS_PAYROLL_ADJUSTMENTS');
+  const cfg = payrollSettings(settings.payroll);
+  const [editPay, setEditPay] = useState<StaffMember | null>(null);
+  const [adjFor, setAdjFor] = useState<MonthlyPay | null>(null);
+  const [adjKind, setAdjKind] = useState<'bonus' | 'deduction'>('deduction');
+  const [adjAmount, setAdjAmount] = useState('');
+  const [adjNote, setAdjNote] = useState('');
+  const [showCfg, setShowCfg] = useState(false);
+  const [done, setDone] = useState('');
+
+  const rows = useMemo(() => monthlyPayroll(staffMembers, shifts, month, adjustments, cfg, today), [staffMembers, shifts, month, adjustments, cfg, today]);
+  const total = rows.reduce(
+    (t, r) => ({ net: t.net + r.net, gross: t.gross + r.gross, ot: t.ot + r.otPay, sso: t.sso + r.sso, deductions: t.deductions + r.deductions }),
+    { net: 0, gross: 0, ot: 0, sso: 0, deductions: 0 }
+  );
+  const ref = `PAYROLL-${currentBranch.id}-${month}`;
+  const booked = expenses.some(e => e.refNumber === ref);
+
+  const exportCsv = () =>
+    downloadCsv(
+      `payroll_${month}.csv`,
+      ['พนักงาน', 'ตำแหน่ง', 'ประเภท', 'อัตรา', 'วันทำงาน', 'ชั่วโมง', 'OT ชม.', 'สาย (ครั้ง)', 'สาย (นาที)', 'ขาด (วัน)', 'ค่าจ้าง', 'ค่า OT', 'เงินเพิ่ม', 'เงินหัก', 'ประกันสังคม', 'รวมก่อนหัก', 'รับสุทธิ'],
+      rows.map(r => [r.name, r.role, PAY_TYPE_TH[r.payType], r.rateText, r.daysWorked, r.hours, r.otHours, r.lateCount, r.lateMinutes, r.absentCount, r.basePay, r.otPay, r.bonus, r.deductions, r.sso, r.gross, r.net])
+    );
+
+  const bookExpense = () => {
+    if (booked || total.gross <= 0) return;
+    if (!window.confirm(`ลงบัญชีค่าแรง ${monthName(month)} เป็นค่าใช้จ่าย ${baht(total.gross)}?`)) return;
+    addExpense({
+      branchId: currentBranch.id,
+      date: month === today.slice(0, 7) ? today : lastDay(month),
+      category: 'salary',
+      title: `เงินเดือน/ค่าแรงพนักงาน ${monthName(month)}`,
+      amount: Math.round(total.gross * 100) / 100,
+      includeVat: false,
+      vatAmount: 0,
+      netAmount: Math.round(total.gross * 100) / 100,
+      refNumber: ref,
+      note: `${rows.filter(r => r.gross > 0).length} คน · รับสุทธิ ${baht(total.net)} · หักประกันสังคม ${baht(total.sso)} · หักอื่น ${baht(total.deductions)}`
+    });
+    setDone(`ลงบัญชีค่าแรง ${monthName(month)} แล้ว (หมวดเงินเดือน)`);
+  };
+
+  const saveAdj = () => {
+    const amount = Number(adjAmount);
+    if (!adjFor || !(amount > 0)) return;
+    setAdjustments(prev => [...prev, { id: `adj-${Date.now()}`, staffId: adjFor.staffId, month, kind: adjKind, amount, note: adjNote.trim() }]);
+    setAdjAmount('');
+    setAdjNote('');
+  };
+
+  const input = 'h-10 px-3 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs';
+
+  return (
+    <div className="space-y-4 text-xs">
+      <div className="flex flex-wrap items-end gap-2">
+        <div>
+          <label htmlFor="payroll-month" className="block text-[11px] text-slate-400 mb-1">เดือน</label>
+          <input id="payroll-month" type="month" value={month} onChange={e => e.target.value && setMonth(e.target.value)} className={input} />
+        </div>
+        <button type="button" onClick={exportCsv} className="h-10 px-3 rounded-xl border border-slate-700 text-slate-200 flex items-center gap-1.5"><Download className="w-4 h-4" /> CSV</button>
+        <button type="button" onClick={bookExpense} disabled={booked || total.gross <= 0} className="h-10 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold flex items-center gap-1.5 disabled:opacity-50">
+          <BookOpenCheck className="w-4 h-4" /> {booked ? 'ลงบัญชีเดือนนี้แล้ว' : 'ลงบัญชีค่าแรง'}
+        </button>
+        <button type="button" onClick={() => setShowCfg(s => !s)} className="h-10 px-3 rounded-xl border border-slate-700 text-slate-300">ตั้งค่าประกันสังคม/มาสาย</button>
+      </div>
+
+      {showCfg && (
+        <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {([
+            ['ssoRate', 'ประกันสังคม (%)'],
+            ['ssoMinWage', 'ฐานค่าจ้างต่ำสุด'],
+            ['ssoMaxWage', 'ฐานค่าจ้างสูงสุด'],
+            ['lateGraceMinutes', 'มาสายเกิน (นาที)']
+          ] as const).map(([k, label]) => (
+            <label key={k} className="text-[11px] text-slate-400">
+              {label}
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={cfg[k]}
+                onChange={e => updateSettings({ payroll: { ...cfg, [k]: Number(e.target.value) || 0 } })}
+                className={`${input} w-full mt-1`}
+              />
+            </label>
+          ))}
+          <p className="col-span-full text-[10px] text-slate-500">ประกันสังคมคิดจากค่าจ้าง+OT ในกรอบฐานค่าจ้างต่ำสุด–สูงสุด ตรวจสอบอัตราและเพดานล่าสุดกับสำนักงานประกันสังคม</p>
+        </div>
+      )}
+
+      {done && <div role="status" className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-700/50 text-emerald-200">{done}</div>}
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        {[
+          ['รวมจ่ายสุทธิ', baht(total.net), 'text-emerald-300'],
+          ['ค่าแรงรวม (ก่อนหัก)', baht(total.gross), 'text-slate-100'],
+          ['ค่า OT รวม', baht(total.ot), 'text-amber-300'],
+          ['หักประกันสังคม', baht(total.sso), 'text-sky-300']
+        ].map(([l, v, c]) => (
+          <div key={l} className="p-3 rounded-2xl bg-slate-900 border border-slate-800">
+            <div className="text-[11px] text-slate-400">{l}</div>
+            <div className={`text-base font-bold ${c}`}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-slate-800">
+        <table className="w-full min-w-[900px] text-slate-300">
+          <thead className="bg-slate-900 text-slate-400 text-[11px]">
+            <tr>
+              <th className="p-2 text-left">พนักงาน</th>
+              <th className="p-2 text-right">วัน / ชม.</th>
+              <th className="p-2 text-right">OT ชม.</th>
+              <th className="p-2 text-right">สาย / ขาด</th>
+              <th className="p-2 text-right">ค่าจ้าง</th>
+              <th className="p-2 text-right">ค่า OT</th>
+              <th className="p-2 text-right">เพิ่ม / หัก</th>
+              <th className="p-2 text-right">ประกันสังคม</th>
+              <th className="p-2 text-right">รับสุทธิ</th>
+              <th className="p-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.staffId} className="border-t border-slate-800">
+                <td className="p-2">
+                  <div className="font-bold text-slate-100">{r.name}</div>
+                  <div className="text-[10px] text-slate-500">{PAY_TYPE_TH[r.payType]} · {r.rateText}</div>
+                </td>
+                <td className="p-2 text-right">{r.daysWorked} วัน<div className="text-[10px] text-slate-500">{r.hours} ชม.</div></td>
+                <td className="p-2 text-right text-amber-300">{r.otHours || '-'}</td>
+                <td className="p-2 text-right">
+                  <span className={r.lateCount ? 'text-amber-300' : ''}>{r.lateCount ? `สาย ${r.lateCount} (${r.lateMinutes} น.)` : '-'}</span>
+                  {r.absentCount > 0 && <div className="text-[10px] text-rose-300">ขาด {r.absentCount} วัน</div>}
+                </td>
+                <td className="p-2 text-right">{baht(r.basePay)}</td>
+                <td className="p-2 text-right">{baht(r.otPay)}</td>
+                <td className="p-2 text-right">
+                  {r.bonus > 0 && <div className="text-emerald-300">+{baht(r.bonus)}</div>}
+                  {r.deductions > 0 && <div className="text-rose-300">−{baht(r.deductions)}</div>}
+                  {!r.bonus && !r.deductions && '-'}
+                </td>
+                <td className="p-2 text-right">{r.sso ? `−${baht(r.sso)}` : '-'}</td>
+                <td className="p-2 text-right font-bold text-emerald-300">{baht(r.net)}</td>
+                <td className="p-2">
+                  <div className="flex gap-1 justify-end">
+                    <button type="button" title="ตั้งค่าค่าจ้าง" aria-label={`ตั้งค่าค่าจ้าง ${r.name}`} onClick={() => setEditPay(staffMembers.find(s => s.id === r.staffId) || null)} className="w-9 h-9 rounded-lg border border-slate-700 flex items-center justify-center"><Pencil className="w-4 h-4" /></button>
+                    <button type="button" title="เพิ่ม/หักเงิน" aria-label={`เพิ่มหรือหักเงิน ${r.name}`} onClick={() => setAdjFor(r)} className="w-9 h-9 rounded-lg border border-slate-700 flex items-center justify-center"><Plus className="w-4 h-4" /></button>
+                    <button type="button" title="พิมพ์สลิป" aria-label={`พิมพ์สลิป ${r.name}`} onClick={() => printPayslip(r, month, settings.shopName || currentBranch.name, adjustments)} className="w-9 h-9 rounded-lg border border-slate-700 flex items-center justify-center"><Printer className="w-4 h-4" /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10px] text-slate-500">
+        ชั่วโมงปกติ = ตามกะ (อย่างน้อย 8 ชม.) ส่วนเกินเป็น OT · ค่า OT รายวันคิดจากค่าแรงวัน/8 รายเดือนคิดจากเงินเดือน/30/8 × อัตรา OT ของแต่ละคน · ใช้เวลาลงเวลาจริงจากตู้ PIN
+      </p>
+
+      {editPay && <PaySettingsModal staff={editPay} onClose={() => setEditPay(null)} onSave={s => { updateStaffMember(s); setEditPay(null); }} />}
+
+      {adjFor && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-3" onClick={() => setAdjFor(null)}>
+          <div role="dialog" aria-modal="true" aria-label="เพิ่มหรือหักเงิน" onClick={e => e.stopPropagation()} className="w-full max-w-md bg-[#0f172a] border border-slate-800 rounded-3xl p-4 space-y-3 text-slate-100">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold">เพิ่ม / หักเงิน · {adjFor.name} · {monthName(month)}</h3>
+              <button type="button" onClick={() => setAdjFor(null)} aria-label="ปิด"><X className="w-5 h-5" /></button>
+            </div>
+            <ul className="space-y-1">
+              {adjustments.filter(a => a.staffId === adjFor.staffId && a.month === month).map(a => (
+                <li key={a.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-900">
+                  <span className={a.kind === 'bonus' ? 'text-emerald-300' : 'text-rose-300'}>{a.kind === 'bonus' ? '+' : '−'}{baht(a.amount)} {a.note}</span>
+                  <button type="button" aria-label="ลบรายการ" onClick={() => setAdjustments(prev => prev.filter(x => x.id !== a.id))} className="text-rose-300"><Trash2 className="w-4 h-4" /></button>
+                </li>
+              ))}
+            </ul>
+            <div className="grid grid-cols-3 gap-2">
+              <select aria-label="ประเภท" value={adjKind} onChange={e => setAdjKind(e.target.value as 'bonus' | 'deduction')} className={input}>
+                <option value="deduction">หักเงิน</option>
+                <option value="bonus">เพิ่มเงิน</option>
+              </select>
+              <input aria-label="จำนวนเงิน" type="number" inputMode="decimal" min="0" value={adjAmount} onChange={e => setAdjAmount(e.target.value)} placeholder="บาท" className={input} />
+              <input aria-label="หมายเหตุ" value={adjNote} onChange={e => setAdjNote(e.target.value)} placeholder={adjKind === 'bonus' ? 'เช่น โบนัส/เบี้ยขยัน' : 'เช่น เบิกล่วงหน้า'} className={input} />
+            </div>
+            <button type="button" onClick={saveAdj} disabled={!(Number(adjAmount) > 0)} className="w-full h-11 rounded-xl bg-orange-600 font-bold disabled:opacity-40">บันทึกรายการ</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const PaySettingsModal: React.FC<{ staff: StaffMember; onClose: () => void; onSave: (s: StaffMember) => void }> = ({ staff, onClose, onSave }) => {
+  const [payType, setPayType] = useState(staff.payType || 'hourly');
+  const [hourly, setHourly] = useState(String(staff.hourlyRate || ''));
+  const [daily, setDaily] = useState(String(staff.dailyRate || ''));
+  const [monthly, setMonthly] = useState(String(staff.monthlySalary || ''));
+  const [ot, setOt] = useState(String(staff.otRateMultiplier || 1.5));
+  const [sso, setSso] = useState(!!staff.socialSecurity);
+  const input = 'w-full h-11 px-3 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-sm';
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-3" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label="ตั้งค่าค่าจ้าง" onClick={e => e.stopPropagation()} className="w-full max-w-md bg-[#0f172a] border border-slate-800 rounded-3xl p-4 space-y-3 text-slate-100 text-xs">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-sm">ค่าจ้าง · {staff.name}</h3>
+          <button type="button" onClick={onClose} aria-label="ปิด"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          {(['hourly', 'daily', 'monthly'] as const).map(t => (
+            <button key={t} type="button" onClick={() => setPayType(t)} className={`h-10 rounded-xl border font-bold ${payType === t ? 'bg-orange-600 border-orange-500 text-white' : 'border-slate-700 text-slate-300'}`}>
+              {PAY_TYPE_TH[t]}
+            </button>
+          ))}
+        </div>
+        {payType === 'hourly' && <label className="block text-slate-400">ค่าจ้างต่อชั่วโมง (บาท)<input type="number" min="0" value={hourly} onChange={e => setHourly(e.target.value)} className={`${input} mt-1`} /></label>}
+        {payType === 'daily' && <label className="block text-slate-400">ค่าแรงต่อวัน (บาท)<input type="number" min="0" value={daily} onChange={e => setDaily(e.target.value)} className={`${input} mt-1`} /></label>}
+        {payType === 'monthly' && <label className="block text-slate-400">เงินเดือน (บาท)<input type="number" min="0" value={monthly} onChange={e => setMonthly(e.target.value)} className={`${input} mt-1`} /></label>}
+        <label className="block text-slate-400">อัตรา OT (เท่า)<input type="number" min="1" step="0.1" value={ot} onChange={e => setOt(e.target.value)} className={`${input} mt-1`} /></label>
+        <label className="flex items-center gap-2 text-slate-300">
+          <input type="checkbox" checked={sso} onChange={e => setSso(e.target.checked)} className="w-5 h-5 accent-orange-500" /> หักประกันสังคม
+        </label>
+        <button
+          type="button"
+          onClick={() =>
+            onSave({
+              ...staff,
+              payType,
+              hourlyRate: Number(hourly) || staff.hourlyRate || 0,
+              dailyRate: Number(daily) || undefined,
+              monthlySalary: Number(monthly) || undefined,
+              otRateMultiplier: Number(ot) || 1.5,
+              socialSecurity: sso
+            })
+          }
+          className="w-full h-11 rounded-xl bg-orange-600 font-bold"
+        >
+          บันทึก
+        </button>
+      </div>
+    </div>
+  );
+};

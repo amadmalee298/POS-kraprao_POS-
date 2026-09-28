@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { isTypingInField } from '../utils/keyboard';
+import { addHours } from '../utils/payroll';
+import { localDay } from '../utils/stockHistory';
 
 const MAX_PIN_ATTEMPTS = 5;
 const LOCKOUT_BASE_MS = 30_000;
@@ -212,7 +214,8 @@ export const LoginScreen: React.FC = () => {
   };
 
   // Today's ISO date string (YYYY-MM-DD)
-  const todayStr = new Date().toISOString().split('T')[0];
+  // Local date: the UTC date is still yesterday before 07:00 in Thailand
+  const todayStr = localDay(new Date().toISOString());
   const todayShift = shifts.find(
     s => (s.staffId === selectedUser.id || s.staffName.includes(selectedUser.name.split(' ')[0])) && s.date === todayStr
   );
@@ -278,13 +281,15 @@ export const LoginScreen: React.FC = () => {
             staffId: authenticatedUser.id,
             staffName: authenticatedUser.name,
             date: todayStr,
-            dayOfWeek: 'Mon',
-            shiftType: 'fullday',
-            scheduledStart: '08:00',
-            scheduledEnd: '17:00',
+            dayOfWeek: (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const)[new Date().getDay()],
+            // Not on the roster today: the shift starts when they clock in (never counted as late)
+            shiftType: 'custom',
+            scheduledStart: nowTime,
+            scheduledEnd: addHours(nowTime, 8),
             scheduledHours: 8,
             clockInTime: nowTime,
-            status: 'clocked_in'
+            status: 'clocked_in',
+            notes: 'ลงเวลานอกตารางงาน'
           });
           setSuccessNotice(`ลงเวลาเข้างานสำเร็จ (${nowTime})`);
         }
