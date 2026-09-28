@@ -96,6 +96,7 @@ import {
 } from '../services/notificationService';
 import {
   INITIAL_BRANCHES,
+  isSampleBranch,
   INITIAL_USERS,
   INITIAL_INGREDIENTS,
   INITIAL_STOCK_LOTS,
@@ -383,7 +384,7 @@ interface POSContextType {
   firebaseSyncState: FirebaseSyncState;
   centralBranchesLive: Record<string, CentralBranchLiveStats>;
   pushAllBranchDataToCloud: () => Promise<boolean>;
-  cleanAndSyncCloudNow: (options?: { purgeCloud?: boolean }) => Promise<{
+  cleanAndSyncCloudNow: (options?: { purgeCloud?: boolean; withStock?: boolean }) => Promise<{
     success: boolean;
     message: string;
     details?: {
@@ -867,8 +868,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Firebase Cloud & Multi-Branch Synchronization State
   const [firebaseSyncState, setFirebaseSyncState] = useState<FirebaseSyncState>({
-    status: navigator.onLine && isFirebaseAvailable() ? 'connected' : 'offline',
-    lastSyncedAt: new Date().toISOString(),
+    // Connected only once the cloud has taken a write (the branch heartbeat below)
+    status: navigator.onLine ? 'syncing' : 'offline',
+    lastSyncedAt: null,
     pendingSyncCount: 0,
     totalSyncedOrders: 0,
     lastSyncedBranch: INITIAL_BRANCHES[0].name
@@ -898,9 +900,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Update branch live heartbeat in Firestore
   useEffect(() => {
     if (!isFirebaseAvailable() || effectiveOffline) {
+      // Without a cloud database this device works alone: never report it as connected
       setFirebaseSyncState(prev => ({
         ...prev,
-        status: effectiveOffline ? 'offline' : 'connected',
+        status: effectiveOffline ? 'offline' : 'error',
+        errorMessage: effectiveOffline ? prev.errorMessage : 'ยังเชื่อมฐานข้อมูลคลาวด์ไม่ได้',
         pendingSyncCount: orders.filter(o => o.isOfflineOrder && !o.isSynced).length
       }));
       return;
@@ -924,8 +928,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           status: 'connected',
           lastSyncedAt: new Date().toISOString(),
           lastSyncedBranch: currentBranch.name,
-          pendingSyncCount: orders.filter(o => o.isOfflineOrder && !o.isSynced).length
+          pendingSyncCount: orders.filter(o => o.isOfflineOrder && !o.isSynced).length,
+          errorMessage: undefined
         }));
+      } else {
+        // The cloud refused the write (usually: this device is not signed in to the shop account)
+        setFirebaseSyncState(prev => ({ ...prev, status: 'error', errorMessage: 'บันทึกขึ้นคลาวด์ไม่ได้ ตรวจสอบการเชื่อมบัญชีร้าน' }));
       }
     });
   }, [currentBranch.id, effectiveOffline, orders.length, ingredients.length]);
@@ -1373,10 +1381,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         await flushPendingStock();
         await flushPendingHistory();
         await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false });
-        await syncBranchToFirestore(currentBranch);
+        if (!(await syncBranchToFirestore(currentBranch))) {
+          setFirebaseSyncState(prev => ({ ...prev, status: 'error', errorMessage: 'บันทึกขึ้นคลาวด์ไม่ได้ ตรวจสอบการเชื่อมบัญชีร้าน' }));
+          return;
+        }
         setFirebaseSyncState(prev => ({
           ...prev,
           status: 'connected',
+          errorMessage: undefined,
           lastSyncedAt: nowIso,
           lastSyncedBranch: currentBranch.name,
           pendingSyncCount: 0
@@ -1393,10 +1405,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       pendingSyncCount: pendingOrders.length
     }));
 
-    // If online, batch push to Firebase Firestore
+    // Only orders the cloud has accepted count as synced; the rest stay queued for the next try
+    const uploaded = new Set<string>();
     if (isFirebaseAvailable() && !effectiveOffline) {
       try {
         const batchResult = await syncOrdersBatchToFirestore(pendingOrders, currentBranch);
+        batchResult.syncedIds.forEach(id => uploaded.add(id));
         await flushPendingStock();
         await flushPendingHistory();
         await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false });
@@ -1422,7 +1436,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       let corruptCount = 0;
 
       const updatedOrders = prevOrders.map(ord => {
-        if (ord.isOfflineOrder && !ord.isSynced) {
+        if (ord.isOfflineOrder && !ord.isSynced && uploaded.has(ord.id)) {
           const computedChecksum = computeOrderChecksum(ord);
           const isChecksumValid = !ord.checksum || ord.checksum === computedChecksum;
 
@@ -1473,10 +1487,21 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return updatedOrders;
     });
 
+    const left = pendingOrders.length - uploaded.size;
+    if (left > 0) {
+      setFirebaseSyncState(prev => ({
+        ...prev,
+        status: effectiveOffline ? 'offline' : 'error',
+        pendingSyncCount: left,
+        errorMessage: `ส่งออเดอร์ขึ้นคลาวด์ไม่ได้ ${left} รายการ (เก็บไว้ในเครื่อง จะลองส่งใหม่)`
+      }));
+      return;
+    }
     setLastSyncedAt(nowIso);
     setFirebaseSyncState(prev => ({
       ...prev,
       status: 'connected',
+      errorMessage: undefined,
       lastSyncedAt: nowIso,
       lastSyncedBranch: currentBranch.name,
       pendingSyncCount: 0,
@@ -1484,7 +1509,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
   };
 
-  const cleanAndSyncCloudNow = useCallback(async (options?: { purgeCloud?: boolean }): Promise<{
+  const cleanAndSyncCloudNow = useCallback(async (options?: { purgeCloud?: boolean; withStock?: boolean }): Promise<{
     success: boolean;
     message: string;
     details?: {
@@ -1518,7 +1543,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         branch: currentBranch,
         settings,
         orders,
-        purgeOrphanCloudData: purge
+        purgeOrphanCloudData: purge,
+        withStock: options?.withStock !== false
       });
 
       if (!res.success) {
@@ -1592,7 +1618,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ]);
 
   const pushAllBranchDataToCloud = async (): Promise<boolean> => {
-    const res = await cleanAndSyncCloudNow({ purgeCloud: true });
+    // Adds and updates only: nothing in the cloud is deleted, and stock levels stay as the cloud
+    // has them (other devices' sales reach it as changes), so a device with an old or partial
+    // copy cannot wipe the shop's data
+    const res = await cleanAndSyncCloudNow({ purgeCloud: false, withStock: false });
     return res.success;
   };
 
@@ -1717,6 +1746,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const bMap = new Map<string, Branch>();
           cloudBranches.forEach(cb => bMap.set(cb.id, cb));
           prev.forEach(b => bMap.set(b.id, b));
+          Array.from(bMap.values()).forEach(b => b.id !== currentBranch?.id && isSampleBranch(b) && bMap.delete(b.id));
           const merged = Array.from(bMap.values());
           try {
             localStorage.setItem('POS_BRANCHES_DATA', JSON.stringify(merged));
@@ -2103,9 +2133,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setDiscount(parsed.discount);
           }
           if (parsed.branches && Array.isArray(parsed.branches)) {
-            setBranches(parsed.branches);
+            const savedBranches = (parsed.branches as Branch[]).filter(b => b.id === parsed.branchId || !isSampleBranch(b));
+            setBranches(savedBranches.length ? savedBranches : INITIAL_BRANCHES);
             if (parsed.branchId) {
-              const b = parsed.branches.find((item: Branch) => item.id === parsed.branchId);
+              const b = savedBranches.find((item: Branch) => item.id === parsed.branchId);
               if (b) setCurrentBranch(b);
             }
           } else if (parsed.branchId) {
@@ -4039,7 +4070,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const importStateJSON = (jsonString: string): boolean => {
     try {
       const parsed = JSON.parse(jsonString);
-      if (parsed.branches && Array.isArray(parsed.branches)) setBranches(parsed.branches);
+      if (parsed.branches && Array.isArray(parsed.branches)) setBranches((parsed.branches as Branch[]).filter(b => b.id === currentBranch?.id || !isSampleBranch(b)));
       if (parsed.branch && typeof parsed.branch === 'object') setCurrentBranch(parsed.branch);
       
       let importedMenuItems = menuItems;

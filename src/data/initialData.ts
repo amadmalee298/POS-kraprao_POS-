@@ -38,35 +38,18 @@ export const INITIAL_BRANCHES: Branch[] = [
     promptpayMobileOrTaxId: '0973399666',
     isMainBranch: true,
   },
-  {
-    id: 'branch-siam',
-    name: 'สาขาสยาม (Siam Paragon)',
-    nameEn: 'Siam Paragon Branch',
-    address: '991 อาคารสยามพารากอน ชั้น G ถ.พระราม 1 ปทุมวัน กรุงเทพฯ 10330',
-    phone: '02-123-4567',
-    taxId: '0105562089123',
-    promptpayMobileOrTaxId: '',
-    isMainBranch: false,
-  },
-  {
-    id: 'branch-asoke',
-    name: 'สาขาอโศก (Asoke Tower)',
-    nameEn: 'Asoke Tower Branch',
-    address: '209 อาคารอโศกทาวเวอร์ ชั้น 1 ถ.สุขุมวิท 21 วัฒนา กรุงเทพฯ 10110',
-    phone: '02-987-6543',
-    taxId: '0105562089124',
-    promptpayMobileOrTaxId: '',
-  },
-  {
-    id: 'branch-nimman',
-    name: 'สาขาเชียงใหม่ (นิมมาน)',
-    nameEn: 'Chiang Mai Nimman Branch',
-    address: '12 ถนนนิมมานเหามินท์ ซอย 9 ต.สุเทพ อ.เมือง จ.เชียงใหม่ 50200',
-    phone: '053-111-222',
-    taxId: '0105562089125',
-    promptpayMobileOrTaxId: '',
-  },
 ];
+
+/**
+ * Example branches shipped with earlier versions. They are dropped when loaded unless the shop
+ * has changed them (a real branch would have its own address).
+ */
+const SAMPLE_BRANCH_ADDRESSES: Record<string, string> = {
+  'branch-siam': '991 อาคารสยามพารากอน ชั้น G ถ.พระราม 1 ปทุมวัน กรุงเทพฯ 10330',
+  'branch-asoke': '209 อาคารอโศกทาวเวอร์ ชั้น 1 ถ.สุขุมวิท 21 วัฒนา กรุงเทพฯ 10110',
+  'branch-nimman': '12 ถนนนิมมานเหามินท์ ซอย 9 ต.สุเทพ อ.เมือง จ.เชียงใหม่ 50200'
+};
+export const isSampleBranch = (b: Pick<Branch, 'id' | 'address'>): boolean => SAMPLE_BRANCH_ADDRESSES[b.id] !== undefined && SAMPLE_BRANCH_ADDRESSES[b.id] === b.address;
 
 export const INITIAL_USERS: User[] = [
   {
