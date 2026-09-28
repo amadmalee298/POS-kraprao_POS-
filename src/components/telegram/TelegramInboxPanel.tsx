@@ -7,7 +7,7 @@ import { getStoredCredentials } from '../../services/notificationService';
 import { baht, captionTitle, downloadTelegramFile, telegramCall } from '../../services/telegramInbox';
 import { vercelBase } from '../../services/receiptScan';
 import { EXPENSE_CATEGORY_LABELS, isVatRegistered, round2, vatInside, vatRateOf } from '../../utils/accounting';
-import { allocateCosts, BillItem, buildIntakeRows, IntakeRow, matchIngredient, parseItemsFromText } from '../../utils/stockIntake';
+import { allocateCosts, BillItem, buildIntakeRows, hasTarget, IntakeRow, matchIngredient, parseItemsFromText } from '../../utils/stockIntake';
 import { compressBase64Image } from '../../utils/imageCompressor';
 import { readTelegramReceipt } from './TelegramInboxPoller';
 
@@ -33,6 +33,7 @@ const billItems = (p: PendingReceipt): BillItem[] => {
 };
 
 const APPROVER_ROLES = ['admin', 'manager'];
+const NEW_INGREDIENT_UNITS = ['kg', 'g', 'l', 'ml', 'ชิ้น', 'ฟอง', 'ขวด', 'ถุง', 'แพ็ค', 'กล่อง'];
 
 const formFor = (p: PendingReceipt, ingredients: Ingredient[]): Form => ({
   kind: p.kind,
@@ -57,7 +58,7 @@ const formFor = (p: PendingReceipt, ingredients: Ingredient[]): Form => ({
  * approve it into the books (expense or other income), or reject it.
  */
 export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory, string> }> = ({ incomeLabels }) => {
-  const { settings, currentBranch, currentUser, addExpense, addIncome, ingredients, addStockLot } = usePOS();
+  const { settings, currentBranch, currentUser, addExpense, addIncome, ingredients, addStockLot, receiveNewIngredient, ingredientCategories = [] } = usePOS();
   const [items, setItems] = useTelegramInbox();
   const [forms, setForms] = useState<Record<string, Form>>({});
   const [images, setImages] = useState<Record<string, string>>({});
@@ -113,7 +114,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
     }
     if (items.find(x => x.id === p.id)?.status === 'approved') return;
     if (receivesStock(f)) {
-      const left = stockRows(p, f).filter(r => r.label && (!r.ingredientId || !r.selected || !(r.quantity > 0)));
+      const left = stockRows(p, f).filter(r => r.label && (!hasTarget(r) || !r.selected || !(r.quantity > 0)));
       if (left.length && !window.confirm(`${left.map(r => r.label).join(', ')} จะไม่เข้าสต็อก (ยังไม่ได้เลือกวัตถุดิบ/จำนวน)\nอนุมัติต่อหรือไม่?`)) return;
     }
     setBusy(p.id);
@@ -153,9 +154,30 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         });
       }
       let stockAdded: PendingReceipt['stockAdded'];
+      const addedNames = new Map<string, string>();
+      const addedUnits = new Map<string, string>();
       if (receivesStock(f)) {
-        const rows = stockRows(p, f).filter(r => r.selected && r.ingredientId && r.quantity > 0);
+        const rows = stockRows(p, f).filter(r => r.selected && hasTarget(r) && r.quantity > 0);
+        const note = `บิลจาก Telegram: ${f.title.trim()}`;
         rows.forEach((row, i) => {
+          if (!row.ingredientId && row.newIngredient) {
+            // First purchase of something the shop has never stocked: create it with this stock
+            const created = receiveNewIngredient(
+              {
+                name: row.newIngredient.name.trim(),
+                unit: row.newIngredient.unit,
+                category: row.newIngredient.category,
+                unitCost: Math.round((row.cost / row.quantity) * 10000) / 10000,
+                minStockAlert: 0
+              },
+              row.quantity,
+              note
+            );
+            row.ingredientId = created.id;
+            addedNames.set(created.id, `${created.name} (ใหม่)`);
+            addedUnits.set(created.id, created.unit);
+            return;
+          }
           addStockLot({
             ingredientId: row.ingredientId,
             lotNumber: `TG-${p.messageId}-${i + 1}`,
@@ -164,7 +186,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
             receivedDate: f.date,
             expiryDate: '',
             supplier: p.data?.vendorName || p.senderName || 'Telegram',
-            notes: `บิลจาก Telegram: ${f.title.trim()}`
+            notes: note
           });
         });
         stockAdded = rows.map(r => ({ ingredientId: r.ingredientId, quantity: r.quantity, cost: r.cost }));
@@ -181,7 +203,9 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         data: { ...base, title: f.title.trim(), date: f.date, category: f.category, amount: round2(f.amount), includeVat: f.includeVat, vatAmount, netAmount: round2(f.amount - vatAmount), refNumber: f.refNumber.trim(), note: f.note }
       });
       const stockText = stockAdded?.length
-        ? `\n📦 เข้าสต็อก: ${stockAdded.map(s => `${ingredientById.get(s.ingredientId)?.name || ''} +${s.quantity} ${ingredientById.get(s.ingredientId)?.unit || ''}`).join(', ')}`
+        ? `\n📦 เข้าสต็อก: ${stockAdded
+            .map(s => `${addedNames.get(s.ingredientId) || ingredientById.get(s.ingredientId)?.name || ''} +${s.quantity} ${addedUnits.get(s.ingredientId) || ingredientById.get(s.ingredientId)?.unit || ''}`)
+            .join(', ')}`
         : '';
       reply(p, `✅ อนุมัติแล้วโดย ${currentUser?.name || 'ผู้จัดการ'}\nบันทึกเป็น${f.kind === 'expense' ? 'ค่าใช้จ่าย' : 'รายรับ'} ${f.title.trim()} ${baht(f.amount)}${stockText}`);
     } finally {
@@ -363,7 +387,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
 
               {receivesStock(f) && (() => {
                 const rows = stockRows(p, f);
-                const chosen = rows.filter(r => r.selected && r.ingredientId && r.quantity > 0);
+                const chosen = rows.filter(r => r.selected && hasTarget(r) && r.quantity > 0);
                 return (
                   <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-3 space-y-2">
                     <div className="font-bold text-emerald-200 flex items-center gap-1.5">
@@ -376,10 +400,11 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                     )}
                     {rows.map(row => {
                       const ing = ingredientById.get(row.ingredientId);
+                      const unmatched = !row.ingredientId && !row.newIngredient && !!row.label;
                       return (
                         <div
                           key={row.key}
-                          className={`grid grid-cols-[auto_1fr] gap-2 items-start ${!row.ingredientId && row.label ? 'rounded-xl border border-amber-600/60 bg-amber-950/30 p-2' : ''}`}
+                          className={`grid grid-cols-[auto_1fr] gap-2 items-start ${unmatched ? 'rounded-xl border border-amber-600/60 bg-amber-950/30 p-2' : ''}`}
                         >
                           <input
                             type="checkbox"
@@ -390,17 +415,31 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                           />
                           <div className="space-y-1">
                             {row.label && <div className="text-slate-400">ในบิล: {row.label}</div>}
-                            {!row.ingredientId && row.label && (
-                              <div className="text-amber-300 font-bold">ไม่พบวัตถุดิบชื่อนี้ในคลัง เลือกจากรายการด้านล่าง ไม่เช่นนั้นจะไม่เข้าสต็อก</div>
+                            {unmatched && (
+                              <div className="text-amber-300 font-bold">ไม่พบในคลัง: เลือกวัตถุดิบ หรือเลือก “＋ สร้างวัตถุดิบใหม่”</div>
                             )}
                             <div className="grid grid-cols-[1fr_90px] gap-2">
                               <select
-                                value={row.ingredientId}
-                                onChange={e => editRow(p, row.key, { ingredientId: e.target.value, selected: !!e.target.value, unitMismatch: false })}
+                                value={row.newIngredient ? '__new__' : row.ingredientId}
+                                onChange={e =>
+                                  e.target.value === '__new__'
+                                    ? editRow(p, row.key, {
+                                        ingredientId: '',
+                                        selected: true,
+                                        unitMismatch: false,
+                                        newIngredient: {
+                                          name: row.label,
+                                          unit: row.billUnit || 'kg',
+                                          category: ingredientCategories[0]?.id || 'dry_good'
+                                        }
+                                      })
+                                    : editRow(p, row.key, { ingredientId: e.target.value, selected: !!e.target.value, unitMismatch: false, newIngredient: undefined })
+                                }
                                 className={field}
                                 aria-label="วัตถุดิบ"
                               >
                                 <option value="">เลือกวัตถุดิบ...</option>
+                                <option value="__new__">＋ สร้างวัตถุดิบใหม่{row.label ? ` “${row.label}”` : ''}</option>
                                 {sortedIngredients.map(i => (
                                   <option key={i.id} value={i.id}>
                                     {i.name} ({i.unit})
@@ -417,12 +456,55 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                                   onChange={e => editRow(p, row.key, { quantity: Number(e.target.value), unitMismatch: false })}
                                   className={`${field} pr-9 font-mono`}
                                 />
-                                <span className="absolute right-2 top-2 text-slate-500">{ing?.unit || ''}</span>
+                                <span className="absolute right-2 top-2 text-slate-500">{ing?.unit || row.newIngredient?.unit || ''}</span>
                               </label>
                             </div>
+                            {row.newIngredient && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-2 rounded-xl border border-sky-700/50 bg-sky-950/30">
+                                <label className="sm:col-span-3 text-sky-200 font-bold">วัตถุดิบใหม่ จะถูกเพิ่มในคลังเมื่ออนุมัติ</label>
+                                <label className="space-y-1">
+                                  <span className="text-slate-400">ชื่อ</span>
+                                  <input
+                                    value={row.newIngredient.name}
+                                    onChange={e => editRow(p, row.key, { newIngredient: { ...row.newIngredient!, name: e.target.value } })}
+                                    className={field}
+                                  />
+                                </label>
+                                <label className="space-y-1">
+                                  <span className="text-slate-400">หน่วยนับในคลัง</span>
+                                  <select
+                                    value={row.newIngredient.unit}
+                                    onChange={e => editRow(p, row.key, { newIngredient: { ...row.newIngredient!, unit: e.target.value } })}
+                                    className={field}
+                                  >
+                                    {Array.from(new Set([row.newIngredient.unit, ...NEW_INGREDIENT_UNITS])).map(u => (
+                                      <option key={u} value={u}>
+                                        {u}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="space-y-1">
+                                  <span className="text-slate-400">หมวด</span>
+                                  <select
+                                    value={row.newIngredient.category}
+                                    onChange={e => editRow(p, row.key, { newIngredient: { ...row.newIngredient!, category: e.target.value } })}
+                                    className={field}
+                                  >
+                                    {ingredientCategories.map(c => (
+                                      <option key={c.id} value={c.id}>
+                                        {c.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              </div>
+                            )}
                             {row.unitMismatch && <div className="text-amber-300">หน่วยในบิลแปลงเป็น {ing?.unit} ไม่ได้ ตรวจจำนวนอีกครั้ง</div>}
-                            {row.selected && row.ingredientId && row.quantity > 0 && (
-                              <div className="text-slate-500">ต้นทุน {baht(row.cost)} · {baht(row.cost / row.quantity)} ต่อ {ing?.unit}</div>
+                            {row.selected && hasTarget(row) && row.quantity > 0 && (
+                              <div className="text-slate-500">
+                                ต้นทุน {baht(row.cost)} · {baht(row.cost / row.quantity)} ต่อ {ing?.unit || row.newIngredient?.unit}
+                              </div>
                             )}
                           </div>
                         </div>

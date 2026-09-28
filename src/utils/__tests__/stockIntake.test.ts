@@ -63,3 +63,18 @@ describe('frozen label', () => {
     expect(matchIngredient('กุ้งแช่แข็ง', [ing('x', 'กุ้ง', 'kg')])?.id).toBe('x');
   });
 });
+
+describe('new ingredients on a bill', () => {
+  it('shares the cost equally when an item has no known cost yet', async () => {
+    const { allocateCosts } = await import('../stockIntake');
+    const rows = allocateCosts(
+      [
+        { key: 'a', label: 'กุ้ง', ingredientId: 'shrimp', quantity: 3, cost: 0, unitMismatch: false, selected: true },
+        { key: 'b', label: 'หอยแมลงภู่', ingredientId: '', newIngredient: { name: 'หอยแมลงภู่', unit: 'kg', category: 'seafood' }, quantity: 2, cost: 0, unitMismatch: false, selected: true }
+      ],
+      shop,
+      1000
+    );
+    expect(rows.map(r => r.cost)).toEqual([500, 500]);
+  });
+});
