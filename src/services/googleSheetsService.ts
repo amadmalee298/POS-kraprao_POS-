@@ -1,27 +1,45 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import {
+  Auth,
+  browserPopupRedirectResolver,
   getAuth,
-  signInWithPopup,
   GoogleAuthProvider,
+  inMemoryPersistence,
+  initializeAuth,
   onAuthStateChanged,
-  User,
-  signOut
+  signInWithPopup,
+  signOut,
+  User
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Order, Ingredient, MenuItem, Branch, StockAdjustmentLog, WasteLog } from '../types';
+import { countsAsRevenue, isUnpaid, orderVatBreakdown } from '../utils/orderUtils';
+import { effectiveUnitCost, recipeCost } from '../utils/recipeUtils';
+import { reasonLabel } from '../utils/stockHistory';
+import { stockTypeLabel, stockTypeOf } from '../utils/stockTypes';
 
-// Reuse initialized Firebase App
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-export const auth = getAuth(app);
+/**
+ * Google sign-in for Sheets runs in its own Firebase app instance. Signing in with a Google account
+ * on the shop's own auth would replace the shop account (and its access to the shop's data), and
+ * signing out of Google would sign the shop out. Kept in memory only: nothing stays on the device.
+ */
+const SHEETS_APP_NAME = 'google-sheets';
+const sheetsApp = getApps().find(a => a.name === SHEETS_APP_NAME) || initializeApp(firebaseConfig, SHEETS_APP_NAME);
+function sheetsAuth(): Auth {
+  try {
+    return initializeAuth(sheetsApp, { persistence: inMemoryPersistence, popupRedirectResolver: browserPopupRedirectResolver });
+  } catch {
+    // Already initialised (e.g. hot reload)
+    return getAuth(sheetsApp);
+  }
+}
+export const auth = sheetsAuth();
 
-// All Google Workspace OAuth Scopes configured for Sheets and Drive
-export const SCOPES = [
-  'https://www.googleapis.com/auth/drive',
-  'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/drive.readonly',
-  'https://www.googleapis.com/auth/spreadsheets',
-  'https://www.googleapis.com/auth/spreadsheets.readonly'
-];
+/**
+ * Only files this app creates or the user opens with it (drive.file). The Sheets API works with
+ * it; access to the rest of the user's Drive is not needed.
+ */
+export const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 
 const provider = new GoogleAuthProvider();
 SCOPES.forEach(scope => provider.addScope(scope));
@@ -67,6 +85,11 @@ export const loadGisScript = (): Promise<void> => {
  * Bypasses Firebase Auth domain authorization restriction on custom domains (e.g. github.io)
  */
 export const requestAccessTokenViaGis = async (): Promise<{ user: any; accessToken: string }> => {
+  if (!firebaseConfig.oAuthClientId) {
+    throw new Error(
+      'ยังไม่ได้เพิ่มโดเมนนี้ใน Firebase: Firebase Console → Authentication → Settings → Authorized domains แล้วเพิ่มโดเมนของเว็บ (วิธีสำรองต้องใช้ OAuth Client ID ซึ่งยังไม่ได้ตั้ง)'
+    );
+  }
   await loadGisScript();
 
   return new Promise((resolve, reject) => {
@@ -182,6 +205,15 @@ export const googleSignIn = async (forceGis = false): Promise<{ user: any; acces
         return await requestAccessTokenViaGis();
       }
 
+      if (firebaseErr?.code === 'auth/operation-not-allowed') {
+        throw new Error('ยังไม่ได้เปิดการเข้าสู่ระบบด้วย Google: Firebase Console → Authentication → Sign-in method → Google → Enable');
+      }
+      if (firebaseErr?.code === 'auth/popup-blocked') {
+        throw new Error('เบราว์เซอร์บล็อกหน้าต่างเข้าสู่ระบบ: อนุญาต pop-up ของเว็บนี้แล้วลองใหม่');
+      }
+      if (firebaseErr?.code === 'auth/popup-closed-by-user' || firebaseErr?.code === 'auth/cancelled-popup-request') {
+        throw new Error('ปิดหน้าต่างเข้าสู่ระบบก่อนเสร็จ ลองใหม่อีกครั้ง');
+      }
       throw firebaseErr;
     }
   } catch (error: any) {
@@ -263,7 +295,7 @@ export async function listUserSpreadsheets(accessToken: string): Promise<GoogleD
 export async function createGoogleSpreadsheet(
   accessToken: string,
   title: string,
-  sheetTitles: string[] = ['ยอดขาย (Sales)', 'สต็อกวัตถุดิบ (Inventory)', 'ต้นทุนเมนู (Recipes)', 'ประวัติสต็อก (Movements)']
+  sheetTitles: string[] = ['ยอดขาย (Sales)', 'สต็อก (Inventory)', 'ต้นทุนเมนู (Recipes)', 'ประวัติสต็อก (Movements)']
 ): Promise<{ spreadsheetId: string; spreadsheetUrl: string }> {
   try {
     const requestBody = {
@@ -375,7 +407,7 @@ export async function writeSheetValues(
 ): Promise<any> {
   const encodedRange = encodeURIComponent(range);
   const response = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodedRange}?valueInputOption=USER_ENTERED`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodedRange}?valueInputOption=RAW`,
     {
       method: 'PUT',
       headers: {
@@ -426,302 +458,187 @@ export async function clearSheetValues(
   return response.json();
 }
 
-/**
- * Format and export Orders / Sales to Google Sheets
- */
-export async function syncSalesToGoogleSheets(
-  accessToken: string,
-  spreadsheetId: string,
-  orders: Order[],
-  branch: Branch,
-  sheetTitle: string = 'ยอดขาย (Sales)'
-): Promise<number> {
-  await ensureSheetExists(accessToken, spreadsheetId, sheetTitle);
+// ---------------------------------------------------------------------------------------------
+// Rows shared by the Google Sheets export and the CSV downloads
+// ---------------------------------------------------------------------------------------------
 
+const ORDER_STATUS_TH: Record<string, string> = {
+  'pending-qr': 'QR รออนุมัติ',
+  pending: 'รอทำ',
+  cooking: 'กำลังปรุง',
+  ready: 'พร้อมเสิร์ฟ',
+  served: 'เสิร์ฟแล้ว',
+  cancelled: 'ยกเลิก'
+};
+const ORDER_TYPE_TH: Record<string, string> = { 'dine-in': 'ทานที่ร้าน', takeaway: 'กลับบ้าน', delivery: 'เดลิเวอรี' };
+const PAYMENT_TH: Record<string, string> = { cash: 'เงินสด', promptpay: 'พร้อมเพย์', transfer: 'โอนเงิน', credit: 'บัตร', truemoney: 'TrueMoney' };
+
+/** Sortable local date-time, e.g. 2026-09-28 11:42 */
+const stamp = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso || '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const money2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+
+function salesSheet(orders: Order[], branch: Branch, vatRate: number): (string | number)[][] {
   const headers = [
-    'เลขที่บิล (Order No)',
-    'วัน-เวลาทำรายการ (Date & Time)',
-    'สาขา (Branch)',
-    'ประเภทออเดอร์ (Type)',
-    'โต๊ะ / แชนแนล (Table)',
-    'รายการอาหาร (Items Detail)',
-    'จำนวนรวม (Qty)',
-    'ยอดรวมก่อนลด (Subtotal THB)',
-    'ส่วนลด (Discount THB)',
-    'ภาษีมูลค่าเพิ่ม (VAT 7% THB)',
-    'ยอดสุทธิ (Grand Total THB)',
-    'วิธีชำระเงิน (Payment)',
-    'สถานะออเดอร์ (Status)',
-    'หมายเหตุ / ใบกำกับภาษี (Notes)'
+    'เลขที่บิล',
+    'วันเวลา',
+    'สาขา',
+    'ประเภท',
+    'โต๊ะ',
+    'รายการอาหาร',
+    'จำนวน',
+    'ยอดก่อนส่วนลด',
+    'ส่วนลด',
+    'ยอดก่อน VAT',
+    `VAT ${vatRate}%`,
+    'ยอดรวม',
+    'วิธีชำระ',
+    'การชำระเงิน',
+    'สถานะออเดอร์',
+    'นับเป็นรายได้',
+    'หมายเหตุ'
   ];
-
-  const rows = orders.map(ord => {
-    const itemsSummary = (ord.items || [])
-      .map(item => `${item.menuItem?.name || 'อาหาร'} x${item.quantity}${item.proteinChoice ? ` (${item.proteinChoice.name})` : ''}${item.spiceLevel ? ` [${item.spiceLevel}]` : ''}`)
-      .join(', ');
-
-    const totalQty = (ord.items || []).reduce((sum, item) => sum + (item.quantity || 1), 0);
-
-    const paymentLabel =
-      ord.paymentMethod === 'promptpay'
-        ? 'พร้อมเพย์ QR'
-        : ord.paymentMethod === 'cash'
-        ? 'เงินสด'
-        : ord.paymentMethod === 'transfer'
-        ? 'โอนเงิน'
-        : ord.paymentMethod === 'credit'
-        ? 'บัตรเครดิต'
-        : ord.paymentMethod;
-
-    const statusLabel =
-      ord.status === 'served'
-        ? 'เสร็จสมบูรณ์'
-        : ord.status === 'ready'
-        ? 'พร้อมเสิร์ฟ'
-        : ord.status === 'cooking'
-        ? 'กำลังปรุง'
-        : ord.status === 'cancelled'
-        ? 'ยกเลิกบิล'
-        : ord.status;
-
-    const dateFormatted = new Date(ord.createdAt).toLocaleString('th-TH');
-
-    let notes = ord.discountNote || '';
-    if (ord.isFullTaxInvoiceRequested && ord.customerTaxInfo) {
-      notes += ` [ใบกำกับภาษี: ${ord.customerTaxInfo.companyName} (${ord.customerTaxInfo.taxId})]`;
-    }
-    if (ord.cancelledBy) {
-      notes += ` [ยกเลิกโดย: ${ord.cancelledBy.userName} เหตุผล: ${ord.cancelReason || '-'}]`;
-    }
-
-    return [
-      ord.orderNumber,
-      dateFormatted,
-      branch.name,
-      ord.orderType === 'dine-in' ? 'ทานที่ร้าน' : ord.orderType === 'takeaway' ? 'สั่งกลับบ้าน' : 'เดลิเวอรี',
-      ord.tableNumber || '-',
-      itemsSummary,
-      totalQty,
-      ord.subtotal,
-      ord.discountAmount || 0,
-      ord.vatAmount || 0,
-      ord.grandTotal,
-      paymentLabel,
-      statusLabel,
-      notes
-    ];
-  });
-
-  // Clear previous content and write new
-  await clearSheetValues(accessToken, spreadsheetId, `'${sheetTitle}'!A1:Z5000`);
-  await writeSheetValues(accessToken, spreadsheetId, `'${sheetTitle}'!A1`, [headers, ...rows]);
-
-  return rows.length;
+  const rows = [...orders]
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    .map(ord => {
+      const { base, vat } = orderVatBreakdown(ord);
+      let notes = ord.discountNote || '';
+      if (ord.isFullTaxInvoiceRequested && ord.customerTaxInfo) notes += ` [ใบกำกับภาษี: ${ord.customerTaxInfo.companyName} (${ord.customerTaxInfo.taxId})]`;
+      if (ord.cancelledBy) notes += ` [ยกเลิกโดย ${ord.cancelledBy.userName}: ${ord.cancelReason || '-'}]`;
+      return [
+        ord.orderNumber,
+        stamp(ord.createdAt),
+        branch.name,
+        ORDER_TYPE_TH[ord.orderType] || ord.orderType,
+        ord.tableNumber || '-',
+        (ord.items || [])
+          .map(i => `${i.menuItem?.name || 'อาหาร'} x${i.quantity}${i.proteinChoice ? ` (${i.proteinChoice.name})` : ''}`)
+          .join(', '),
+        (ord.items || []).reduce((sum, i) => sum + (i.quantity || 1), 0),
+        money2(ord.subtotal),
+        money2(ord.discountAmount || 0),
+        base,
+        vat,
+        money2(ord.grandTotal),
+        PAYMENT_TH[ord.paymentMethod] || ord.paymentMethod || '-',
+        isUnpaid(ord) ? 'ค้างชำระ' : 'ชำระแล้ว',
+        ORDER_STATUS_TH[ord.status] || ord.status,
+        countsAsRevenue(ord) ? 'ใช่' : 'ไม่',
+        notes.trim()
+      ];
+    });
+  return [headers, ...rows];
 }
 
-/**
- * Format and export Inventory / Stock to Google Sheets
- */
-export async function syncInventoryToGoogleSheets(
-  accessToken: string,
-  spreadsheetId: string,
-  ingredients: Ingredient[],
-  branch: Branch,
-  sheetTitle: string = 'สต็อกวัตถุดิบ (Inventory)'
-): Promise<number> {
-  await ensureSheetExists(accessToken, spreadsheetId, sheetTitle);
-
-  const headers = [
-    'รหัสวัตถุดิบ (ID)',
-    'ชื่อวัตถุดิบ (Ingredient Name)',
-    'หมวดหมู่วัตถุดิบ (Category)',
-    'สต็อกคงเหลือ (Current Stock)',
-    'หน่วยนับ (Unit)',
-    'เกณฑ์เตือนสต็อกต่ำ (Min Alert)',
-    'ราคาทุน/หน่วย (Unit Cost THB)',
-    'มูลค่าสต็อกรวม (Total Valuation THB)',
-    'สถานะสต็อก (Stock Status)',
-    'บาร์โค้ด (Barcode)',
-    'สาขา (Branch)',
-    'อัปเดตล่าสุด (Last Synced)'
-  ];
-
-  const nowStr = new Date().toLocaleString('th-TH');
-
+function inventorySheet(ingredients: Ingredient[], branch: Branch): (string | number)[][] {
+  const headers = ['รหัส', 'ชื่อ', 'ประเภทบัญชี', 'หมวดหมู่', 'คงเหลือ', 'หน่วย', 'จุดเตือน', 'ต้นทุน/หน่วย', 'มูลค่าคงเหลือ', 'สถานะ', 'บาร์โค้ด', 'สาขา'];
   const rows = ingredients.map(ing => {
-    const isLow = ing.currentStock <= ing.minStockAlert;
-    const isOut = ing.currentStock <= 0;
-    const totalVal = Math.round(ing.currentStock * ing.unitCost * 100) / 100;
-    const statusText = isOut ? '🚨 สต็อกหมด' : isLow ? '⚠️ สต็อกต่ำกว่าเกณฑ์' : '✅ สต็อกปกติ';
-
+    const cost = effectiveUnitCost(ing);
+    const status = ing.currentStock <= 0 ? 'หมด' : ing.currentStock <= ing.minStockAlert ? 'ต่ำกว่าจุดเตือน' : 'ปกติ';
     return [
       ing.id,
       ing.name,
+      stockTypeLabel(stockTypeOf(ing)),
       ing.category,
       ing.currentStock,
       ing.unit,
       ing.minStockAlert,
-      ing.unitCost,
-      totalVal,
-      statusText,
+      Math.round(cost * 10000) / 10000,
+      money2(ing.currentStock * cost),
+      status,
       ing.barcode || '-',
-      branch.name,
-      nowStr
+      branch.name
     ];
   });
-
-  // Clear previous content and write new
-  await clearSheetValues(accessToken, spreadsheetId, `'${sheetTitle}'!A1:Z5000`);
-  await writeSheetValues(accessToken, spreadsheetId, `'${sheetTitle}'!A1`, [headers, ...rows]);
-
-  return rows.length;
+  return [headers, ...rows];
 }
 
-/**
- * Format and export Menu Recipe Costing & Margin Analysis to Google Sheets
- */
-export async function syncRecipeCostingToGoogleSheets(
-  accessToken: string,
-  spreadsheetId: string,
-  menuItems: MenuItem[],
-  ingredients: Ingredient[],
-  sheetTitle: string = 'ต้นทุนเมนู (Recipes)'
-): Promise<number> {
-  await ensureSheetExists(accessToken, spreadsheetId, sheetTitle);
-
-  const headers = [
-    'รหัสเมนู (Item ID)',
-    'ชื่อเมนู (Menu Name)',
-    'หมวดหมู่ (Category)',
-    'ราคาขายหน้าร้าน (Selling Price THB)',
-    'ต้นทุนวัตถุดิบเฉลี่ย (Food Cost THB)',
-    'กำไรขั้นต้น (Gross Profit THB)',
-    'อัตรากำไร (Margin %)',
-    'สัดส่วนต้นทุน (Food Cost %)',
-    'สถานะความคุ้มค่า (Profitability)',
-    'ส่วนประกอบในสูตร (Recipe Ingredients)'
-  ];
-
-  const ingMap = new Map(ingredients.map(i => [i.id, i]));
-
+function recipeSheet(menuItems: MenuItem[], ingredients: Ingredient[]): (string | number)[][] {
+  const headers = ['รหัสเมนู', 'เมนู', 'หมวดหมู่', 'ราคาขาย', 'ต้นทุนวัตถุดิบ', 'กำไรขั้นต้น', 'อัตรากำไร %', 'Food cost %', 'ประเมิน', 'ส่วนประกอบ'];
+  const byId = new Map(ingredients.map(i => [i.id, i]));
   const rows = menuItems.map(item => {
-    let calculatedCost = 0;
-    const recipeDetails: string[] = [];
-
-    (item.recipe || []).forEach(r => {
-      const ing = ingMap.get(r.ingredientId);
-      if (ing) {
-        let costPart = 0;
-        if (ing.unit === 'kg' && r.recipeUnit === 'g') {
-          costPart = (r.amountNeeded / 1000) * ing.unitCost;
-        } else if (ing.unit === 'l' && r.recipeUnit === 'ml') {
-          costPart = (r.amountNeeded / 1000) * ing.unitCost;
-        } else {
-          costPart = r.amountNeeded * ing.unitCost;
-        }
-        calculatedCost += costPart;
-        recipeDetails.push(`${ing.name}: ${r.amountNeeded} ${r.recipeUnit || ing.unit} (~${costPart.toFixed(1)}บ.)`);
-      }
-    });
-
-    const finalCost = calculatedCost > 0 ? calculatedCost : item.costPrice || 0;
-    const grossProfit = item.price - finalCost;
-    const marginPct = item.price > 0 ? Math.round((grossProfit / item.price) * 100) : 0;
-    const foodCostPct = item.price > 0 ? Math.round((finalCost / item.price) * 100) : 0;
-
-    let profitStatus = '⭐⭐⭐ กำไรดีเยี่ยม';
-    if (foodCostPct > 45) {
-      profitStatus = '⚠️ ต้นทุนสูงเกินเกณฑ์';
-    } else if (foodCostPct > 35) {
-      profitStatus = '⭐ กำไรปานกลาง';
-    }
-
+    // Same costing as the menu and accounting pages (unit conversion, per-unit cost)
+    const fromRecipe = recipeCost(item.recipe, ingredients);
+    const cost = fromRecipe > 0 ? fromRecipe : item.costPrice || 0;
+    const profit = item.price - cost;
+    const foodCostPct = item.price > 0 ? Math.round((cost / item.price) * 1000) / 10 : 0;
     return [
       item.id,
       item.name,
       item.category,
       item.price,
-      Math.round(finalCost * 100) / 100,
-      Math.round(grossProfit * 100) / 100,
-      `${marginPct}%`,
-      `${foodCostPct}%`,
-      profitStatus,
-      recipeDetails.join(' | ') || 'ยังไม่ได้กำหนดสูตร'
+      money2(cost),
+      money2(profit),
+      item.price > 0 ? Math.round((profit / item.price) * 1000) / 10 : 0,
+      foodCostPct,
+      !cost ? 'ยังไม่มีต้นทุน' : foodCostPct > 45 ? 'ต้นทุนสูงเกินเกณฑ์' : foodCostPct > 35 ? 'ปานกลาง' : 'ดี',
+      (item.recipe || [])
+        .map(r => `${byId.get(r.ingredientId)?.name || 'วัตถุดิบที่ถูกลบ'} ${r.amountNeeded} ${r.recipeUnit || byId.get(r.ingredientId)?.unit || ''}`)
+        .join(' | ') || 'ยังไม่ได้กำหนดสูตร'
     ];
   });
-
-  await clearSheetValues(accessToken, spreadsheetId, `'${sheetTitle}'!A1:Z5000`);
-  await writeSheetValues(accessToken, spreadsheetId, `'${sheetTitle}'!A1`, [headers, ...rows]);
-
-  return rows.length;
+  return [headers, ...rows];
 }
 
-/**
- * Format and export Stock Adjustments & Waste Logs to Google Sheets
- */
-export async function syncMovementsToGoogleSheets(
+function movementSheet(adjustments: StockAdjustmentLog[], wasteLogs: WasteLog[]): (string | number)[][] {
+  const headers = ['วันเวลา', 'ประเภท', 'วัตถุดิบ', 'เปลี่ยนแปลง', 'หน่วย', 'ก่อน', 'หลัง', 'มูลค่าที่เสีย', 'เหตุผล', 'ผู้บันทึก', 'หมายเหตุ'];
+  const adj = adjustments.map(a => [
+    stamp(a.timestamp),
+    a.changeQty > 0 ? 'รับเข้า/เพิ่ม' : 'ปรับลด',
+    a.ingredientName,
+    a.changeQty,
+    a.unit,
+    a.previousStock,
+    a.newStock,
+    '',
+    reasonLabel(String(a.reason)),
+    a.userName || '-',
+    a.notes || ''
+  ]);
+  const waste = wasteLogs.map(w => [
+    stamp(w.loggedDate),
+    'ของเสีย',
+    w.ingredientName,
+    -Math.abs(w.quantity),
+    w.unit,
+    '',
+    '',
+    money2(w.totalCostLoss),
+    reasonLabel(String(w.reason)),
+    w.reportedBy || '-',
+    w.notes || ''
+  ]);
+  return [headers, ...[...adj, ...waste].sort((a, b) => String(a[0]).localeCompare(String(b[0])))];
+}
+
+/** Replace a tab's content (the whole tab is cleared first, so no old rows are left behind) */
+async function replaceSheet(accessToken: string, spreadsheetId: string, sheetTitle: string, values: (string | number)[][]) {
+  await ensureSheetExists(accessToken, spreadsheetId, sheetTitle);
+  await clearSheetValues(accessToken, spreadsheetId, `'${sheetTitle}'`);
+  await writeSheetValues(accessToken, spreadsheetId, `'${sheetTitle}'!A1`, values);
+  return values.length - 1;
+}
+
+export const syncSalesToGoogleSheets = (accessToken: string, spreadsheetId: string, orders: Order[], branch: Branch, vatRate = 7, sheetTitle = 'ยอดขาย (Sales)') =>
+  replaceSheet(accessToken, spreadsheetId, sheetTitle, salesSheet(orders, branch, vatRate));
+
+export const syncInventoryToGoogleSheets = (accessToken: string, spreadsheetId: string, ingredients: Ingredient[], branch: Branch, sheetTitle = 'สต็อก (Inventory)') =>
+  replaceSheet(accessToken, spreadsheetId, sheetTitle, inventorySheet(ingredients, branch));
+
+export const syncRecipeCostingToGoogleSheets = (accessToken: string, spreadsheetId: string, menuItems: MenuItem[], ingredients: Ingredient[], sheetTitle = 'ต้นทุนเมนู (Recipes)') =>
+  replaceSheet(accessToken, spreadsheetId, sheetTitle, recipeSheet(menuItems, ingredients));
+
+export const syncMovementsToGoogleSheets = (
   accessToken: string,
   spreadsheetId: string,
   adjustments: StockAdjustmentLog[],
   wasteLogs: WasteLog[],
-  sheetTitle: string = 'ประวัติสต็อก (Movements)'
-): Promise<number> {
-  await ensureSheetExists(accessToken, spreadsheetId, sheetTitle);
-
-  const headers = [
-    'วัน-เวลา (Timestamp)',
-    'ประเภทรายการ (Movement Type)',
-    'ชื่อวัตถุดิบ (Ingredient)',
-    'จำนวนเปลี่ยนแปลง (Change Qty)',
-    'หน่วยนับ (Unit)',
-    'สต็อกก่อนหน้า (Previous)',
-    'สต็อกคงเหลือใหม่ (New Stock)',
-    'มูลค่าความสูญเสีย (Loss Cost THB)',
-    'สาเหตุ / เหตุผล (Reason)',
-    'ผู้บันทึกรายการ (Staff)',
-    'หมายเหตุเพิ่มเติม (Notes)'
-  ];
-
-  const adjRows = adjustments.map(adj => {
-    const isAdd = adj.changeQty > 0;
-    return [
-      new Date(adj.timestamp).toLocaleString('th-TH'),
-      isAdd ? '➕ เติมสต็อก (Restock)' : '✏️ ปรับปรุงยอดสต็อก (Adjustment)',
-      adj.ingredientName,
-      adj.changeQty > 0 ? `+${adj.changeQty}` : adj.changeQty,
-      adj.unit,
-      adj.previousStock,
-      adj.newStock,
-      '-',
-      adj.reason,
-      adj.userName || 'พนักงาน',
-      adj.notes || '-'
-    ];
-  });
-
-  const wasteRows = wasteLogs.map(w => {
-    return [
-      new Date(w.loggedDate).toLocaleDateString('th-TH'),
-      '🗑️ ขยะ/ของเสีย (Waste Log)',
-      w.ingredientName,
-      `-${w.quantity}`,
-      w.unit,
-      '-',
-      '-',
-      w.totalCostLoss,
-      w.reason,
-      w.reportedBy || 'พนักงาน',
-      w.notes || '-'
-    ];
-  });
-
-  const allRows = [...adjRows, ...wasteRows];
-
-  await clearSheetValues(accessToken, spreadsheetId, `'${sheetTitle}'!A1:Z5000`);
-  await writeSheetValues(accessToken, spreadsheetId, `'${sheetTitle}'!A1`, [headers, ...allRows]);
-
-  return allRows.length;
-}
+  sheetTitle = 'ประวัติสต็อก (Movements)'
+) => replaceSheet(accessToken, spreadsheetId, sheetTitle, movementSheet(adjustments, wasteLogs));
 
 /**
  * Master One-Click All Datasets Sync
@@ -736,26 +653,14 @@ export async function syncAllDatasetsToSpreadsheet(
     adjustments: StockAdjustmentLog[];
     wasteLogs: WasteLog[];
     branch: Branch;
+    vatRate?: number;
   }
-): Promise<{
-  salesCount: number;
-  inventoryCount: number;
-  recipeCount: number;
-  movementsCount: number;
-  url: string;
-}> {
-  const salesCount = await syncSalesToGoogleSheets(accessToken, spreadsheetId, data.orders, data.branch);
+) {
+  const salesCount = await syncSalesToGoogleSheets(accessToken, spreadsheetId, data.orders, data.branch, data.vatRate);
   const inventoryCount = await syncInventoryToGoogleSheets(accessToken, spreadsheetId, data.ingredients, data.branch);
   const recipeCount = await syncRecipeCostingToGoogleSheets(accessToken, spreadsheetId, data.menuItems, data.ingredients);
   const movementsCount = await syncMovementsToGoogleSheets(accessToken, spreadsheetId, data.adjustments, data.wasteLogs);
-
-  return {
-    salesCount,
-    inventoryCount,
-    recipeCount,
-    movementsCount,
-    url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`
-  };
+  return { salesCount, inventoryCount, recipeCount, movementsCount, url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit` };
 }
 
 /**
@@ -786,89 +691,10 @@ function triggerFileDownload(content: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function downloadSalesCsv(orders: Order[], branch: Branch) {
-  const headers = [
-    'เลขที่บิล (Order No)',
-    'วัน-เวลาทำรายการ (Date & Time)',
-    'สาขา (Branch)',
-    'ประเภทออเดอร์ (Type)',
-    'โต๊ะ / แชนแนล (Table)',
-    'รายการอาหาร (Items Detail)',
-    'จำนวนรวม (Qty)',
-    'ยอดรวมก่อนลด (Subtotal THB)',
-    'ส่วนลด (Discount THB)',
-    'ภาษีมูลค่าเพิ่ม (VAT 7% THB)',
-    'ยอดสุทธิ (Grand Total THB)',
-    'วิธีชำระเงิน (Payment)',
-    'สถานะออเดอร์ (Status)',
-    'หมายเหตุ / ใบกำกับภาษี (Notes)'
-  ];
-
-  const rows = orders.map(ord => {
-    const itemsSummary = (ord.items || [])
-      .map(item => `${item.menuItem?.name || 'อาหาร'} x${item.quantity}`)
-      .join('; ');
-    const totalQty = (ord.items || []).reduce((sum, item) => sum + (item.quantity || 1), 0);
-
-    return [
-      ord.orderNumber,
-      new Date(ord.createdAt).toLocaleString('th-TH'),
-      branch.name,
-      ord.orderType,
-      ord.tableNumber || '-',
-      itemsSummary,
-      totalQty,
-      ord.subtotal,
-      ord.discountAmount || 0,
-      ord.vatAmount || 0,
-      ord.grandTotal,
-      ord.paymentMethod,
-      ord.status,
-      ord.discountNote || ''
-    ];
-  });
-
-  const csv = convertToCSVString([headers, ...rows]);
-  triggerFileDownload(csv, `sales_${branch.id}_${new Date().toISOString().slice(0, 10)}.csv`);
+export function downloadSalesCsv(orders: Order[], branch: Branch, vatRate = 7) {
+  triggerFileDownload(convertToCSVString(salesSheet(orders, branch, vatRate)), `sales_${branch.id}_${new Date().toISOString().slice(0, 10)}.csv`);
 }
 
 export function downloadInventoryCsv(ingredients: Ingredient[], branch: Branch) {
-  const headers = [
-    'รหัสวัตถุดิบ (ID)',
-    'ชื่อวัตถุดิบ (Ingredient Name)',
-    'หมวดหมู่วัตถุดิบ (Category)',
-    'สต็อกคงเหลือ (Current Stock)',
-    'หน่วยนับ (Unit)',
-    'เกณฑ์เตือนสต็อกต่ำ (Min Alert)',
-    'ราคาทุน/หน่วย (Unit Cost THB)',
-    'มูลค่าสต็อกรวม (Total Valuation THB)',
-    'สถานะสต็อก (Stock Status)',
-    'บาร์โค้ด (Barcode)',
-    'สาขา (Branch)'
-  ];
-
-  const rows = ingredients.map(ing => {
-    const isLow = ing.currentStock <= ing.minStockAlert;
-    const isOut = ing.currentStock <= 0;
-    const totalVal = Math.round(ing.currentStock * ing.unitCost * 100) / 100;
-    const statusText = isOut ? 'สต็อกหมด' : isLow ? 'สต็อกต่ำกว่าเกณฑ์' : 'สต็อกปกติ';
-
-    return [
-      ing.id,
-      ing.name,
-      ing.category,
-      ing.currentStock,
-      ing.unit,
-      ing.minStockAlert,
-      ing.unitCost,
-      totalVal,
-      statusText,
-      ing.barcode || '-',
-      branch.name
-    ];
-  });
-
-  const csv = convertToCSVString([headers, ...rows]);
-  triggerFileDownload(csv, `inventory_${branch.id}_${new Date().toISOString().slice(0, 10)}.csv`);
+  triggerFileDownload(convertToCSVString(inventorySheet(ingredients, branch)), `inventory_${branch.id}_${new Date().toISOString().slice(0, 10)}.csv`);
 }
-
