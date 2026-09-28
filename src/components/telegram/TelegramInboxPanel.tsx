@@ -7,6 +7,7 @@ import { getStoredCredentials } from '../../services/notificationService';
 import { baht, captionTitle, downloadTelegramFile, telegramCall } from '../../services/telegramInbox';
 import { vercelBase } from '../../services/receiptScan';
 import { EXPENSE_CATEGORY_LABELS, isVatRegistered, round2, vatInside, vatRateOf } from '../../utils/accounting';
+import { stockTypeForExpenseCategory, stockTypeLabel } from '../../utils/stockTypes';
 import { allocateCosts, BillItem, buildIntakeRows, hasTarget, IntakeRow, matchIngredient, parseItemsFromText } from '../../utils/stockIntake';
 import { compressBase64Image } from '../../utils/imageCompressor';
 import { readTelegramReceipt } from './TelegramInboxPoller';
@@ -76,10 +77,18 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const form = (p: PendingReceipt) => forms[p.id] || formFor(p, ingredients);
   const vatRegistered = isVatRegistered(settings);
   const ingredientById = useMemo(() => new Map(ingredients.map(i => [i.id, i])), [ingredients]);
+  // The shop's categories, plus the ones supplies and equipment need
+  const categoryOptions = useMemo(() => {
+    const list = [...ingredientCategories];
+    if (!list.some(c => c.id === 'supplies')) list.push({ id: 'supplies', name: 'วัสดุสิ้นเปลือง' } as any);
+    if (!list.some(c => c.id === 'equipment')) list.push({ id: 'equipment', name: 'อุปกรณ์' } as any);
+    return list;
+  }, [ingredientCategories]);
   const sortedIngredients = useMemo(() => [...ingredients].sort((a, b) => a.name.localeCompare(b.name, 'th')), [ingredients]);
 
   // Raw-material purchases go into stock when approved
-  const receivesStock = (f: Form) => f.kind === 'expense' && f.category === 'raw_material';
+  // Purchases of stock, supplies and equipment all go into the stock list (each is accounted for differently)
+  const receivesStock = (f: Form) => f.kind === 'expense' && !!stockTypeForExpenseCategory(f.category);
   /** What the stock cost the shop: before VAT when the VAT is claimed back */
   const stockCost = (f: Form) => (vatRegistered && f.includeVat ? f.amount - vatInside(f.amount, vatRate) : f.amount);
   const stockRows = (p: PendingReceipt, f: Form) =>
@@ -167,6 +176,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                 name: row.newIngredient.name.trim(),
                 unit: row.newIngredient.unit,
                 category: row.newIngredient.category,
+                stockType: stockTypeForExpenseCategory(f.category) || 'inventory',
                 unitCost: Math.round((row.cost / row.quantity) * 10000) / 10000,
                 minStockAlert: 0
               },
@@ -391,7 +401,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                 return (
                   <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-3 space-y-2">
                     <div className="font-bold text-emerald-200 flex items-center gap-1.5">
-                      <Package className="w-4 h-4" /> รับเข้าสต็อกเมื่ออนุมัติ ({chosen.length} รายการ)
+                      <Package className="w-4 h-4" /> รับเข้า{stockTypeLabel(stockTypeForExpenseCategory(f.category) || 'inventory')}เมื่ออนุมัติ ({chosen.length} รายการ)
                     </div>
                     {rows.length === 0 && (
                       <p className="text-slate-400">
@@ -429,8 +439,9 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                                         unitMismatch: false,
                                         newIngredient: {
                                           name: row.label,
-                                          unit: row.billUnit || 'kg',
-                                          category: ingredientCategories[0]?.id || 'dry_good'
+                                          unit: row.billUnit || (f.category === 'raw_material' ? 'kg' : 'ชิ้น'),
+                                          category:
+                                            f.category === 'supplies' ? 'supplies' : f.category === 'equipment' ? 'equipment' : ingredientCategories[0]?.id || 'dry_good'
                                         }
                                       })
                                     : editRow(p, row.key, { ingredientId: e.target.value, selected: !!e.target.value, unitMismatch: false, newIngredient: undefined })
@@ -491,7 +502,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                                     onChange={e => editRow(p, row.key, { newIngredient: { ...row.newIngredient!, category: e.target.value } })}
                                     className={field}
                                   >
-                                    {ingredientCategories.map(c => (
+                                    {categoryOptions.map(c => (
                                       <option key={c.id} value={c.id}>
                                         {c.name}
                                       </option>

@@ -2,7 +2,10 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { countsAsRevenue, orderVatBreakdown } from '../../utils/orderUtils';
 import { useSharedList } from '../../hooks/useSharedList';
 import { cartItemUnitCost, effectiveUnitCost } from '../../utils/recipeUtils';
+import { stockValueByType } from '../../utils/stockTypes';
 import {
+  DEFAULT_USEFUL_LIFE_YEARS,
+  equipmentBookValue,
   buildBalanceSheet,
   buildCashFlow,
   buildProfitAndLoss,
@@ -130,6 +133,8 @@ interface MonthlyFinancialData {
   suppliesExpense: number;
   marketing: number;
   otherExpense: number;
+  depreciation: number;
+  equipmentPurchases: number;
   totalOpex: number;
   netProfit: number;
   netMarginPct: number;
@@ -141,8 +146,9 @@ const MONTH_NAMES_TH = [
 ];
 
 const categoryLabels: Record<ExpenseCategory, string> = {
-  raw_material: 'ซื้อวัตถุดิบ',
-  supplies: 'ซัพพลายใช้สอย/อุปกรณ์สิ้นเปลือง',
+  raw_material: 'ซื้อวัตถุดิบ/บรรจุภัณฑ์',
+  supplies: 'วัสดุสิ้นเปลือง',
+  equipment: 'ซื้ออุปกรณ์ (สินทรัพย์)',
   rent: 'ค่าเช่าสถานที่',
   salary: 'ค่าแรง/เงินเดือน',
   utilities: 'ค่าน้ำ/ค่าไฟ/แก๊ส',
@@ -258,6 +264,7 @@ export const EXPENSE_TITLE_PRESETS: Record<ExpenseCategory, string[]> = {
     'ซื้อน้ำแข็งหลอด / เครื่องดื่มสต็อก',
     'ซื้อวัตถุดิบจากแม็คโคร / โลตัส'
   ],
+  equipment: ['ซื้อตู้แช่ / ตู้เย็น', 'ซื้อเตาแก๊ส / หัวเตา', 'ซื้อหม้อ / กระทะ / เครื่องครัว', 'ซื้อเครื่องปั่น / เครื่องใช้ไฟฟ้า', 'ซื้อโต๊ะ / เก้าอี้ร้าน'],
   supplies: [
     'ซื้อน้ำยาล้างจาน / สก๊อตไบร์ท / ฝอยขัดหม้อ',
     'ซื้อถุงขยะดำ / ถุงพลาสติกหูหิ้ว',
@@ -361,7 +368,7 @@ const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boo
 };
 
 export const AccountingView: React.FC = () => {
-  const { orders, expenses, incomes = [], settings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [] } = usePOS();
+  const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [] } = usePOS();
 
   const {
     sortedIngredients,
@@ -401,6 +408,7 @@ export const AccountingView: React.FC = () => {
 
   const [timeHorizon, setTimeHorizon] = useState<TimeHorizon>('selected');
   const vatRegistered = isVatRegistered(settings);
+  const depreciationOptions = useMemo(() => ({ usefulLifeYears: settings.equipmentUsefulLifeYears || DEFAULT_USEFUL_LIFE_YEARS }), [settings.equipmentUsefulLifeYears]);
   const [telegramInbox] = useTelegramInbox();
   const telegramWaiting = telegramInbox.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading').length;
   const vatRate = vatRateOf(settings);
@@ -889,17 +897,22 @@ export const AccountingView: React.FC = () => {
   }, [apList]);
 
   // Dynamic Real-data Balance Sheet Computations
-  const liveInventoryAsset = useMemo(() => {
-    return ingredients.reduce((sum, ing) => sum + (ing.currentStock || 0) * effectiveUnitCost(ing), 0);
-  }, [ingredients]);
+  // Inventory (IAS 2) is food stock only: supplies were expensed when bought, equipment is below
+  const stockByType = useMemo(() => stockValueByType(ingredients), [ingredients]);
+  const liveInventoryAsset = stockByType.inventory.value;
+  // Equipment bought through expenses, at cost less straight-line depreciation (IAS 16)
+  const equipmentBook = useMemo(
+    () => equipmentBookValue(expenses, currentBranch.id, vatRegistered, depreciationOptions),
+    [expenses, currentBranch.id, vatRegistered, depreciationOptions]
+  );
 
   const liveAccountsReceivable = totalUnpaidAR;
   const liveAccountsPayable = totalUnpaidAP;
 
   // All-time books of this branch (retained earnings and VAT not yet remitted)
   const allTimePL = useMemo(
-    () => buildProfitAndLoss({ orders, expenses, incomes: incomes || [] }, { branchId: currentBranch.id }, vatRegistered),
-    [orders, expenses, incomes, currentBranch.id, vatRegistered]
+    () => buildProfitAndLoss({ orders, expenses, incomes: incomes || [] }, { branchId: currentBranch.id }, vatRegistered, depreciationOptions),
+    [orders, expenses, incomes, currentBranch.id, vatRegistered, depreciationOptions]
   );
   const liveRetainedEarnings = allTimePL.profitBeforeTax;
 
@@ -923,7 +936,8 @@ export const AccountingView: React.FC = () => {
   const activeAccountsReceivable = balanceData.overrideAccountsReceivable !== undefined ? balanceData.overrideAccountsReceivable : liveAccountsReceivable;
   const activeAccountsPayable = balanceData.overrideAccountsPayable !== undefined ? balanceData.overrideAccountsPayable : liveAccountsPayable;
   const activeRetainedEarnings = balanceData.overrideRetainedEarnings !== undefined ? balanceData.overrideRetainedEarnings : liveRetainedEarnings;
-  const activeEquipmentAssets = balanceData.equipmentAssets || 0;
+  // Equipment the shop had before using the system (entered by hand) plus equipment bought since
+  const activeEquipmentAssets = (balanceData.equipmentAssets || 0) + equipmentBook.net;
   const activeShareCapital = balanceData.shareCapital || 0;
 
   const activeVatPayable = balanceData.overrideVatPayable !== undefined ? balanceData.overrideVatPayable : Math.max(0, allTimePL.vatPayable);
@@ -986,7 +1000,8 @@ export const AccountingView: React.FC = () => {
       const pl = buildProfitAndLoss(
         { orders, expenses, incomes: incomes || [] },
         { branchId: currentBranch.id, inPeriod: d => monthOf(d) === monthKey },
-        vatRegistered
+        vatRegistered,
+        depreciationOptions
       );
       return {
         monthKey,
@@ -1009,6 +1024,8 @@ export const AccountingView: React.FC = () => {
         marketing: pl.expenses.marketing,
         otherExpense: pl.expenses.other,
         totalOpex: pl.sga,
+        depreciation: pl.depreciation,
+        equipmentPurchases: pl.expenses.equipment,
         netProfit: pl.profitBeforeTax,
         netMarginPct: pct(pl.profitBeforeTax, pl.totalIncome)
       };
@@ -1042,13 +1059,15 @@ export const AccountingView: React.FC = () => {
         acc.marketing += d.marketing;
         acc.otherExpense += d.otherExpense;
         acc.totalOpex += d.totalOpex;
+        acc.depreciation += d.depreciation;
+        acc.equipmentPurchases += d.equipmentPurchases;
         acc.netProfit += d.netProfit;
         return acc;
       },
       {
         totalRevenue: 0, salesRevenue: 0, estimatedCogs: 0, operatingProfit: 0, posSales: 0, deliverySales: 0, cateringSales: 0, otherIncome: 0,
         cogs: 0, grossProfit: 0, rent: 0, salary: 0, utilities: 0, rawMaterialExpense: 0, suppliesExpense: 0,
-        marketing: 0, otherExpense: 0, totalOpex: 0, netProfit: 0
+        marketing: 0, otherExpense: 0, depreciation: 0, equipmentPurchases: 0, totalOpex: 0, netProfit: 0
       }
     );
   }, [monthlyData]);
@@ -1164,9 +1183,11 @@ export const AccountingView: React.FC = () => {
       );
 
       const pl = buildProfitAndLoss(
-        { orders: dayOrders, expenses: dayExpenses, incomes: dayIncomes },
-        { branchId: currentBranch.id },
-        vatRegistered
+        // All expenses: depreciation of equipment bought earlier also falls on this day
+        { orders: dayOrders, expenses, incomes: dayIncomes },
+        { branchId: currentBranch.id, inPeriod: d => isSameDay(d, fullDate) },
+        vatRegistered,
+        depreciationOptions
       );
       const posSales = pl.storeSales;
       const deliverySales = pl.deliverySales;
@@ -2442,7 +2463,7 @@ export const AccountingView: React.FC = () => {
                       <span className="font-mono">{money(rangeTotals.utilities)}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>วัสดุสิ้นเปลืองและบรรจุภัณฑ์</span>
+                      <span>วัสดุสิ้นเปลือง</span>
                       <span className="font-mono">{money(rangeTotals.suppliesExpense)}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-800/60">
@@ -2453,9 +2474,18 @@ export const AccountingView: React.FC = () => {
                       <span>ค่าใช้จ่ายอื่น</span>
                       <span className="font-mono">{money(rangeTotals.otherExpense)}</span>
                     </div>
+                    <div className="flex justify-between py-1 border-b border-slate-800/60">
+                      <span>ค่าเสื่อมราคาอุปกรณ์</span>
+                      <span className="font-mono">{money(rangeTotals.depreciation)}</span>
+                    </div>
                     {rangeTotals.rawMaterialExpense > 0 && (
                       <p className="text-[11px] text-slate-500 pt-1">
                         ค่าซื้อวัตถุดิบ ฿{money(rangeTotals.rawMaterialExpense)} ไม่อยู่ในส่วนนี้: วัตถุดิบเป็นสินค้าคงเหลือ และถูกรับรู้เป็นต้นทุนขายเมื่ออาหารถูกขาย
+                      </p>
+                    )}
+                    {rangeTotals.equipmentPurchases > 0 && (
+                      <p className="text-[11px] text-slate-500 pt-1">
+                        ค่าซื้ออุปกรณ์ ฿{money(rangeTotals.equipmentPurchases)} บันทึกเป็นสินทรัพย์ และทยอยเป็นค่าเสื่อมราคาแบบเส้นตรง {depreciationOptions.usefulLifeYears} ปี
                       </p>
                     )}
                     <div className="flex justify-between py-1.5 font-bold text-slate-100">
@@ -2584,7 +2614,11 @@ export const AccountingView: React.FC = () => {
                     <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
                       <div>
                         <div className="text-slate-100">สินค้าคงเหลือ {balanceData.overrideInventoryAsset !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
-                        <div className="text-[10px] text-slate-500">วัตถุดิบในคลัง ณ ปัจจุบัน × ต้นทุนต่อหน่วย</div>
+                        <div className="text-[10px] text-slate-500">
+                          วัตถุดิบและบรรจุภัณฑ์ในคลัง × ต้นทุนต่อหน่วย
+                          {(stockByType.supplies.items > 0 || stockByType.equipment.items > 0) &&
+                            ` · ไม่รวมวัสดุสิ้นเปลือง (ลงค่าใช้จ่ายแล้ว) และอุปกรณ์ในคลัง (นับจำนวนเท่านั้น)`}
+                        </div>
                       </div>
                       <div className={`font-mono font-bold ${balanceSheet.inventory < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.inventory)}</div>
                     </div>
@@ -2596,7 +2630,11 @@ export const AccountingView: React.FC = () => {
                     <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
                       <div>
                         <div className="text-slate-100">อุปกรณ์และเครื่องใช้ (สุทธิ)</div>
-                        <div className="text-[10px] text-slate-500">เครื่องครัว ตู้แช่ เตา อุปกรณ์ร้าน หลังหักค่าเสื่อมราคา</div>
+                        <div className="text-[10px] text-slate-500">
+                          {equipmentBook.count > 0
+                            ? `ราคาทุน ฿${money(equipmentBook.cost)} หักค่าเสื่อมสะสม ฿${money(equipmentBook.accumulated)} (${depreciationOptions.usefulLifeYears} ปี)${balanceData.equipmentAssets ? ` + ยอดตั้งต้น ฿${money(balanceData.equipmentAssets)}` : ''}`
+                            : 'บันทึกค่าใช้จ่ายหมวด “ซื้ออุปกรณ์” จะมาอยู่ที่นี่ และคิดค่าเสื่อมราคาให้'}
+                        </div>
                       </div>
                       <div className={`font-mono font-bold ${balanceSheet.equipment < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.equipment)}</div>
                     </div>
@@ -4731,8 +4769,9 @@ export const AccountingView: React.FC = () => {
                     onChange={e => handleExpCategoryChange(e.target.value as ExpenseCategory)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm focus:outline-none focus:border-rose-500"
                   >
-                    <option value="raw_material">ซื้อวัตถุดิบ (Raw Material)</option>
-                    <option value="supplies">ซัพพลายใช้สอย / อุปกรณ์สิ้นเปลือง (Supplies & Consumables)</option>
+                    <option value="raw_material">ซื้อวัตถุดิบ / บรรจุภัณฑ์ใส่อาหาร</option>
+                    <option value="supplies">วัสดุสิ้นเปลือง (น้ำยา ทิชชู่ ถุงมือ ฯลฯ)</option>
+                    <option value="equipment">ซื้ออุปกรณ์ (บันทึกเป็นสินทรัพย์ คิดค่าเสื่อมราคา)</option>
                     <option value="rent">ค่าเช่าสถานที่ (Rent)</option>
                     <option value="salary">ค่าแรง/เงินเดือนพนักงาน (Salary)</option>
                     <option value="utilities">ค่าน้ำ/ค่าไฟ/ค่าแก๊ส (Utilities)</option>
@@ -5860,6 +5899,27 @@ export const AccountingView: React.FC = () => {
                     </label>
                   );
                 })}
+
+              <label className="block">
+                <span className="flex justify-between text-slate-300 mb-1">
+                  <span>
+                    <span className="text-slate-500">นโยบายบัญชี · </span>อายุการใช้งานอุปกรณ์ (ปี) สำหรับค่าเสื่อมราคาเส้นตรง
+                  </span>
+                </span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={50}
+                  value={settings.equipmentUsefulLifeYears || DEFAULT_USEFUL_LIFE_YEARS}
+                  onChange={e => {
+                    const years = Math.max(1, Math.min(50, Math.round(Number(e.target.value) || DEFAULT_USEFUL_LIFE_YEARS)));
+                    updateSettings({ equipmentUsefulLifeYears: years });
+                  }}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
+                />
+                <span className="text-[11px] text-slate-500">ทั่วไปเครื่องครัว/เครื่องใช้ไฟฟ้า 5 ปี (ประมวลรัษฎากรให้ไม่เกิน 20% ต่อปี)</span>
+              </label>
 
               <div className="pt-2 flex gap-2">
                 <button type="button" onClick={() => setIsEditBalanceModalOpen(false)} className="flex-1 h-11 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl">

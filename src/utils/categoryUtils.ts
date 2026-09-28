@@ -184,6 +184,14 @@ export const syncAndHealCategories = (
  * Synchronizes ingredient categories with all categories present in ingredients,
  * ensuring no categories are lost.
  */
+/** Thai names for category ids that come with the shop's data */
+const KNOWN_INGREDIENT_CATEGORIES: Record<string, { name: string; icon: string }> = {
+  supplies: { name: 'วัสดุสิ้นเปลือง', icon: '🧼' },
+  equipment: { name: 'อุปกรณ์', icon: '🍳' },
+  packaging: { name: 'บรรจุภัณฑ์', icon: '📦' },
+  other: { name: 'อื่นๆ', icon: '🏷️' }
+};
+
 export const syncAndHealIngredientCategories = (
   existingCategories: IngredientCategory[] = [],
   ingredients: Ingredient[] = []
@@ -204,7 +212,9 @@ export const syncAndHealIngredientCategories = (
   if (Array.isArray(existingCategories) && existingCategories.length > 0) {
     existingCategories.forEach(c => {
       if (c && c.id && c.name) {
-        catMap.set(c.id.toLowerCase(), { ...c });
+        // A category added earlier under its bare id (e.g. "supplies") gets its Thai name
+        const known = KNOWN_INGREDIENT_CATEGORIES[c.id.toLowerCase()];
+        catMap.set(c.id.toLowerCase(), known && c.name === c.id ? { ...c, ...known } : { ...c });
       }
     });
   } else {
@@ -233,10 +243,11 @@ export const syncAndHealIngredientCategories = (
           ? catKey
           : `ingcat-${Date.now().toString(36)}-${Math.floor(Math.random() * 1000)}`;
 
+        const known = KNOWN_INGREDIENT_CATEGORIES[catKey.toLowerCase()];
         catMap.set(safeId.toLowerCase(), {
           id: safeId,
-          name: catKey,
-          icon: '🏷️'
+          name: known?.name || catKey,
+          icon: known?.icon || '🏷️'
         });
       }
     });
