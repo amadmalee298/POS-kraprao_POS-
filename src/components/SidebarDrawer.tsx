@@ -68,7 +68,7 @@ export const SidebarDrawer: React.FC = () => {
   const topItems = allTopItems.filter(i => canOpenSettingsPart(i.tab, permissions));
 
   const allSettingsItems: { tab: SettingsTab; label: string; icon: React.ElementType; highlight?: boolean }[] = [
-    { tab: 'scheduling', label: 'ตารางงาน & เงินเดือน', icon: CalendarDays },
+    { tab: 'scheduling', label: 'ตารางงาน เงินเดือน & ประวัติลงเวลา', icon: CalendarDays },
     { tab: 'pins', label: 'รหัส PIN & สิทธิ์พนักงาน', icon: KeyRound },
     { tab: 'general', label: 'ตั้งค่าร้านและสาขา', icon: Settings },
     { tab: 'sync', label: 'ตั้งค่าการซิงค์ข้อมูล', icon: RefreshCw },

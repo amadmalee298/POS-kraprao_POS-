@@ -40,6 +40,8 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
+import { MonthlyPayrollPanel } from './MonthlyPayrollPanel';
+import { AttendanceHistoryPanel } from './AttendanceHistoryPanel';
 import { StaffMember, ShiftEntry, ShiftType, PayrollSummary, ShiftSwapRequest, ShiftRequestType, StaffPermissions } from '../../types';
 import { exportToPDF, exportToPNG, printElement } from '../../utils/exportDocument';
 import { StaffPinClockTerminal } from './StaffPinClockTerminal';
@@ -97,7 +99,7 @@ export const StaffSchedulingPanel: React.FC = () => {
   } = usePOS();
 
   // Active Sub-Tab
-  const [subTab, setSubTab] = useState<'roster' | 'timeclock' | 'tracking' | 'requests' | 'payroll' | 'staff'>('roster');
+  const [subTab, setSubTab] = useState<'roster' | 'timeclock' | 'tracking' | 'requests' | 'payroll' | 'monthly' | 'history' | 'staff'>('roster');
 
   // Week Selector Offset (0 = current week, -1 = last week, +1 = next week)
   const [weekOffset, setWeekOffset] = useState<number>(0);
@@ -606,6 +608,30 @@ export const StaffSchedulingPanel: React.FC = () => {
           >
             <DollarSign className="w-4 h-4" />
             <span>💰 คำนวณเงินเดือน & OT (Payroll)</span>
+          </button>
+
+          <button
+            onClick={() => setSubTab('monthly')}
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
+              subTab === 'monthly'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-950/50'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+            }`}
+          >
+            <DollarSign className="w-4 h-4" />
+            <span>💵 เงินเดือนรายเดือน & สลิป</span>
+          </button>
+
+          <button
+            onClick={() => setSubTab('history')}
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
+              subTab === 'history'
+                ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-lg shadow-sky-950/50'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+            }`}
+          >
+            <Clock className="w-4 h-4" />
+            <span>🗂️ ประวัติลงเวลาย้อนหลัง</span>
           </button>
 
           <button
@@ -1175,6 +1201,10 @@ export const StaffSchedulingPanel: React.FC = () => {
       )}
 
       {/* TAB 4: PAYROLL CALCULATIONS & SUMMARY */}
+      {subTab === 'monthly' && <MonthlyPayrollPanel />}
+
+      {subTab === 'history' && <AttendanceHistoryPanel />}
+
       {subTab === 'payroll' && (
         <div className="space-y-6">
           {/* Summary KPIs */}
