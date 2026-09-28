@@ -49,3 +49,17 @@ describe('stock from a bill', () => {
     expect(rows[1]).toMatchObject({ ingredientId: '', selected: false, cost: 0 });
   });
 });
+
+describe('Thai spelling variants', () => {
+  it('matches กุ้ง typed with the tone mark before the vowel', () => {
+    const typedOtherOrder = 'กุ้ง';
+    expect(matchIngredient(typedOtherOrder, shop)?.id).toBe('shrimp');
+    expect(matchIngredient('กุง', [ing('s2', 'กุ้งแม่น้ำแกะเปลือก', 'g')])?.id).toBe('s2');
+  });
+});
+
+describe('frozen label', () => {
+  it('ignores แช่แข็ง when matching', () => {
+    expect(matchIngredient('กุ้งแช่แข็ง', [ing('x', 'กุ้ง', 'kg')])?.id).toBe('x');
+  });
+});

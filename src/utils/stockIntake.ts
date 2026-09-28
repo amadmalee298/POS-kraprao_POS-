@@ -54,7 +54,14 @@ export function quantityInName(name: string): { quantity?: number; unit?: string
   return { quantity: toNumber(m[1]), unit: canonicalUnit(m[2].replace(/\.$/, '')), name: name.replace(m[0], '').trim() };
 }
 
-const norm = (s: string) => (s || '').toLowerCase().replace(/[\s().,\-_/]|สด|แช่แข็ง|ตรา\S*/g, '');
+// Thai can be typed with the vowel and tone mark in either order (ก ุ ้ ง / ก ้ ุ ง): normalise, then
+// drop tone marks so both spellings of กุ้ง match
+const norm = (s: string) =>
+  (s || '')
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[\u0E47-\u0E4C]/g, '')
+    .replace(/[\s().,\-_/]|สด|แชแขง|ตรา\S*/g, '');
 
 /** The shop's ingredient a bill line most likely means, or null */
 export function matchIngredient(label: string, ingredients: Ingredient[]): Ingredient | null {

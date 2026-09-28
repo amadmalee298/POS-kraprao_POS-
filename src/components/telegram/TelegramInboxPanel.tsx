@@ -112,6 +112,10 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
       return;
     }
     if (items.find(x => x.id === p.id)?.status === 'approved') return;
+    if (receivesStock(f)) {
+      const left = stockRows(p, f).filter(r => r.label && (!r.ingredientId || !r.selected || !(r.quantity > 0)));
+      if (left.length && !window.confirm(`${left.map(r => r.label).join(', ')} จะไม่เข้าสต็อก (ยังไม่ได้เลือกวัตถุดิบ/จำนวน)\nอนุมัติต่อหรือไม่?`)) return;
+    }
     setBusy(p.id);
     setError(null);
     try {
@@ -373,7 +377,10 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                     {rows.map(row => {
                       const ing = ingredientById.get(row.ingredientId);
                       return (
-                        <div key={row.key} className="grid grid-cols-[auto_1fr] gap-2 items-start">
+                        <div
+                          key={row.key}
+                          className={`grid grid-cols-[auto_1fr] gap-2 items-start ${!row.ingredientId && row.label ? 'rounded-xl border border-amber-600/60 bg-amber-950/30 p-2' : ''}`}
+                        >
                           <input
                             type="checkbox"
                             aria-label="รับเข้าสต็อก"
@@ -383,6 +390,9 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                           />
                           <div className="space-y-1">
                             {row.label && <div className="text-slate-400">ในบิล: {row.label}</div>}
+                            {!row.ingredientId && row.label && (
+                              <div className="text-amber-300 font-bold">ไม่พบวัตถุดิบชื่อนี้ในคลัง เลือกจากรายการด้านล่าง ไม่เช่นนั้นจะไม่เข้าสต็อก</div>
+                            )}
                             <div className="grid grid-cols-[1fr_90px] gap-2">
                               <select
                                 value={row.ingredientId}
