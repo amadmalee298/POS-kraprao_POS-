@@ -45,7 +45,7 @@ export const MobileClockPage: React.FC<{ code: string; openedAt: number; onClose
 
   useEffect(() => {
     if (!needsQr(cfg)) return;
-    qrCodeValid(cfg.qrSecret, code, openedAt).then(setQrOk);
+    qrCodeValid(cfg.qrSecret, code).then(setQrOk);
   }, [code, openedAt, cfg.qrSecret, cfg.mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = async (s: StaffMember, entered: string) => {
@@ -114,7 +114,7 @@ export const MobileClockPage: React.FC<{ code: string; openedAt: number; onClose
               )}
               {needsQr(cfg) && (
                 <span className={`px-2.5 py-1 rounded-full border flex items-center gap-1 ${qrOk ? 'bg-emerald-950/40 border-emerald-700 text-emerald-300' : 'bg-stone-900 border-stone-700'}`}>
-                  <QrCode className="w-3.5 h-3.5" /> {qrOk ? 'สแกน QR ร้านแล้ว' : code ? 'QR หมดอายุ สแกนใหม่' : 'ต้องสแกน QR ที่ร้าน'}
+                  <QrCode className="w-3.5 h-3.5" /> {qrOk ? 'สแกน QR ร้านแล้ว' : code ? 'QR นี้ใช้ไม่ได้แล้ว สแกน QR ล่าสุดของร้าน' : 'ต้องสแกน QR ที่ร้าน'}
                 </span>
               )}
             </div>

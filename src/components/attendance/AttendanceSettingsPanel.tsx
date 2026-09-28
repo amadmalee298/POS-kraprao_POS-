@@ -1,48 +1,45 @@
 import React, { useEffect, useState } from 'react';
-import { Crosshair, ExternalLink, MapPin, QrCode, RefreshCw, X } from 'lucide-react';
+import { Crosshair, Download, ExternalLink, MapPin, Printer, QrCode, RefreshCw, X } from 'lucide-react';
 import QRCode from 'qrcode';
 import { usePOS } from '../../context/POSContext';
 import type { AttendanceSettings } from '../../types';
-import { isShopDevice, needsGps, needsQr, QR_STEP_MS, qrCodeAt, setShopDevice } from '../../utils/clock';
+import { isShopDevice, needsGps, needsQr, setShopDevice, shopQrCode } from '../../utils/clock';
 import { newScriptSecret } from '../../services/sheetsScript';
 
 const MODES: { id: AttendanceSettings['mode']; label: string; hint: string }[] = [
   { id: 'off', label: 'ปิด', hint: 'ลงเวลาได้เฉพาะที่เครื่องของร้าน (ตู้ PIN)' },
   { id: 'gps', label: 'GPS ในขอบเขตร้าน', hint: 'ลงเวลาจากมือถือได้เมื่ออยู่ในรัศมีที่กำหนด' },
-  { id: 'qr', label: 'สแกน QR ที่ร้าน', hint: 'ต้องสแกน QR ที่เปลี่ยนทุก 30 วินาทีบนเครื่องร้าน' },
+  { id: 'qr', label: 'สแกน QR ที่ร้าน', hint: 'ต้องสแกน QR ของร้าน (ติดไว้ที่ร้าน หรือเปิดบนแท็บเล็ต)' },
   { id: 'gps_qr', label: 'GPS + QR (แน่นที่สุด)', hint: 'ต้องอยู่ในขอบเขตและสแกน QR ที่ร้าน' }
 ];
 
 export const attendanceOf = (a?: Partial<AttendanceSettings>): AttendanceSettings => ({ mode: 'off', radius: 100, qrSecret: '', ...(a || {}) });
 
-/** The shop's live QR for clocking in; open it full screen on the shop tablet */
+/** The shop's QR for clocking in: show it on the shop tablet, or print it and stick it up */
 export const ShopClockQR: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { settings } = usePOS();
   const secret = settings.attendance?.qrSecret || '';
   const [img, setImg] = useState('');
-  const [left, setLeft] = useState(30);
 
   useEffect(() => {
     let stopped = false;
-    let lastStep = -1;
-    const tick = async () => {
-      const now = Date.now();
-      setLeft(Math.ceil((QR_STEP_MS - (now % QR_STEP_MS)) / 1000));
-      const step = Math.floor(now / QR_STEP_MS);
-      if (step === lastStep || !secret) return;
-      lastStep = step;
-      const code = await qrCodeAt(secret, now);
-      const url = `${window.location.origin}${window.location.pathname}#clock=${code}`;
-      const data = await QRCode.toDataURL(url, { width: 360, margin: 1 });
+    (async () => {
+      if (!secret) return;
+      const url = `${window.location.origin}${window.location.pathname}#clock=${await shopQrCode(secret)}`;
+      const data = await QRCode.toDataURL(url, { width: 720, margin: 1 });
       if (!stopped) setImg(data);
-    };
-    tick();
-    const id = setInterval(tick, 1000);
+    })();
     return () => {
       stopped = true;
-      clearInterval(id);
     };
   }, [secret]);
+
+  const print = () => {
+    const w = window.open('', '_blank', 'width=600,height=800');
+    if (!w || !img) return;
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>QR ลงเวลา</title><style>body{font-family:sans-serif;text-align:center;padding:32px}img{width:80%;max-width:520px}</style></head><body><h1>สแกนเพื่อลงเวลาเข้า-ออกงาน</h1><p>ใช้กล้องมือถือสแกน แล้วใส่ PIN ของคุณ</p><img src="${img}" alt="QR"><script>window.onload=()=>window.print()</script></body></html>`);
+    w.document.close();
+  };
 
   return (
     <div className="fixed inset-0 z-[80] bg-slate-950 flex flex-col items-center justify-center p-4 text-slate-100">
@@ -54,7 +51,16 @@ export const ShopClockQR: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       <div className="bg-white p-3 rounded-3xl w-[min(80vw,380px)] aspect-square flex items-center justify-center">
         {img ? <img src={img} alt="QR ลงเวลา" className="w-full h-full" /> : <RefreshCw className="w-10 h-10 text-slate-400 animate-spin" />}
       </div>
-      <p className="mt-4 text-sm text-slate-400">QR ใหม่ใน {left} วินาที</p>
+      <div className="mt-4 flex gap-2">
+        <button type="button" onClick={print} disabled={!img} className="h-11 px-4 rounded-xl bg-sky-600 font-bold flex items-center gap-1.5 disabled:opacity-40">
+          <Printer className="w-4 h-4" /> พิมพ์ QR
+        </button>
+        {img && (
+          <a href={img} download="qr-ลงเวลา.png" className="h-11 px-4 rounded-xl border border-slate-700 font-bold flex items-center gap-1.5">
+            <Download className="w-4 h-4" /> บันทึกรูป
+          </a>
+        )}
+      </div>
     </div>
   );
 };
@@ -146,16 +152,16 @@ export const AttendanceSettingsPanel: React.FC = () => {
       {needsQr(cfg) && (
         <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-slate-950 border border-slate-800">
           <button type="button" onClick={() => setShowQr(true)} className="h-11 px-4 rounded-xl bg-sky-600 text-white font-bold flex items-center gap-1.5">
-            <QrCode className="w-4 h-4" /> เปิดจอ QR ลงเวลา
+            <QrCode className="w-4 h-4" /> QR ลงเวลา (แสดง / พิมพ์)
           </button>
           <button
             type="button"
-            onClick={() => window.confirm('เปลี่ยนรหัส QR? QR ที่เปิดค้างไว้บนเครื่องอื่นจะใช้ไม่ได้จนกว่าจะเปิดใหม่') && save({ qrSecret: newScriptSecret() })}
+            onClick={() => window.confirm('เปลี่ยนรหัส QR? QR เดิม (รวมที่พิมพ์ติดไว้) จะใช้ไม่ได้ ต้องพิมพ์หรือเปิด QR ใหม่') && save({ qrSecret: newScriptSecret() })}
             className="h-11 px-3 rounded-xl border border-slate-700 text-slate-300"
           >
             เปลี่ยนรหัส QR
           </button>
-          <p className="basis-full text-[10px] text-slate-500">เปิดจอนี้ค้างไว้บนแท็บเล็ตของร้าน QR เปลี่ยนทุก 30 วินาที ถ่ายรูปส่งต่อให้คนอื่นใช้ไม่ได้</p>
+          <p className="basis-full text-[10px] text-slate-500">พิมพ์ติดไว้ที่ร้าน หรือเปิดบนแท็บเล็ต · QR นี้ใช้ได้จนกว่าจะกด “เปลี่ยนรหัส QR” · QR ถ่ายรูปส่งต่อกันได้ จึงควรใช้คู่กับ GPS (แบบ GPS + QR)</p>
         </div>
       )}
 

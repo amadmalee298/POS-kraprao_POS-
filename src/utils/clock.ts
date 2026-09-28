@@ -3,10 +3,8 @@ import { addHours } from './payroll';
 
 /**
  * Clocking in and out from a staff member's own phone: where the phone is (GPS, within the
- * shop's radius) and/or the shop's live QR code, which changes every 30 seconds.
+ * shop's radius) and/or the shop's QR code, scanned at the shop.
  */
-
-export const QR_STEP_MS = 30 * 1000;
 
 /** Metres between two points (haversine) */
 export function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -31,18 +29,17 @@ async function sha256Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** The code shown in the shop's QR for a moment in time */
-export async function qrCodeAt(secret: string, timeMs: number): Promise<string> {
-  return (await sha256Hex(`${secret}:${Math.floor(timeMs / QR_STEP_MS)}`)).slice(0, 10);
+/**
+ * The code in the shop's QR. It stays the same (the QR can be printed and stuck up in the shop)
+ * until the owner changes the shop's QR code, which makes every older QR stop working.
+ */
+export async function shopQrCode(secret: string): Promise<string> {
+  return (await sha256Hex(`${secret}:shop-qr`)).slice(0, 10);
 }
 
-/** A scanned code is good for this 30-second step and the one before (up to a minute old) */
-export async function qrCodeValid(secret: string, code: string, timeMs: number): Promise<boolean> {
+export async function qrCodeValid(secret: string, code: string): Promise<boolean> {
   if (!secret || !code) return false;
-  for (const back of [0, 1]) {
-    if ((await qrCodeAt(secret, timeMs - back * QR_STEP_MS)) === code) return true;
-  }
-  return false;
+  return (await shopQrCode(secret)) === code;
 }
 
 export const needsGps = (a?: AttendanceSettings) => a?.mode === 'gps' || a?.mode === 'gps_qr';

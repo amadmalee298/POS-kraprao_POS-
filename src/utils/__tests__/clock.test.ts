@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ShiftEntry, StaffMember } from '../../types';
-import { clockChange, distanceMeters, qrCodeAt, qrCodeValid, QR_STEP_MS, withinArea } from '../clock';
+import { clockChange, distanceMeters, qrCodeValid, shopQrCode, withinArea } from '../clock';
 
 const staff: StaffMember = { id: 's1', name: 'A', role: 'พนักงาน', hourlyRate: 50, otRateMultiplier: 1.5, status: 'active' };
 const check = { method: 'mobile' as const, distance: 20 };
@@ -17,14 +17,13 @@ describe('area', () => {
   });
 });
 
-describe('live QR code', () => {
-  it('is valid for the current and previous 30 seconds only', async () => {
-    const t = 1_800_000_000_000;
-    const code = await qrCodeAt('secret', t);
-    expect(await qrCodeValid('secret', code, t)).toBe(true);
-    expect(await qrCodeValid('secret', code, t + QR_STEP_MS)).toBe(true);
-    expect(await qrCodeValid('secret', code, t + 3 * QR_STEP_MS)).toBe(false);
-    expect(await qrCodeValid('other', code, t)).toBe(false);
+describe('shop QR code', () => {
+  it('stays the same until the secret changes, and only the shop\u2019s code is accepted', async () => {
+    const code = await shopQrCode('secret');
+    expect(await shopQrCode('secret')).toBe(code);
+    expect(await qrCodeValid('secret', code)).toBe(true);
+    expect(await qrCodeValid('new-secret', code)).toBe(false);
+    expect(await qrCodeValid('secret', 'abc')).toBe(false);
   });
 });
 
