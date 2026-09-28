@@ -35,11 +35,29 @@ async function viaServer(url: string, image: string, mimeType: string): Promise<
   }
 }
 
+/** Common Claude API failures in plain Thai with what to do */
+export function friendlyAiError(message: string): string {
+  const m = message || '';
+  if (/credit balance is too low/i.test(m)) return 'เครดิต Claude API หมด: เติมเครดิตที่ console.anthropic.com → Settings → Billing แล้วกด “อ่านใหม่”';
+  if (/invalid x-api-key|authentication_error|401/i.test(m)) return 'Claude API Key ไม่ถูกต้อง: สร้างคีย์ใหม่ที่ console.anthropic.com แล้วใส่ใหม่';
+  if (/rate_limit|429/i.test(m)) return 'ใช้ AI ถี่เกินไป รอสักครู่แล้วกด “อ่านใหม่”';
+  if (/overloaded|529/i.test(m)) return 'ระบบ AI ใช้งานหนักชั่วคราว รอสักครู่แล้วกด “อ่านใหม่”';
+  return m;
+}
+
 /**
  * Reads a receipt or cash bill photo with Claude: this site's server, the shop's Vercel site
  * (ANTHROPIC_API_KEY there), or the shop's own key on this device, in that order.
  */
 export async function scanReceiptImage(base64: string, mimeType = 'image/jpeg', serverUrl?: string): Promise<VerifiedReceiptData> {
+  try {
+    return await scanWithAnyAi(base64, mimeType, serverUrl);
+  } catch (e: any) {
+    throw new Error(friendlyAiError(e?.message || 'อ่านใบเสร็จไม่สำเร็จ'));
+  }
+}
+
+async function scanWithAnyAi(base64: string, mimeType: string, serverUrl?: string): Promise<VerifiedReceiptData> {
   const data = base64.replace(/^data:[^;]+;base64,/, '');
   const errors: string[] = [];
   if (hasBackend()) {

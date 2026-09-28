@@ -147,7 +147,8 @@ export function toPendingData(r: VerifiedReceiptData, fallbackDate: string): Non
     note: [r.note, ...(r.lineItems || []).slice(0, 12).map(li => `${li.name} ${li.amount}`)].filter(Boolean).join(' · ').slice(0, 500),
     warnings: r.warnings || [],
     verified: !!r.verified,
-    confidenceScore: Number(r.confidenceScore) || 0
+    confidenceScore: Number(r.confidenceScore) || 0,
+    lineItems: (r.lineItems || []).slice(0, 30).map(li => ({ name: li.name, quantity: li.quantity, amount: Number(li.amount) || 0 }))
   };
 }
 
