@@ -223,7 +223,16 @@ export type StockAdjustmentReason =
   | 'manual_adjustment'
   | 'cooking_prep'
   | 'prep_output'
+  | 'issue'
   | 'other';
+
+/** A fixed issue portion, e.g. "ข้าวสวย 1 กล่อง" = ข้าวสาร 0.1 kg + กล่องข้าว 1 ใบ */
+export interface IssueUnit {
+  id: string;
+  name: string; // e.g. ข้าวสวย
+  unitLabel: string; // e.g. กล่อง
+  inputs: { ingredientId: string; quantity: number }[]; // per 1 unit
+}
 
 export interface StockAdjustmentLog {
   id: string;

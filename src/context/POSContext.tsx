@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { averageCostAfterPrep } from '../utils/prep';
+import { localDay } from '../utils/stockHistory';
 import { canonicalUnit, convertAmount, effectiveUnitCost, repointRecipe, withRecipeCosts, withRecipeUnits } from '../utils/recipeUtils';
 import { syncAndHealCategories, syncAndHealIngredientCategories } from '../utils/categoryUtils';
 import {
@@ -24,6 +25,7 @@ import {
   CustomerTaxInfo,
   ActiveTab,
   WasteLog,
+  WasteReason,
   StaffMember,
   ShiftEntry,
   ShiftSwapRequest,
@@ -303,6 +305,8 @@ interface POSContextType {
   // Waste Log operations
   wasteLogs: WasteLog[];
   addWasteLog: (log: Omit<WasteLog, 'id'>) => void;
+  /** Take several items out of stock at once: as waste (with a waste record each) or as issued for use */
+  issueStock: (lines: { ingredientId: string; quantity: number }[], opts: { waste?: WasteReason; note: string }) => { cost: number };
   deleteWasteLog: (logId: string) => void;
 
   // Stock Adjustment Log operations
@@ -3648,6 +3652,47 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ]);
   };
 
+  const issueStock = (lines: { ingredientId: string; quantity: number }[], opts: { waste?: WasteReason; note: string }) => {
+    const byId = new Map(ingredients.map(i => [i.id, i]));
+    // One line per item, so the stock history shows the right balances
+    const totals = new Map<string, number>();
+    lines.forEach(l => {
+      if (byId.has(l.ingredientId) && l.quantity > 0) totals.set(l.ingredientId, (totals.get(l.ingredientId) || 0) + l.quantity);
+    });
+    const userName = currentUser?.name || 'ผู้ใช้งานระบบ';
+    const today = localDay(new Date().toISOString());
+    let cost = 0;
+    const waste: WasteLog[] = [];
+    totals.forEach((qty, id) => {
+      const ing = byId.get(id)!;
+      const unitCost = effectiveUnitCost(ing);
+      cost += qty * unitCost;
+      if (opts.waste) {
+        waste.push({
+          id: `waste-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          ingredientId: id,
+          ingredientName: ing.name,
+          quantity: qty,
+          unit: ing.unit,
+          unitCost,
+          totalCostLoss: Math.round(qty * unitCost * 100) / 100,
+          reason: opts.waste,
+          loggedDate: today,
+          notes: opts.note,
+          reportedBy: userName
+        });
+      }
+    });
+    if (waste.length) {
+      setWasteLogs(prev => [...waste, ...prev]);
+      if (isFirebaseAvailable() && !effectiveOffline) waste.forEach(w => syncWasteLogToFirestore(w, currentBranch).catch(console.warn));
+      else pendingWasteLogsRef.current.push(...waste);
+    }
+    const reason = !opts.waste ? 'issue' : opts.waste === 'expired' ? 'expired' : opts.waste === 'damaged' ? 'damaged' : 'waste';
+    moveStock(Array.from(totals, ([ingredientId, qty]) => ({ ingredientId, change: -qty, reason, notes: opts.note, userName })));
+    return { cost: Math.round(cost * 100) / 100 };
+  };
+
   // Waste records are shared history like stock adjustments; they are not deleted
   const deleteWasteLog = (_logId: string) => undefined;
 
@@ -4275,6 +4320,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addStockLot,
         receiveNewIngredient,
         producePrep,
+        issueStock,
         wasteLogs,
         addWasteLog,
         deleteWasteLog,

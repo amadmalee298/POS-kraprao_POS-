@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType } from '../../utils/stockTypes';
 import { PrepProductionPanel } from './PrepProductionPanel';
+import { StockIssuePanel } from './StockIssuePanel';
 import {
   PackageCheck,
   AlertTriangle,
@@ -30,6 +31,7 @@ import {
   Printer,
   Tag,
   ChefHat,
+  PackageMinus,
   Edit2,
   Check,
   Save,
@@ -128,7 +130,7 @@ export const InventoryView: React.FC = () => {
   const [savedCostIngId, setSavedCostIngId] = useState<string | null>(null);
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<'smart_audit' | 'forecast' | 'waste' | 'current' | 'prep' | 'usage' | 'stockcard'>('smart_audit');
+  const [activeTab, setActiveTab] = useState<'smart_audit' | 'forecast' | 'waste' | 'current' | 'prep' | 'issue' | 'usage' | 'stockcard'>('smart_audit');
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -937,6 +939,18 @@ export const InventoryView: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveTab('issue')}
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
+              activeTab === 'issue'
+                ? 'bg-orange-600 text-white shadow-lg shadow-orange-950/50'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <PackageMinus className="w-4 h-4" />
+            <span>ตัดจ่าย / ของเสีย / ข้าวกล่อง</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('usage')}
             className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
               activeTab === 'usage'
@@ -1480,6 +1494,8 @@ export const InventoryView: React.FC = () => {
 
         {/* TAB 2: ประวัติรับ-เบิกรายวัตถุดิบ (Item Usage Log) */}
         {activeTab === 'prep' && <PrepProductionPanel />}
+
+        {activeTab === 'issue' && <StockIssuePanel />}
 
         {activeTab === 'usage' && (
           <div className="space-y-5">
