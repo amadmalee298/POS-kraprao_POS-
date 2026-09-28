@@ -416,6 +416,11 @@ export interface QrPaymentOption {
   iconName?: string;
 }
 
+export interface SheetsScriptSettings {
+  url: string; // the web app URL of the deployed script (…/exec)
+  secret: string; // written into the script; requests without it are refused
+}
+
 export interface SystemSettings {
   autoBackupFreq: 'daily' | 'weekly' | 'off';
   lastBackupDate?: string;
@@ -450,6 +455,8 @@ export interface SystemSettings {
   receiptUseMonospace?: boolean;
   receiptFooterNote?: string;
   merchantSettings?: MerchantConnectionSettings;
+  /** Google Sheets through an Apps Script in the shop's spreadsheet: no Google sign-in on the devices */
+  sheetsScript?: SheetsScriptSettings;
   /** Years over which equipment bought is depreciated (straight line); default 5 */
   equipmentUsefulLifeYears?: number;
   requirePinOnEveryLogin?: boolean; // บังคับใส่รหัสพนักงานทุกครั้งที่เข้าสู่ระบบ
