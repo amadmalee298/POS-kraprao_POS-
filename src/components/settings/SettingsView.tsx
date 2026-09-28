@@ -64,6 +64,7 @@ import { calculateOrderTotals } from '../../utils/tax';
 import { StaffSchedulingPanel } from './StaffSchedulingPanel';
 import { StaffPinClockTerminal } from './StaffPinClockTerminal';
 import { onSettingsTabRequest, SettingsTab, takePendingSettingsTab } from '../../utils/settingsNav';
+import { canOpenSettingsPart } from '../../utils/access';
 import { CashShiftManagementPanel } from './CashShiftManagementPanel';
 import { SecurityLogPanel } from './SecurityLogPanel';
 import { QrPaymentOption, StaffMember, StaffPermissions } from '../../types';
@@ -147,12 +148,18 @@ export const SettingsView: React.FC = () => {
     logSecurityEvent,
     cleanSlateForProduction,
     firebaseSyncState,
-    cleanAndSyncCloudNow
+    cleanAndSyncCloudNow,
+    permissions
   } = usePOS();
 
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(() => takePendingSettingsTab() || 'general');
   // The side menu can open a part of this page directly (e.g. the PIN timeclock)
   useEffect(() => onSettingsTabRequest(setSettingsTab), []);
+  // Staff without the settings permission only reach the timeclock (and the cash drawer)
+  const partAllowed = canOpenSettingsPart(settingsTab, permissions);
+  useEffect(() => {
+    if (!partAllowed) setSettingsTab('timeclock');
+  }, [partAllowed]);
   const [isMerchantModalOpen, setIsMerchantModalOpen] = useState(false);
   const gatewayOn = gatewayEnabled(settings);
 
@@ -816,6 +823,7 @@ export const SettingsView: React.FC = () => {
 
         {/* Tab Switcher */}
         <div className="flex items-center space-x-2 bg-slate-950 p-1.5 rounded-2xl border border-slate-800 overflow-x-auto no-scrollbar">
+          {canOpenSettingsPart('general', permissions) && (
           <button
             onClick={() => setSettingsTab('general')}
             className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
@@ -827,7 +835,9 @@ export const SettingsView: React.FC = () => {
             <Settings className="w-4 h-4" />
             <span>⚙️ ตั้งค่าทั่วไป (General Config)</span>
           </button>
+          )}
 
+          {canOpenSettingsPart('pins', permissions) && (
           <button
             onClick={() => setSettingsTab('pins')}
             className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
@@ -839,7 +849,9 @@ export const SettingsView: React.FC = () => {
             <Key className="w-4 h-4" />
             <span>🔑 รหัส PIN & สิทธิ์พนักงาน (Employee PINs)</span>
           </button>
+          )}
 
+          {canOpenSettingsPart('scheduling', permissions) && (
           <button
             onClick={() => setSettingsTab('scheduling')}
             className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
@@ -851,7 +863,9 @@ export const SettingsView: React.FC = () => {
             <Calendar className="w-4 h-4" />
             <span>🗓️ จัดตารางงาน & คิดเงินเดือน (Staff Scheduling)</span>
           </button>
+          )}
 
+          {canOpenSettingsPart('timeclock', permissions) && (
           <button
             onClick={() => setSettingsTab('timeclock')}
             className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
@@ -863,7 +877,9 @@ export const SettingsView: React.FC = () => {
             <Clock className="w-4 h-4 text-emerald-300" />
             <span>📌 ตู้บันทึกเวลาเข้า-ออกงาน (PIN Timeclock)</span>
           </button>
+          )}
 
+          {canOpenSettingsPart('shifts', permissions) && (
           <button
             onClick={() => setSettingsTab('shifts')}
             className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
@@ -875,7 +891,9 @@ export const SettingsView: React.FC = () => {
             <Wallet className="w-4 h-4 text-amber-300" />
             <span>💰 เปิด-ปิดกะ & ลิ้นชักเงินสด (Cash Shifts)</span>
           </button>
+          )}
 
+          {canOpenSettingsPart('sync', permissions) && (
           <button
             onClick={() => setSettingsTab('sync')}
             className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
@@ -887,7 +905,9 @@ export const SettingsView: React.FC = () => {
             <RefreshCw className="w-4 h-4" />
             <span>🔄 ตั้งค่าการซิงค์ข้อมูล (Sync Settings)</span>
           </button>
+          )}
 
+          {canOpenSettingsPart('security_logs', permissions) && (
           <button
             onClick={() => setSettingsTab('security_logs')}
             className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
@@ -899,7 +919,9 @@ export const SettingsView: React.FC = () => {
             <ShieldAlert className="w-4 h-4 text-rose-300" />
             <span>🛡️ ประวัติความปลอดภัย (Security Log)</span>
           </button>
+          )}
 
+          {canOpenSettingsPart('backup', permissions) && (
           <button
             onClick={() => setSettingsTab('backup')}
             className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
@@ -911,6 +933,7 @@ export const SettingsView: React.FC = () => {
             <Database className="w-4 h-4" />
             <span>💾 สำรอง & กู้คืนข้อมูล (Backup & Restore)</span>
           </button>
+          )}
         </div>
 
         {/* Save Confirmation Toast */}
@@ -924,7 +947,7 @@ export const SettingsView: React.FC = () => {
 
       {/* Settings Body */}
       <div className="flex-1 p-6 overflow-y-auto space-y-6">
-        {settingsTab === 'pins' ? (
+        {!partAllowed ? null : settingsTab === 'pins' ? (
           <div className="max-w-5xl space-y-6 animate-in fade-in">
             {/* MANAGER AUTHORIZATION STATUS BANNER */}
             <div className={`p-4 rounded-2xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl ${

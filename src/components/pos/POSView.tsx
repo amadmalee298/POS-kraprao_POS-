@@ -85,7 +85,8 @@ export const POSView: React.FC = () => {
     tables,
     createOrder,
     settleOrderPayment,
-    setIsLocked
+    setIsLocked,
+    permissions
   } = usePOS();
 
   const hotItems = useMemo(() => menuItems.filter(m => m.isPopular || m.isFrequent), [menuItems]);
@@ -324,7 +325,8 @@ export const POSView: React.FC = () => {
           <button
             type="button"
             onClick={() => setIsDiscountOpen(true)}
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || !permissions.canGiveDiscount}
+            title={permissions.canGiveDiscount ? undefined : 'ไม่มีสิทธิ์ให้ส่วนลด (ตั้งที่รหัส PIN & สิทธิ์พนักงาน)'}
             className="h-10 px-3 rounded-xl border border-[#3a2517] bg-[#1d130c] text-sm flex items-center gap-1.5 disabled:opacity-40"
           >
             <Percent className="w-4 h-4 text-[#ff8a3d]" />

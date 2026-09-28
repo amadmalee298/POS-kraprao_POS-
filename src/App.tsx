@@ -33,6 +33,7 @@ import { NotificationSettingsSync } from './components/NotificationSettingsSync'
 import { TelegramInboxPoller } from './components/telegram/TelegramInboxPoller';
 import { SheetsScriptAutoSync } from './components/sheets/SheetsScriptAutoSync';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
+import { canOpenTab, firstAllowedTab } from './utils/access';
 
 const MainLayout: React.FC = () => {
   const {
@@ -50,9 +51,17 @@ const MainLayout: React.FC = () => {
     applyConflictResolutions,
     isResolvingConflicts,
     scanForSyncConflicts,
-    isScanningConflicts
+    isScanningConflicts,
+    permissions,
+    setActiveTab
   } = usePOS();
   const effectiveOffline = isOffline || forceOfflineMode;
+
+  // Staff only see the pages their PIN card allows: anything else sends them to one they may use
+  const tabAllowed = canOpenTab(activeTab, permissions);
+  useEffect(() => {
+    if (!tabAllowed) setActiveTab(firstAllowedTab(permissions));
+  }, [tabAllowed, permissions, setActiveTab]);
 
   // Inactivity auto-lock timer
   useEffect(() => {
@@ -130,6 +139,8 @@ const MainLayout: React.FC = () => {
             </div>
           }
         >
+        {!tabAllowed ? null : (
+        <>
         {(activeTab === 'dashboard' || activeTab === 'analytics') && <ExecutiveDashboardView />}
         {activeTab === 'pos' && <POSView />}
         {activeTab === 'qr' && <QrOrderingView />}
@@ -144,6 +155,8 @@ const MainLayout: React.FC = () => {
         {activeTab === 'crm' && <CRMView />}
         {activeTab === 'line_notify' && <LineNotifyView />}
         {activeTab === 'settings' && <SettingsView />}
+        </>
+        )}
         </React.Suspense>
       </main>
 

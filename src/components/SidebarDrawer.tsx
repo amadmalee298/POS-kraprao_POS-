@@ -28,6 +28,7 @@ import {
   HardDrive
 } from 'lucide-react';
 import { requestSettingsTab, SettingsTab } from '../utils/settingsNav';
+import { canOpenSettingsPart, canOpenTab } from '../utils/access';
 import { usePOS } from '../context/POSContext';
 import { ActiveTab } from '../types';
 import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
@@ -45,7 +46,8 @@ export const SidebarDrawer: React.FC = () => {
     settings,
     isOffline,
     forceOfflineMode,
-    firebaseSyncState
+    firebaseSyncState,
+    permissions
   } = usePOS();
   const cloudStatus = isOffline || forceOfflineMode ? 'offline' : firebaseSyncState.status;
 
@@ -58,9 +60,14 @@ export const SidebarDrawer: React.FC = () => {
     o => o.branchId === currentBranch.id && (o.status === 'pending' || o.status === 'cooking')
   ).length;
 
-  const settingsItems: { tab: SettingsTab; label: string; icon: React.ElementType; highlight?: boolean }[] = [
-    { tab: 'timeclock', label: 'ลงเวลาเข้า-ออกงาน (PIN)', icon: Clock, highlight: true },
-    { tab: 'shifts', label: 'เปิด-ปิดกะ & ลิ้นชักเงินสด', icon: Wallet },
+  const allTopItems: { tab: SettingsTab; label: string; icon: React.ElementType; style: string }[] = [
+    { tab: 'timeclock', label: 'ลงเวลาเข้า-ออกงาน (PIN)', icon: Clock, style: 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/40' },
+    { tab: 'shifts', label: 'เปิด-ปิดกะ & ลิ้นชักเงินสด', icon: Wallet, style: 'bg-amber-950/30 border-amber-500/30 text-amber-300 hover:bg-amber-900/30' }
+  ];
+
+  const topItems = allTopItems.filter(i => canOpenSettingsPart(i.tab, permissions));
+
+  const allSettingsItems: { tab: SettingsTab; label: string; icon: React.ElementType; highlight?: boolean }[] = [
     { tab: 'scheduling', label: 'ตารางงาน & เงินเดือน', icon: CalendarDays },
     { tab: 'pins', label: 'รหัส PIN & สิทธิ์พนักงาน', icon: KeyRound },
     { tab: 'general', label: 'ตั้งค่าร้านและสาขา', icon: Settings },
@@ -68,8 +75,9 @@ export const SidebarDrawer: React.FC = () => {
     { tab: 'security_logs', label: 'ประวัติความปลอดภัย', icon: ShieldAlert },
     { tab: 'backup', label: 'สำรอง & กู้คืนข้อมูล', icon: HardDrive }
   ];
+  const settingsItems = allSettingsItems.filter(i => canOpenSettingsPart(i.tab, permissions));
 
-  const menuItemsList: {
+  const allMenuItems: {
     id: ActiveTab;
     label: string;
     icon: React.ElementType;
@@ -96,6 +104,7 @@ export const SidebarDrawer: React.FC = () => {
     { id: 'crm', label: 'สมาชิก CRM & คูปอง', icon: Users },
     { id: 'line_notify', label: 'แจ้งเตือน Line/Telegram', icon: BellRing },
   ];
+  const menuItemsList = allMenuItems.filter(i => canOpenTab(i.id, permissions));
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -139,10 +148,11 @@ export const SidebarDrawer: React.FC = () => {
         {/* Section Label */}
         <div className="px-5 py-2.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
           <span>คุมบริหารสาขา</span>
-          <span className="text-[10px] text-slate-500 font-mono">{menuItemsList.length + settingsItems.length} ฟังก์ชัน</span>
+          <span className="text-[10px] text-slate-500 font-mono">{menuItemsList.length + settingsItems.length + topItems.length} ฟังก์ชัน</span>
         </div>
 
-        {/* Google Sheets Quick Sync Card */}
+        {/* Google Sheets Quick Sync Card (sales figures: for those who may see the accounts) */}
+        {permissions.canAccessAccounting && (
         <div className="px-3 mb-2">
           <button
             onClick={() => {
@@ -165,9 +175,29 @@ export const SidebarDrawer: React.FC = () => {
             </span>
           </button>
         </div>
+        )}
 
         {/* Menu Items Scrollable List */}
         <div className="flex-1 overflow-y-auto px-3 space-y-1 py-1 custom-scrollbar">
+          {/* Used every shift: clock in/out and the cash drawer come first */}
+          {topItems.map(item => {
+            const IconComponent = item.icon;
+            return (
+              <button
+                key={item.tab}
+                onClick={() => {
+                  requestSettingsTab(item.tab);
+                  setActiveTab('settings');
+                  setIsDrawerOpen(false);
+                }}
+                className={`w-full flex items-center space-x-3 px-3.5 py-3 rounded-xl text-sm font-bold transition text-left border ${item.style}`}
+              >
+                <IconComponent className="w-5 h-5 shrink-0" />
+                <span className="truncate">{item.label}</span>
+              </button>
+            );
+          })}
+
           {menuItemsList.map(item => {
             const IconComponent = item.icon;
             const isActive = activeTab === item.id;
@@ -210,7 +240,7 @@ export const SidebarDrawer: React.FC = () => {
           })}
 
           {/* Staff & settings: each part of the settings page is one tap away */}
-          <div className="pt-3 pb-1 px-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">พนักงาน & ตั้งค่า</div>
+          {settingsItems.length > 0 && <div className="pt-3 pb-1 px-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">พนักงาน & ตั้งค่า</div>}
           {settingsItems.map(item => {
             const IconComponent = item.icon;
             return (
