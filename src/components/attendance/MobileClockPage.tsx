@@ -24,10 +24,10 @@ const locate = () =>
   });
 
 /** Code from the scanned QR in the address (#clock=CODE), read once when the page opens */
-export const readClockHash = (): { open: boolean; code: string } => {
+export const readClockHash = (): { open: boolean; code: string; branch: string } => {
   const h = window.location.hash || '';
-  const m = /^#clock(?:=([\w-]+))?/.exec(h);
-  return { open: !!m, code: m?.[1] || '' };
+  const m = /^#clock(?:=([\w-]+))?(?:&b=([^&]+))?/.exec(h);
+  return { open: !!m, code: m?.[1] || '', branch: m?.[2] ? decodeURIComponent(m[2]) : '' };
 };
 
 /**
@@ -35,7 +35,14 @@ export const readClockHash = (): { open: boolean; code: string } => {
  * proves it is at the shop (GPS inside the area and/or the shop's live QR).
  */
 export const MobileClockPage: React.FC<{ code: string; openedAt: number; onClose: () => void }> = ({ code, openedAt, onClose }) => {
-  const { staffMembers, shifts, addShift, updateShift, settings } = usePOS();
+  const { staffMembers, shifts, addShift, updateShift, settings, currentBranch, branches, setCurrentBranch, firebaseSyncState } = usePOS();
+  // The QR names the shop's branch: follow it, so the settings and staff of that branch load
+  const qrBranch = readClockHash().branch;
+  useEffect(() => {
+    if (!qrBranch || qrBranch === currentBranch.id) return;
+    const b = branches.find(x => x.id === qrBranch);
+    if (b) setCurrentBranch(b);
+  }, [qrBranch, currentBranch.id, branches, setCurrentBranch]);
   const cfg = attendanceOf(settings.attendance);
   const [staffId, setStaffId] = useState('');
   const [pin, setPin] = useState('');
@@ -146,7 +153,19 @@ export const MobileClockPage: React.FC<{ code: string; openedAt: number; onClose
             <Loader2 className="w-4 h-4 animate-spin" /> กำลังโหลดการตั้งค่าร้าน...
           </div>
         ) : cfg.mode === 'off' ? (
-          <div className="p-4 rounded-2xl bg-stone-900 border border-stone-800 text-sm">ร้านยังไม่เปิดให้ลงเวลาด้วยมือถือ ลงเวลาที่เครื่องของร้าน</div>
+          <div className="p-4 rounded-2xl bg-stone-900 border border-stone-800 text-sm space-y-3">
+            <p>ยังไม่พบการตั้งค่าลงเวลาด้วยมือถือของร้าน</p>
+            {/* What this phone sees, so the shop can tell why */}
+            <ul className="text-[12px] text-stone-400 space-y-0.5">
+              <li>บัญชีร้าน: {signedIn ? user?.email : 'ยังไม่ได้เชื่อม'}</li>
+              <li>สาขา: {currentBranch.name}{qrBranch && qrBranch !== currentBranch.id ? ' (ไม่ตรงกับ QR)' : ''}</li>
+              <li>คลาวด์: {firebaseSyncState.status === 'connected' ? 'เชื่อมต่อแล้ว' : firebaseSyncState.status === 'error' ? `ไม่ได้ซิงค์ (${firebaseSyncState.errorMessage || '-'})` : firebaseSyncState.status === 'offline' ? 'ออฟไลน์' : 'กำลังเชื่อม'}</li>
+            </ul>
+            <p className="text-[12px] text-stone-400">
+              ถ้าร้านเปิดใช้แล้ว: ให้เจ้าของเปิดหน้าตั้งค่าลงเวลาบนเครื่องที่ขึ้น “ซิงค์คลาวด์” แล้วกดเลือกโหมดอีกครั้ง จากนั้นกด “ลองใหม่”
+            </p>
+            <button type="button" onClick={() => window.location.reload()} className="w-full h-11 rounded-xl border border-stone-600 font-bold">ลองใหม่</button>
+          </div>
         ) : (
           <>
             <div className="flex flex-wrap gap-2 text-xs">
