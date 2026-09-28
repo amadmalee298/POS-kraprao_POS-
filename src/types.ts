@@ -494,6 +494,8 @@ export interface StaffMember {
   monthlySalary?: number; // THB per month
   /** Social security (ประกันสังคม) is taken from the pay */
   socialSecurity?: boolean;
+  /** Overtime is paid (missing = yes); off = hours past the shift earn no OT rate */
+  otEnabled?: boolean;
 }
 
 /** A bonus or deduction for one person in one month (e.g. ค่าเบิกล่วงหน้า) */
