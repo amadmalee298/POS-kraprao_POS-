@@ -18,8 +18,16 @@ import {
   Settings,
   Database,
   History,
-  Flame as FlameIcon
+  Flame as FlameIcon,
+  Clock,
+  CalendarDays,
+  Wallet,
+  KeyRound,
+  RefreshCw,
+  ShieldAlert,
+  HardDrive
 } from 'lucide-react';
+import { requestSettingsTab, SettingsTab } from '../utils/settingsNav';
 import { usePOS } from '../context/POSContext';
 import { ActiveTab } from '../types';
 import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
@@ -34,8 +42,12 @@ export const SidebarDrawer: React.FC = () => {
     ingredients,
     orders,
     currentBranch,
-    settings
+    settings,
+    isOffline,
+    forceOfflineMode,
+    firebaseSyncState
   } = usePOS();
+  const cloudStatus = isOffline || forceOfflineMode ? 'offline' : firebaseSyncState.status;
 
   const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
 
@@ -45,6 +57,17 @@ export const SidebarDrawer: React.FC = () => {
   const pendingKdsCount = orders.filter(
     o => o.branchId === currentBranch.id && (o.status === 'pending' || o.status === 'cooking')
   ).length;
+
+  const settingsItems: { tab: SettingsTab; label: string; icon: React.ElementType; highlight?: boolean }[] = [
+    { tab: 'timeclock', label: 'ลงเวลาเข้า-ออกงาน (PIN)', icon: Clock, highlight: true },
+    { tab: 'shifts', label: 'เปิด-ปิดกะ & ลิ้นชักเงินสด', icon: Wallet },
+    { tab: 'scheduling', label: 'ตารางงาน & เงินเดือน', icon: CalendarDays },
+    { tab: 'pins', label: 'รหัส PIN & สิทธิ์พนักงาน', icon: KeyRound },
+    { tab: 'general', label: 'ตั้งค่าร้านและสาขา', icon: Settings },
+    { tab: 'sync', label: 'ตั้งค่าการซิงค์ข้อมูล', icon: RefreshCw },
+    { tab: 'security_logs', label: 'ประวัติความปลอดภัย', icon: ShieldAlert },
+    { tab: 'backup', label: 'สำรอง & กู้คืนข้อมูล', icon: HardDrive }
+  ];
 
   const menuItemsList: {
     id: ActiveTab;
@@ -72,7 +95,6 @@ export const SidebarDrawer: React.FC = () => {
     { id: 'order_history', label: 'ประวัติออเดอร์และใบเสร็จ (Order History)', icon: History },
     { id: 'crm', label: 'สมาชิก CRM & คูปอง', icon: Users },
     { id: 'line_notify', label: 'แจ้งเตือน Line/Telegram', icon: BellRing },
-    { id: 'settings', label: 'ตั้งค่าร้านและสาขาพ่วง', icon: Settings }
   ];
 
   return (
@@ -117,7 +139,7 @@ export const SidebarDrawer: React.FC = () => {
         {/* Section Label */}
         <div className="px-5 py-2.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
           <span>คุมบริหารสาขา</span>
-          <span className="text-[10px] text-slate-500 font-mono">14 ฟังก์ชัน</span>
+          <span className="text-[10px] text-slate-500 font-mono">{menuItemsList.length + settingsItems.length} ฟังก์ชัน</span>
         </div>
 
         {/* Google Sheets Quick Sync Card */}
@@ -186,6 +208,28 @@ export const SidebarDrawer: React.FC = () => {
               </button>
             );
           })}
+
+          {/* Staff & settings: each part of the settings page is one tap away */}
+          <div className="pt-3 pb-1 px-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">พนักงาน & ตั้งค่า</div>
+          {settingsItems.map(item => {
+            const IconComponent = item.icon;
+            return (
+              <button
+                key={item.tab}
+                onClick={() => {
+                  requestSettingsTab(item.tab);
+                  setActiveTab('settings');
+                  setIsDrawerOpen(false);
+                }}
+                className={`w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition text-left group ${
+                  item.highlight ? 'text-emerald-300 hover:bg-emerald-900/30' : 'text-slate-300 hover:bg-slate-800/60 hover:text-slate-100'
+                }`}
+              >
+                <IconComponent className={`w-4 h-4 shrink-0 ${item.highlight ? 'text-emerald-400' : 'text-slate-400 group-hover:text-slate-200'}`} />
+                <span className="truncate">{item.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Drawer Footer Status */}
@@ -195,9 +239,18 @@ export const SidebarDrawer: React.FC = () => {
               <Database className="w-3.5 h-3.5 text-slate-500" />
               <span>ฐานข้อมูลร่วม</span>
             </span>
-            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>เชื่อมต่อ</span>
+            {/* The real cloud state (same as the sync button in the header) */}
+            <span
+              className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full border text-[10px] font-bold ${
+                cloudStatus === 'connected'
+                  ? 'bg-emerald-950/60 border-emerald-500/30 text-emerald-400'
+                  : cloudStatus === 'error'
+                  ? 'bg-rose-950/60 border-rose-500/30 text-rose-300'
+                  : 'bg-amber-950/60 border-amber-500/30 text-amber-300'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${cloudStatus === 'connected' ? 'bg-emerald-400' : cloudStatus === 'error' ? 'bg-rose-400' : 'bg-amber-400'}`} />
+              <span>{cloudStatus === 'connected' ? 'เชื่อมต่อ' : cloudStatus === 'error' ? 'ไม่ได้ซิงค์' : cloudStatus === 'offline' ? 'ออฟไลน์' : 'กำลังเชื่อม'}</span>
             </span>
           </div>
 
