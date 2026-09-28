@@ -17,7 +17,7 @@ export const attendanceOf = (a?: Partial<AttendanceSettings>): AttendanceSetting
 
 /** The shop's QR for clocking in: show it on the shop tablet, or print it and stick it up */
 export const ShopClockQR: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const { settings } = usePOS();
+  const { settings, currentBranch } = usePOS();
   const secret = settings.attendance?.qrSecret || '';
   const [img, setImg] = useState('');
 
@@ -25,14 +25,15 @@ export const ShopClockQR: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     let stopped = false;
     (async () => {
       if (!secret) return;
-      const url = `${window.location.origin}${window.location.pathname}#clock=${await shopQrCode(secret)}`;
+      // The branch travels in the QR, so a phone set to another branch reads the right settings
+      const url = `${window.location.origin}${window.location.pathname}#clock=${await shopQrCode(secret)}&b=${encodeURIComponent(currentBranch.id)}`;
       const data = await QRCode.toDataURL(url, { width: 720, margin: 1 });
       if (!stopped) setImg(data);
     })();
     return () => {
       stopped = true;
     };
-  }, [secret]);
+  }, [secret, currentBranch.id]);
 
   const print = () => {
     const w = window.open('', '_blank', 'width=600,height=800');

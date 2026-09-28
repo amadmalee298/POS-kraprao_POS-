@@ -495,6 +495,19 @@ export const INITIAL_SETTINGS: SystemSettings = {
 
 export const INITIAL_WASTE_LOGS: WasteLog[] = [];
 
+/**
+ * Example staff shipped with earlier versions. They are removed from every device (and the cloud)
+ * unless the shop has renamed them, i.e. made them its own.
+ */
+const SAMPLE_STAFF_NAMES: Record<string, string> = {
+  'staff-1': 'เชฟวิชัย (หัวหน้าเชฟ)',
+  'staff-2': 'กุ๊กต้น (ผู้ช่วยเชฟกระทะร้อน)',
+  'staff-3': 'คุณนภา (ผู้จัดการสาขา)',
+  'staff-4': 'น้องมายด์ (แคชเชียร์/การเงิน)',
+  'staff-5': 'น้องแพรว (พนักงานต้อนรับ/เสิร์ฟ)'
+};
+export const isSampleStaff = (s: { id: string; name: string }): boolean => SAMPLE_STAFF_NAMES[s.id] !== undefined && SAMPLE_STAFF_NAMES[s.id] === s.name;
+
 export const INITIAL_STAFF_MEMBERS: StaffMember[] = [
   {
     id: 'staff-ahmad',
@@ -531,80 +544,6 @@ export const INITIAL_STAFF_MEMBERS: StaffMember[] = [
       canAccessPOS: true,
       canAccessKDS: true
     }
-  },
-  {
-    id: 'staff-1',
-    name: 'เชฟวิชัย (หัวหน้าเชฟ)',
-    role: 'เชฟใหญ่',
-    hourlyRate: 120,
-    otRateMultiplier: 1.5,
-    phone: '081-999-8811',
-    branchId: 'branch-siam',
-    status: 'active',
-    pin: '1111',
-    permissions: { canAccessKDS: true, canAccessInventory: true, canEditRecipe: true }
-  },
-  {
-    id: 'staff-2',
-    name: 'กุ๊กต้น (ผู้ช่วยเชฟกระทะร้อน)',
-    role: 'ผู้ช่วยกุ๊ก',
-    hourlyRate: 85,
-    otRateMultiplier: 1.5,
-    phone: '082-777-6622',
-    branchId: 'branch-siam',
-    status: 'active',
-    pin: '2222',
-    permissions: { canAccessKDS: true, canAccessInventory: true }
-  },
-  {
-    id: 'staff-3',
-    name: 'คุณนภา (ผู้จัดการสาขา)',
-    role: 'ผู้จัดการ',
-    hourlyRate: 150,
-    otRateMultiplier: 1.5,
-    phone: '089-111-2233',
-    branchId: 'branch-siam',
-    status: 'active',
-    pin: '5555',
-    permissions: {
-      canAccessPOS: true,
-      canAccessKDS: true,
-      canAccessInventory: true,
-      canAccessAccounting: true,
-      canAccessSettings: true,
-      canVoidOrder: true,
-      canGiveDiscount: true,
-      canEditRecipe: true
-    }
-  },
-  {
-    id: 'staff-4',
-    name: 'น้องมายด์ (แคชเชียร์/การเงิน)',
-    role: 'แคชเชียร์',
-    hourlyRate: 75,
-    otRateMultiplier: 1.5,
-    phone: '083-444-5566',
-    branchId: 'branch-siam',
-    status: 'active',
-    pin: '0000',
-    permissions: {
-      canAccessPOS: true,
-      canAccessKDS: true,
-      canGiveDiscount: true,
-      canVoidOrder: true
-    }
-  },
-  {
-    id: 'staff-5',
-    name: 'น้องแพรว (พนักงานต้อนรับ/เสิร์ฟ)',
-    role: 'พนักงานเสิร์ฟ',
-    hourlyRate: 65,
-    otRateMultiplier: 1.5,
-    phone: '084-555-6677',
-    branchId: 'branch-siam',
-    status: 'active',
-    pin: '4444',
-    permissions: { canAccessPOS: true, canAccessKDS: true }
   }
 ];
 
