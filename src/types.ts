@@ -231,7 +231,10 @@ export interface IssueUnit {
   id: string;
   name: string; // e.g. ข้าวสวย
   unitLabel: string; // e.g. กล่อง
-  inputs: { ingredientId: string; quantity: number }[]; // per 1 unit
+  /** Follow this menu item's or add-on's recipe (kept up to date with the recipe) */
+  source?: { kind: 'menu' | 'addon'; id: string };
+  /** Extra items per 1 unit on top of the recipe (e.g. the box), or the whole unit when there is no recipe */
+  inputs: { ingredientId: string; quantity: number }[];
 }
 
 export interface StockAdjustmentLog {
