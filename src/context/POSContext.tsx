@@ -291,6 +291,8 @@ interface POSContextType {
     updatedMenuPrices?: Record<string, number>
   ) => void;
   addStockLot: (lot: Omit<StockLot, 'id'>) => void;
+  /** A new ingredient that arrives with its first purchase: created with that stock and a receiving entry in the history */
+  receiveNewIngredient: (ingredient: Omit<Ingredient, 'id' | 'currentStock'>, quantity: number, note: string) => Ingredient;
 
   // Waste Log operations
   wasteLogs: WasteLog[];
@@ -3571,6 +3573,35 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ]);
   };
 
+  const receiveNewIngredient = (ingData: Omit<Ingredient, 'id' | 'currentStock'>, quantity: number, note: string): Ingredient => {
+    // Created with the stock already in it: moveStock cannot see an ingredient added in the same click
+    const qty = Math.max(0, quantity);
+    const ing = addIngredient({ ...ingData, currentStock: qty });
+    if (qty > 0) {
+      const log: StockAdjustmentLog = {
+        id: `adj-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        ingredientId: ing.id,
+        ingredientName: ing.name,
+        previousStock: 0,
+        newStock: qty,
+        changeQty: qty,
+        unit: ing.unit,
+        reason: 'restock',
+        notes: note,
+        userName: currentUser?.name || 'ผู้ใช้งานระบบ',
+        userRole: currentUser?.role || 'staff',
+        timestamp: new Date().toISOString()
+      };
+      setStockAdjustmentLogs(prev => [log, ...prev]);
+      if (isFirebaseAvailable() && !effectiveOffline) {
+        syncStockAdjustmentToFirestore(log, currentBranch).catch(console.warn);
+      } else {
+        pendingStockLogsRef.current.push(log);
+      }
+    }
+    return ing;
+  };
+
   // Waste Log operations
   const addWasteLog = (logData: Omit<WasteLog, 'id'>) => {
     const newLog: WasteLog = {
@@ -4219,6 +4250,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateIngredientStock,
         updateIngredientPriceAndRecalculate,
         addStockLot,
+        receiveNewIngredient,
         wasteLogs,
         addWasteLog,
         deleteWasteLog,

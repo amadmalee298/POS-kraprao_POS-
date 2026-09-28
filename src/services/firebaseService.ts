@@ -34,6 +34,9 @@ import { isStubOrderDoc } from '../utils/orderUtils';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem, CategoryItem, AddOnOption, SystemSettings } from '../types';
 
+/** Stock types saved with an ingredient (see utils/stockTypes) */
+const STOCK_TYPE_IDS = ['inventory', 'supplies', 'equipment'];
+
 export interface CentralBranchLiveStats {
   branchId: string;
   branchName: string;
@@ -1237,7 +1240,8 @@ export async function fetchBranchInventoryFromFirestore(branchId: string = 'bran
             barcode: data.barcode || '',
             packageUnit: data.packageUnit || undefined,
             packageSize: typeof data.packageSize === 'number' ? data.packageSize : undefined,
-            isFrequent: !!data.isFrequent
+            isFrequent: !!data.isFrequent,
+            stockType: STOCK_TYPE_IDS.includes(data.stockType) ? data.stockType : undefined
           });
         }
       });
@@ -1267,7 +1271,8 @@ export async function fetchBranchInventoryFromFirestore(branchId: string = 'bran
               barcode: data.barcode || '',
               packageUnit: data.packageUnit || undefined,
               packageSize: typeof data.packageSize === 'number' ? data.packageSize : undefined,
-              isFrequent: !!data.isFrequent
+              isFrequent: !!data.isFrequent,
+              stockType: STOCK_TYPE_IDS.includes(data.stockType) ? data.stockType : undefined
             });
           }
         });
@@ -1327,6 +1332,7 @@ export async function syncIngredientToFirestore(
       packageUnit: ingredient.packageUnit || null,
       packageSize: sanitizedPkgSize,
       isFrequent: !!ingredient.isFrequent,
+      stockType: ingredient.stockType || null,
       branchId,
       branchName,
       lastUpdated: nowIso,
@@ -2270,7 +2276,8 @@ export function subscribeToBranchInventory(
           barcode: data.barcode || '',
           packageUnit: data.packageUnit || undefined,
           packageSize: typeof data.packageSize === 'number' ? data.packageSize : undefined,
-          isFrequent: !!data.isFrequent
+          isFrequent: !!data.isFrequent,
+          stockType: STOCK_TYPE_IDS.includes(data.stockType) ? data.stockType : undefined
         });
       });
       onUpdate(ings, removedIds);

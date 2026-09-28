@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType } from '../../utils/stockTypes';
 import {
   PackageCheck,
   AlertTriangle,
@@ -35,7 +36,7 @@ import {
   Star
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { Ingredient, StockLot } from '../../types';
+import { Ingredient, StockLot, StockType } from '../../types';
 import { AIInventoryForecastPanel } from './AIInventoryForecastPanel';
 import { canonicalUnit, effectiveUnitCost } from '../../utils/recipeUtils';
 import { buildStockMovements, salesUsageByDay, withRunningBalance } from '../../utils/stockHistory';
@@ -114,6 +115,7 @@ export const InventoryView: React.FC = () => {
   const [editIngUnitCostInput, setEditIngUnitCostInput] = useState<string>('0');
   const [editIngPackCostInput, setEditIngPackCostInput] = useState<string>('');
   const [editIngCat, setEditIngCat] = useState<string>('meat');
+  const [editIngStockType, setEditIngStockType] = useState<StockType | ''>('');
   const [editIngBarcode, setEditIngBarcode] = useState('');
   const [editIngPackageUnit, setEditIngPackageUnit] = useState('');
   const [editIngPackageSize, setEditIngPackageSize] = useState<string>('');
@@ -129,6 +131,9 @@ export const InventoryView: React.FC = () => {
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  // Stock, supplies or equipment (each is accounted for differently)
+  const [stockTypeFilter, setStockTypeFilter] = useState<StockType | 'all'>('all');
+  const stockTypeTotals = useMemo(() => stockValueByType(ingredients), [ingredients]);
   const [onlyLowStock, setOnlyLowStock] = useState(false);
   const [selectedIngredientFilter, setSelectedIngredientFilter] = useState<string>('all');
   const [txTypeFilter, setTxTypeFilter] = useState<'all' | 'IN' | 'OUT' | 'ADJUST'>('all');
@@ -358,8 +363,9 @@ export const InventoryView: React.FC = () => {
     .filter(ing => {
       const matchesSearch = ing.name.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesCat = categoryFilter === 'all' || ing.category === categoryFilter;
+      const matchesType = stockTypeFilter === 'all' || stockTypeOf(ing) === stockTypeFilter;
       const matchesLow = !onlyLowStock || ing.currentStock <= ing.minStockAlert;
-      return matchesSearch && matchesCat && matchesLow;
+      return matchesSearch && matchesCat && matchesType && matchesLow;
     })
     .sort((a, b) => {
       // Frequent / pinned ingredients first
@@ -582,6 +588,7 @@ export const InventoryView: React.FC = () => {
     setEditIngUnitCost(initialCost);
     setEditIngUnitCostInput(initialCost.toString());
     setEditIngCat(ing.category);
+    setEditIngStockType(ing.stockType || '');
     setEditIngBarcode(ing.barcode || '');
     const isLiquid = ing.unit === 'ml';
     const isWeight = ing.unit === 'g';
@@ -650,6 +657,7 @@ export const InventoryView: React.FC = () => {
       minStockAlert: editIngMinAlert,
       unitCost: finalUnitCost,
       category: editIngCat,
+      stockType: editIngStockType || undefined,
       barcode: editIngBarcode.trim() || undefined,
       packageUnit: editIngPackageUnit.trim() || undefined,
       packageSize: !isNaN(pkgSizeNum) && pkgSizeNum > 0 ? pkgSizeNum : undefined
@@ -957,6 +965,32 @@ export const InventoryView: React.FC = () => {
         {/* TAB 1: วัตถุดิบคงเหลือปัจจุบัน */}
         {activeTab === 'current' && (
           <div className="space-y-4">
+            {/* Kinds of stock */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2" role="tablist" aria-label="ประเภทสต็อก">
+              {([['all', 'ทั้งหมด', ingredients.length, null, 'รวมทุกประเภท'] as const, ...STOCK_TYPES.map(t => [t.id, t.label, stockTypeTotals[t.id].items, stockTypeTotals[t.id].value, t.hint] as const)]).map(
+                ([id, label, count, value, hint]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={stockTypeFilter === id}
+                    onClick={() => setStockTypeFilter(id as StockType | 'all')}
+                    title={hint}
+                    className={`p-3 rounded-2xl border text-left transition ${
+                      stockTypeFilter === id ? 'bg-orange-500/15 border-orange-500 text-orange-100' : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="text-xs font-bold">{label}</div>
+                    <div className="text-[11px] text-slate-400">
+                      {count} รายการ{value !== null ? ` · ฿${value.toLocaleString('th-TH', { maximumFractionDigits: 0 })}` : ''}
+                    </div>
+                  </button>
+                )
+              )}
+            </div>
+            {stockTypeFilter !== 'all' && (
+              <p className="text-[11px] text-slate-400 -mt-2">{STOCK_TYPES.find(t => t.id === stockTypeFilter)?.hint}</p>
+            )}
             {/* Filter Bar */}
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300 font-bold">
@@ -2927,6 +2961,23 @@ export const InventoryView: React.FC = () => {
                     ))}
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1 text-xs">ประเภทบัญชี</label>
+                <select
+                  value={editIngStockType}
+                  onChange={e => setEditIngStockType(e.target.value as StockType | '')}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 font-medium focus:outline-none focus:border-sky-500"
+                >
+                  <option value="">ตามหมวดหมู่ ({stockTypeLabel(stockTypeOf({ category: editIngCat }))})</option>
+                  {STOCK_TYPES.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">{STOCK_TYPES.find(t => t.id === (editIngStockType || stockTypeOf({ category: editIngCat })))?.hint}</p>
               </div>
 
               {editIngUnit === 'custom' && (

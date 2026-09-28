@@ -44,13 +44,80 @@ export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
   salary: 'เงินเดือนและค่าแรง',
   rent: 'ค่าเช่า',
   utilities: 'ค่าน้ำ ค่าไฟ ค่าแก๊ส',
-  supplies: 'วัสดุสิ้นเปลืองและบรรจุภัณฑ์',
+  supplies: 'วัสดุสิ้นเปลือง',
+  equipment: 'ซื้ออุปกรณ์ (สินทรัพย์)',
   marketing: 'โฆษณาและการตลาด',
   other: 'ค่าใช้จ่ายอื่น'
 };
 
-/** Selling and administrative expense lines, in statement order */
+/**
+ * Selling and administrative expense lines, in statement order. Not here: ingredient purchases
+ * (stock, charged as cost of sales) and equipment purchases (assets, charged as depreciation).
+ */
 export const SGA_CATEGORIES: ExpenseCategory[] = ['salary', 'rent', 'utilities', 'supplies', 'marketing', 'other'];
+
+export const DEFAULT_USEFUL_LIFE_YEARS = 5;
+
+export interface DepreciationOptions {
+  /** Straight-line useful life of equipment, years (default 5) */
+  usefulLifeYears?: number;
+  /** Depreciation is charged up to this day (YYYY-MM-DD, default today) */
+  today?: string;
+}
+
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+interface EquipmentItem {
+  expense: Expense;
+  cost: number;
+  start: Date;
+  lifeDays: number;
+}
+
+function equipmentItems(expenses: Expense[], ownBranch: (id?: string) => boolean, vatRegistered: boolean, opts: DepreciationOptions): EquipmentItem[] {
+  const years = opts.usefulLifeYears && opts.usefulLifeYears > 0 ? opts.usefulLifeYears : DEFAULT_USEFUL_LIFE_YEARS;
+  return expenses
+    .filter(e => e.category === 'equipment' && ownBranch(e.branchId) && /^\d{4}-\d{2}-\d{2}/.test(e.date || ''))
+    .map(e => {
+      const [y, m, d] = e.date.slice(0, 10).split('-').map(Number);
+      return { expense: e, cost: expenseCost(e, vatRegistered), start: new Date(y, m - 1, d), lifeDays: Math.round(years * 365) };
+    });
+}
+
+/**
+ * Straight-line depreciation of equipment bought, per day from the purchase date (IAS 16),
+ * for the days that pass `inPeriod`, up to today.
+ */
+function depreciationFor(items: EquipmentItem[], inPeriod: (date: string) => boolean, today: string): number {
+  let total = 0;
+  for (const it of items) {
+    if (it.cost <= 0) continue;
+    const perDay = it.cost / it.lifeDays;
+    const day = new Date(it.start);
+    for (let i = 0; i < it.lifeDays; i++) {
+      const key = ymd(day);
+      if (key > today) break;
+      // Local noon: the same calendar day for every date parser in the app
+      if (inPeriod(`${key}T12:00:00`)) total += perDay;
+      day.setDate(day.getDate() + 1);
+    }
+  }
+  return total;
+}
+
+/** Equipment at cost, depreciation to date and book value (for the balance sheet) */
+export function equipmentBookValue(
+  expenses: Expense[],
+  branchId: string,
+  vatRegistered: boolean,
+  opts: DepreciationOptions = {}
+): { cost: number; accumulated: number; net: number; count: number } {
+  const own = (id?: string) => branchId === 'all' || !id || id === branchId;
+  const items = equipmentItems(expenses, own, vatRegistered, opts);
+  const cost = items.reduce((s, i) => s + i.cost, 0);
+  const accumulated = Math.min(cost, depreciationFor(items, () => true, opts.today || ymd(new Date())));
+  return { cost: round2(cost), accumulated: round2(accumulated), net: round2(cost - accumulated), count: items.length };
+}
 
 export interface ProfitAndLoss {
   // Revenue from sales and services
@@ -65,7 +132,9 @@ export interface ProfitAndLoss {
   grossProfit: number;
   // Selling and administrative expenses, before VAT when it can be claimed
   expenses: Record<ExpenseCategory, number>;
-  sga: number; // excludes ingredient purchases: what was sold is already in COGS
+  /** Depreciation of equipment for the period (part of selling and admin expenses) */
+  depreciation: number;
+  sga: number; // excludes ingredient and equipment purchases; includes depreciation
   operatingProfit: number;
   otherIncome: number;
   profitBeforeTax: number;
@@ -90,6 +159,7 @@ const emptyExpenses = (): Record<ExpenseCategory, number> => ({
   utilities: 0,
   raw_material: 0,
   supplies: 0,
+  equipment: 0,
   marketing: 0,
   other: 0
 });
@@ -105,7 +175,8 @@ export function monthOf(date: string): string {
 export function buildProfitAndLoss(
   data: { orders: Order[]; expenses: Expense[]; incomes: OtherIncome[] },
   filter: BookFilter,
-  vatRegistered: boolean
+  vatRegistered: boolean,
+  depreciationOptions: DepreciationOptions = {}
 ): ProfitAndLoss {
   const inPeriod = filter.inPeriod || (() => true);
   const all = filter.branchId === 'all';
@@ -153,7 +224,12 @@ export function buildProfitAndLoss(
 
   const salesRevenue = storeSales + deliverySales + cateringSales;
   const grossProfit = salesRevenue - cogs;
-  const sga = SGA_CATEGORIES.reduce((sum, c) => sum + expenses[c], 0);
+  const depreciation = depreciationFor(
+    equipmentItems(data.expenses, ownBranch, vatRegistered, depreciationOptions),
+    inPeriod,
+    depreciationOptions.today || ymd(new Date())
+  );
+  const sga = SGA_CATEGORIES.reduce((sum, c) => sum + expenses[c], 0) + depreciation;
   const operatingProfit = grossProfit - sga;
   const profitBeforeTax = operatingProfit + otherIncome;
   (Object.keys(expenses) as ExpenseCategory[]).forEach(k => (expenses[k] = round2(expenses[k])));
@@ -167,6 +243,7 @@ export function buildProfitAndLoss(
     estimatedCogs: round2(estimatedCogs),
     grossProfit: round2(grossProfit),
     expenses,
+    depreciation: round2(depreciation),
     sga: round2(sga),
     operatingProfit: round2(operatingProfit),
     otherIncome: round2(otherIncome),
@@ -239,6 +316,8 @@ export interface CashFlowStatement {
   receiptsFromReceivables: number;
   paidExpenses: number; // recorded expenses including ingredient purchases, VAT included
   paidPayables: number;
+  /** Equipment bought through expenses (investing) */
+  equipmentPaid: number;
   operating: number;
   investing: number;
   financing: number;
@@ -266,7 +345,10 @@ export function buildCashFlow(data: CashFlowData, filter: BookFilter): CashFlowS
     o => o.grandTotal || 0
   );
   const receiptsOther = sum(data.incomes.filter(i => own(i.branchId) && inPeriod(i.date)), i => i.amount || 0);
-  const paidExpenses = sum(data.expenses.filter(e => own(e.branchId) && inPeriod(e.date)), e => e.amount || 0);
+  const periodExpenses = data.expenses.filter(e => own(e.branchId) && inPeriod(e.date));
+  // Equipment bought is an investment, not an operating payment
+  const paidExpenses = sum(periodExpenses.filter(e => e.category !== 'equipment'), e => e.amount || 0);
+  const equipmentPaid = sum(periodExpenses.filter(e => e.category === 'equipment'), e => e.amount || 0);
   const paymentsIn = (list: CashFlowData['receivables']) =>
     sum(list.filter(x => own(x.branchId)), x => sum((x.payments || []).filter(p => inPeriod(p.date)), p => p.amount || 0));
   const receiptsFromReceivables = paymentsIn(data.receivables);
@@ -274,10 +356,10 @@ export function buildCashFlow(data: CashFlowData, filter: BookFilter): CashFlowS
   const entries = data.entries.filter(e => own(e.branchId) && inPeriod(e.date));
   const net = (type: 'investing' | 'financing') =>
     sum(entries.filter(e => e.activityType === type), e => (e.flowType === 'inflow' ? e.amount : -e.amount));
-  const investingOut = sum(entries.filter(e => e.activityType === 'investing' && e.flowType === 'outflow'), e => e.amount);
+  const investingOut = sum(entries.filter(e => e.activityType === 'investing' && e.flowType === 'outflow'), e => e.amount) + equipmentPaid;
 
   const operating = receiptsFromSales + receiptsOther + receiptsFromReceivables - paidExpenses - paidPayables;
-  const investing = net('investing');
+  const investing = net('investing') - equipmentPaid;
   const financing = net('financing');
   return {
     receiptsFromSales: round2(receiptsFromSales),
@@ -285,6 +367,7 @@ export function buildCashFlow(data: CashFlowData, filter: BookFilter): CashFlowS
     receiptsFromReceivables: round2(receiptsFromReceivables),
     paidExpenses: round2(paidExpenses),
     paidPayables: round2(paidPayables),
+    equipmentPaid: round2(equipmentPaid),
     operating: round2(operating),
     investing: round2(investing),
     financing: round2(financing),

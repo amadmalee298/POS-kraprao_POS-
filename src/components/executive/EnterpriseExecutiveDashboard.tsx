@@ -1,6 +1,7 @@
 import { countsAsRevenue } from '../../utils/orderUtils';
 import { buildProfitAndLoss, EXPENSE_CATEGORY_LABELS, expenseCost, isVatRegistered, pct } from '../../utils/accounting';
 import { cartItemUnitCost } from '../../utils/recipeUtils';
+import { stockTypeOf, stockValueByType } from '../../utils/stockTypes';
 import { findProteinOption, effectiveUnitCost } from '../../utils/recipeUtils';
 import React, { useState, useMemo } from 'react';
 import {
@@ -310,20 +311,22 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   // Profit figures follow the accounting page: sales before VAT, cost of the dishes sold, selling
   // and admin expenses (ingredient purchases are stock, already in the cost of sales)
   const vatRegistered = isVatRegistered(settings);
+  const depreciationOptions = useMemo(() => ({ usefulLifeYears: settings.equipmentUsefulLifeYears }), [settings.equipmentUsefulLifeYears]);
   const localDay = (d: string) => (d ? getLocalDateStr(d) : '');
   const todayPL = useMemo(
     () =>
-      buildProfitAndLoss({ orders, expenses, incomes }, { branchId: selectedBranchId, inPeriod: d => localDay(d) === todayStr }, vatRegistered),
-    [orders, expenses, incomes, selectedBranchId, todayStr, vatRegistered]
+      buildProfitAndLoss({ orders, expenses, incomes }, { branchId: selectedBranchId, inPeriod: d => localDay(d) === todayStr }, vatRegistered, depreciationOptions),
+    [orders, expenses, incomes, selectedBranchId, todayStr, vatRegistered, depreciationOptions]
   );
   const periodPL = useMemo(
     () =>
       buildProfitAndLoss(
         { orders, expenses, incomes },
         { branchId: selectedBranchId, inPeriod: d => { const day = localDay(d); return (!startDate || day >= startDate) && (!endDate || day <= endDate); } },
-        vatRegistered
+        vatRegistered,
+        depreciationOptions
       ),
-    [orders, expenses, incomes, selectedBranchId, startDate, endDate, vatRegistered]
+    [orders, expenses, incomes, selectedBranchId, startDate, endDate, vatRegistered, depreciationOptions]
   );
 
   // Section 1 Core KPIs (Today Real Data)
@@ -688,11 +691,12 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   // -------------------------------------------------------------
   // 6. Food Cost Breakdown Data (Real from Inventory / Expenses)
   // -------------------------------------------------------------
+  const stockTypeValues = useMemo(() => stockValueByType(ingredients), [ingredients]);
   const foodCostPieData = useMemo(() => {
     const categoryTotals = new Map<string, number>();
     let totalStockValue = 0;
 
-    ingredients.forEach(ing => {
+    ingredients.filter(ing => stockTypeOf(ing) === 'inventory').forEach(ing => {
       const val = (ing.currentStock || 0) * effectiveUnitCost(ing);
       const cat =
         ingredientCategories.find(c => c.id === ing.category)?.name ||
@@ -1589,7 +1593,9 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
               <PieChartIcon className="w-4 h-4 text-orange-400" />
               <span>มูลค่าสต็อกวัตถุดิบ</span>
             </h3>
-            <p className="text-xs text-slate-400">สัดส่วนมูลค่าวัตถุดิบที่มีอยู่ในคลังแยกตามประเภท</p>
+            <p className="text-xs text-slate-400">
+              สินค้าคงเหลือ (วัตถุดิบและบรรจุภัณฑ์) แยกตามหมวด · วัสดุสิ้นเปลือง ฿{stockTypeValues.supplies.value.toLocaleString('th-TH')} และอุปกรณ์ในคลัง ฿{stockTypeValues.equipment.value.toLocaleString('th-TH')} แยกไว้ต่างหาก
+            </p>
           </div>
 
           <div className="bg-slate-950 px-3 py-1.5 rounded-2xl border border-slate-800 text-xs">

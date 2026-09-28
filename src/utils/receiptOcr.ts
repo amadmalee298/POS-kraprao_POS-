@@ -8,6 +8,7 @@
 export type ReceiptExpenseCategory =
   | 'raw_material'
   | 'supplies'
+  | 'equipment'
   | 'rent'
   | 'salary'
   | 'utilities'
@@ -48,6 +49,7 @@ export interface VerifiedReceiptData {
 export const RECEIPT_CATEGORIES: ReceiptExpenseCategory[] = [
   'raw_material',
   'supplies',
+  'equipment',
   'rent',
   'salary',
   'utilities',
@@ -118,7 +120,7 @@ export function buildReceiptOcrPrompt(todayIso: string): string {
 5. ยอดเงิน: subtotal (ถ้ามีพิมพ์), discount, vatAmount และ amount = "ยอดสุทธิที่ต้องชำระจริง" (Grand Total/ยอดสุทธิ/Net) — ไม่ใช่ "เงินสดที่รับมา" หรือ "เงินทอน"
 6. includeVat = true เฉพาะเมื่อบิลแสดง VAT/ภาษีมูลค่าเพิ่มชัดเจน
 7. ตรวจทานตัวเอง: ผลรวม lineItems ควรเท่ากับ subtotal หรือ amount (หลังหักส่วนลด/บวก VAT แบบแยก) และ VAT 7% ของยอดที่รวม VAT แล้ว = amount × 7/107 ถ้าไม่ตรง ให้กลับไปอ่านตัวเลขในภาพใหม่อีกครั้ง
-8. category: raw_material = อาหาร/เนื้อสัตว์/ผัก/เครื่องปรุง/ของสด/ข้าว/ไข่; supplies = ของใช้สิ้นเปลือง/บรรจุภัณฑ์/กล่อง/ถุง/ทิชชู่/น้ำยาทำความสะอาด/อุปกรณ์; utilities = ค่าน้ำ/ไฟ/แก๊ส/อินเทอร์เน็ต; salary = ค่าแรง; rent = ค่าเช่า; marketing = โฆษณา; other = อื่นๆ
+8. category: raw_material = อาหาร/เนื้อสัตว์/ผัก/เครื่องปรุง/ของสด/ข้าว/ไข่ และบรรจุภัณฑ์ใส่อาหารขาย (กล่อง ถุง แก้ว ช้อนพลาสติก); supplies = ของใช้สิ้นเปลือง/ทิชชู่/น้ำยาทำความสะอาด/ถุงมือ/ถุงขยะ; equipment = อุปกรณ์และเครื่องใช้ที่ใช้งานได้นานเกิน 1 ปี (หม้อ กระทะ มีด เตา ตู้แช่ เครื่องปั่น โต๊ะ เก้าอี้); utilities = ค่าน้ำ/ไฟ/แก๊ส/อินเทอร์เน็ต; salary = ค่าแรง; rent = ค่าเช่า; marketing = โฆษณา; other = อื่นๆ
 9. title = สรุปสั้นๆ เช่น "ซื้อวัตถุดิบ - แม็คโคร"; note = สรุปสินค้าหลักที่ซื้อ
 10. confidenceScore 0-100 = ความมั่นใจจริงว่าตัวเลขทุกตัวถูกต้อง (ภาพเบลอ/เขียนมือ/บางส่วนขาด → ให้คะแนนต่ำลง)`;
 }

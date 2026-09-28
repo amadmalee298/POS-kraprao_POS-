@@ -171,7 +171,15 @@ export interface Ingredient {
   packageUnit?: string; // เช่น 'ขวด', 'ลัง', 'ถุง', 'แพ็ค', 'กล่อง', 'กระป๋อง'
   packageSize?: number; // เช่น 680 (1 packageUnit = 680 ของหน่วย unit หลัก เช่น 1 ขวด = 680 ml)
   isFrequent?: boolean; // รายการใช้บ่อย (หมุดปักให้อยู่ด้านบน)
+  /**
+   * What kind of stock this is (accounting): food and packaging sold with it are inventory
+   * (IAS 2), cleaning and kitchen consumables are supplies (expensed when bought), kitchen tools and
+   * machines are equipment (IAS 16). Missing = decided from the category.
+   */
+  stockType?: StockType;
 }
+
+export type StockType = 'inventory' | 'supplies' | 'equipment';
 
 export interface SmartAuditItem {
   ingredientId: string;
@@ -245,7 +253,7 @@ export interface WasteLog {
   reportedBy?: string;
 }
 
-export type ExpenseCategory = 'rent' | 'salary' | 'utilities' | 'raw_material' | 'supplies' | 'marketing' | 'other';
+export type ExpenseCategory = 'rent' | 'salary' | 'utilities' | 'raw_material' | 'supplies' | 'equipment' | 'marketing' | 'other';
 
 export type IncomeCategory = 'catering' | 'ad_sponsor' | 'recycling' | 'interest' | 'rental' | 'asset_sale' | 'subsidy' | 'delivery_subsidy' | 'other';
 
@@ -440,6 +448,8 @@ export interface SystemSettings {
   receiptUseMonospace?: boolean;
   receiptFooterNote?: string;
   merchantSettings?: MerchantConnectionSettings;
+  /** Years over which equipment bought is depreciated (straight line); default 5 */
+  equipmentUsefulLifeYears?: number;
   requirePinOnEveryLogin?: boolean; // บังคับใส่รหัสพนักงานทุกครั้งที่เข้าสู่ระบบ
   autoLockAfterPayment?: boolean; // ล็อคหน้าจออัตโนมัติเมื่อปิดบิลการขาย
   autoLockMinutes?: number; // ล็อคหน้าจออัตโนมัติเมื่อไม่มีการใช้งาน (0 = ปิด)

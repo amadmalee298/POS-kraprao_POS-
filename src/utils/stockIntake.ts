@@ -21,6 +21,9 @@ export interface IntakeRow {
   quantity: number; // in the ingredient's unit
   cost: number; // baht for this row
   lineAmount?: number; // the amount printed on the bill for this line, if any
+  billUnit?: string; // unit written on the bill (canonical), if any
+  /** Create this ingredient on approval (the shop has never stocked it) */
+  newIngredient?: { name: string; unit: string; category: string };
   /** The bill's unit could not be converted to the ingredient's unit: check the quantity */
   unitMismatch: boolean;
   selected: boolean;
@@ -54,7 +57,14 @@ export function quantityInName(name: string): { quantity?: number; unit?: string
   return { quantity: toNumber(m[1]), unit: canonicalUnit(m[2].replace(/\.$/, '')), name: name.replace(m[0], '').trim() };
 }
 
-const norm = (s: string) => (s || '').toLowerCase().replace(/[\s().,\-_/]|สด|แช่แข็ง|ตรา\S*/g, '');
+// Thai can be typed with the vowel and tone mark in either order (ก ุ ้ ง / ก ้ ุ ง): normalise, then
+// drop tone marks so both spellings of กุ้ง match
+const norm = (s: string) =>
+  (s || '')
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[\u0E47-\u0E4C]/g, '')
+    .replace(/[\s().,\-_/]|สด|แชแขง|ตรา\S*/g, '');
 
 /** The shop's ingredient a bill line most likely means, or null */
 export function matchIngredient(label: string, ingredients: Ingredient[]): Ingredient | null {
@@ -99,6 +109,7 @@ export function buildIntakeRows(items: BillItem[], ingredients: Ingredient[], to
       quantity: Math.round(qty * 1000) / 1000,
       cost: it.amount && it.amount > 0 ? it.amount : 0,
       lineAmount: it.amount && it.amount > 0 ? it.amount : 0,
+      billUnit: unit,
       unitMismatch,
       selected: !!ing && qty > 0
     };
@@ -111,14 +122,18 @@ export function buildIntakeRows(items: BillItem[], ingredients: Ingredient[], to
  * shared by the other selected rows in proportion to their value at the ingredient's current cost
  * (equally when that is unknown). Rows that are not selected cost nothing.
  */
+/** The row goes into stock: an existing ingredient, or a new one with a name */
+export const hasTarget = (r: Pick<IntakeRow, 'ingredientId' | 'newIngredient'>) => !!(r.ingredientId || r.newIngredient?.name.trim());
+
 export function allocateCosts<T extends IntakeRow & { lineAmount?: number }>(rows: T[], ingredients: Ingredient[], totalCost: number): T[] {
   const byId = new Map(ingredients.map(i => [i.id, i]));
-  const chosen = rows.filter(r => r.selected && r.ingredientId && r.quantity > 0);
+  const chosen = rows.filter(r => r.selected && hasTarget(r) && r.quantity > 0);
   const priced = chosen.filter(r => (r.lineAmount || 0) > 0);
   const unpriced = chosen.filter(r => !((r.lineAmount || 0) > 0));
   const rest = Math.max(0, totalCost - priced.reduce((s, r) => s + (r.lineAmount || 0), 0));
   const weightOf = (r: T) => r.quantity * effectiveUnitCost(byId.get(r.ingredientId) || {});
-  const weight = unpriced.reduce((s, r) => s + weightOf(r), 0);
+  // Value shares need a known cost for every row; otherwise share equally
+  const weight = unpriced.every(r => weightOf(r) > 0) ? unpriced.reduce((s, r) => s + weightOf(r), 0) : 0;
   return rows.map(r => {
     if (!chosen.includes(r)) return { ...r, cost: 0 };
     if ((r.lineAmount || 0) > 0) return { ...r, cost: r.lineAmount! };

@@ -49,3 +49,32 @@ describe('stock from a bill', () => {
     expect(rows[1]).toMatchObject({ ingredientId: '', selected: false, cost: 0 });
   });
 });
+
+describe('Thai spelling variants', () => {
+  it('matches กุ้ง typed with the tone mark before the vowel', () => {
+    const typedOtherOrder = 'กุ้ง';
+    expect(matchIngredient(typedOtherOrder, shop)?.id).toBe('shrimp');
+    expect(matchIngredient('กุง', [ing('s2', 'กุ้งแม่น้ำแกะเปลือก', 'g')])?.id).toBe('s2');
+  });
+});
+
+describe('frozen label', () => {
+  it('ignores แช่แข็ง when matching', () => {
+    expect(matchIngredient('กุ้งแช่แข็ง', [ing('x', 'กุ้ง', 'kg')])?.id).toBe('x');
+  });
+});
+
+describe('new ingredients on a bill', () => {
+  it('shares the cost equally when an item has no known cost yet', async () => {
+    const { allocateCosts } = await import('../stockIntake');
+    const rows = allocateCosts(
+      [
+        { key: 'a', label: 'กุ้ง', ingredientId: 'shrimp', quantity: 3, cost: 0, unitMismatch: false, selected: true },
+        { key: 'b', label: 'หอยแมลงภู่', ingredientId: '', newIngredient: { name: 'หอยแมลงภู่', unit: 'kg', category: 'seafood' }, quantity: 2, cost: 0, unitMismatch: false, selected: true }
+      ],
+      shop,
+      1000
+    );
+    expect(rows.map(r => r.cost)).toEqual([500, 500]);
+  });
+});

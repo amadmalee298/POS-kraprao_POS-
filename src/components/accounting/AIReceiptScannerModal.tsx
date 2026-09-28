@@ -1070,8 +1070,9 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
   };
 
   const categoryLabels: Record<ExpenseCategory, string> = {
-    raw_material: 'ซื้อวัตถุดิบ',
-    supplies: 'ซัพพลายใช้สอย/อุปกรณ์สิ้นเปลือง',
+    raw_material: 'ซื้อวัตถุดิบ/บรรจุภัณฑ์',
+    supplies: 'วัสดุสิ้นเปลือง',
+    equipment: 'ซื้ออุปกรณ์ (สินทรัพย์)',
     rent: 'ค่าเช่าสถานที่',
     salary: 'ค่าแรง/เงินเดือน',
     utilities: 'ค่าน้ำ/ค่าไฟ/แก๊ส',
@@ -1525,7 +1526,8 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
                       className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-100 font-bold"
                     >
                       <option value="raw_material">ซื้อวัตถุดิบ (Raw Material)</option>
-                      <option value="supplies">ซัพพลายใช้สอย / อุปกรณ์สิ้นเปลือง (Supplies & Consumables)</option>
+                      <option value="supplies">วัสดุสิ้นเปลือง (น้ำยา ทิชชู่ ถุงมือ ฯลฯ)</option>
+                      <option value="equipment">ซื้ออุปกรณ์ (บันทึกเป็นสินทรัพย์ คิดค่าเสื่อมราคา)</option>
                       <option value="rent">ค่าเช่าสถานที่ (Rent)</option>
                       <option value="salary">ค่าแรง/เงินเดือนพนักงาน (Salary)</option>
                       <option value="utilities">ค่าน้ำ/ค่าไฟ/ค่าแก๊ส (Utilities)</option>

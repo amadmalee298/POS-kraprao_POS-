@@ -129,7 +129,7 @@ export const captionTitle = (caption: string) =>
     .trim()
     .slice(0, 80);
 
-const EXPENSE_CATEGORIES: ExpenseCategory[] = ['rent', 'salary', 'utilities', 'raw_material', 'supplies', 'marketing', 'other'];
+const EXPENSE_CATEGORIES: ExpenseCategory[] = ['rent', 'salary', 'utilities', 'raw_material', 'supplies', 'equipment', 'marketing', 'other'];
 
 /** What the AI read, in the shape the approval screen edits */
 export function toPendingData(r: VerifiedReceiptData, fallbackDate: string): NonNullable<PendingReceipt['data']> {

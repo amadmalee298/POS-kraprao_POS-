@@ -156,3 +156,37 @@ describe('receivable status', () => {
     expect(withLiveStatus({ ...base, paidAmount: 100, remainingAmount: 0 }, '2026-09-21').status).toBe('paid');
   });
 });
+
+describe('equipment (IAS 16)', () => {
+  const fridge = expense({ id: 'eq1', category: 'equipment', title: 'ตู้แช่', date: '2026-01-01', amount: 18250, includeVat: false, vatAmount: 0, netAmount: 18250 });
+
+  it('is not an expense when bought; it is depreciated straight-line', () => {
+    const jan = buildProfitAndLoss(
+      { orders: [], expenses: [fridge], incomes: [] },
+      { branchId: 'b1', inPeriod: d => d.startsWith('2026-01') },
+      true,
+      { usefulLifeYears: 5, today: '2026-12-31' }
+    );
+    // 18,250 over 5 × 365 days = 10 a day; January has 31 days
+    expect(jan.expenses.equipment).toBe(18250);
+    expect(jan.depreciation).toBe(310);
+    expect(jan.sga).toBe(310);
+    expect(jan.profitBeforeTax).toBe(-310);
+  });
+
+  it('stops at today and keeps a book value', async () => {
+    const { equipmentBookValue } = await import('../accounting');
+    const bv = equipmentBookValue([fridge], 'b1', true, { usefulLifeYears: 5, today: '2026-01-10' });
+    expect(bv).toMatchObject({ cost: 18250, accumulated: 100, net: 18150, count: 1 });
+  });
+
+  it('is an investing outflow in the cash flow', () => {
+    const cf = buildCashFlow(
+      { orders: [], expenses: [fridge], incomes: [], receivables: [], payables: [], entries: [] },
+      { branchId: 'b1', inPeriod: d => d.startsWith('2026-01') }
+    );
+    expect(cf.operating).toBe(0);
+    expect(cf.investing).toBe(-18250);
+    expect(cf.equipmentPaid).toBe(18250);
+  });
+});
