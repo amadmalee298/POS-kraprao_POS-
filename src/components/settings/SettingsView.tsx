@@ -65,6 +65,42 @@ import { StaffSchedulingPanel } from './StaffSchedulingPanel';
 import { StaffPinClockTerminal } from './StaffPinClockTerminal';
 import { onSettingsTabRequest, SettingsTab, takePendingSettingsTab } from '../../utils/settingsNav';
 import { canOpenSettingsPart } from '../../utils/access';
+import { AttendanceSettingsPanel, ShopClockQR } from '../attendance/AttendanceSettingsPanel';
+import { needsQr, openMobileClock, terminalClockAllowed } from '../../utils/clock';
+
+/**
+ * The PIN terminal on the shop's own devices; with phone clocking on, other devices send people
+ * to the phone page instead (and any device can show the shop's live QR).
+ */
+const TimeclockEntry: React.FC = () => {
+  const { settings } = usePOS();
+  const [showQr, setShowQr] = useState(false);
+  const a = settings.attendance;
+  const qrButton = needsQr(a) && (
+    <button type="button" onClick={() => setShowQr(true)} className="h-11 px-4 rounded-xl bg-sky-600 text-white font-bold text-sm">
+      แสดง QR ลงเวลาของร้าน
+    </button>
+  );
+  return (
+    <>
+      {terminalClockAllowed(a) ? (
+        <>
+          {qrButton && <div className="flex justify-end">{qrButton}</div>}
+          <StaffPinClockTerminal />
+        </>
+      ) : (
+        <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 text-sm text-slate-300 space-y-3">
+          <p>ร้านเปิดให้ลงเวลาด้วยมือถือ เครื่องนี้ยังไม่ได้ตั้งเป็นเครื่องของร้าน จึงลงเวลาผ่านหน้ามือถือ (ตรวจ GPS / QR)</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={openMobileClock} className="h-11 px-4 rounded-xl bg-emerald-600 text-white font-bold">📱 ลงเวลาด้วยมือถือ</button>
+            {qrButton}
+          </div>
+        </div>
+      )}
+      {showQr && <ShopClockQR onClose={() => setShowQr(false)} />}
+    </>
+  );
+};
 import { CashShiftManagementPanel } from './CashShiftManagementPanel';
 import { SecurityLogPanel } from './SecurityLogPanel';
 import { QrPaymentOption, StaffMember, StaffPermissions } from '../../types';
@@ -1388,7 +1424,10 @@ export const SettingsView: React.FC = () => {
         ) : settingsTab === 'scheduling' ? (
           <StaffSchedulingPanel />
         ) : settingsTab === 'timeclock' ? (
-          <StaffPinClockTerminal />
+          <div className="space-y-4">
+            {permissions.canAccessSettings && <AttendanceSettingsPanel />}
+            <TimeclockEntry />
+          </div>
         ) : settingsTab === 'shifts' ? (
           <CashShiftManagementPanel />
         ) : settingsTab === 'sync' ? (

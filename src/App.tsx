@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { POSProvider, usePOS } from './context/POSContext';
 import { HeaderNavbar } from './components/HeaderNavbar';
 import { SidebarDrawer } from './components/SidebarDrawer';
@@ -34,6 +34,7 @@ import { TelegramInboxPoller } from './components/telegram/TelegramInboxPoller';
 import { SheetsScriptAutoSync } from './components/sheets/SheetsScriptAutoSync';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
 import { canOpenTab, firstAllowedTab } from './utils/access';
+import { MobileClockPage, readClockHash } from './components/attendance/MobileClockPage';
 
 const MainLayout: React.FC = () => {
   const {
@@ -56,6 +57,19 @@ const MainLayout: React.FC = () => {
     setActiveTab
   } = usePOS();
   const effectiveOffline = isOffline || forceOfflineMode;
+
+  const [mobileClock, setMobileClock] = useState<{ code: string; at: number } | null>(() => {
+    const h = readClockHash();
+    return h.open ? { code: h.code, at: Date.now() } : null;
+  });
+  useEffect(() => {
+    const onHash = () => {
+      const h = readClockHash();
+      setMobileClock(h.open ? { code: h.code, at: Date.now() } : null);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   // Staff only see the pages their PIN card allows: anything else sends them to one they may use
   const tabAllowed = canOpenTab(activeTab, permissions);
@@ -90,6 +104,18 @@ const MainLayout: React.FC = () => {
 
   return (
     <div className="h-[100dvh] bg-[#0d0704] text-stone-100 flex flex-col font-sans antialiased selection:bg-orange-500 selection:text-white">
+      {/* Clocking in from a staff phone (opened from the login screen or the shop's QR) */}
+      {mobileClock && (
+        <MobileClockPage
+          code={mobileClock.code}
+          openedAt={mobileClock.at}
+          onClose={() => {
+            history.replaceState(null, '', window.location.pathname + window.location.search);
+            setMobileClock(null);
+          }}
+        />
+      )}
+
       {/* Fullscreen PIN Lock Screen */}
       {isLocked && <LoginScreen />}
 

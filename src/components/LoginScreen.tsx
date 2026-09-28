@@ -21,6 +21,7 @@ import {
 import { usePOS } from '../context/POSContext';
 import { isTypingInField } from '../utils/keyboard';
 import { addHours } from '../utils/payroll';
+import { openMobileClock, terminalClockAllowed } from '../utils/clock';
 import { localDay } from '../utils/stockHistory';
 
 const MAX_PIN_ATTEMPTS = 5;
@@ -30,7 +31,7 @@ const DEFAULT_PIN = '1234';
 const isWeakPin = (pin: string | undefined): boolean => !pin || pin === DEFAULT_PIN || /^(\d)\1{3}$/.test(pin);
 
 export const LoginScreen: React.FC = () => {
-  const { users, setCurrentUser, setIsLocked, currentUser, shifts, addShift, updateShift, updateUserPin, logSecurityEvent } = usePOS();
+  const { users, setCurrentUser, setIsLocked, currentUser, shifts, addShift, updateShift, updateUserPin, logSecurityEvent, settings } = usePOS();
   const [loginMode, setLoginMode] = useState<'pin' | 'password'>('pin');
 
   // Filter out any legacy "สมศักดิ์" and ensure "อาห์มัด" is top priority
@@ -61,6 +62,8 @@ export const LoginScreen: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [showPin, setShowPin] = useState(false);
+  // With phone clocking on, only the shop's own devices clock people in here
+  const terminalClock = terminalClockAllowed(settings.attendance);
   const [clockInAction, setClockInAction] = useState<boolean>(true);
   const [successNotice, setSuccessNotice] = useState<string>('');
 
@@ -265,7 +268,7 @@ export const LoginScreen: React.FC = () => {
       });
 
       // Clock in logic if requested
-      if (clockInAction) {
+      if (clockInAction && terminalClock) {
         const nowTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
         if (todayShift) {
           if (todayShift.status !== 'clocked_in') {
@@ -315,7 +318,7 @@ export const LoginScreen: React.FC = () => {
       setError(`PIN ของ ${selectedUser.name.split(' ')[0]} ไม่ถูกต้อง — ถ้าไม่ใช่คุณ แตะเลือกชื่อของคุณก่อน`);
       setTimeout(() => setPin(''), 450);
     }
-  }, [isLockedOut, lockoutRemaining, registerFailedAttempt, selectedUser, sanitizedUsers, clockInAction, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
+  }, [isLockedOut, lockoutRemaining, registerFailedAttempt, selectedUser, sanitizedUsers, clockInAction, terminalClock, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
 
   const handleNumClick = useCallback((num: string) => {
     setPin(prev => {
@@ -581,6 +584,7 @@ export const LoginScreen: React.FC = () => {
 
             {/* Clock-In Option & Forgot PIN in 1 clean line */}
             <div className="flex items-center justify-between text-[11px] pt-0.5 px-1">
+              {terminalClock ? (
               <label className="flex items-center space-x-1.5 cursor-pointer text-stone-400 hover:text-stone-200">
                 <input
                   type="checkbox"
@@ -590,6 +594,13 @@ export const LoginScreen: React.FC = () => {
                 />
                 <span>ลงเวลาเข้างาน</span>
               </label>
+              ) : <span />}
+
+              {settings.attendance && settings.attendance.mode !== 'off' && (
+                <button type="button" onClick={openMobileClock} className="text-emerald-400 hover:text-emerald-300 underline underline-offset-2">
+                  📱 ลงเวลาด้วยมือถือ
+                </button>
+              )}
 
               <button
                 type="button"
