@@ -61,8 +61,10 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     menuItems,
     stockAdjustmentLogs,
     wasteLogs,
-    currentBranch
+    currentBranch,
+    settings
   } = usePOS();
+  const vatRate = typeof settings.vatRate === 'number' ? settings.vatRate : 7;
 
   const [googleUser, setGoogleUser] = useState<any | null>(getGoogleUser());
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -246,7 +248,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
       // Sync datasets according to checkboxes
       if (syncSales) {
-        const count = await syncSalesToGoogleSheets(accessToken, targetId, orders, currentBranch);
+        const count = await syncSalesToGoogleSheets(accessToken, targetId, orders, currentBranch, vatRate);
         syncLogs.push(`📊 ส่งออกรายการบิลขาย (Sales): ${count} บิล`);
       }
 
@@ -351,7 +353,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                   </div>
                 ) : (
                   <p className="text-slate-300 text-xs">
-                    ยังไม่ได้เชื่อมต่อบัญชี Google โปรดกดปุ่ม Sign in เพื่ออนุญาตการสร้างและอัปเดตไฟล์ Google Sheets
+                    ยังไม่ได้เชื่อมต่อบัญชี Google กด Sign in เพื่อให้ระบบสร้างและอัปเดตไฟล์ Google Sheets ของร้าน (ขอสิทธิ์เฉพาะไฟล์ที่ระบบสร้างเอง ไม่เห็นไฟล์อื่นใน Drive และไม่กระทบบัญชีร้านที่ใช้อยู่)
                   </p>
                 )}
               </div>
@@ -492,7 +494,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             </div>
             <div className="flex items-center space-x-2">
               <button
-                onClick={() => downloadSalesCsv(orders, currentBranch)}
+                onClick={() => downloadSalesCsv(orders, currentBranch, vatRate)}
                 className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-bold text-[11px] transition flex items-center space-x-1 cursor-pointer border border-slate-700"
                 title="ดาวน์โหลดบิลยอดขายเป็นไฟล์ CSV"
               >
@@ -554,7 +556,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
               ) : (
                 <div className="space-y-2 bg-slate-950/60 border border-slate-800 p-4 rounded-2xl">
                   <div className="flex items-center justify-between mb-1">
-                    <label className="block text-slate-300 font-bold">เลือกไฟล์ Google Sheets ใน Drive ของคุณ</label>
+                    <label className="block text-slate-300 font-bold">เลือกไฟล์ที่ระบบเคยสร้างไว้</label>
                     <button
                       onClick={() => accessToken && fetchSpreadsheets(accessToken)}
                       className="text-emerald-400 hover:text-emerald-300 underline text-[11px] font-semibold flex items-center space-x-1 cursor-pointer"

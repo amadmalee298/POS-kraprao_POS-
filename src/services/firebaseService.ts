@@ -80,7 +80,8 @@ const authReadyPromise = new Promise<void>(resolve => {
 });
 
 try {
-  const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+  // The default app (other named apps, e.g. the Google Sheets sign-in, may already exist)
+  const app = getApps().some(a => a.name === '[DEFAULT]') ? getApp() : initializeApp(firebaseConfig);
   const cfg = firebaseConfig as any;
 
   // Optional App Check (reCAPTCHA v3): only requests from this web app are accepted

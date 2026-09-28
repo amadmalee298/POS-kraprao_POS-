@@ -125,6 +125,9 @@ export function reasonLabel(reason: string): string {
     audit_correction: 'ตรวจนับ',
     manual_adjustment: 'ปรับยอด',
     cooking_prep: 'เบิกเตรียมครัว',
+    spoiled: 'เน่าเสีย',
+    overcooked: 'ปรุงเสีย',
+    trimming: 'ตัดแต่ง',
     other: 'อื่นๆ'
   };
   return labels[reason] || reason;
