@@ -63,6 +63,7 @@ import { usePOS } from '../../context/POSContext';
 import { calculateOrderTotals } from '../../utils/tax';
 import { StaffSchedulingPanel } from './StaffSchedulingPanel';
 import { StaffPinClockTerminal } from './StaffPinClockTerminal';
+import { onSettingsTabRequest, SettingsTab, takePendingSettingsTab } from '../../utils/settingsNav';
 import { CashShiftManagementPanel } from './CashShiftManagementPanel';
 import { SecurityLogPanel } from './SecurityLogPanel';
 import { QrPaymentOption, StaffMember, StaffPermissions } from '../../types';
@@ -149,7 +150,9 @@ export const SettingsView: React.FC = () => {
     cleanAndSyncCloudNow
   } = usePOS();
 
-  const [settingsTab, setSettingsTab] = useState<'general' | 'scheduling' | 'timeclock' | 'shifts' | 'sync' | 'pins' | 'security_logs' | 'backup'>('general');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(() => takePendingSettingsTab() || 'general');
+  // The side menu can open a part of this page directly (e.g. the PIN timeclock)
+  useEffect(() => onSettingsTabRequest(setSettingsTab), []);
   const [isMerchantModalOpen, setIsMerchantModalOpen] = useState(false);
   const gatewayOn = gatewayEnabled(settings);
 
