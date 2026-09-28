@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { isTypingInField } from '../utils/keyboard';
-import { clockChange, openMobileClock, openShift, terminalClockAllowed } from '../utils/clock';
+import { clockChange, loginClockAllowed, openMobileClock, openShift } from '../utils/clock';
 import { localDay } from '../utils/stockHistory';
 
 const MAX_PIN_ATTEMPTS = 5;
@@ -62,8 +62,8 @@ export const LoginScreen: React.FC = () => {
   const [error, setError] = useState('');
   const [showPin, setShowPin] = useState(false);
   // With phone clocking on, only the shop's own devices clock people in here
-  const terminalClock = terminalClockAllowed(settings.attendance);
-  const [clockInAction, setClockInAction] = useState<boolean>(true);
+  const terminalClock = loginClockAllowed(settings.attendance);
+  const [clockInAction, setClockInAction] = useState<boolean>(false);
   const [successNotice, setSuccessNotice] = useState<string>('');
 
   // Brute-force protection: lock the keypad after repeated wrong PINs

@@ -104,10 +104,36 @@ export const AttendanceSettingsPanel: React.FC = () => {
   return (
     <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3 text-xs text-slate-300">
       <div>
-        <h3 className="font-bold text-sm text-slate-100">ลงเวลาด้วยมือถือของพนักงาน</h3>
-        <p className="text-slate-400 mt-0.5">พนักงานเปิดเว็บนี้ในมือถือ กด “ลงเวลาด้วยมือถือ” ที่หน้าเข้าระบบ (หรือสแกน QR ที่ร้าน) แล้วใส่ PIN · เวลาเข้าประวัติลงเวลาและเงินเดือนทันที</p>
+        <h3 className="font-bold text-sm text-slate-100">ตั้งค่าการลงเวลาเข้า-ออกงาน</h3>
+        <p className="text-slate-400 mt-0.5">เลือกได้ว่าจะให้ลงเวลาทางไหน แต่ละทางเปิด/ปิดแยกกัน · ทุกทางเข้าประวัติลงเวลาและเงินเดือนทันที</p>
       </div>
 
+      {/* How people clock in: each way can be switched on or off */}
+      <div className="space-y-2">
+        {([
+          ['pinTerminal', 'ตู้ลงเวลาด้วย PIN', 'หน้า “ลงเวลาเข้า-ออกงาน (PIN)” บนเครื่องของร้าน', cfg.pinTerminal !== false],
+          ['clockInOnLogin', 'ลงเวลาพร้อมเข้าระบบ', 'ตอนใส่ PIN เข้าระบบ POS มีช่องให้ลงเวลาเข้างานไปด้วย (ปิด = เข้าระบบกับลงเวลาแยกกัน)', cfg.clockInOnLogin === true]
+        ] as const).map(([key, label, hint, on]) => (
+          <div key={key} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800">
+            <div>
+              <div className="font-bold text-slate-100">{label}</div>
+              <div className="text-[11px] text-slate-400">{hint}</div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={on}
+              aria-label={label}
+              onClick={() => save({ [key]: !on } as Partial<AttendanceSettings>)}
+              className={`w-12 h-7 rounded-full p-1 transition shrink-0 ${on ? 'bg-emerald-500' : 'bg-slate-700'}`}
+            >
+              <span className={`block w-5 h-5 rounded-full bg-white transition ${on ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="text-[11px] font-bold text-slate-300 pt-1">ลงเวลาด้วยมือถือของพนักงาน</div>
       <div className="grid sm:grid-cols-2 gap-2">
         {MODES.map(m => (
           <button

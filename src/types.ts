@@ -552,6 +552,10 @@ export interface ClockCheck {
 /** Clocking in from staff phones: where the shop is and what must be proven */
 export interface AttendanceSettings {
   mode: 'off' | 'gps' | 'qr' | 'gps_qr';
+  /** The PIN timeclock screen can clock people in/out (missing = on) */
+  pinTerminal?: boolean;
+  /** Logging in to the POS with a PIN also clocks in (missing = off: signing in and clocking in are separate) */
+  clockInOnLogin?: boolean;
   lat?: number;
   lng?: number;
   radius: number; // metres

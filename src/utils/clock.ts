@@ -118,7 +118,9 @@ export const setShopDevice = (on: boolean) => {
   }
 };
 /** May this device clock people in at the terminal / login screen */
-export const terminalClockAllowed = (a?: AttendanceSettings) => !a || a.mode === 'off' || isShopDevice();
+export const terminalClockAllowed = (a?: AttendanceSettings) => a?.pinTerminal !== false && (!a || a.mode === 'off' || isShopDevice());
+/** The login screen offers "clock in too" (off unless the owner turned it on) */
+export const loginClockAllowed = (a?: AttendanceSettings) => a?.clockInOnLogin === true && terminalClockAllowed(a);
 
 export const openMobileClock = () => {
   window.location.hash = 'clock';
