@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { StaffMember, ShiftEntry } from '../../types';
-import { addHours } from '../../utils/payroll';
+import { clockChange, openShift } from '../../utils/clock';
 
 interface StaffPinClockTerminalProps {
   onClose?: () => void;
@@ -83,11 +83,14 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
     return shifts.filter(s => s.date === todayStr);
   }, [shifts, todayStr]);
 
-  // Active authenticated staff's shift today
+  // The authenticated person's shift that is running now (clocked in, not out), else their latest today
+  const openStaffShift = useMemo(() => (authenticatedStaff ? openShift(shifts, authenticatedStaff.id, now) : undefined), [authenticatedStaff, shifts, now]);
   const currentStaffShift = useMemo(() => {
     if (!authenticatedStaff) return null;
-    return todayShifts.find(s => s.staffId === authenticatedStaff.id || s.staffName.includes(authenticatedStaff.name.split(' ')[0]));
-  }, [authenticatedStaff, todayShifts]);
+    if (openStaffShift) return openStaffShift;
+    const mine = todayShifts.filter(s => s.staffId === authenticatedStaff.id);
+    return mine.find(s => !s.clockInTime && s.shiftType !== 'off') || mine[mine.length - 1] || null;
+  }, [authenticatedStaff, todayShifts, openStaffShift]);
 
   // Pre-select staff from dropdown/cards
   const handleSelectStaff = (staff: StaffMember) => {
@@ -160,34 +163,13 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
 
   // Handle Clock-In Action
   const handleClockIn = () => {
-    if (!authenticatedStaff) return;
-
-    const timeInHHMM = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+    if (!authenticatedStaff || openStaffShift) return;
     const fullLogTimestamp = `${todayStr} ${timeStrFull}`;
-
-    if (currentStaffShift) {
-      updateShift({
-        ...currentStaffShift,
-        clockInTime: timeInHHMM,
-        status: 'clocked_in',
-        notes: `[PIN Authorized Clock-In at ${fullLogTimestamp}] ${currentStaffShift.notes || ''}`.trim()
-      });
-    } else {
-      addShift({
-        staffId: authenticatedStaff.id,
-        staffName: authenticatedStaff.name,
-        date: todayStr,
-        dayOfWeek: currentDayOfWeek,
-        // Not on the roster today: the shift starts when they clock in (never counted as late)
-        shiftType: 'custom',
-        scheduledStart: timeInHHMM,
-        scheduledEnd: addHours(timeInHHMM, 8),
-        scheduledHours: 8,
-        clockInTime: timeInHHMM,
-        status: 'clocked_in',
-        notes: `[PIN Authorized Clock-In at ${fullLogTimestamp}] ลงเวลานอกตารางงาน`
-      });
-    }
+    // Today's rostered shift, or a new one (a shift already finished today is never reopened)
+    const change = clockChange(shifts, authenticatedStaff, new Date(), undefined, 'ตู้ PIN');
+    const timeInHHMM = change.time;
+    if (change.update) updateShift({ ...change.update, notes: `[PIN Authorized Clock-In at ${fullLogTimestamp}] ${change.update.notes || ''}`.trim() });
+    if (change.add) addShift({ ...change.add, notes: `[PIN Authorized Clock-In at ${fullLogTimestamp}] ${change.add.notes || ''}`.trim() });
 
     setSuccessBanner({
       type: 'clock_in',
@@ -207,46 +189,12 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
 
   // Handle Clock-Out Action
   const handleClockOut = () => {
-    if (!authenticatedStaff) return;
-
-    const timeOutHHMM = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+    if (!authenticatedStaff || !openStaffShift) return;
     const fullLogTimestamp = `${todayStr} ${timeStrFull}`;
-
-    // Hours between clock-in and clock-out (a shift past midnight included); none without a clock-in
-    let actualHours = 0;
-    if (currentStaffShift?.clockInTime) {
-      const [inH, inM] = currentStaffShift.clockInTime.split(':').map(Number);
-      const [outH, outM] = timeOutHHMM.split(':').map(Number);
-      let totalMinutes = (outH * 60 + outM) - (inH * 60 + inM);
-      if (totalMinutes < 0) totalMinutes += 24 * 60;
-      actualHours = Number((totalMinutes / 60).toFixed(2));
-    }
-
-    if (currentStaffShift) {
-      updateShift({
-        ...currentStaffShift,
-        clockOutTime: timeOutHHMM,
-        actualHours,
-        status: 'completed',
-        notes: `[PIN Authorized Clock-Out at ${fullLogTimestamp}] ${currentStaffShift.notes || ''}`.trim()
-      });
-    } else {
-      addShift({
-        staffId: authenticatedStaff.id,
-        staffName: authenticatedStaff.name,
-        date: todayStr,
-        dayOfWeek: currentDayOfWeek,
-        shiftType: 'custom',
-        scheduledStart: timeOutHHMM,
-        scheduledEnd: timeOutHHMM,
-        scheduledHours: 0,
-        // No clock-in was recorded: no hours are made up; the manager fixes the time in the history
-        clockOutTime: timeOutHHMM,
-        actualHours: 0,
-        status: 'completed',
-        notes: `[PIN Authorized Clock-Out at ${fullLogTimestamp}] ไม่พบเวลาเข้างาน ให้ผู้จัดการแก้เวลาในประวัติลงเวลา`
-      });
-    }
+    const change = clockChange(shifts, authenticatedStaff, new Date());
+    const actualHours = change.update?.actualHours || 0;
+    if (change.update) updateShift({ ...change.update, notes: `[PIN Authorized Clock-Out at ${fullLogTimestamp}] ${change.update.notes || ''}`.trim() });
+    const timeOutHHMM = change.time;
 
     setSuccessBanner({
       type: 'clock_out',
@@ -548,7 +496,7 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
 
                 {/* Action Buttons */}
                 <div className="space-y-2 pt-2">
-                  {(!currentStaffShift || currentStaffShift.status !== 'clocked_in') ? (
+                  {!openStaffShift ? (
                     <button
                       onClick={handleClockIn}
                       className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-sm rounded-xl shadow-lg shadow-emerald-950/50 transition flex items-center justify-center space-x-2"
@@ -601,11 +549,11 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-slate-200">{s.staffName}</span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        s.status === 'clocked_in'
+                        s.status === 'clocked_in' && !s.clockOutTime
                           ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                           : 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
                       }`}>
-                        {s.status === 'clocked_in' ? '🟢 ทำงานอยู่' : '✓ เสร็จสิ้น'}
+                        {s.status === 'clocked_in' && !s.clockOutTime ? '🟢 ทำงานอยู่' : '✓ เสร็จสิ้น'}
                       </span>
                     </div>
 

@@ -59,7 +59,7 @@ export function openShift(shifts: ShiftEntry[], staffId: string, now: Date): Shi
 export type ClockChange = { kind: 'in' | 'out'; update?: ShiftEntry; add?: Omit<ShiftEntry, 'id'>; time: string };
 
 /** What clocking now does: out of the open shift, or in to today's rostered (or a new) shift */
-export function clockChange(shifts: ShiftEntry[], staff: StaffMember, now: Date, check: ClockCheck): ClockChange {
+export function clockChange(shifts: ShiftEntry[], staff: Pick<StaffMember, 'id' | 'name'>, now: Date, check?: ClockCheck, source = 'มือถือ'): ClockChange {
   const time = hhmm(now);
   const open = openShift(shifts, staff.id, now);
   if (open) {
@@ -70,12 +70,13 @@ export function clockChange(shifts: ShiftEntry[], staff: StaffMember, now: Date,
     return {
       kind: 'out',
       time,
-      update: { ...open, clockOutTime: time, actualHours: Math.round((minutes / 60) * 100) / 100, status: 'completed', clockOutCheck: check }
+      update: { ...open, clockOutTime: time, actualHours: Math.round((minutes / 60) * 100) / 100, status: 'completed', ...(check ? { clockOutCheck: check } : {}) }
     };
   }
   const today = ymd(now);
   const rostered = shifts.find(s => s.staffId === staff.id && s.date === today && !s.clockInTime && s.shiftType !== 'off');
-  if (rostered) return { kind: 'in', time, update: { ...rostered, clockInTime: time, status: 'clocked_in', clockInCheck: check } };
+  // A shift already finished today stays as it is: clocking in again starts another one
+  if (rostered) return { kind: 'in', time, update: { ...rostered, clockInTime: time, status: 'clocked_in', ...(check ? { clockInCheck: check } : {}) } };
   return {
     kind: 'in',
     time,
@@ -90,8 +91,8 @@ export function clockChange(shifts: ShiftEntry[], staff: StaffMember, now: Date,
       scheduledHours: 8,
       clockInTime: time,
       status: 'clocked_in',
-      notes: 'ลงเวลานอกตารางงาน (มือถือ)',
-      clockInCheck: check
+      notes: `ลงเวลานอกตารางงาน (${source})`,
+      ...(check ? { clockInCheck: check } : {})
     }
   };
 }

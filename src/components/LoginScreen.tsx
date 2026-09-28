@@ -20,8 +20,7 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { isTypingInField } from '../utils/keyboard';
-import { addHours } from '../utils/payroll';
-import { openMobileClock, terminalClockAllowed } from '../utils/clock';
+import { clockChange, openMobileClock, openShift, terminalClockAllowed } from '../utils/clock';
 import { localDay } from '../utils/stockHistory';
 
 const MAX_PIN_ATTEMPTS = 5;
@@ -219,11 +218,6 @@ export const LoginScreen: React.FC = () => {
   // Today's ISO date string (YYYY-MM-DD)
   // Local date: the UTC date is still yesterday before 07:00 in Thailand
   const todayStr = localDay(new Date().toISOString());
-  const todayShift = shifts.find(
-    s => (s.staffId === selectedUser.id || s.staffName.includes(selectedUser.name.split(' ')[0])) && s.date === todayStr
-  );
-
-  const isAlreadyClockedIn = todayShift?.status === 'clocked_in';
 
   const executePinLogin = useCallback((pinToTest: string) => {
     if (!pinToTest || pinToTest.length !== 4) {
@@ -269,32 +263,13 @@ export const LoginScreen: React.FC = () => {
 
       // Clock in logic if requested
       if (clockInAction && terminalClock) {
-        const nowTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-        if (todayShift) {
-          if (todayShift.status !== 'clocked_in') {
-            updateShift({
-              ...todayShift,
-              clockInTime: nowTime,
-              status: 'clocked_in'
-            });
-            setSuccessNotice(`ลงเวลาเข้างานสำเร็จ (${nowTime})`);
-          }
-        } else {
-          addShift({
-            staffId: authenticatedUser.id,
-            staffName: authenticatedUser.name,
-            date: todayStr,
-            dayOfWeek: (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const)[new Date().getDay()],
-            // Not on the roster today: the shift starts when they clock in (never counted as late)
-            shiftType: 'custom',
-            scheduledStart: nowTime,
-            scheduledEnd: addHours(nowTime, 8),
-            scheduledHours: 8,
-            clockInTime: nowTime,
-            status: 'clocked_in',
-            notes: 'ลงเวลานอกตารางงาน'
-          });
-          setSuccessNotice(`ลงเวลาเข้างานสำเร็จ (${nowTime})`);
+        // Already working (clocked in, not out): nothing to do. Otherwise today's rostered shift or a
+        // new one; a shift already finished today is never reopened
+        if (!openShift(shifts, authenticatedUser.id, new Date())) {
+          const change = clockChange(shifts, authenticatedUser, new Date(), undefined, 'หน้าเข้าระบบ');
+          if (change.update) updateShift(change.update);
+          if (change.add) addShift(change.add);
+          setSuccessNotice(`ลงเวลาเข้างานสำเร็จ (${change.time})`);
         }
       }
 
@@ -318,7 +293,7 @@ export const LoginScreen: React.FC = () => {
       setError(`PIN ของ ${selectedUser.name.split(' ')[0]} ไม่ถูกต้อง — ถ้าไม่ใช่คุณ แตะเลือกชื่อของคุณก่อน`);
       setTimeout(() => setPin(''), 450);
     }
-  }, [isLockedOut, lockoutRemaining, registerFailedAttempt, selectedUser, sanitizedUsers, clockInAction, terminalClock, todayShift, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
+  }, [isLockedOut, lockoutRemaining, registerFailedAttempt, selectedUser, sanitizedUsers, clockInAction, terminalClock, shifts, todayStr, updateShift, addShift, setCurrentUser, setIsLocked, logSecurityEvent]);
 
   const handleNumClick = useCallback((num: string) => {
     setPin(prev => {
