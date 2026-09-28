@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType } from '../../utils/stockTypes';
+import { PrepProductionPanel } from './PrepProductionPanel';
 import {
   PackageCheck,
   AlertTriangle,
@@ -28,6 +29,7 @@ import {
   Download,
   Printer,
   Tag,
+  ChefHat,
   Edit2,
   Check,
   Save,
@@ -126,7 +128,7 @@ export const InventoryView: React.FC = () => {
   const [savedCostIngId, setSavedCostIngId] = useState<string | null>(null);
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<'smart_audit' | 'forecast' | 'waste' | 'current' | 'usage' | 'stockcard'>('smart_audit');
+  const [activeTab, setActiveTab] = useState<'smart_audit' | 'forecast' | 'waste' | 'current' | 'prep' | 'usage' | 'stockcard'>('smart_audit');
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -923,6 +925,18 @@ export const InventoryView: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveTab('prep')}
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
+              activeTab === 'prep'
+                ? 'bg-orange-600 text-white shadow-lg shadow-orange-950/50'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <ChefHat className="w-4 h-4" />
+            <span>ผลิต/เตรียมวัตถุดิบ (เบิกไปปรุง)</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('usage')}
             className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
               activeTab === 'usage'
@@ -1465,6 +1479,8 @@ export const InventoryView: React.FC = () => {
         )}
 
         {/* TAB 2: ประวัติรับ-เบิกรายวัตถุดิบ (Item Usage Log) */}
+        {activeTab === 'prep' && <PrepProductionPanel />}
+
         {activeTab === 'usage' && (
           <div className="space-y-5">
             {/* Header Banner */}
@@ -1612,7 +1628,7 @@ export const InventoryView: React.FC = () => {
                           )}
                           {log.type === 'OUT' && (
                             <span className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold text-[10px] inline-flex items-center space-x-1">
-                              <span>ตัดขาย POS (OUT)</span>
+                              <span>เบิก/ตัดออก (OUT)</span>
                             </span>
                           )}
                           {log.type === 'ADJUST' && (

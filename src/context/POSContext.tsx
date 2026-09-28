@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
-import { canonicalUnit, convertAmount, repointRecipe, withRecipeCosts, withRecipeUnits } from '../utils/recipeUtils';
+import { averageCostAfterPrep } from '../utils/prep';
+import { canonicalUnit, convertAmount, effectiveUnitCost, repointRecipe, withRecipeCosts, withRecipeUnits } from '../utils/recipeUtils';
 import { syncAndHealCategories, syncAndHealIngredientCategories } from '../utils/categoryUtils';
 import {
   MenuItem,
@@ -291,6 +292,11 @@ interface POSContextType {
     updatedMenuPrices?: Record<string, number>
   ) => void;
   addStockLot: (lot: Omit<StockLot, 'id'>) => void;
+  /**
+   * Kitchen prep: draw the inputs from stock, put the yield of the output into stock, and set the
+   * output's cost to the weighted average including this batch. Returns the batch cost.
+   */
+  producePrep: (run: { outputIngredientId: string; outputQty: number; inputs: { ingredientId: string; quantity: number }[]; note?: string }) => { cost: number; unitCost: number; averageCost: number };
   /** A new ingredient that arrives with its first purchase: created with that stock and a receiving entry in the history */
   receiveNewIngredient: (ingredient: Omit<Ingredient, 'id' | 'currentStock'>, quantity: number, note: string) => Ingredient;
 
@@ -3573,6 +3579,23 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ]);
   };
 
+  const producePrep = (run: { outputIngredientId: string; outputQty: number; inputs: { ingredientId: string; quantity: number }[]; note?: string }) => {
+    const byId = new Map(ingredients.map(i => [i.id, i]));
+    const output = byId.get(run.outputIngredientId);
+    if (!output || !(run.outputQty > 0)) return { cost: 0, unitCost: 0, averageCost: 0 };
+    const inputs = run.inputs.filter(i => byId.has(i.ingredientId) && i.quantity > 0);
+    const cost = inputs.reduce((sum, i) => sum + i.quantity * effectiveUnitCost(byId.get(i.ingredientId)!), 0);
+    const label = `ผลิต ${output.name}${run.note ? ` · ${run.note}` : ''}`;
+    // Value moves from the inputs to the output: one stock movement for the whole run
+    moveStock([
+      ...inputs.map(i => ({ ingredientId: i.ingredientId, change: -i.quantity, reason: 'cooking_prep', notes: label })),
+      { ingredientId: output.id, change: run.outputQty, reason: 'prep_output', notes: `${label} (ต้นทุน ฿${cost.toFixed(2)})` }
+    ]);
+    const averageCost = averageCostAfterPrep(output, run.outputQty, cost);
+    updateIngredientPriceAndRecalculate(output.id, averageCost);
+    return { cost: Math.round(cost * 100) / 100, unitCost: cost / run.outputQty, averageCost };
+  };
+
   const receiveNewIngredient = (ingData: Omit<Ingredient, 'id' | 'currentStock'>, quantity: number, note: string): Ingredient => {
     // Created with the stock already in it: moveStock cannot see an ingredient added in the same click
     const qty = Math.max(0, quantity);
@@ -4251,6 +4274,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateIngredientPriceAndRecalculate,
         addStockLot,
         receiveNewIngredient,
+        producePrep,
         wasteLogs,
         addWasteLog,
         deleteWasteLog,

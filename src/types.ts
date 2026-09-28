@@ -222,6 +222,7 @@ export type StockAdjustmentReason =
   | 'audit_correction'
   | 'manual_adjustment'
   | 'cooking_prep'
+  | 'prep_output'
   | 'other';
 
 export interface StockAdjustmentLog {
@@ -701,4 +702,33 @@ export interface PendingReceipt {
   decidedBy?: string;
   decidedAt?: string;
   recordId?: string; // expense or income created on approval
+}
+
+/** A kitchen prep recipe: raw ingredients drawn from stock and cooked into a stocked item (e.g. ซอสกะเพรา, เนื้อบดปรุงสุก) */
+export interface PrepRecipe {
+  id: string;
+  outputIngredientId: string;
+  /** Quantity one batch makes, in the output ingredient's unit */
+  outputQty: number;
+  /** Quantities one batch uses, in each ingredient's unit */
+  inputs: { ingredientId: string; quantity: number }[];
+  note?: string;
+}
+
+/** One production run: what was drawn, what came out and what it cost */
+export interface PrepBatch {
+  id: string;
+  recipeId: string;
+  outputIngredientId: string;
+  outputName: string;
+  outputUnit: string;
+  batches: number;
+  expectedQty: number;
+  outputQty: number; // actual yield
+  inputs: { ingredientId: string; name: string; unit: string; quantity: number; cost: number }[];
+  cost: number;
+  unitCost: number;
+  producedAt: string; // ISO
+  producedBy: string;
+  note?: string;
 }
