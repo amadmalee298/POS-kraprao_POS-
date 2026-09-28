@@ -90,9 +90,15 @@ const TimeclockEntry: React.FC = () => {
         </>
       ) : (
         <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 text-sm text-slate-300 space-y-3">
-          <p>ร้านเปิดให้ลงเวลาด้วยมือถือ เครื่องนี้ยังไม่ได้ตั้งเป็นเครื่องของร้าน จึงลงเวลาผ่านหน้ามือถือ (ตรวจ GPS / QR)</p>
+          <p>
+            {a?.pinTerminal === false
+              ? 'ร้านปิดตู้ลงเวลาด้วย PIN อยู่'
+              : 'ร้านเปิดให้ลงเวลาด้วยมือถือ เครื่องนี้ยังไม่ได้ตั้งเป็นเครื่องของร้าน จึงลงเวลาผ่านหน้ามือถือ (ตรวจ GPS / QR)'}
+          </p>
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={openMobileClock} className="h-11 px-4 rounded-xl bg-emerald-600 text-white font-bold">📱 ลงเวลาด้วยมือถือ</button>
+            {a && a.mode !== 'off' && (
+              <button type="button" onClick={openMobileClock} className="h-11 px-4 rounded-xl bg-emerald-600 text-white font-bold">📱 ลงเวลาด้วยมือถือ</button>
+            )}
             {qrButton}
           </div>
         </div>

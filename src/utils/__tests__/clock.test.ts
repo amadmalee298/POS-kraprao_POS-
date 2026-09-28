@@ -49,3 +49,14 @@ describe('clockChange', () => {
     expect(out.update).toMatchObject({ clockOutTime: '02:00', actualHours: 6 });
   });
 });
+
+describe('clocking in again the same day', () => {
+  it('starts a new shift instead of reopening the finished one', () => {
+    const done = { id: 'd', staffId: 's1', staffName: 'A', date: '2026-09-29', dayOfWeek: 'Tue', shiftType: 'custom', scheduledStart: '00:40', scheduledEnd: '08:40', scheduledHours: 8, clockInTime: '00:40', clockOutTime: '00:40', actualHours: 0, status: 'completed' } as ShiftEntry;
+    const c = clockChange([done], staff, new Date('2026-09-29T00:45:00'));
+    expect(c.kind).toBe('in');
+    expect(c.update).toBeUndefined();
+    expect(c.add).toMatchObject({ clockInTime: '00:45', status: 'clocked_in' });
+    expect(c.add).not.toHaveProperty('clockInCheck');
+  });
+});
