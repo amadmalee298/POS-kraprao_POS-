@@ -169,7 +169,7 @@ export const MonthlyPayrollPanel: React.FC = () => {
               <tr key={r.staffId} className="border-t border-slate-800">
                 <td className="p-2">
                   <div className="font-bold text-slate-100">{r.name}</div>
-                  <div className="text-[10px] text-slate-500">{PAY_TYPE_TH[r.payType]} · {r.rateText}</div>
+                  <div className="text-[10px] text-slate-500">{PAY_TYPE_TH[r.payType]} · {r.rateText}{staffMembers.find(s => s.id === r.staffId)?.otEnabled === false ? ' · ไม่คิด OT' : ''}</div>
                 </td>
                 <td className="p-2 text-right">{r.daysWorked} วัน<div className="text-[10px] text-slate-500">{r.hours} ชม.</div></td>
                 <td className="p-2 text-right text-amber-300">{r.otHours || '-'}</td>
@@ -241,6 +241,7 @@ const PaySettingsModal: React.FC<{ staff: StaffMember; onClose: () => void; onSa
   const [daily, setDaily] = useState(String(staff.dailyRate || ''));
   const [monthly, setMonthly] = useState(String(staff.monthlySalary || ''));
   const [ot, setOt] = useState(String(staff.otRateMultiplier || 1.5));
+  const [otOn, setOtOn] = useState(staff.otEnabled !== false);
   const [sso, setSso] = useState(!!staff.socialSecurity);
   const input = 'w-full h-11 px-3 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-sm';
   return (
@@ -260,7 +261,14 @@ const PaySettingsModal: React.FC<{ staff: StaffMember; onClose: () => void; onSa
         {payType === 'hourly' && <label className="block text-slate-400">ค่าจ้างต่อชั่วโมง (บาท)<input type="number" min="0" value={hourly} onChange={e => setHourly(e.target.value)} className={`${input} mt-1`} /></label>}
         {payType === 'daily' && <label className="block text-slate-400">ค่าแรงต่อวัน (บาท)<input type="number" min="0" value={daily} onChange={e => setDaily(e.target.value)} className={`${input} mt-1`} /></label>}
         {payType === 'monthly' && <label className="block text-slate-400">เงินเดือน (บาท)<input type="number" min="0" value={monthly} onChange={e => setMonthly(e.target.value)} className={`${input} mt-1`} /></label>}
-        <label className="block text-slate-400">อัตรา OT (เท่า)<input type="number" min="1" step="0.1" value={ot} onChange={e => setOt(e.target.value)} className={`${input} mt-1`} /></label>
+        <label className="flex items-center gap-2 text-slate-300">
+          <input type="checkbox" checked={otOn} onChange={e => setOtOn(e.target.checked)} className="w-5 h-5 accent-orange-500" /> คิดค่าล่วงเวลา (OT)
+        </label>
+        {otOn ? (
+          <label className="block text-slate-400">อัตรา OT (เท่า)<input type="number" min="1" step="0.1" value={ot} onChange={e => setOt(e.target.value)} className={`${input} mt-1`} /></label>
+        ) : (
+          <p className="text-[11px] text-slate-500">ไม่คิด OT: {payType === 'hourly' ? 'ทุกชั่วโมงที่ทำจ่ายอัตราปกติ' : 'จ่ายตามค่าแรงวัน/เงินเดือน ไม่มีค่าล่วงเวลาเพิ่ม'}</p>
+        )}
         <label className="flex items-center gap-2 text-slate-300">
           <input type="checkbox" checked={sso} onChange={e => setSso(e.target.checked)} className="w-5 h-5 accent-orange-500" /> หักประกันสังคม
         </label>
@@ -274,6 +282,7 @@ const PaySettingsModal: React.FC<{ staff: StaffMember; onClose: () => void; onSa
               dailyRate: Number(daily) || undefined,
               monthlySalary: Number(monthly) || undefined,
               otRateMultiplier: Number(ot) || 1.5,
+              otEnabled: otOn,
               socialSecurity: sso
             })
           }

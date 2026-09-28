@@ -86,3 +86,18 @@ describe('addHours', () => {
     expect(addHours('20:00', 8)).toBe('04:00');
   });
 });
+
+describe('OT switched off', () => {
+  const two = [
+    sh({ clockInTime: '08:00', clockOutTime: '18:00' }), // 10 h
+    sh({ date: '2026-09-11', clockInTime: '08:00', clockOutTime: '16:00' }) // 8 h
+  ];
+  it('pays every hour at the normal rate for hourly staff', () => {
+    const [p] = monthlyPayroll([staff({ otEnabled: false })], two, '2026-09', [], settings, '2026-09-28');
+    expect(p).toMatchObject({ basePay: 900, otPay: 0, otHours: 0, net: 900 });
+  });
+  it('adds nothing on top of a daily wage', () => {
+    const [p] = monthlyPayroll([staff({ payType: 'daily', dailyRate: 400, otEnabled: false })], two, '2026-09', [], settings, '2026-09-28');
+    expect(p).toMatchObject({ basePay: 800, otPay: 0, net: 800 });
+  });
+});

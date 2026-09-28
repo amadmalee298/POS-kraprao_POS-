@@ -107,9 +107,11 @@ export function monthlyPayroll(
       const payType = s.payType || 'hourly';
       const hourlyRate = s.hourlyRate || 0;
       const perHour = payType === 'monthly' ? (s.monthlySalary || 0) / 30 / 8 : payType === 'daily' ? (s.dailyRate || 0) / 8 : hourlyRate;
+      const otOn = s.otEnabled !== false;
+      // Without OT, an hourly worker is still paid every hour worked at the normal rate
       const basePay =
-        payType === 'monthly' ? s.monthlySalary || 0 : payType === 'daily' ? daysWorked * (s.dailyRate || 0) : regularHours * hourlyRate;
-      const otPay = otHours * perHour * (s.otRateMultiplier || 1.5);
+        payType === 'monthly' ? s.monthlySalary || 0 : payType === 'daily' ? daysWorked * (s.dailyRate || 0) : (otOn ? regularHours : hours) * hourlyRate;
+      const otPay = otOn ? otHours * perHour * (s.otRateMultiplier || 1.5) : 0;
       const adj = adjustments.filter(a => a.staffId === s.id && a.month === month);
       const bonus = adj.filter(a => a.kind === 'bonus').reduce((t, a) => t + (a.amount || 0), 0);
       const deductions = adj.filter(a => a.kind === 'deduction').reduce((t, a) => t + (a.amount || 0), 0);
@@ -133,7 +135,7 @@ export function monthlyPayroll(
         daysWorked,
         hours: r2(hours),
         regularHours: r2(regularHours),
-        otHours: r2(otHours),
+        otHours: otOn ? r2(otHours) : 0,
         lateCount,
         lateMinutes,
         absentCount,
