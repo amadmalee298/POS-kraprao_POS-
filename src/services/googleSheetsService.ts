@@ -43,6 +43,27 @@ export const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 
 const provider = new GoogleAuthProvider();
 SCOPES.forEach(scope => provider.addScope(scope));
+// Always show the permission screen: a skipped screen can hand back a token without Drive access
+provider.setCustomParameters({ prompt: 'consent select_account' });
+
+/** What to tell the user when Google gave a token without permission to write the file */
+export const MISSING_SCOPE_MESSAGE =
+  'Google ยังไม่ได้ให้สิทธิ์เขียนไฟล์: กดออกจากระบบ Google แล้ว Sign in ใหม่ ในหน้าขออนุญาตของ Google ให้ติ๊กช่อง “ดู แก้ไข สร้าง และลบไฟล์ Google ไดรฟ์ที่คุณใช้กับแอปนี้” (See, edit, create and delete only the specific Google Drive files you use with this app) แล้วกด Continue';
+
+/** True when the token carries the Drive permission the export needs */
+export async function hasDriveFileScope(accessToken: string): Promise<boolean> {
+  try {
+    const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`);
+    if (!res.ok) return true; // cannot tell: let the API call report it
+    const info = await res.json();
+    return String(info.scope || '').split(' ').some((sc: string) => SCOPES.includes(sc) || sc === 'https://www.googleapis.com/auth/drive');
+  } catch {
+    return true;
+  }
+}
+
+/** Google's "insufficient scopes" API error */
+export const isScopeError = (message: string) => /insufficient authentication scopes|insufficientPermissions|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(message || '');
 
 // In-memory token & user caching (Crucial: NEVER store in localStorage/sessionStorage)
 let isSigningIn = false;
@@ -114,6 +135,10 @@ export const requestAccessTokenViaGis = async (): Promise<{ user: any; accessTok
           }
 
           const token = tokenResponse.access_token;
+          if (!(await hasDriveFileScope(token))) {
+            reject(new Error(MISSING_SCOPE_MESSAGE));
+            return;
+          }
           cachedAccessToken = token;
 
           // Fetch user info from Google OAuth2 Userinfo endpoint
@@ -190,6 +215,10 @@ export const googleSignIn = async (forceGis = false): Promise<{ user: any; acces
         throw new Error('ไม่สามารถรับ Access Token จาก Google OAuth ได้');
       }
 
+      if (!(await hasDriveFileScope(credential.accessToken))) {
+        await signOut(auth).catch(() => {});
+        throw new Error(MISSING_SCOPE_MESSAGE);
+      }
       cachedAccessToken = credential.accessToken;
       cachedGoogleUser = result.user;
       return { user: result.user, accessToken: cachedAccessToken };

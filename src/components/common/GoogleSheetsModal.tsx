@@ -40,7 +40,9 @@ import {
   syncMovementsToGoogleSheets,
   downloadSalesCsv,
   downloadInventoryCsv,
-  GoogleDriveFile
+  GoogleDriveFile,
+  isScopeError,
+  MISSING_SCOPE_MESSAGE
 } from '../../services/googleSheetsService';
 import firebaseConfig from '../../../firebase-applet-config.json';
 
@@ -278,10 +280,19 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
       fetchSpreadsheets(accessToken);
     } catch (err: any) {
       console.error('Export to Google Sheets failed:', err);
-      setSyncResult({
-        success: false,
-        message: `เกิดข้อผิดพลาดในการส่งออกข้อมูล: ${err.message || 'กรุณาลองใหม่อีกครั้ง'}`
-      });
+      if (isScopeError(err?.message)) {
+        // The token cannot write files: sign out of Google so the next sign-in asks again
+        await googleSignOut();
+        setGoogleUser(null);
+        setAccessToken(null);
+        setAuthError(MISSING_SCOPE_MESSAGE);
+        setSyncResult({ success: false, message: MISSING_SCOPE_MESSAGE });
+      } else {
+        setSyncResult({
+          success: false,
+          message: `เกิดข้อผิดพลาดในการส่งออกข้อมูล: ${err.message || 'กรุณาลองใหม่อีกครั้ง'}`
+        });
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -622,7 +633,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                         <span>สต็อกและมูลค่าสินค้า ({ingredients.length} รายการ)</span>
                       </div>
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        แท็บ: <code className="text-emerald-400 font-mono">สต็อกวัตถุดิบ (Inventory)</code>
+                        แท็บ: <code className="text-emerald-400 font-mono">สต็อก (Inventory)</code>
                       </p>
                     </div>
                   </label>
