@@ -458,6 +458,7 @@ export interface SystemSettings {
   /** Google Sheets through an Apps Script in the shop's spreadsheet: no Google sign-in on the devices */
   sheetsScript?: SheetsScriptSettings;
   payroll?: PayrollSettings;
+  attendance?: AttendanceSettings;
   /** Years over which equipment bought is depreciated (straight line); default 5 */
   equipmentUsefulLifeYears?: number;
   requirePinOnEveryLogin?: boolean; // บังคับใส่รหัสพนักงานทุกครั้งที่เข้าสู่ระบบ
@@ -534,6 +535,27 @@ export interface ShiftEntry {
   actualHours?: number;   // e.g. 9.5
   status: 'scheduled' | 'clocked_in' | 'completed' | 'absent' | 'late';
   notes?: string;
+  /** Where and how the person clocked in / out from their own phone */
+  clockInCheck?: ClockCheck;
+  clockOutCheck?: ClockCheck;
+}
+
+export interface ClockCheck {
+  method: 'mobile';
+  lat?: number;
+  lng?: number;
+  accuracy?: number; // metres
+  distance?: number; // metres from the shop
+  qr?: boolean; // the shop's live QR was scanned
+}
+
+/** Clocking in from staff phones: where the shop is and what must be proven */
+export interface AttendanceSettings {
+  mode: 'off' | 'gps' | 'qr' | 'gps_qr';
+  lat?: number;
+  lng?: number;
+  radius: number; // metres
+  qrSecret: string;
 }
 
 export interface PayrollSummary {

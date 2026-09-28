@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Download, Pencil, X } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import type { ShiftEntry } from '../../types';
+import type { ClockCheck, ShiftEntry } from '../../types';
 import { downloadCsv } from '../../utils/accounting';
 import { localDay } from '../../utils/stockHistory';
 import { Attendance, attendanceOf, payrollSettings, workedHours } from '../../utils/payroll';
@@ -14,6 +14,15 @@ const STATUS: Record<Attendance, { label: string; cls: string }> = {
   upcoming: { label: 'ยังไม่ถึง', cls: 'bg-slate-700/40 text-slate-400 border-slate-600' },
   off: { label: 'วันหยุด', cls: 'bg-slate-700/40 text-slate-400 border-slate-600' }
 };
+
+/** How a phone clock-in was proven: GPS distance and/or the shop's QR */
+const checkText = (c?: ClockCheck) =>
+  c ? (
+    <div className="text-[10px] text-sky-300 font-sans" title={c.lat !== undefined ? `${c.lat}, ${c.lng} (±${c.accuracy} ม.)` : undefined}>
+      📱{c.distance !== undefined ? ` ${c.distance} ม.` : ''}{c.qr ? ' QR' : ''}
+    </div>
+  ) : null;
+const checkCsv = (c?: ClockCheck) => (c ? `มือถือ${c.distance !== undefined ? ` ${c.distance} ม.` : ''}${c.qr ? ' QR' : ''}` : 'เครื่องร้าน');
 
 const dateText = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('th-TH', { weekday: 'short', day: 'numeric', month: 'short' });
 
@@ -44,8 +53,8 @@ export const AttendanceHistoryPanel: React.FC = () => {
   const exportCsv = () =>
     downloadCsv(
       `attendance_${month}${staffId ? `_${staffId}` : ''}.csv`,
-      ['วันที่', 'พนักงาน', 'เข้ากะ', 'ออกกะ', 'ลงเวลาเข้า', 'ลงเวลาออก', 'ชั่วโมงทำงาน', 'สถานะ', 'สาย (นาที)', 'หมายเหตุ'],
-      rows.map(r => [r.sh.date, r.sh.staffName, r.sh.scheduledStart, r.sh.scheduledEnd, r.sh.clockInTime || '', r.sh.clockOutTime || '', r.hours, STATUS[r.status].label, r.lateMinutes, r.sh.notes || ''])
+      ['วันที่', 'พนักงาน', 'เข้ากะ', 'ออกกะ', 'ลงเวลาเข้า', 'ลงเวลาออก', 'ชั่วโมงทำงาน', 'สถานะ', 'สาย (นาที)', 'ลงเข้าจาก', 'ลงออกจาก', 'หมายเหตุ'],
+      rows.map(r => [r.sh.date, r.sh.staffName, r.sh.scheduledStart, r.sh.scheduledEnd, r.sh.clockInTime || '', r.sh.clockOutTime || '', r.hours, STATUS[r.status].label, r.lateMinutes, r.sh.clockInTime ? checkCsv(r.sh.clockInCheck) : '', r.sh.clockOutTime ? checkCsv(r.sh.clockOutCheck) : '', r.sh.notes || ''])
     );
 
   const input = 'h-10 px-3 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs';
@@ -117,8 +126,8 @@ export const AttendanceHistoryPanel: React.FC = () => {
                   <td className="p-2 whitespace-nowrap">{dateText(r.sh.date)}</td>
                   <td className="p-2">{r.sh.staffName}{r.sh.notes ? <div className="text-[10px] text-slate-500">{r.sh.notes}</div> : null}</td>
                   <td className="p-2 text-center text-slate-500 whitespace-nowrap">{r.sh.scheduledStart}–{r.sh.scheduledEnd}</td>
-                  <td className="p-2 text-center font-mono">{r.sh.clockInTime || '-'}</td>
-                  <td className="p-2 text-center font-mono">{r.sh.clockOutTime || '-'}</td>
+                  <td className="p-2 text-center font-mono">{r.sh.clockInTime || '-'}{checkText(r.sh.clockInCheck)}</td>
+                  <td className="p-2 text-center font-mono">{r.sh.clockOutTime || '-'}{checkText(r.sh.clockOutCheck)}</td>
                   <td className="p-2 text-right">{r.hours || '-'}</td>
                   <td className="p-2 text-center">
                     <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${STATUS[r.status].cls}`}>
