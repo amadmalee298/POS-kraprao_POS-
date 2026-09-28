@@ -68,7 +68,7 @@ export interface StockMovement {
   operator: string;
 }
 
-const OUT_REASONS = new Set(['waste', 'spoilage', 'expired', 'damaged', 'cooking_prep']);
+const OUT_REASONS = new Set(['waste', 'spoilage', 'expired', 'damaged', 'cooking_prep', 'issue']);
 
 /** Every stock movement: history entries (receiving, waste, counts, corrections) plus daily sales. */
 export function buildStockMovements(
@@ -83,7 +83,7 @@ export function buildStockMovements(
     ingredientId: l.ingredientId,
     ingredientName: byId.get(l.ingredientId)?.name || l.ingredientName,
     unit: l.unit,
-    type: l.reason === 'restock' && l.changeQty > 0 ? 'IN' : OUT_REASONS.has(String(l.reason)) ? 'OUT' : 'ADJUST',
+    type: (l.reason === 'restock' || l.reason === 'prep_output') && l.changeQty > 0 ? 'IN' : OUT_REASONS.has(String(l.reason)) ? 'OUT' : 'ADJUST',
     change: l.changeQty,
     note: [reasonLabel(String(l.reason)), l.notes].filter(Boolean).join(' · '),
     operator: l.userName
@@ -124,7 +124,9 @@ export function reasonLabel(reason: string): string {
     damaged: 'เสียหาย',
     audit_correction: 'ตรวจนับ',
     manual_adjustment: 'ปรับยอด',
-    cooking_prep: 'เบิกเตรียมครัว',
+    cooking_prep: 'เบิกไปผลิต/เตรียมครัว',
+    prep_output: 'รับเข้าจากการผลิต',
+    issue: 'เบิกใช้',
     spoiled: 'เน่าเสีย',
     overcooked: 'ปรุงเสีย',
     trimming: 'ตัดแต่ง',

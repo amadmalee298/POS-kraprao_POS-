@@ -36,6 +36,8 @@ const REASON_LABELS: Record<string, { label: string; color: string; bg: string }
   audit_correction: { label: 'ปรับตามผลตรวจนับ (Audit Correction)', color: 'text-sky-400', bg: 'bg-sky-500/10 border-sky-500/20' },
   manual_adjustment: { label: 'ปรับยอดระบุเอง (Manual Adjustment)', color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20' },
   cooking_prep: { label: 'เตรียมเบิกปรุงอาหาร (Cooking Prep)', color: 'text-indigo-400', bg: 'bg-indigo-500/10 border-indigo-500/20' },
+  prep_output: { label: 'รับเข้าจากการผลิต', color: 'text-teal-300', bg: 'bg-teal-500/10 border-teal-500/20' },
+  issue: { label: 'เบิกใช้', color: 'text-sky-300', bg: 'bg-sky-500/10 border-sky-500/20' },
   other: { label: 'อื่นๆ (Other)', color: 'text-slate-400', bg: 'bg-slate-500/10 border-slate-500/20' }
 };
 

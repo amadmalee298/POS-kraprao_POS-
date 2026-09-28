@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
-import { canonicalUnit, convertAmount, repointRecipe, withRecipeCosts, withRecipeUnits } from '../utils/recipeUtils';
+import { averageCostAfterPrep } from '../utils/prep';
+import { localDay } from '../utils/stockHistory';
+import { canonicalUnit, convertAmount, effectiveUnitCost, repointRecipe, withRecipeCosts, withRecipeUnits } from '../utils/recipeUtils';
 import { syncAndHealCategories, syncAndHealIngredientCategories } from '../utils/categoryUtils';
 import {
   MenuItem,
@@ -23,6 +25,7 @@ import {
   CustomerTaxInfo,
   ActiveTab,
   WasteLog,
+  WasteReason,
   StaffMember,
   ShiftEntry,
   ShiftSwapRequest,
@@ -291,12 +294,19 @@ interface POSContextType {
     updatedMenuPrices?: Record<string, number>
   ) => void;
   addStockLot: (lot: Omit<StockLot, 'id'>) => void;
+  /**
+   * Kitchen prep: draw the inputs from stock, put the yield of the output into stock, and set the
+   * output's cost to the weighted average including this batch. Returns the batch cost.
+   */
+  producePrep: (run: { outputIngredientId: string; outputQty: number; inputs: { ingredientId: string; quantity: number }[]; note?: string }) => { cost: number; unitCost: number; averageCost: number };
   /** A new ingredient that arrives with its first purchase: created with that stock and a receiving entry in the history */
   receiveNewIngredient: (ingredient: Omit<Ingredient, 'id' | 'currentStock'>, quantity: number, note: string) => Ingredient;
 
   // Waste Log operations
   wasteLogs: WasteLog[];
   addWasteLog: (log: Omit<WasteLog, 'id'>) => void;
+  /** Take several items out of stock at once: as waste (with a waste record each) or as issued for use */
+  issueStock: (lines: { ingredientId: string; quantity: number }[], opts: { waste?: WasteReason; note: string }) => { cost: number };
   deleteWasteLog: (logId: string) => void;
 
   // Stock Adjustment Log operations
@@ -3573,6 +3583,23 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ]);
   };
 
+  const producePrep = (run: { outputIngredientId: string; outputQty: number; inputs: { ingredientId: string; quantity: number }[]; note?: string }) => {
+    const byId = new Map(ingredients.map(i => [i.id, i]));
+    const output = byId.get(run.outputIngredientId);
+    if (!output || !(run.outputQty > 0)) return { cost: 0, unitCost: 0, averageCost: 0 };
+    const inputs = run.inputs.filter(i => byId.has(i.ingredientId) && i.quantity > 0);
+    const cost = inputs.reduce((sum, i) => sum + i.quantity * effectiveUnitCost(byId.get(i.ingredientId)!), 0);
+    const label = `ผลิต ${output.name}${run.note ? ` · ${run.note}` : ''}`;
+    // Value moves from the inputs to the output: one stock movement for the whole run
+    moveStock([
+      ...inputs.map(i => ({ ingredientId: i.ingredientId, change: -i.quantity, reason: 'cooking_prep', notes: label })),
+      { ingredientId: output.id, change: run.outputQty, reason: 'prep_output', notes: `${label} (ต้นทุน ฿${cost.toFixed(2)})` }
+    ]);
+    const averageCost = averageCostAfterPrep(output, run.outputQty, cost);
+    updateIngredientPriceAndRecalculate(output.id, averageCost);
+    return { cost: Math.round(cost * 100) / 100, unitCost: cost / run.outputQty, averageCost };
+  };
+
   const receiveNewIngredient = (ingData: Omit<Ingredient, 'id' | 'currentStock'>, quantity: number, note: string): Ingredient => {
     // Created with the stock already in it: moveStock cannot see an ingredient added in the same click
     const qty = Math.max(0, quantity);
@@ -3623,6 +3650,47 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         userName: logData.reportedBy
       }
     ]);
+  };
+
+  const issueStock = (lines: { ingredientId: string; quantity: number }[], opts: { waste?: WasteReason; note: string }) => {
+    const byId = new Map(ingredients.map(i => [i.id, i]));
+    // One line per item, so the stock history shows the right balances
+    const totals = new Map<string, number>();
+    lines.forEach(l => {
+      if (byId.has(l.ingredientId) && l.quantity > 0) totals.set(l.ingredientId, (totals.get(l.ingredientId) || 0) + l.quantity);
+    });
+    const userName = currentUser?.name || 'ผู้ใช้งานระบบ';
+    const today = localDay(new Date().toISOString());
+    let cost = 0;
+    const waste: WasteLog[] = [];
+    totals.forEach((qty, id) => {
+      const ing = byId.get(id)!;
+      const unitCost = effectiveUnitCost(ing);
+      cost += qty * unitCost;
+      if (opts.waste) {
+        waste.push({
+          id: `waste-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          ingredientId: id,
+          ingredientName: ing.name,
+          quantity: qty,
+          unit: ing.unit,
+          unitCost,
+          totalCostLoss: Math.round(qty * unitCost * 100) / 100,
+          reason: opts.waste,
+          loggedDate: today,
+          notes: opts.note,
+          reportedBy: userName
+        });
+      }
+    });
+    if (waste.length) {
+      setWasteLogs(prev => [...waste, ...prev]);
+      if (isFirebaseAvailable() && !effectiveOffline) waste.forEach(w => syncWasteLogToFirestore(w, currentBranch).catch(console.warn));
+      else pendingWasteLogsRef.current.push(...waste);
+    }
+    const reason = !opts.waste ? 'issue' : opts.waste === 'expired' ? 'expired' : opts.waste === 'damaged' ? 'damaged' : 'waste';
+    moveStock(Array.from(totals, ([ingredientId, qty]) => ({ ingredientId, change: -qty, reason, notes: opts.note, userName })));
+    return { cost: Math.round(cost * 100) / 100 };
   };
 
   // Waste records are shared history like stock adjustments; they are not deleted
@@ -4251,6 +4319,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateIngredientPriceAndRecalculate,
         addStockLot,
         receiveNewIngredient,
+        producePrep,
+        issueStock,
         wasteLogs,
         addWasteLog,
         deleteWasteLog,
