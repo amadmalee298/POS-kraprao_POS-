@@ -226,17 +226,6 @@ export type StockAdjustmentReason =
   | 'issue'
   | 'other';
 
-/** A fixed issue portion, e.g. "ข้าวสวย 1 กล่อง" = ข้าวสาร 0.1 kg + กล่องข้าว 1 ใบ */
-export interface IssueUnit {
-  id: string;
-  name: string; // e.g. ข้าวสวย
-  unitLabel: string; // e.g. กล่อง
-  /** Follow this menu item's or add-on's recipe (kept up to date with the recipe) */
-  source?: { kind: 'menu' | 'addon'; id: string };
-  /** Extra items per 1 unit on top of the recipe (e.g. the box), or the whole unit when there is no recipe */
-  inputs: { ingredientId: string; quantity: number }[];
-}
-
 export interface StockAdjustmentLog {
   id: string;
   ingredientId: string;

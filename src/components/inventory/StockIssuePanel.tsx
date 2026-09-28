@@ -1,16 +1,14 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Edit3, PackageMinus, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, PackageMinus, Plus, Trash2, UtensilsCrossed, X } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { useSharedList } from '../../hooks/useSharedList';
-import type { AddOnOption, Ingredient, IssueUnit, MenuItem, WasteReason } from '../../types';
-import { convertAmount, effectiveUnitCost } from '../../utils/recipeUtils';
-import { matchIngredient } from '../../utils/stockIntake';
+import type { WasteReason } from '../../types';
+import { effectiveUnitCost } from '../../utils/recipeUtils';
 import { localDay } from '../../utils/stockHistory';
-import { issueUnitLines, issueUnitSource } from '../../utils/issueUnits';
+import { menuIssueDeductions } from '../../utils/menuIssue';
 
 /**
- * Taking stock out by hand: whole portions such as "ข้าวสวย 1 กล่อง" (issued for use or thrown
- * away), and waste of any ingredients with a reason, each valued at the ingredient's cost.
+ * Taking stock out by hand: boxes of a menu (its whole recipe, as a sale would deduct it) issued
+ * for use or thrown away, and waste of any ingredients with a reason, each valued at cost.
  */
 
 const WASTE_REASONS: { id: WasteReason; label: string }[] = [
@@ -23,106 +21,99 @@ const WASTE_REASONS: { id: WasteReason; label: string }[] = [
 ];
 const reasonLabel = (r: string) => WASTE_REASONS.find(x => x.id === r)?.label || r;
 
+// Why boxes of food leave the kitchen without a sale
+const MENU_PURPOSES = [
+  { id: 'staff', label: 'อาหารพนักงาน', waste: undefined },
+  { id: 'free', label: 'แจก / รับรอง / ชิม', waste: undefined },
+  { id: 'leftover', label: 'ทำเกิน เหลือทิ้ง', waste: 'other' as WasteReason },
+  { id: 'spoiled', label: 'เสีย / ลูกค้าคืน', waste: 'overcooked' as WasteReason }
+];
+
 const fmt = (n: number, d = 3) => (Number.isFinite(n) ? n.toLocaleString('th-TH', { maximumFractionDigits: d }) : '0');
 const baht = (n: number) => `฿${(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const newId = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-
-interface UnitDraft {
-  id?: string;
-  name: string;
-  unitLabel: string;
-  source: string; // 'menu:<id>' | 'addon:<id>' | '' (own list)
-  inputs: { ingredientId: string; quantity: string }[];
-}
-
-const sourceKey = (u: Pick<IssueUnit, 'source'>) => (u.source ? `${u.source.kind}:${u.source.id}` : '');
-const parseSource = (key: string): IssueUnit['source'] => {
-  const [kind, ...rest] = key.split(':');
-  return (kind === 'menu' || kind === 'addon') && rest.length ? { kind, id: rest.join(':') } : undefined;
-};
 
 interface WasteLine {
   key: string;
   ingredientId: string;
   quantity: string;
 }
-
 const blankLine = (): WasteLine => ({ key: newId('w'), ingredientId: '', quantity: '' });
 
-/**
- * Starting point for "ข้าวสวย 1 กล่อง": follows the shop's rice recipe (a rice menu item or the
- * extra-rice add-on) so a box takes out what a sold portion does, plus the box itself. Without a
- * rice recipe it starts from about 100 g of raw rice.
- */
-function riceBoxDraft(ingredients: Ingredient[], menuItems: MenuItem[], addOns: AddOnOption[]): UnitDraft {
-  const plainRice = /^(ข้าวสวย|ข้าวเปล่า|ข้าวหอมมะลิ|ข้าว)\s*(เปล่า|สวย)?$/;
-  const menu = menuItems.find(m => plainRice.test(m.name.trim()) && m.recipe?.length);
-  const addOn = addOns.find(a => /ข้าว/.test(a.name) && !/เหนียว|ต้ม/.test(a.name) && (a.recipe?.length || a.ingredientId));
-  const source = menu ? `menu:${menu.id}` : addOn ? `addon:${addOn.id}` : '';
-  const raw = ingredients.filter(i => !/ปรุงสุก|สำเร็จ/.test(i.name));
-  const rice = ['ข้าวสาร', 'ข้าวหอมมะลิ', 'ข้าวสวย', 'ข้าว'].map(n => matchIngredient(n, raw)).find(Boolean);
-  const box = raw.find(i => /กล่อง/.test(i.name) && (i.category === 'packaging' || /ข้าว|อาหาร|ใส่/.test(i.name)));
-  const inputs: UnitDraft['inputs'] = [];
-  if (rice && !source) inputs.push({ ingredientId: rice.id, quantity: String(convertAmount(0.1, 'kg', rice.unit) ?? 0.1) });
-  if (box) inputs.push({ ingredientId: box.id, quantity: '1' });
-  return { name: 'ข้าวสวย', unitLabel: 'กล่อง', source, inputs: inputs.length ? inputs : [{ ingredientId: '', quantity: '' }] };
+interface MenuLine {
+  key: string;
+  menuItemId: string;
+  protein: string;
+  boxes: string;
 }
+const blankMenuLine = (): MenuLine => ({ key: newId('m'), menuItemId: '', protein: '', boxes: '1' });
+
+const CONTAINER_KEY = 'POS_MENU_ISSUE_CONTAINER';
+const readContainer = () => {
+  try {
+    return localStorage.getItem(CONTAINER_KEY) || '';
+  } catch {
+    return '';
+  }
+};
 
 export const StockIssuePanel: React.FC = () => {
-  const { ingredients, issueStock, wasteLogs, menuItems, addOns } = usePOS();
-  const [units, setUnits] = useSharedList<IssueUnit>('issue_units', 'POS_ISSUE_UNITS');
-  const [draft, setDraft] = useState<UnitDraft | null>(null);
-  const [draftError, setDraftError] = useState('');
-  const [counts, setCounts] = useState<Record<string, string>>({});
+  const { ingredients, issueStock, wasteLogs, menuItems } = usePOS();
   const [lines, setLines] = useState<WasteLine[]>([blankLine()]);
   const [reason, setReason] = useState<WasteReason>('spoiled');
   const [note, setNote] = useState('');
   const [done, setDone] = useState('');
+  const [menuLines, setMenuLines] = useState<MenuLine[]>([blankMenuLine()]);
+  const [purpose, setPurpose] = useState(MENU_PURPOSES[0].id);
+  const [containerId, setContainerIdState] = useState(readContainer);
+  const [menuNote, setMenuNote] = useState('');
 
   const byId = useMemo(() => new Map(ingredients.map(i => [i.id, i])), [ingredients]);
   const sorted = useMemo(() => [...ingredients].sort((a, b) => a.name.localeCompare(b.name, 'th')), [ingredients]);
+  const menus = useMemo(() => menuItems.filter(m => m.recipe?.length).sort((a, b) => a.name.localeCompare(b.name, 'th')), [menuItems]);
+  const menuById = useMemo(() => new Map(menuItems.map(m => [m.id, m])), [menuItems]);
 
-  // ---- Portions (ข้าวกล่อง) ----
-  const saveDraft = () => {
-    if (!draft) return;
-    const inputs = draft.inputs.map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity) })).filter(i => i.ingredientId && i.quantity > 0);
-    if (!draft.name.trim()) return setDraftError('ใส่ชื่อ เช่น ข้าวสวย');
-    if (!draft.unitLabel.trim()) return setDraftError('ใส่หน่วย เช่น กล่อง');
-    const source = parseSource(draft.source);
-    if (!source && !inputs.length) return setDraftError('เลือกสูตรอาหาร หรือเพิ่มวัตถุดิบที่ตัดต่อ 1 หน่วยอย่างน้อย 1 รายการ');
-    const unit: IssueUnit = { id: draft.id || newId('iu'), name: draft.name.trim(), unitLabel: draft.unitLabel.trim(), ...(source ? { source } : {}), inputs };
-    setUnits(prev => (draft.id ? prev.map(u => (u.id === draft.id ? unit : u)) : [...prev, unit]));
-    setDraft(null);
+  const setContainerId = (id: string) => {
+    setContainerIdState(id);
+    try {
+      localStorage.setItem(CONTAINER_KEY, id);
+    } catch {
+      // remembered for this visit only
+    }
   };
 
-  const setDraftLine = (idx: number, patch: Partial<UnitDraft['inputs'][number]>) =>
-    setDraft(d => (d ? { ...d, inputs: d.inputs.map((l, i) => (i === idx ? { ...l, ...patch } : l)) } : d));
+  // ---- Boxes of a menu ----
+  const menuRows = menuLines.map(l => ({ menuItemId: l.menuItemId, protein: l.protein || undefined, boxes: Number(l.boxes) || 0 }));
+  const validMenuRows = menuRows.filter(r => menuById.has(r.menuItemId) && r.boxes > 0);
+  const totalBoxes = validMenuRows.reduce((s, r) => s + r.boxes, 0);
+  const menuUsage = useMemo(
+    () =>
+      Array.from(menuIssueDeductions(validMenuRows, menuItems, ingredients, containerId || undefined), ([ingredientId, qty]) => {
+        const ing = byId.get(ingredientId)!;
+        return { ing, qty, value: qty * effectiveUnitCost(ing), short: Math.max(0, qty - (ing.currentStock || 0)) };
+      }).filter(r => r.ing),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(validMenuRows), menuItems, ingredients, containerId, byId]
+  );
+  const menuCost = menuUsage.reduce((s, r) => s + r.value, 0);
 
-  /** What 1 unit takes out of stock, following its recipe as it is now */
-  const linesOf = (u: IssueUnit) => issueUnitLines(u, ingredients, menuItems, addOns);
+  const setMenuLine = (key: string, patch: Partial<MenuLine>) => setMenuLines(ls => ls.map(l => (l.key === key ? { ...l, ...patch } : l)));
 
-  /** How many whole units the stock still covers */
-  const unitsLeft = (u: IssueUnit) =>
-    linesOf(u).reduce((min, i) => {
-      const ing = byId.get(i.ingredientId);
-      return ing && i.quantity > 0 ? Math.min(min, Math.floor((ing.currentStock || 0) / i.quantity)) : min;
-    }, Infinity);
-
-  const unitCost = (u: IssueUnit) => linesOf(u).reduce((s, i) => s + i.quantity * effectiveUnitCost(byId.get(i.ingredientId) || {}), 0);
-
-  const issueUnits = (u: IssueUnit, asWaste: boolean) => {
-    const n = Number(counts[u.id]);
-    const perUnit = linesOf(u);
-    if (!(n > 0) || !perUnit.length) return;
-    const left = unitsLeft(u);
-    if (n > left && !window.confirm(`สต็อกพอประมาณ ${left} ${u.unitLabel} ต้องการตัด ${n} ${u.unitLabel} ต่อหรือไม่? (สต็อกไม่ติดลบ)`)) return;
-    const label = `${u.name} ${fmt(n)} ${u.unitLabel}`;
+  const submitMenus = () => {
+    if (!menuUsage.length) return;
+    if (menuUsage.some(r => r.short > 0) && !window.confirm('วัตถุดิบบางรายการในสต็อกไม่พอ ระบบจะตัดได้ไม่เกินที่มี ต้องการทำต่อหรือไม่?')) return;
+    const p = MENU_PURPOSES.find(x => x.id === purpose)!;
+    const what = validMenuRows
+      .map(r => `${menuById.get(r.menuItemId)!.name}${r.protein ? ` (${r.protein})` : ''} ${fmt(r.boxes)} กล่อง`)
+      .join(', ');
+    const text = [p.label, what, menuNote.trim()].filter(Boolean).join(' · ');
     const { cost } = issueStock(
-      perUnit.map(i => ({ ingredientId: i.ingredientId, quantity: i.quantity * n })),
-      asWaste ? { waste: 'other', note: `ทิ้ง ${label}` } : { note: `เบิกใช้ ${label}` }
+      menuUsage.map(r => ({ ingredientId: r.ing.id, quantity: r.qty })),
+      p.waste ? { waste: p.waste, note: text } : { note: text }
     );
-    setCounts(c => ({ ...c, [u.id]: '' }));
-    setDone(`${asWaste ? 'ตัดของเสีย' : 'เบิกใช้'} ${label} แล้ว · มูลค่า ${baht(cost)}`);
+    setMenuLines([blankMenuLine()]);
+    setMenuNote('');
+    setDone(`ตัดจ่าย${p.waste ? 'ของเสีย' : 'เบิกใช้'} ${fmt(totalBoxes)} กล่อง (${what}) · ต้นทุน ${baht(cost)}`);
   };
 
   // ---- Waste of any ingredients ----
@@ -170,74 +161,75 @@ export const StockIssuePanel: React.FC = () => {
         </div>
       )}
 
-      {/* Portions */}
+      {/* Boxes of a menu */}
       <section className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex items-start gap-2">
+          <UtensilsCrossed className="w-5 h-5 text-orange-400 shrink-0 mt-0.5" />
           <div>
-            <h3 className="font-bold text-slate-100">ตัดจ่ายเป็นกล่อง / หน่วย</h3>
-            <p className="text-xs text-slate-400">เช่น ข้าวสวย 1 กล่อง ตัดตามสูตรอาหาร (ปริมาณข้าวเท่ากับที่ขาย 1 ที่) + กล่องข้าว 1 ใบ ใส่จำนวนกล่องแล้วกดเบิกใช้ หรือทิ้ง (ของเสีย)</p>
-          </div>
-          <div className="flex gap-2">
-            {!units.some(u => u.name === 'ข้าวสวย') && (
-              <button type="button" onClick={() => { setDraftError(''); setDraft(riceBoxDraft(ingredients, menuItems, addOns)); }} className="h-10 px-3 rounded-xl border border-slate-700 text-slate-300 text-xs">
-                + ข้าวสวย (กล่อง)
-              </button>
-            )}
-            <button type="button" onClick={() => { setDraftError(''); setDraft({ name: '', unitLabel: 'กล่อง', source: '', inputs: [{ ingredientId: '', quantity: '' }] }); }} className="h-10 px-3 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold flex items-center gap-1">
-              <Plus className="w-4 h-4" /> เพิ่มหน่วยตัดจ่าย
-            </button>
+            <h3 className="font-bold text-slate-100">ตัดจ่ายตามเมนู (กล่อง)</h3>
+            <p className="text-xs text-slate-400">เลือกเมนูและจำนวนกล่อง ระบบตัดวัตถุดิบทั้งหมดตามสูตรของเมนู (ข้าว เนื้อ ซอส ไข่ ฯลฯ) เหมือนขาย 1 กล่อง แต่ไม่นับเป็นยอดขาย</p>
           </div>
         </div>
-
-        {units.length === 0 ? (
-          <p className="text-xs text-slate-500">ยังไม่มีหน่วยตัดจ่าย กด “+ ข้าวสวย (กล่อง)” เพื่อเริ่ม</p>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {units.map(u => {
-              const left = unitsLeft(u);
-              const perUnit = linesOf(u);
-              const source = issueUnitSource(u, menuItems, addOns);
-              return (
-                <div key={u.id} className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col gap-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="font-bold text-slate-100">{u.name} / {u.unitLabel}</div>
-                      <div className="text-[11px] text-slate-400">
-                        ต้นทุน {baht(unitCost(u))}/{u.unitLabel} · สต็อกพอ ≈ {Number.isFinite(left) ? fmt(left, 0) : '-'} {u.unitLabel}
-                      </div>
-                    </div>
-                    <div className="flex gap-1">
-                      <button type="button" aria-label="แก้ไข" onClick={() => { setDraftError(''); setDraft({ id: u.id, name: u.name, unitLabel: u.unitLabel, source: sourceKey(u), inputs: u.inputs.map(i => ({ ingredientId: i.ingredientId, quantity: String(i.quantity) })) }); }} className="w-9 h-9 rounded-lg border border-slate-700 flex items-center justify-center text-slate-300"><Edit3 className="w-4 h-4" /></button>
-                      <button type="button" aria-label="ลบ" onClick={() => window.confirm(`ลบหน่วย ${u.name}?`) && setUnits(prev => prev.filter(x => x.id !== u.id))} className="w-9 h-9 rounded-lg border border-slate-700 flex items-center justify-center text-rose-300"><Trash2 className="w-4 h-4" /></button>
-                    </div>
-                  </div>
-                  {u.source && (
-                    <div className={`text-[11px] ${source ? 'text-emerald-300' : 'text-rose-300'}`}>
-                      {source ? `ตามสูตร: ${source.name}` : 'สูตรอาหารที่ผูกไว้ถูกลบไปแล้ว กดแก้ไขเพื่อเลือกใหม่'}
-                    </div>
-                  )}
-                  <ul className="text-xs text-slate-400">
-                    {perUnit.map(i => {
-                      const ing = byId.get(i.ingredientId);
-                      return (
-                        <li key={`${i.ingredientId}-${i.fromRecipe}`}>
-                          {ing?.name} {fmt(i.quantity)} {ing?.unit} / {u.unitLabel}
-                          {!i.fromRecipe && u.source ? <span className="text-slate-500"> (เพิ่มเติม)</span> : null}
-                        </li>
-                      );
-                    })}
-                    {!perUnit.length && <li className="text-rose-300">ยังไม่มีวัตถุดิบที่จะตัด</li>}
-                  </ul>
-                  <div className="flex gap-2 mt-auto">
-                    <input aria-label={`จำนวน${u.unitLabel} ${u.name}`} type="number" inputMode="numeric" min="0" step="any" value={counts[u.id] || ''} onChange={e => setCounts(c => ({ ...c, [u.id]: e.target.value }))} placeholder={u.unitLabel} className={`${input} w-28`} />
-                    <button type="button" disabled={!(Number(counts[u.id]) > 0)} onClick={() => issueUnits(u, false)} className="flex-1 h-11 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold disabled:opacity-40">เบิกใช้</button>
-                    <button type="button" disabled={!(Number(counts[u.id]) > 0)} onClick={() => issueUnits(u, true)} className="flex-1 h-11 rounded-xl bg-rose-700 hover:bg-rose-600 text-white text-xs font-bold disabled:opacity-40">ทิ้ง (ของเสีย)</button>
-                  </div>
-                </div>
-              );
-            })}
+        <div className="space-y-2">
+          {menuLines.map((l, idx) => {
+            const m = menuById.get(l.menuItemId);
+            return (
+              <div key={l.key} className="flex flex-wrap sm:flex-nowrap gap-2 items-center">
+                <select aria-label={`เมนูที่ ${idx + 1}`} value={l.menuItemId} onChange={e => setMenuLine(l.key, { menuItemId: e.target.value, protein: '' })} className={`${input} flex-1 min-w-[12rem]`}>
+                  <option value="">เลือกเมนู</option>
+                  {menus.map(mi => (
+                    <option key={mi.id} value={mi.id}>{mi.name}</option>
+                  ))}
+                </select>
+                {m?.availableProteins?.length ? (
+                  <select aria-label={`เนื้อสัตว์เมนูที่ ${idx + 1}`} value={l.protein} onChange={e => setMenuLine(l.key, { protein: e.target.value })} className={`${input} w-36`}>
+                    <option value="">ตามสูตรหลัก</option>
+                    {m.availableProteins.map(p => (
+                      <option key={p.name} value={p.name}>{p.name}</option>
+                    ))}
+                  </select>
+                ) : null}
+                <input aria-label={`จำนวนกล่องเมนูที่ ${idx + 1}`} type="number" inputMode="numeric" min="0" step="1" value={l.boxes} onChange={e => setMenuLine(l.key, { boxes: e.target.value })} className={`${input} w-20`} />
+                <span className="text-xs text-slate-400">กล่อง</span>
+                <button type="button" aria-label="ลบบรรทัด" onClick={() => setMenuLines(ls => (ls.length > 1 ? ls.filter(x => x.key !== l.key) : [blankMenuLine()]))} className="w-11 h-11 rounded-xl border border-slate-700 flex items-center justify-center text-rose-300"><Trash2 className="w-4 h-4" /></button>
+              </div>
+            );
+          })}
+          <button type="button" onClick={() => setMenuLines(ls => [...ls, blankMenuLine()])} className="h-10 px-3 rounded-xl border border-slate-700 text-xs text-slate-300 flex items-center gap-1"><Plus className="w-4 h-4" /> เพิ่มเมนู</button>
+        </div>
+        <div className="grid sm:grid-cols-3 gap-2">
+          <select aria-label="วัตถุประสงค์" value={purpose} onChange={e => setPurpose(e.target.value)} className={input}>
+            {MENU_PURPOSES.map(p => (
+              <option key={p.id} value={p.id}>{p.label}{p.waste ? ' (ของเสีย)' : ''}</option>
+            ))}
+          </select>
+          <select aria-label="กล่องบรรจุ" value={containerId} onChange={e => setContainerId(e.target.value)} className={input}>
+            <option value="">ไม่ตัดกล่องบรรจุ</option>
+            {sorted.map(i => (
+              <option key={i.id} value={i.id}>ตัดกล่อง: {i.name}</option>
+            ))}
+          </select>
+          <input aria-label="หมายเหตุตัดจ่ายเมนู" value={menuNote} onChange={e => setMenuNote(e.target.value)} placeholder="หมายเหตุ (ไม่บังคับ)" className={input} />
+        </div>
+        {menuUsage.length > 0 && (
+          <div className="rounded-xl border border-slate-800 overflow-hidden">
+            <div className="px-3 py-2 bg-slate-900 text-xs text-slate-400">วัตถุดิบที่จะตัด ({fmt(totalBoxes)} กล่อง)</div>
+            <ul className="divide-y divide-slate-800">
+              {menuUsage.map(r => (
+                <li key={r.ing.id} className="px-3 py-1.5 flex justify-between gap-2 text-xs text-slate-300">
+                  <span>{r.ing.name}</span>
+                  <span className={r.short > 0 ? 'text-amber-300' : ''}>
+                    {fmt(r.qty)} {r.ing.unit} · {baht(r.value)}{r.short > 0 ? ` (ขาด ${fmt(r.short)})` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm text-slate-300">ต้นทุนรวม <span className="font-bold text-orange-300">{baht(menuCost)}</span>{totalBoxes > 0 ? <span className="text-xs text-slate-500"> · {baht(menuCost / totalBoxes)}/กล่อง</span> : null}</div>
+          <button type="button" disabled={!menuUsage.length} onClick={submitMenus} className="h-12 px-5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white font-bold disabled:opacity-40">ยืนยันตัดจ่าย</button>
+        </div>
       </section>
 
       {/* Waste write-off */}
@@ -323,66 +315,6 @@ export const StockIssuePanel: React.FC = () => {
         )}
       </section>
 
-      {draft && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 overflow-y-auto" onClick={() => setDraft(null)}>
-          <div role="dialog" aria-modal="true" aria-label="หน่วยตัดจ่าย" onClick={e => e.stopPropagation()} className="bg-[#0f172a] border border-slate-800 rounded-3xl w-full max-w-lg my-auto text-slate-100 text-sm">
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-              <h3 className="font-bold">{draft.id ? 'แก้ไขหน่วยตัดจ่าย' : 'หน่วยตัดจ่ายใหม่'}</h3>
-              <button type="button" onClick={() => setDraft(null)} aria-label="ปิด" className="w-9 h-9 rounded-lg border border-slate-700 flex items-center justify-center"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="p-4 space-y-3">
-              <div className="grid grid-cols-3 gap-2">
-                <input aria-label="ชื่อ" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} placeholder="ชื่อ เช่น ข้าวสวย" className={`${input} col-span-2`} />
-                <input aria-label="หน่วย" value={draft.unitLabel} onChange={e => setDraft({ ...draft, unitLabel: e.target.value })} placeholder="กล่อง" className={input} />
-              </div>
-              <div>
-                <label htmlFor="issue-source" className="block text-xs text-slate-400 mb-1">ตัดตามสูตรอาหาร</label>
-                <select id="issue-source" value={draft.source} onChange={e => setDraft({ ...draft, source: e.target.value })} className={`${input} w-full px-2`}>
-                  <option value="">ไม่ใช้สูตร (กำหนดวัตถุดิบเอง)</option>
-                  <optgroup label="ท็อปปิ้ง / เพิ่ม">
-                    {addOns.filter(a => a.recipe?.length || a.ingredientId).map(a => (
-                      <option key={a.id} value={`addon:${a.id}`}>{a.name}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="เมนูอาหาร">
-                    {menuItems.filter(m => m.recipe?.length).map(m => (
-                      <option key={m.id} value={`menu:${m.id}`}>{m.name}</option>
-                    ))}
-                  </optgroup>
-                </select>
-                {draft.source && (
-                  <ul className="mt-2 p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 space-y-0.5">
-                    {issueUnitLines({ id: 'draft', name: draft.name, unitLabel: draft.unitLabel, source: parseSource(draft.source), inputs: [] }, ingredients, menuItems, addOns).map(l => (
-                      <li key={l.ingredientId}>{byId.get(l.ingredientId)?.name} {fmt(l.quantity)} {byId.get(l.ingredientId)?.unit} / {draft.unitLabel || 'หน่วย'}</li>
-                    ))}
-                    <li className="text-[11px] text-slate-500">ตัดตามสูตรปัจจุบันเสมอ แก้สูตรที่หน้าเมนูแล้วการตัดจ่ายเปลี่ยนตาม</li>
-                  </ul>
-                )}
-              </div>
-              <div className="text-xs text-slate-400">{draft.source ? 'ตัดเพิ่มเติมต่อ 1 ' : 'ตัดจากสต็อกต่อ 1 '}{draft.unitLabel || 'หน่วย'}{draft.source ? ' (เช่น กล่อง ช้อนส้อม ไม่บังคับ)' : ''}</div>
-              {draft.inputs.map((l, idx) => (
-                <div key={idx} className="flex gap-2">
-                  <select aria-label={`วัตถุดิบที่ ${idx + 1}`} value={l.ingredientId} onChange={e => setDraftLine(idx, { ingredientId: e.target.value })} className={`${input} flex-1 min-w-0 px-2`}>
-                    <option value="">เลือกวัตถุดิบ</option>
-                    {sorted.map(i => (
-                      <option key={i.id} value={i.id}>{i.name}</option>
-                    ))}
-                  </select>
-                  <input aria-label={`จำนวนวัตถุดิบที่ ${idx + 1}`} type="number" inputMode="decimal" min="0" step="any" value={l.quantity} onChange={e => setDraftLine(idx, { quantity: e.target.value })} placeholder="จำนวน" className={`${input} w-24 px-2`} />
-                  <span className="w-10 self-center text-xs text-slate-400">{byId.get(l.ingredientId)?.unit || ''}</span>
-                  <button type="button" aria-label="ลบบรรทัด" onClick={() => setDraft({ ...draft, inputs: draft.inputs.filter((_, i) => i !== idx) })} className="w-11 h-11 rounded-xl border border-slate-700 flex items-center justify-center text-rose-300"><Trash2 className="w-4 h-4" /></button>
-                </div>
-              ))}
-              <button type="button" onClick={() => setDraft({ ...draft, inputs: [...draft.inputs, { ingredientId: '', quantity: '' }] })} className="h-10 px-3 rounded-xl border border-slate-700 text-xs flex items-center gap-1"><Plus className="w-4 h-4" /> เพิ่มวัตถุดิบ</button>
-              {draftError && <div role="alert" className="text-xs text-rose-300">{draftError}</div>}
-            </div>
-            <div className="p-4 border-t border-slate-800 flex gap-2">
-              <button type="button" onClick={() => setDraft(null)} className="flex-1 h-12 rounded-xl border border-slate-700 font-bold">ยกเลิก</button>
-              <button type="button" onClick={saveDraft} className="flex-[2] h-12 rounded-xl bg-orange-600 hover:bg-orange-500 font-bold">บันทึก</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

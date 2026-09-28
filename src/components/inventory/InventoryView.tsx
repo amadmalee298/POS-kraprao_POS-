@@ -947,7 +947,7 @@ export const InventoryView: React.FC = () => {
             }`}
           >
             <PackageMinus className="w-4 h-4" />
-            <span>ตัดจ่าย / ของเสีย / ข้าวกล่อง</span>
+            <span>ตัดจ่ายตามเมนู / ของเสีย</span>
           </button>
 
           <button
