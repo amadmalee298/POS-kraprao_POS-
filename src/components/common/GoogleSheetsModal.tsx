@@ -23,6 +23,7 @@ import {
   Check
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
+import { SheetsScriptPanel } from '../sheets/SheetsScriptPanel';
 import {
   initGoogleAuth,
   googleSignIn,
@@ -365,6 +366,8 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+          <SheetsScriptPanel />
+          <div className="text-[11px] text-slate-500 pt-2 border-t border-slate-800">หรือส่งด้วยการ Sign in Google (ต้องเชื่อมใหม่ทุก 1 ชั่วโมง)</div>
           
           {/* Section 1: Google Account Connection Status */}
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 space-y-3">
@@ -761,7 +764,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             {googleUser ? (
               <span className="text-emerald-400 font-medium">✓ เชื่อมต่อกับ Google Workspace สำเร็จ</span>
             ) : (
-              <span>โปรดเข้าสู่ระบบ Google เพื่อดำเนินการ</span>
+              <span>ใช้ Apps Script ด้านบน หรือ Sign in Google เพื่อส่งออก</span>
             )}
           </div>
 

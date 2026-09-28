@@ -759,6 +759,24 @@ export async function syncAllDatasetsToSpreadsheet(
   return { salesCount, inventoryCount, recipeCount, movementsCount, url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit` };
 }
 
+/** Every sheet the shop's spreadsheet gets, as rows */
+export function buildAllSheets(data: {
+  orders: Order[];
+  ingredients: Ingredient[];
+  menuItems: MenuItem[];
+  adjustments: StockAdjustmentLog[];
+  wasteLogs: WasteLog[];
+  branch: Branch;
+  vatRate?: number;
+}): { title: string; values: (string | number)[][] }[] {
+  return [
+    { title: 'ยอดขาย (Sales)', values: salesSheet(data.orders, data.branch, data.vatRate ?? 7) },
+    { title: 'สต็อก (Inventory)', values: inventorySheet(data.ingredients, data.branch) },
+    { title: 'ต้นทุนเมนู (Recipes)', values: recipeSheet(data.menuItems, data.ingredients) },
+    { title: 'ประวัติสต็อก (Movements)', values: movementSheet(data.adjustments, data.wasteLogs) }
+  ];
+}
+
 /**
  * Utility to convert 2D array to CSV formatted string with UTF-8 BOM for Excel support
  */
