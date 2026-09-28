@@ -26,13 +26,14 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
   order,
   onSuccess
 }) => {
-  const { cancelOrder, currentUser, users, logSecurityEvent } = usePOS();
+  const { cancelOrder, currentUser, users, logSecurityEvent, permissions } = usePOS();
 
   const [selectedReason, setSelectedReason] = useState<string>(CANCEL_REASONS[0]);
   const [customNote, setCustomNote] = useState<string>('');
   
   // Authorized user logic
-  const isDirectlyAuthorized = currentUser.role === 'admin' || currentUser.role === 'manager';
+  // Allowed to cancel bills on their PIN card; anyone else needs an owner's or manager's PIN
+  const isDirectlyAuthorized = permissions.canVoidOrder;
   
   // The shop's real staff list; only people with their own PIN can approve
   const managers = users.filter(u => (u.role === 'admin' || u.role === 'manager') && !!u.pin);

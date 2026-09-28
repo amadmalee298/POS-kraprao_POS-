@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from 'react';
 import { averageCostAfterPrep } from '../utils/prep';
 import { localDay } from '../utils/stockHistory';
+import { effectivePermissions } from '../utils/access';
 import { canonicalUnit, convertAmount, effectiveUnitCost, repointRecipe, withRecipeCosts, withRecipeUnits } from '../utils/recipeUtils';
 import { syncAndHealCategories, syncAndHealIngredientCategories } from '../utils/categoryUtils';
 import {
@@ -26,6 +27,7 @@ import {
   ActiveTab,
   WasteLog,
   WasteReason,
+  StaffPermissions,
   StaffMember,
   ShiftEntry,
   ShiftSwapRequest,
@@ -172,6 +174,8 @@ interface POSContextType {
   addBranch: (branchData: Omit<Branch, 'id'>) => void;
   deleteBranch: (branchId: string) => void;
   currentUser: User;
+  /** What the signed-in person may do (from their PIN card; everything for the owner) */
+  permissions: Required<StaffPermissions>;
   setCurrentUser: (user: User) => void;
   users: User[];
   updateUserPin: (userId: string, newPin: string) => void;
@@ -821,6 +825,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const clearStockAdjustmentLogs = () => undefined;
   const deleteStockAdjustmentLog = (_logId: string) => undefined;
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>(INITIAL_STAFF_MEMBERS);
+
+  // Permissions come from the person's current PIN card, so a change applies without signing in again
+  const permissions = useMemo(() => {
+    const card = staffMembers.find(s => s.id === currentUser?.id);
+    return effectivePermissions(currentUser ? { role: currentUser.role, permissions: card?.permissions ?? currentUser.permissions } : null);
+  }, [staffMembers, currentUser]);
   const [shifts, setShifts] = useState<ShiftEntry[]>(INITIAL_SHIFTS);
   const [shiftSwapRequests, setShiftSwapRequests] = useState<ShiftSwapRequest[]>(INITIAL_SHIFT_SWAP_REQUESTS);
   const [cashShifts, setCashShifts] = useState<CashShift[]>(INITIAL_CASH_SHIFTS);
@@ -2251,7 +2261,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       finalUsers.length !== users.length ||
       finalUsers.some((fu, idx) => {
         const u = users[idx];
-        return !u || u.id !== fu.id || u.name !== fu.name || u.pin !== fu.pin || u.role !== fu.role;
+        return (
+          !u ||
+          u.id !== fu.id ||
+          u.name !== fu.name ||
+          u.pin !== fu.pin ||
+          u.role !== fu.role ||
+          JSON.stringify(u.permissions || null) !== JSON.stringify(fu.permissions || null)
+        );
       });
 
     if (isDifferent) {
@@ -4278,6 +4295,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addBranch,
         deleteBranch,
         currentUser,
+        permissions,
         setCurrentUser,
         users,
         updateUserPin,

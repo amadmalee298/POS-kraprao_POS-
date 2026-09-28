@@ -42,7 +42,8 @@ export const HeaderNavbar: React.FC = () => {
     isOffline,
     forceOfflineMode,
     pendingOfflineCount,
-    settings
+    settings,
+    permissions
   } = usePOS();
 
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
@@ -144,7 +145,8 @@ export const HeaderNavbar: React.FC = () => {
 
             {/* Right: Sync Health Monitor, Green Receipt, User Badge & Logout */}
             <div className="flex items-center space-x-2 sm:space-x-2.5">
-              {/* Google Sheets / Receipts button */}
+              {/* Google Sheets / Receipts button (sales figures) */}
+              {permissions.canAccessAccounting && (
               <button
                 onClick={() => setIsGoogleSheetsModalOpen(true)}
                 className="p-2 rounded-xl bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-400 transition active:scale-95 shadow-sm flex items-center justify-center"
@@ -152,8 +154,10 @@ export const HeaderNavbar: React.FC = () => {
               >
                 <FileSpreadsheet className="w-4 h-4" />
               </button>
+              )}
 
               {/* Merchant Pro Pill (Optional Desktop) */}
+              {permissions.canAccessSettings && (
               <button
                 onClick={() => setIsMerchantModalOpen(true)}
                 className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-[#180f0a] hover:bg-[#25170f] border border-[#2d1b12] text-stone-300 transition active:scale-95 shadow-sm"
@@ -167,6 +171,7 @@ export const HeaderNavbar: React.FC = () => {
                   <span className="w-2 h-2 rounded-full bg-stone-500" />
                 )}
               </button>
+              )}
 
               {/* Sync Health & Connection Monitor */}
               <SyncHealthMonitor />
@@ -193,6 +198,7 @@ export const HeaderNavbar: React.FC = () => {
 
           {/* Row 2: Navigation Tabs (ขายหน้าร้าน | ห้องครัว | คลังวัตถุดิบ) */}
           <div className="flex items-center justify-around sm:justify-center sm:space-x-8 border-t border-[#22130a] py-2">
+            {permissions.canAccessPOS && (
             <button
               onClick={() => setActiveTab('pos')}
               className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition ${
@@ -204,7 +210,9 @@ export const HeaderNavbar: React.FC = () => {
               <Store className="w-4 h-4" />
               <span>ขายหน้าร้าน</span>
             </button>
+            )}
 
+            {permissions.canAccessKDS && (
             <button
               onClick={() => setActiveTab('kds')}
               className={`relative flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition ${
@@ -221,7 +229,9 @@ export const HeaderNavbar: React.FC = () => {
                 </span>
               )}
             </button>
+            )}
 
+            {permissions.canAccessInventory && (
             <button
               onClick={() => setActiveTab('inventory')}
               className={`relative flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition ${
@@ -232,16 +242,13 @@ export const HeaderNavbar: React.FC = () => {
             >
               <PackageCheck className="w-4 h-4" />
               <span>คลังวัตถุดิบ</span>
-              {lowStockCount > 0 ? (
+              {lowStockCount > 0 && (
                 <span className="ml-1 px-1.5 py-0.2 text-[10px] font-black bg-rose-600 text-white rounded-full flex items-center space-x-0.5">
                   <span>{lowStockCount}</span>
                 </span>
-              ) : (
-                <span className="ml-1 px-1.5 py-0.2 text-[10px] font-black bg-rose-600/90 text-white rounded-full">
-                  33
-                </span>
               )}
             </button>
+            )}
           </div>
         </div>
       </header>
