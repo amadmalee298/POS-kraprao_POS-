@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ShopAccountStatusButton } from './ShopAccountBanner';
 import {
   X,
+  ChevronDown,
   LayoutGrid,
   ShoppingCart,
   QrCode,
@@ -52,6 +53,23 @@ export const SidebarDrawer: React.FC = () => {
   const cloudStatus = isOffline || forceOfflineMode ? 'offline' : firebaseSyncState.status;
 
   const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
+  // "Staff & settings" folds away; open or closed is remembered on this device
+  const [settingsOpen, setSettingsOpen] = useState(() => {
+    try {
+      return localStorage.getItem('POS_MENU_SETTINGS_OPEN') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleSettingsOpen = () =>
+    setSettingsOpen(o => {
+      try {
+        localStorage.setItem('POS_MENU_SETTINGS_OPEN', o ? '0' : '1');
+      } catch {
+        // this visit only
+      }
+      return !o;
+    });
 
   if (!isDrawerOpen) return null;
 
@@ -240,8 +258,21 @@ export const SidebarDrawer: React.FC = () => {
           })}
 
           {/* Staff & settings: each part of the settings page is one tap away */}
-          {settingsItems.length > 0 && <div className="pt-3 pb-1 px-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">พนักงาน & ตั้งค่า</div>}
-          {settingsItems.map(item => {
+          {settingsItems.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleSettingsOpen}
+              aria-expanded={settingsOpen}
+              className="w-full mt-2 flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-300 hover:bg-slate-800/60 border border-slate-800"
+            >
+              <span className="flex items-center gap-3">
+                <Settings className="w-4 h-4 text-slate-400" />
+                พนักงาน & ตั้งค่า
+              </span>
+              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${settingsOpen ? 'rotate-180' : ''}`} />
+            </button>
+          )}
+          {settingsOpen && settingsItems.map(item => {
             const IconComponent = item.icon;
             return (
               <button
