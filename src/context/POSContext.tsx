@@ -100,6 +100,7 @@ import {
 import {
   INITIAL_BRANCHES,
   isSampleBranch,
+  isSampleStaff,
   INITIAL_USERS,
   INITIAL_INGREDIENTS,
   INITIAL_STOCK_LOTS,
@@ -2210,6 +2211,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Staff cards and work shifts (clock-ins) are shared by every device of the branch, so the
   // timeclock on one device and the payroll on another see the same records
+  // Built-in sample staff (from earlier versions) are removed here; the removal is shared, so they
+  // also leave the cloud and every other device instead of coming back from an older device
+  useEffect(() => {
+    if (isStorageLoaded && staffMembers.some(isSampleStaff)) setStaffMembers(prev => prev.filter(s => !isSampleStaff(s)));
+  }, [isStorageLoaded, staffMembers]);
   useCloudMergedList({ key: 'staff_members', branchId: currentBranch?.id, items: staffMembers, setItems: setStaffMembers, enabled: isStorageLoaded, offline: effectiveOffline });
   useCloudMergedList({
     key: 'staff_shifts',
