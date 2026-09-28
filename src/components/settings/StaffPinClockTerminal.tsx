@@ -27,7 +27,9 @@ interface StaffPinClockTerminalProps {
 }
 
 export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ onClose, isModal = false }) => {
-  const { staffMembers, shifts, addShift, updateShift, logSecurityEvent } = usePOS();
+  const { staffMembers, shifts, addShift, updateShift, logSecurityEvent, currentUser, permissions } = usePOS();
+  // Staff see only their own times; the owner (and anyone allowed into settings) sees everyone's
+  const seeAll = permissions.canAccessSettings;
 
   // Active Selected Staff or direct PIN entry
   const [selectedStaffId, setSelectedStaffId] = useState<string>('');
@@ -82,6 +84,10 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
   const todayShifts = useMemo(() => {
     return shifts.filter(s => s.date === todayStr);
   }, [shifts, todayStr]);
+  const visibleShifts = useMemo(
+    () => (seeAll ? todayShifts : todayShifts.filter(s => s.staffId === currentUser?.id)),
+    [todayShifts, seeAll, currentUser?.id]
+  );
 
   // The authenticated person's shift that is running now (clocked in, not out), else their latest today
   const openStaffShift = useMemo(() => (authenticatedStaff ? openShift(shifts, authenticatedStaff.id, now) : undefined), [authenticatedStaff, shifts, now]);
@@ -301,9 +307,11 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
               {activeStaffList.map(staff => {
-                const shiftToday = todayShifts.find(s => s.staffId === staff.id);
-                const isClockedIn = shiftToday?.status === 'clocked_in';
-                const isCompleted = shiftToday?.status === 'completed';
+                // Latest shift today; others' status is shown only to those who see everyone
+                const showStatus = seeAll || staff.id === currentUser?.id;
+                const shiftToday = showStatus ? [...todayShifts].reverse().find(s => s.staffId === staff.id) : undefined;
+                const isClockedIn = shiftToday?.status === 'clocked_in' && !shiftToday.clockOutTime;
+                const isCompleted = !!shiftToday && !isClockedIn && !!shiftToday.clockOutTime;
                 const isSelected = selectedStaffId === staff.id;
 
                 return (
@@ -332,7 +340,7 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
                       <span className="text-[10px] font-mono text-slate-500">
                         {staff.pin ? 'PIN: ****' : 'ไม่มี PIN'}
                       </span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      {showStatus && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
                         isClockedIn
                           ? 'bg-emerald-500/20 text-emerald-400'
                           : isCompleted
@@ -340,7 +348,7 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
                           : 'bg-slate-800 text-slate-500'
                       }`}>
                         {isClockedIn ? 'เข้างานอยู่' : isCompleted ? 'ออกงานแล้ว' : 'ยังไม่เข้า'}
-                      </span>
+                      </span>}
                     </div>
                   </button>
                 );
@@ -533,18 +541,18 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="text-xs font-bold text-amber-300 flex items-center space-x-2">
                 <History className="w-4 h-4 text-amber-400" />
-                <span>ประวัติลงเวลาประจำวันนี้ ({todayShifts.length} รายการ)</span>
+                <span>{seeAll ? 'ประวัติลงเวลาประจำวันนี้' : 'เวลาของฉันวันนี้'} ({visibleShifts.length} รายการ)</span>
               </h3>
               <span className="text-[10px] text-slate-400 font-mono">{todayStr}</span>
             </div>
 
             <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
-              {todayShifts.length === 0 ? (
+              {visibleShifts.length === 0 ? (
                 <div className="text-center py-6 text-slate-500 text-xs italic">
                   ยังไม่มีประวัติการลงเวลาเข้า-ออกงานในวันนี้
                 </div>
               ) : (
-                todayShifts.map(s => (
+                visibleShifts.map(s => (
                   <div key={s.id} className="p-3 bg-slate-950 border border-slate-800/80 rounded-xl text-xs space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-slate-200">{s.staffName}</span>
