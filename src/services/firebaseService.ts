@@ -341,14 +341,15 @@ export async function syncOrderToFirestore(order: Order, branch: Branch): Promis
 /**
  * Batch push multiple un-synced offline orders to central Firebase
  */
-export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch): Promise<{ success: number; failed: number }> {
+export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch): Promise<{ success: number; failed: number; syncedIds: string[] }> {
   if (!dbInstance || !navigator.onLine || orders.length === 0) {
-    return { success: 0, failed: orders.length };
+    return { success: 0, failed: orders.length, syncedIds: [] };
   }
   await waitForFirebaseAuth();
 
   let successCount = 0;
   let failedCount = 0;
+  const syncedIds: string[] = [];
 
   // Process in chunks of 450 (Firestore limit is 500 per batch)
   const chunkSize = 450;
@@ -369,6 +370,7 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
     try {
       await batch.commit();
       successCount += chunk.length;
+      syncedIds.push(...chunk.map(o => o.id));
       console.log(`[Firebase Service] ☁️ Batch committed ${chunk.length} orders to Firebase Firestore.`);
     } catch (err) {
       console.error('[Firebase Service] ❌ Failed to commit batch orders:', err);
@@ -383,7 +385,7 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
     });
   }
 
-  return { success: successCount, failed: failedCount };
+  return { success: successCount, failed: failedCount, syncedIds };
 }
 
 /**
@@ -2027,6 +2029,8 @@ export interface SyncFullCatalogParams {
   settings?: SystemSettings;
   orders?: Order[];
   purgeOrphanCloudData?: boolean;
+  /** Overwrite the cloud's stock levels with this device's (default true); new items always get theirs */
+  withStock?: boolean;
 }
 
 export interface SyncFullCatalogResult {
@@ -2074,7 +2078,8 @@ export async function syncFullCatalogToFirestore(
     branch,
     settings,
     orders = [],
-    purgeOrphanCloudData = true
+    purgeOrphanCloudData = true,
+    withStock = true
   } = params;
 
   try {
@@ -2121,7 +2126,7 @@ export async function syncFullCatalogToFirestore(
     // 3. Sync Active Inventory to Firestore
     let inventorySynced = 0;
     if (ingredients.length > 0) {
-      await syncInventoryToFirestore(ingredients, branch, { purgeDeleted: purgeOrphanCloudData });
+      await syncInventoryToFirestore(ingredients, branch, { purgeDeleted: purgeOrphanCloudData, withStock });
       inventorySynced = ingredients.length;
     }
 
