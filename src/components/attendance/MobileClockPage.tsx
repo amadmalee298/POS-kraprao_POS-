@@ -4,6 +4,11 @@ import { usePOS } from '../../context/POSContext';
 import type { ClockCheck, StaffMember } from '../../types';
 import { clockChange, distanceMeters, needsGps, needsQr, openShift, qrCodeValid, withinArea } from '../../utils/clock';
 import { attendanceOf } from './AttendanceSettingsPanel';
+import { FirebaseUserInfo, onFirebaseUserChange, waitForFirebaseAuth } from '../../services/firebaseService';
+import { ShopAccountDialog } from '../ShopAccountBanner';
+
+// How long to wait for the shop's settings to arrive from the cloud before saying it is off
+const SETTINGS_WAIT_MS = 8000;
 
 // A scanned QR must be used within this time (the page stays open while the PIN is typed)
 const QR_USE_MS = 3 * 60 * 1000;
@@ -38,6 +43,27 @@ export const MobileClockPage: React.FC<{ code: string; openedAt: number; onClose
   const [error, setError] = useState('');
   const [done, setDone] = useState<{ kind: 'in' | 'out'; time: string; name: string; note: string } | null>(null);
   const [qrOk, setQrOk] = useState<boolean | null>(null);
+  // The phone needs the shop account: staff, PINs and the shop's settings come from the cloud
+  const [user, setUser] = useState<FirebaseUserInfo | null | undefined>(undefined);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    // Only after the saved sign-in has been restored, so a signed-in phone is not asked to sign in
+    let unsub: (() => void) | undefined;
+    let stopped = false;
+    waitForFirebaseAuth().then(() => {
+      if (!stopped) unsub = onFirebaseUserChange(setUser);
+    });
+    return () => {
+      stopped = true;
+      unsub?.();
+    };
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(() => setWaited(true), SETTINGS_WAIT_MS);
+    return () => clearTimeout(t);
+  }, []);
+  const signedIn = !!user && !user.isAnonymous;
 
   const active = useMemo(() => staffMembers.filter(s => s.status !== 'inactive'), [staffMembers]);
   const staff = active.find(s => s.id === staffId);
@@ -104,7 +130,22 @@ export const MobileClockPage: React.FC<{ code: string; openedAt: number; onClose
           </button>
         </div>
 
-        {cfg.mode === 'off' ? (
+        {cfg.mode === 'off' && user !== undefined && !signedIn ? (
+          <div className="p-4 rounded-2xl bg-stone-900 border border-amber-700/60 text-sm space-y-3">
+            <p className="font-bold text-amber-200">มือถือเครื่องนี้ยังไม่ได้เชื่อมบัญชีร้าน</p>
+            <p className="text-stone-300">ต้องเชื่อมครั้งแรกครั้งเดียว ระบบจึงรู้จักรายชื่อพนักงานและการตั้งค่าของร้าน</p>
+            <button type="button" onClick={() => setAccountOpen(true)} className="w-full h-12 rounded-xl bg-orange-600 font-bold">
+              เชื่อมบัญชีร้าน
+            </button>
+            <p className="text-[12px] text-stone-400">
+              ถ้าเปิดมาจากแอปอื่น (LINE / แอปสแกน) ให้กดเมนู ⋯ แล้วเลือก “เปิดใน Safari/Chrome” ก่อน แล้วเชื่อมบัญชีในเบราว์เซอร์นั้น ครั้งต่อไปสแกนแล้วใช้ได้เลย
+            </p>
+          </div>
+        ) : cfg.mode === 'off' && !waited ? (
+          <div className="p-4 rounded-2xl bg-stone-900 border border-stone-800 text-sm flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" /> กำลังโหลดการตั้งค่าร้าน...
+          </div>
+        ) : cfg.mode === 'off' ? (
           <div className="p-4 rounded-2xl bg-stone-900 border border-stone-800 text-sm">ร้านยังไม่เปิดให้ลงเวลาด้วยมือถือ ลงเวลาที่เครื่องของร้าน</div>
         ) : (
           <>
@@ -191,6 +232,7 @@ export const MobileClockPage: React.FC<{ code: string; openedAt: number; onClose
           </>
         )}
       </div>
+      {accountOpen && <ShopAccountDialog user={user || null} onClose={() => setAccountOpen(false)} />}
     </div>
   );
 };
