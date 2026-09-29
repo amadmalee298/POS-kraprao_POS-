@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { countsAsRevenue, orderVatBreakdown } from '../../utils/orderUtils';
 import { useSharedList } from '../../hooks/useSharedList';
 import { cartItemUnitCost, effectiveUnitCost } from '../../utils/recipeUtils';
@@ -412,7 +413,9 @@ export const AccountingView: React.FC = () => {
   const [telegramInbox] = useTelegramInbox();
   const telegramWaiting = telegramInbox.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading').length;
   const vatRate = vatRateOf(settings);
-  const [activeTab, setActiveTab] = useState<ViewTab>('overview');
+  const [activeTab, setActiveTab] = useState<ViewTab>(() => takePageSection<ViewTab>('accounting') || 'overview');
+  // The side menu can open a section of this page directly
+  useEffect(() => onPageSectionRequest<ViewTab>('accounting', setActiveTab), []);
 
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
   const [isAddIncomeOpen, setIsAddIncomeOpen] = useState(false);
