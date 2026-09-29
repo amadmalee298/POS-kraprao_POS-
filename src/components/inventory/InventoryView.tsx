@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType } from '../../utils/stockTypes';
-import { PrepProductionPanel } from './PrepProductionPanel';
 import { StockIssuePanel } from './StockIssuePanel';
 import {
   PackageCheck,
@@ -31,7 +30,6 @@ import {
   Download,
   Printer,
   Tag,
-  ChefHat,
   PackageMinus,
   Edit2,
   Check,
@@ -131,7 +129,7 @@ export const InventoryView: React.FC = () => {
   const [savedCostIngId, setSavedCostIngId] = useState<string | null>(null);
 
   // Tab State
-  type InvTab = 'smart_audit' | 'forecast' | 'waste' | 'current' | 'prep' | 'issue' | 'usage' | 'stockcard';
+  type InvTab = 'smart_audit' | 'forecast' | 'waste' | 'current' | 'issue' | 'usage' | 'stockcard';
   const [activeTab, setActiveTab] = useState<InvTab>(() => takePageSection<InvTab>('inventory') || 'smart_audit');
   // The side menu can open a section of this page directly
   useEffect(() => onPageSectionRequest<InvTab>('inventory', setActiveTab), []);
@@ -931,18 +929,6 @@ export const InventoryView: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setActiveTab('prep')}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
-              activeTab === 'prep'
-                ? 'bg-orange-600 text-white shadow-lg shadow-orange-950/50'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <ChefHat className="w-4 h-4" />
-            <span>ผลิต/เตรียมวัตถุดิบ (เบิกไปปรุง)</span>
-          </button>
-
-          <button
             onClick={() => setActiveTab('issue')}
             className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
               activeTab === 'issue'
@@ -1497,7 +1483,6 @@ export const InventoryView: React.FC = () => {
         )}
 
         {/* TAB 2: ประวัติรับ-เบิกรายวัตถุดิบ (Item Usage Log) */}
-        {activeTab === 'prep' && <PrepProductionPanel />}
 
         {activeTab === 'issue' && <StockIssuePanel />}
 

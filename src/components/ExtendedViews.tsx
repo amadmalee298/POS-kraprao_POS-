@@ -121,6 +121,7 @@ import { sellerInfo } from '../utils/seller';
 import { exportToPDF, exportToPNG, printElement } from '../utils/exportDocument';
 import { AIMenuEngineeringPanel } from './inventory/AIMenuEngineeringPanel';
 import { BulkIngredientCostEditorPanel } from './inventory/BulkIngredientCostEditorPanel';
+import { PrepProductionPanel } from './inventory/PrepProductionPanel';
 import { EnterpriseExecutiveDashboard } from './executive/EnterpriseExecutiveDashboard';
 
 // 1. Executive Dashboard View (แดชบอร์ดสรุปผู้บริหาร)
@@ -1258,7 +1259,7 @@ export const RecipeCostingView: React.FC = () => {
   const [saveSuccessToast, setSaveSuccessToast] = useState<string | null>(null);
   const tracksStock = ingredients.some(i => i.currentStock > 0);
 
-  type RecipeTab = 'menu' | 'toppings' | 'recipes' | 'bulk_edit' | 'ai_engineering';
+  type RecipeTab = 'menu' | 'toppings' | 'recipes' | 'prep' | 'bulk_edit' | 'ai_engineering';
   const [activeSubTab, setActiveSubTab] = useState<RecipeTab>(() => takePageSection<RecipeTab>('recipes') || 'bulk_edit');
   // The side menu can open a section of this page directly
   useEffect(() => onPageSectionRequest<RecipeTab>('recipes', setActiveSubTab), []);
@@ -1865,6 +1866,18 @@ export const RecipeCostingView: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveSubTab('prep')}
+          className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2 ${
+            activeSubTab === 'prep'
+              ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 shadow-md'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+          }`}
+        >
+          <ChefHat className="w-4 h-4" />
+          <span>4. ผลิต/เตรียมวัตถุดิบ (เบิกไปปรุง)</span>
+        </button>
+
+        <button
           onClick={() => setActiveSubTab('bulk_edit')}
           className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2 ${
             activeSubTab === 'bulk_edit'
@@ -1873,7 +1886,7 @@ export const RecipeCostingView: React.FC = () => {
           }`}
         >
           <Layers className="w-4 h-4 text-amber-400" />
-          <span>⚡ 4. ปรับราคาทุนวัตถุดิบ & คำนวณราคาขายยกแผง</span>
+          <span>⚡ 5. ปรับราคาทุนวัตถุดิบ & คำนวณราคาขายยกแผง</span>
         </button>
 
         <button
@@ -1885,7 +1898,7 @@ export const RecipeCostingView: React.FC = () => {
           }`}
         >
           <Sparkles className="w-4 h-4 text-amber-400 animate-pulse" />
-          <span>✨ 5. AI วิศวกรรมเมนู & ราคาแนะนำ</span>
+          <span>✨ 6. AI วิศวกรรมเมนู & ราคาแนะนำ</span>
         </button>
       </div>
 
@@ -2514,6 +2527,8 @@ export const RecipeCostingView: React.FC = () => {
           )}
         </div>
       )}
+
+      {activeSubTab === 'prep' && <PrepProductionPanel />}
 
       {/* SUB TAB 4: BULK INGREDIENT COST & RETAIL PRICE RECALCULATOR */}
       {activeSubTab === 'bulk_edit' && (
