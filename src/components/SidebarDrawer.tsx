@@ -26,7 +26,8 @@ import {
   KeyRound,
   RefreshCw,
   ShieldAlert,
-  HardDrive
+  HardDrive,
+  Printer
 } from 'lucide-react';
 import { requestSettingsTab, SettingsTab } from '../utils/settingsNav';
 import { canOpenSettingsPart, canOpenTab } from '../utils/access';
@@ -135,6 +136,7 @@ export const SidebarDrawer: React.FC = () => {
     { tab: 'general', label: 'ตั้งค่าร้านและสาขา', icon: Settings },
     { tab: 'sync', label: 'ตั้งค่าการซิงค์ข้อมูล', icon: RefreshCw },
     { tab: 'security_logs', label: 'ประวัติความปลอดภัย', icon: ShieldAlert },
+    { tab: 'printer', label: 'เครื่องพิมพ์ใบเสร็จ', icon: Printer },
     { tab: 'backup', label: 'สำรอง & กู้คืนข้อมูล', icon: HardDrive }
   ];
   const settingsItems = allSettingsItems.filter(i => canOpenSettingsPart(i.tab, permissions));
