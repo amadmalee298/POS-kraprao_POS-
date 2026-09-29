@@ -30,13 +30,47 @@ import {
 } from 'lucide-react';
 import { requestSettingsTab, SettingsTab } from '../utils/settingsNav';
 import { canOpenSettingsPart, canOpenTab } from '../utils/access';
+import { requestPageSection, SectionPage } from '../utils/pageNav';
 import { usePOS } from '../context/POSContext';
 import { ActiveTab } from '../types';
 import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
 import { GoogleSheetsModal } from './common/GoogleSheetsModal';
 
-// Pages folded under "สต๊อก จัดซื้อ & บัญชี"
+// Pages that open as dropdowns of their own sections
 const STOCK_GROUP: ActiveTab[] = ['inventory', 'recipes', 'po', 'accounting'];
+const PAGE_SECTIONS: Record<SectionPage, { id: string; label: string }[]> = {
+  inventory: [
+    { id: 'current', label: 'วัตถุดิบคงเหลือ' },
+    { id: 'smart_audit', label: 'ตรวจนับด้วยการสแกน (Smart Audit)' },
+    { id: 'prep', label: 'ผลิต/เตรียมวัตถุดิบ' },
+    { id: 'issue', label: 'ตัดจ่ายตามเมนู / ของเสีย' },
+    { id: 'usage', label: 'ประวัติรับ-เบิกรายวัตถุดิบ' },
+    { id: 'stockcard', label: 'สมุดประวัติรวม (Stock Card)' },
+    { id: 'forecast', label: 'AI พยากรณ์ & เตือนของขาด' },
+    { id: 'waste', label: 'AI วิเคราะห์ของเสีย' }
+  ],
+  recipes: [
+    { id: 'menu', label: 'จัดการเมนูอาหาร' },
+    { id: 'toppings', label: 'จัดการ Toppings' },
+    { id: 'recipes', label: 'สูตรอาหาร (BOM)' },
+    { id: 'bulk_edit', label: 'ปรับราคาทุน & ราคาขาย' },
+    { id: 'ai_engineering', label: 'AI วิศวกรรมเมนู' }
+  ],
+  po: [
+    { id: 'po', label: 'ใบสั่งซื้อ (PO)' },
+    { id: 'suppliers', label: 'ซัพพลายเออร์' }
+  ],
+  accounting: [
+    { id: 'statement', label: 'งบกำไรขาดทุน (P&L)' },
+    { id: 'balance_sheet', label: 'งบแสดงฐานะการเงิน' },
+    { id: 'cash_flow', label: 'งบกระแสเงินสด' },
+    { id: 'ar_ap', label: 'ลูกหนี้ / เจ้าหนี้' },
+    { id: 'incomes', label: 'รายได้อื่น' },
+    { id: 'expenses', label: 'ค่าใช้จ่าย / ภาษีซื้อ' },
+    { id: 'details', label: 'รายวัน' },
+    { id: 'telegram', label: 'บิลจาก Telegram' }
+  ]
+};
 
 export const SidebarDrawer: React.FC = () => {
   const {
@@ -57,18 +91,21 @@ export const SidebarDrawer: React.FC = () => {
 
   const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
   // Menu groups fold away; open or closed is remembered on this device
-  const [folds, setFolds] = useState<{ settings: boolean; stock: boolean }>(() => {
+  const foldKey = (k: string) => (k === 'settings' ? 'POS_MENU_SETTINGS_OPEN' : `POS_MENU_FOLD_${k}`);
+  const [folds, setFolds] = useState<Record<string, boolean>>(() => {
+    const out: Record<string, boolean> = {};
     try {
-      return { settings: localStorage.getItem('POS_MENU_SETTINGS_OPEN') === '1', stock: localStorage.getItem('POS_MENU_STOCK_OPEN') === '1' };
+      ['settings', ...STOCK_GROUP].forEach(k => (out[k] = localStorage.getItem(foldKey(k)) === '1'));
     } catch {
-      return { settings: false, stock: false };
+      // closed
     }
+    return out;
   });
-  const toggleFold = (key: 'settings' | 'stock') =>
+  const toggleFold = (key: string) =>
     setFolds(f => {
       const next = { ...f, [key]: !f[key] };
       try {
-        localStorage.setItem(key === 'settings' ? 'POS_MENU_SETTINGS_OPEN' : 'POS_MENU_STOCK_OPEN', next[key] ? '1' : '0');
+        localStorage.setItem(foldKey(key), next[key] ? '1' : '0');
       } catch {
         // this visit only
       }
@@ -264,29 +301,53 @@ export const SidebarDrawer: React.FC = () => {
 
           {menuItemsList.filter(i => !STOCK_GROUP.includes(i.id)).map(renderItem)}
 
-          {/* Stock, purchasing and accounts fold under one header */}
-          {stockItems.length > 0 && (
-            <button
-              type="button"
-              onClick={() => toggleFold('stock')}
-              aria-expanded={folds.stock}
-              className={`w-full mt-2 flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold border ${
-                !folds.stock && stockItems.some(i => i.id === activeTab) ? 'border-red-500/30 text-red-300' : 'border-slate-800 text-slate-300'
-              } hover:bg-slate-800/60`}
-            >
-              <span className="flex items-center gap-3">
-                <Package className="w-4 h-4 text-slate-400" />
-                สต๊อก จัดซื้อ & บัญชี
-              </span>
-              <span className="flex items-center gap-1.5">
-                {!folds.stock && lowStockCount > 0 && stockItems.some(i => i.id === 'inventory') && (
-                  <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-red-600 text-white">{lowStockCount}</span>
+          {/* Stock, recipes, purchasing and accounts: each opens to the sections of its page */}
+          {stockItems.map(item => {
+            const IconComponent = item.icon;
+            const open = !!folds[item.id];
+            const onPage = activeTab === item.id;
+            return (
+              <div key={item.id}>
+                <button
+                  type="button"
+                  onClick={() => toggleFold(item.id)}
+                  aria-expanded={open}
+                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition text-left ${
+                    onPage ? 'bg-red-950/50 text-red-400 border border-red-500/30 font-bold' : 'text-slate-300 hover:bg-slate-800/60'
+                  }`}
+                >
+                  <span className="flex items-center space-x-3 truncate">
+                    <IconComponent className={`w-4 h-4 shrink-0 ${onPage ? 'text-red-400' : 'text-slate-400'}`} />
+                    <span className="truncate">{item.label}</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 ml-2 shrink-0">
+                    {item.badgeCount !== undefined && item.badgeCount > 0 && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-red-600 text-white">{item.badgeCount}</span>
+                    )}
+                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+                  </span>
+                </button>
+                {open && (
+                  <div className="ml-6 pl-3 border-l border-slate-800 space-y-0.5 py-1">
+                    {(PAGE_SECTIONS[item.id as SectionPage] || []).map(sec => (
+                      <button
+                        key={sec.id}
+                        type="button"
+                        onClick={() => {
+                          requestPageSection(item.id as SectionPage, sec.id);
+                          setActiveTab(item.id);
+                          setIsDrawerOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg text-[12px] text-slate-400 hover:text-slate-100 hover:bg-slate-800/60"
+                      >
+                        {sec.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
-                <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${folds.stock ? 'rotate-180' : ''}`} />
-              </span>
-            </button>
-          )}
-          {folds.stock && stockItems.map(renderItem)}
+              </div>
+            );
+          })}
 
           {/* Staff & settings: each part of the settings page is one tap away */}
           {settingsItems.length > 0 && (

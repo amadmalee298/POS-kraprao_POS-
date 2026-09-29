@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType } from '../../utils/stockTypes';
 import { PrepProductionPanel } from './PrepProductionPanel';
 import { StockIssuePanel } from './StockIssuePanel';
@@ -130,7 +131,10 @@ export const InventoryView: React.FC = () => {
   const [savedCostIngId, setSavedCostIngId] = useState<string | null>(null);
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<'smart_audit' | 'forecast' | 'waste' | 'current' | 'prep' | 'issue' | 'usage' | 'stockcard'>('smart_audit');
+  type InvTab = 'smart_audit' | 'forecast' | 'waste' | 'current' | 'prep' | 'issue' | 'usage' | 'stockcard';
+  const [activeTab, setActiveTab] = useState<InvTab>(() => takePageSection<InvTab>('inventory') || 'smart_audit');
+  // The side menu can open a section of this page directly
+  useEffect(() => onPageSectionRequest<InvTab>('inventory', setActiveTab), []);
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { onPageSectionRequest, takePageSection } from '../utils/pageNav';
 import { TelegramInboxSettings } from './telegram/TelegramInboxSettings';
 import { calcRecipeItemCostAndDeduction, canonicalUnit, convertAmount, getAvailableRecipeUnits, isShortOfStock, recipeCost } from '../utils/recipeUtils';
 import { ProteinOptionsEditor } from './menu/ProteinOptionsEditor';
@@ -1257,7 +1258,10 @@ export const RecipeCostingView: React.FC = () => {
   const [saveSuccessToast, setSaveSuccessToast] = useState<string | null>(null);
   const tracksStock = ingredients.some(i => i.currentStock > 0);
 
-  const [activeSubTab, setActiveSubTab] = useState<'menu' | 'toppings' | 'recipes' | 'bulk_edit' | 'ai_engineering'>('bulk_edit');
+  type RecipeTab = 'menu' | 'toppings' | 'recipes' | 'bulk_edit' | 'ai_engineering';
+  const [activeSubTab, setActiveSubTab] = useState<RecipeTab>(() => takePageSection<RecipeTab>('recipes') || 'bulk_edit');
+  // The side menu can open a section of this page directly
+  useEffect(() => onPageSectionRequest<RecipeTab>('recipes', setActiveSubTab), []);
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
 
   // Category Manager Modal State
@@ -4902,7 +4906,8 @@ const withoutSamplePOs = (list: POItem[]) => list.filter(p => SAMPLE_PO_NUMBERS[
 
 export const POManagementView: React.FC = () => {
   const [receiveNotice, setReceiveNotice] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'po' | 'suppliers'>('po');
+  const [activeSubTab, setActiveSubTab] = useState<'po' | 'suppliers'>(() => takePageSection<'po' | 'suppliers'>('po') || 'po');
+  useEffect(() => onPageSectionRequest<'po' | 'suppliers'>('po', setActiveSubTab), []);
   // Shared with every device of the branch (see useSharedList)
   const { addExpense, currentBranch } = usePOS();
   const [poList, setPoList] = useSharedList<POItem>('purchase_orders', 'POS_PO_LIST', withoutSamplePOs);
