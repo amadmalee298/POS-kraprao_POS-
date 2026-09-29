@@ -38,6 +38,9 @@ import { GoogleSheetsModal } from './common/GoogleSheetsModal';
 
 // Pages that open as dropdowns of their own sections
 const STOCK_GROUP: ActiveTab[] = ['inventory', 'recipes', 'po', 'accounting'];
+// Documents and customers fold under one header; LINE/Telegram sits with the settings
+const DOCS_GROUP: ActiveTab[] = ['quotation', 'tax_receipt', 'order_history', 'crm'];
+const IN_SETTINGS: ActiveTab[] = ['line_notify'];
 const PAGE_SECTIONS: Record<SectionPage, { id: string; label: string }[]> = {
   inventory: [
     { id: 'current', label: 'วัตถุดิบคงเหลือ' },
@@ -95,7 +98,7 @@ export const SidebarDrawer: React.FC = () => {
   const [folds, setFolds] = useState<Record<string, boolean>>(() => {
     const out: Record<string, boolean> = {};
     try {
-      ['settings', ...STOCK_GROUP].forEach(k => (out[k] = localStorage.getItem(foldKey(k)) === '1'));
+      ['settings', 'docs', ...STOCK_GROUP].forEach(k => (out[k] = localStorage.getItem(foldKey(k)) === '1'));
     } catch {
       // closed
     }
@@ -165,6 +168,8 @@ export const SidebarDrawer: React.FC = () => {
   ];
   const menuItemsList = allMenuItems.filter(i => canOpenTab(i.id, permissions));
   const stockItems = menuItemsList.filter(i => STOCK_GROUP.includes(i.id));
+  const docItems = menuItemsList.filter(i => DOCS_GROUP.includes(i.id));
+  const settingsPageItems = menuItemsList.filter(i => IN_SETTINGS.includes(i.id));
   const renderItem = (item: (typeof allMenuItems)[number]) => {
     const IconComponent = item.icon;
     const isActive = activeTab === item.id;
@@ -299,7 +304,26 @@ export const SidebarDrawer: React.FC = () => {
             );
           })}
 
-          {menuItemsList.filter(i => !STOCK_GROUP.includes(i.id)).map(renderItem)}
+          {menuItemsList.filter(i => ![...STOCK_GROUP, ...DOCS_GROUP, ...IN_SETTINGS].includes(i.id)).map(renderItem)}
+
+          {/* Quotations, receipts, order history and members */}
+          {docItems.length > 0 && (
+            <button
+              type="button"
+              onClick={() => toggleFold('docs')}
+              aria-expanded={!!folds.docs}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition text-left ${
+                !folds.docs && docItems.some(i => i.id === activeTab) ? 'bg-red-950/50 text-red-400 border border-red-500/30 font-bold' : 'text-slate-300 hover:bg-slate-800/60'
+              }`}
+            >
+              <span className="flex items-center space-x-3">
+                <Receipt className="w-4 h-4 shrink-0 text-slate-400" />
+                <span>เอกสาร ใบเสร็จ & ลูกค้า</span>
+              </span>
+              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${folds.docs ? 'rotate-180' : ''}`} />
+            </button>
+          )}
+          {folds.docs && <div className="ml-6 pl-2 border-l border-slate-800 space-y-0.5">{docItems.map(renderItem)}</div>}
 
           {/* Stock, recipes, purchasing and accounts: each opens to the sections of its page */}
           {stockItems.map(item => {
@@ -350,7 +374,7 @@ export const SidebarDrawer: React.FC = () => {
           })}
 
           {/* Staff & settings: each part of the settings page is one tap away */}
-          {settingsItems.length > 0 && (
+          {settingsItems.length + settingsPageItems.length > 0 && (
             <button
               type="button"
               onClick={() => toggleFold('settings')}
@@ -383,6 +407,7 @@ export const SidebarDrawer: React.FC = () => {
               </button>
             );
           })}
+          {folds.settings && settingsPageItems.map(renderItem)}
         </div>
 
         {/* Drawer Footer Status */}
