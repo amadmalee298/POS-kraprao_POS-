@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ShopAccountStatusButton } from './ShopAccountBanner';
 import {
   X,
+  ChevronDown,
   LayoutGrid,
   ShoppingCart,
   QrCode,
@@ -34,6 +35,9 @@ import { ActiveTab } from '../types';
 import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
 import { GoogleSheetsModal } from './common/GoogleSheetsModal';
 
+// Pages folded under "สต๊อก จัดซื้อ & บัญชี"
+const STOCK_GROUP: ActiveTab[] = ['inventory', 'recipes', 'po', 'accounting'];
+
 export const SidebarDrawer: React.FC = () => {
   const {
     activeTab,
@@ -52,6 +56,24 @@ export const SidebarDrawer: React.FC = () => {
   const cloudStatus = isOffline || forceOfflineMode ? 'offline' : firebaseSyncState.status;
 
   const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
+  // Menu groups fold away; open or closed is remembered on this device
+  const [folds, setFolds] = useState<{ settings: boolean; stock: boolean }>(() => {
+    try {
+      return { settings: localStorage.getItem('POS_MENU_SETTINGS_OPEN') === '1', stock: localStorage.getItem('POS_MENU_STOCK_OPEN') === '1' };
+    } catch {
+      return { settings: false, stock: false };
+    }
+  });
+  const toggleFold = (key: 'settings' | 'stock') =>
+    setFolds(f => {
+      const next = { ...f, [key]: !f[key] };
+      try {
+        localStorage.setItem(key === 'settings' ? 'POS_MENU_SETTINGS_OPEN' : 'POS_MENU_STOCK_OPEN', next[key] ? '1' : '0');
+      } catch {
+        // this visit only
+      }
+      return next;
+    });
 
   if (!isDrawerOpen) return null;
 
@@ -105,6 +127,48 @@ export const SidebarDrawer: React.FC = () => {
     { id: 'line_notify', label: 'แจ้งเตือน Line/Telegram', icon: BellRing },
   ];
   const menuItemsList = allMenuItems.filter(i => canOpenTab(i.id, permissions));
+  const stockItems = menuItemsList.filter(i => STOCK_GROUP.includes(i.id));
+  const renderItem = (item: (typeof allMenuItems)[number]) => {
+    const IconComponent = item.icon;
+    const isActive = activeTab === item.id;
+
+    return (
+      <button
+        key={item.id}
+        onClick={() => {
+          setActiveTab(item.id);
+          setIsDrawerOpen(false);
+        }}
+        className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition text-left group ${
+          isActive
+            ? 'bg-red-950/50 text-red-400 border border-red-500/30 font-bold shadow-md'
+            : 'text-slate-300 hover:bg-slate-800/60 hover:text-slate-100'
+        }`}
+      >
+        <div className="flex items-center space-x-3 truncate">
+          <IconComponent
+            className={`w-4 h-4 shrink-0 ${
+              isActive ? 'text-red-400' : 'text-slate-400 group-hover:text-slate-200'
+            }`}
+          />
+          <span className="truncate">{item.label}</span>
+        </div>
+
+        {/* Badge indicators */}
+        <div className="flex items-center space-x-1.5 ml-2 shrink-0">
+          {item.hasDotAlert && (
+            <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping inline-block" />
+          )}
+          {item.badgeCount !== undefined && item.badgeCount > 0 && (
+            <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-red-600 text-white shadow-sm">
+              {item.badgeCount}
+            </span>
+          )}
+        </div>
+      </button>
+    );
+  };
+
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -181,7 +245,7 @@ export const SidebarDrawer: React.FC = () => {
         <div className="flex-1 overflow-y-auto px-3 space-y-1 py-1 custom-scrollbar">
           {/* Used every shift: clock in/out and the cash drawer come first */}
           {topItems.map(item => {
-            const IconComponent = item.icon;
+    const IconComponent = item.icon;
             return (
               <button
                 key={item.tab}
@@ -198,51 +262,49 @@ export const SidebarDrawer: React.FC = () => {
             );
           })}
 
-          {menuItemsList.map(item => {
-            const IconComponent = item.icon;
-            const isActive = activeTab === item.id;
+          {menuItemsList.filter(i => !STOCK_GROUP.includes(i.id)).map(renderItem)}
 
-            return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setActiveTab(item.id);
-                  setIsDrawerOpen(false);
-                }}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition text-left group ${
-                  isActive
-                    ? 'bg-red-950/50 text-red-400 border border-red-500/30 font-bold shadow-md'
-                    : 'text-slate-300 hover:bg-slate-800/60 hover:text-slate-100'
-                }`}
-              >
-                <div className="flex items-center space-x-3 truncate">
-                  <IconComponent
-                    className={`w-4 h-4 shrink-0 ${
-                      isActive ? 'text-red-400' : 'text-slate-400 group-hover:text-slate-200'
-                    }`}
-                  />
-                  <span className="truncate">{item.label}</span>
-                </div>
-
-                {/* Badge indicators */}
-                <div className="flex items-center space-x-1.5 ml-2 shrink-0">
-                  {item.hasDotAlert && (
-                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping inline-block" />
-                  )}
-                  {item.badgeCount !== undefined && item.badgeCount > 0 && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-red-600 text-white shadow-sm">
-                      {item.badgeCount}
-                    </span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
+          {/* Stock, purchasing and accounts fold under one header */}
+          {stockItems.length > 0 && (
+            <button
+              type="button"
+              onClick={() => toggleFold('stock')}
+              aria-expanded={folds.stock}
+              className={`w-full mt-2 flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold border ${
+                !folds.stock && stockItems.some(i => i.id === activeTab) ? 'border-red-500/30 text-red-300' : 'border-slate-800 text-slate-300'
+              } hover:bg-slate-800/60`}
+            >
+              <span className="flex items-center gap-3">
+                <Package className="w-4 h-4 text-slate-400" />
+                สต๊อก จัดซื้อ & บัญชี
+              </span>
+              <span className="flex items-center gap-1.5">
+                {!folds.stock && lowStockCount > 0 && stockItems.some(i => i.id === 'inventory') && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-red-600 text-white">{lowStockCount}</span>
+                )}
+                <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${folds.stock ? 'rotate-180' : ''}`} />
+              </span>
+            </button>
+          )}
+          {folds.stock && stockItems.map(renderItem)}
 
           {/* Staff & settings: each part of the settings page is one tap away */}
-          {settingsItems.length > 0 && <div className="pt-3 pb-1 px-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">พนักงาน & ตั้งค่า</div>}
-          {settingsItems.map(item => {
-            const IconComponent = item.icon;
+          {settingsItems.length > 0 && (
+            <button
+              type="button"
+              onClick={() => toggleFold('settings')}
+              aria-expanded={folds.settings}
+              className="w-full mt-2 flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-300 hover:bg-slate-800/60 border border-slate-800"
+            >
+              <span className="flex items-center gap-3">
+                <Settings className="w-4 h-4 text-slate-400" />
+                พนักงาน & ตั้งค่า
+              </span>
+              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${folds.settings ? 'rotate-180' : ''}`} />
+            </button>
+          )}
+          {folds.settings && settingsItems.map(item => {
+    const IconComponent = item.icon;
             return (
               <button
                 key={item.tab}
