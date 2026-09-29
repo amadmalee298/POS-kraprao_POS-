@@ -61,7 +61,7 @@ export const canOpenTab = (tab: ActiveTab, p: Required<StaffPermissions>) => (TA
 
 /** Parts of the settings page open to staff without the settings permission */
 export const canOpenSettingsPart = (part: string, p: Required<StaffPermissions>) =>
-  p.canAccessSettings || part === 'timeclock' || (part === 'shifts' && p.canManageShifts);
+  p.canAccessSettings || part === 'timeclock' || (part === 'shifts' && p.canManageShifts) || (part === 'printer' && p.canAccessPOS);
 
 /** Where to send someone who landed on a page they may not open */
 export function firstAllowedTab(p: Required<StaffPermissions>): ActiveTab {

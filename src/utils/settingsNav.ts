@@ -1,5 +1,5 @@
 /** Opening a given part of the settings page from elsewhere (e.g. the side menu) */
-export type SettingsTab = 'general' | 'scheduling' | 'timeclock' | 'shifts' | 'sync' | 'pins' | 'security_logs' | 'backup';
+export type SettingsTab = 'general' | 'scheduling' | 'timeclock' | 'shifts' | 'sync' | 'pins' | 'security_logs' | 'backup' | 'printer';
 
 const EVENT = 'open-settings-tab';
 let pending: SettingsTab | null = null;

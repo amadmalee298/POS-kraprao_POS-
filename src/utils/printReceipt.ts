@@ -1,5 +1,6 @@
 import { Order, Branch, SystemSettings } from '../types';
 import { SHOP_LOGO_URL } from '../assets/logo';
+import { directPrinting, printHtmlDirect, readPrinterConfig } from '../services/receiptPrinter';
 
 // Every value interpolated into receipt HTML must be escaped: order notes, table names and
 // tax-invoice fields can come from customers (QR ordering) or from the shared cloud database.
@@ -348,6 +349,17 @@ export async function printReceiptViaWindow(
   settings: SystemSettings,
   options: ThermalPrintOptions = {}
 ): Promise<boolean> {
+  // A receipt printer connected to this device prints directly; the print dialog is the fallback
+  const printer = readPrinterConfig();
+  if (directPrinting(printer)) {
+    try {
+      await printHtmlDirect(buildThermalReceiptHtml(order, branch, settings, { ...options, paperWidth: printer.paperWidth }), printer);
+      return true;
+    } catch (err) {
+      console.warn('[Print Utility] Direct printing failed, opening the print dialog instead:', err);
+      window.dispatchEvent(new CustomEvent('receipt-printer-error', { detail: (err as Error)?.message || String(err) }));
+    }
+  }
   try {
     const existingContainer = document.getElementById('direct-print-container');
     if (existingContainer) {

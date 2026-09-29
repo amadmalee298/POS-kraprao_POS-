@@ -65,6 +65,7 @@ import { StaffSchedulingPanel } from './StaffSchedulingPanel';
 import { StaffPinClockTerminal } from './StaffPinClockTerminal';
 import { onSettingsTabRequest, SettingsTab, takePendingSettingsTab } from '../../utils/settingsNav';
 import { canOpenSettingsPart } from '../../utils/access';
+import { PrinterSettingsPanel } from './PrinterSettingsPanel';
 import { AttendanceSettingsPanel, ShopClockQR } from '../attendance/AttendanceSettingsPanel';
 import { needsQr, openMobileClock, terminalClockAllowed } from '../../utils/clock';
 
@@ -976,6 +977,19 @@ export const SettingsView: React.FC = () => {
             <span>💾 สำรอง & กู้คืนข้อมูล (Backup & Restore)</span>
           </button>
           )}
+          {canOpenSettingsPart('printer', permissions) && (
+          <button
+            onClick={() => setSettingsTab('printer')}
+            className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
+              settingsTab === 'printer'
+                ? 'bg-slate-800 text-amber-400 shadow-md border border-slate-700'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Printer className="w-4 h-4" />
+            <span>🖨️ เครื่องพิมพ์ใบเสร็จ (Printer)</span>
+          </button>
+          )}
         </div>
 
         {/* Save Confirmation Toast */}
@@ -989,7 +1003,9 @@ export const SettingsView: React.FC = () => {
 
       {/* Settings Body */}
       <div className="flex-1 p-6 overflow-y-auto space-y-6">
-        {!partAllowed ? null : settingsTab === 'pins' ? (
+        {!partAllowed ? null : settingsTab === 'printer' ? (
+          <PrinterSettingsPanel />
+        ) : settingsTab === 'pins' ? (
           <div className="max-w-5xl space-y-6 animate-in fade-in">
             {/* MANAGER AUTHORIZATION STATUS BANNER */}
             <div className={`p-4 rounded-2xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl ${
