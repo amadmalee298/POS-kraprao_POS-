@@ -46,7 +46,6 @@ const PAGE_SECTIONS: Record<SectionPage, { id: string; label: string }[]> = {
   inventory: [
     { id: 'current', label: 'วัตถุดิบคงเหลือ' },
     { id: 'smart_audit', label: 'ตรวจนับด้วยการสแกน (Smart Audit)' },
-    { id: 'prep', label: 'ผลิต/เตรียมวัตถุดิบ' },
     { id: 'issue', label: 'ตัดจ่ายตามเมนู / ของเสีย' },
     { id: 'usage', label: 'ประวัติรับ-เบิกรายวัตถุดิบ' },
     { id: 'stockcard', label: 'สมุดประวัติรวม (Stock Card)' },
@@ -57,6 +56,7 @@ const PAGE_SECTIONS: Record<SectionPage, { id: string; label: string }[]> = {
     { id: 'menu', label: 'จัดการเมนูอาหาร' },
     { id: 'toppings', label: 'จัดการ Toppings' },
     { id: 'recipes', label: 'สูตรอาหาร (BOM)' },
+    { id: 'prep', label: 'ผลิต/เตรียมวัตถุดิบ' },
     { id: 'bulk_edit', label: 'ปรับราคาทุน & ราคาขาย' },
     { id: 'ai_engineering', label: 'AI วิศวกรรมเมนู' }
   ],
