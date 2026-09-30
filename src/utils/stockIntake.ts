@@ -1,5 +1,5 @@
 import type { Ingredient } from '../types';
-import { canonicalUnit, convertAmount, effectiveUnitCost } from './recipeUtils';
+import { canonicalUnit, convertForIngredient, effectiveUnitCost } from './recipeUtils';
 
 /**
  * Turning a purchase bill into stock: the items on the bill (read by AI, or typed as the photo's
@@ -98,7 +98,7 @@ export function buildIntakeRows(items: BillItem[], ingredients: Ingredient[], to
     let unitMismatch = false;
     if (ing && unit) {
       // null = the bill's unit cannot become the ingredient's (e.g. ขวด → kg)
-      const converted = convertAmount(quantity, unit, ing.unit);
+      const converted = convertForIngredient(quantity, unit, ing.unit, ing);
       if (converted === null) unitMismatch = true;
       else qty = converted;
     }

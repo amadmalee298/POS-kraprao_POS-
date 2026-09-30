@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { onPageSectionRequest, takePageSection } from '../utils/pageNav';
 import { TelegramInboxSettings } from './telegram/TelegramInboxSettings';
-import { calcRecipeItemCostAndDeduction, canonicalUnit, convertAmount, getAvailableRecipeUnits, isShortOfStock, recipeCost } from '../utils/recipeUtils';
+import { calcRecipeItemCostAndDeduction, canonicalUnit, convertForIngredient, getAvailableRecipeUnits, isShortOfStock, recipeCost } from '../utils/recipeUtils';
 import { ProteinOptionsEditor } from './menu/ProteinOptionsEditor';
 import { RecipeAuditPanel } from './menu/RecipeAuditPanel';
 import { isItemInCategory } from '../utils/categoryUtils';
@@ -1467,7 +1467,7 @@ export const RecipeCostingView: React.FC = () => {
         const ing = ingredients.find(i => i.id === ingredientId);
         const oldUnit = r.recipeUnit || ing?.unit || 'pcs';
         // Handles Thai unit names too (e.g. "กิโลกรัม" → g)
-        const newAmount = convertAmount(r.amountNeeded, oldUnit, newUnit) ?? r.amountNeeded;
+        const newAmount = convertForIngredient(r.amountNeeded, oldUnit, newUnit, ing) ?? r.amountNeeded;
 
         return {
           ...r,
@@ -1553,7 +1553,7 @@ export const RecipeCostingView: React.FC = () => {
         const ing = ingredients.find(i => i.id === ingredientId);
         const oldUnit = r.recipeUnit || ing?.unit || 'pcs';
         // Handles Thai unit names too (e.g. "กิโลกรัม" → g)
-        const newAmount = convertAmount(r.amountNeeded, oldUnit, newUnit) ?? r.amountNeeded;
+        const newAmount = convertForIngredient(r.amountNeeded, oldUnit, newUnit, ing) ?? r.amountNeeded;
 
         return {
           ...r,
@@ -2275,7 +2275,7 @@ export const RecipeCostingView: React.FC = () => {
                   editableRecipe.map(rec => {
                     const ing = ingredients.find(i => i.id === rec.ingredientId);
                     const calc = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit);
-                    const availableUnits = ing ? getAvailableRecipeUnits(ing.unit) : [];
+                    const availableUnits = ing ? getAvailableRecipeUnits(ing.unit, ing) : [];
                     const isAbnormalCost = calc.lineCost > 500;
 
                     return (
@@ -2391,7 +2391,7 @@ export const RecipeCostingView: React.FC = () => {
                       editableRecipe.map(rec => {
                         const ing = ingredients.find(i => i.id === rec.ingredientId);
                         const calc = calcRecipeItemCostAndDeduction(ing, rec.amountNeeded, rec.recipeUnit);
-                        const availableUnits = ing ? getAvailableRecipeUnits(ing.unit) : [];
+                        const availableUnits = ing ? getAvailableRecipeUnits(ing.unit, ing) : [];
                         const isAbnormalCost = calc.lineCost > 500;
 
                         return (
@@ -3031,7 +3031,7 @@ export const RecipeCostingView: React.FC = () => {
                     {toppingFormRecipe.map(rec => {
                       const ing = ingredients.find(i => i.id === rec.ingredientId);
                       if (!ing) return null;
-                      const availableUnits = getAvailableRecipeUnits(ing.unit);
+                      const availableUnits = getAvailableRecipeUnits(ing.unit, ing);
                       return (
                         <div key={rec.ingredientId} className="flex items-center space-x-2 bg-slate-950 p-2 rounded-xl border border-slate-800">
                           <div className="flex-1 min-w-0">

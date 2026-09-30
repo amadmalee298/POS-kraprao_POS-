@@ -1,7 +1,7 @@
 import React from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { Ingredient, ProteinOption, RecipeIngredient } from '../../types';
-import { canonicalUnit, convertAmount, getAvailableRecipeUnits } from '../../utils/recipeUtils';
+import { canonicalUnit, convertForIngredient, getAvailableRecipeUnits } from '../../utils/recipeUtils';
 
 interface Props {
   value: ProteinOption[];
@@ -91,7 +91,7 @@ export const ProteinOptionsEditor: React.FC<Props> = ({ value, onChange, ingredi
               )}
               {(opt.recipe || []).map((line, lineIdx) => {
                 const ing = byId.get(line.ingredientId);
-                const units = getAvailableRecipeUnits(ing?.unit || 'pcs');
+                const units = getAvailableRecipeUnits(ing?.unit || 'pcs', ing);
                 const unit = line.recipeUnit ? canonicalUnit(line.recipeUnit) : canonicalUnit(ing?.unit) || units[0]?.val;
                 return (
                   <div key={lineIdx} className="flex items-center gap-1.5">
@@ -125,7 +125,7 @@ export const ProteinOptionsEditor: React.FC<Props> = ({ value, onChange, ingredi
                       value={unit}
                       onChange={e =>
                         setLine(idx, lineIdx, {
-                          amountNeeded: Number((convertAmount(line.amountNeeded, unit, e.target.value) ?? line.amountNeeded).toFixed(4)),
+                          amountNeeded: Number((convertForIngredient(line.amountNeeded, unit, e.target.value, ing) ?? line.amountNeeded).toFixed(4)),
                           recipeUnit: e.target.value
                         })
                       }

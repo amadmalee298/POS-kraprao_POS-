@@ -41,7 +41,7 @@ import {
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot, StockType } from '../../types';
 import { AIInventoryForecastPanel } from './AIInventoryForecastPanel';
-import { canonicalUnit, effectiveUnitCost } from '../../utils/recipeUtils';
+import { canonicalUnit, convertForIngredient, countBaseOf, countUnitOf, effectiveUnitCost } from '../../utils/recipeUtils';
 import { buildStockMovements, salesUsageByDay, withRunningBalance } from '../../utils/stockHistory';
 import { AIWasteAnalysisPanel } from './AIWasteAnalysisPanel';
 import { SmartAuditPanel } from './SmartAuditPanel';
@@ -122,6 +122,9 @@ export const InventoryView: React.FC = () => {
   const [editIngBarcode, setEditIngBarcode] = useState('');
   const [editIngPackageUnit, setEditIngPackageUnit] = useState('');
   const [editIngPackageSize, setEditIngPackageSize] = useState<string>('');
+  const [editIngCountUnit, setEditIngCountUnit] = useState('');
+  const [editIngCountPer, setEditIngCountPer] = useState('');
+  const [editIngCountBase, setEditIngCountBase] = useState<'kg' | 'l'>('kg');
 
   // Inline Price Editing in Table
   const [inlineCostInputs, setInlineCostInputs] = useState<Record<string, string>>({});
@@ -602,6 +605,9 @@ export const InventoryView: React.FC = () => {
     const pkgSizeStr = ing.packageSize ? ing.packageSize.toString() : (isLiquid ? '680' : isWeight ? '1000' : '');
     setEditIngPackageUnit(pkgUnit);
     setEditIngPackageSize(pkgSizeStr);
+    setEditIngCountUnit(ing.countUnit || '');
+    setEditIngCountPer(ing.countPerBase ? String(ing.countPerBase) : '');
+    setEditIngCountBase(ing.countBase === 'l' ? 'l' : 'kg');
 
     const parsedPkg = parseFloat(pkgSizeStr);
     if (!isNaN(parsedPkg) && parsedPkg > 0) {
@@ -655,6 +661,16 @@ export const InventoryView: React.FC = () => {
     const finalUnitCost = !isNaN(parsedCost) && parsedCost >= 0 ? parsedCost : editIngUnitCost;
 
     const pkgSizeNum = parseFloat(editIngPackageSize);
+    const countPer = parseFloat(editIngCountPer);
+    // Stock kept by weight: pieces are the extra unit; stock kept in pieces: the stock unit is the piece
+    const byMeasure = ['kg', 'g', 'l', 'ml'].includes(canonicalUnit(finalUnit));
+    const pieceUnit = byMeasure ? editIngCountUnit.trim() : finalUnit;
+    const hasCount = !!pieceUnit && countPer > 0;
+    const countFields = {
+      countUnit: hasCount ? pieceUnit : undefined,
+      countPerBase: hasCount ? countPer : undefined,
+      countBase: hasCount ? countBaseOf({ unit: finalUnit, countBase: editIngCountBase }) : undefined
+    };
     updateIngredient({
       ...editingIng,
       name: editIngName.trim(),
@@ -666,7 +682,8 @@ export const InventoryView: React.FC = () => {
       stockType: editIngStockType || undefined,
       barcode: editIngBarcode.trim() || undefined,
       packageUnit: editIngPackageUnit.trim() || undefined,
-      packageSize: !isNaN(pkgSizeNum) && pkgSizeNum > 0 ? pkgSizeNum : undefined
+      packageSize: !isNaN(pkgSizeNum) && pkgSizeNum > 0 ? pkgSizeNum : undefined,
+      ...countFields
     }, editIngStock > editingIng.currentStock ? 'restock' : 'manual_adjustment', 'แก้ยอดจากหน้าต่างแก้ไขข้อมูลวัตถุดิบ');
 
     if (editIngUnit === 'custom' && editIngCustomUnit.trim()) {
@@ -1325,6 +1342,11 @@ export const InventoryView: React.FC = () => {
                             {ing.packageUnit && ing.packageSize && ing.packageSize > 0 && (
                               <div className="text-[11px] text-amber-400/90 font-mono font-medium">
                                 ≈ {(ing.currentStock / ing.packageSize).toFixed(1)} {ing.packageUnit}
+                              </div>
+                            )}
+                            {countUnitOf(ing) && canonicalUnit(ing.unit) !== countUnitOf(ing) && (
+                              <div className="text-[11px] text-sky-400/90 font-mono font-medium">
+                                ≈ {Math.round(convertForIngredient(ing.currentStock, ing.unit, ing.countUnit, ing) ?? 0).toLocaleString('th-TH')} {ing.countUnit}
                               </div>
                             )}
                             {isLow && (
@@ -3153,6 +3175,85 @@ export const InventoryView: React.FC = () => {
                   </p>
                 )}
               </div>
+
+              {/* Piece count: bought by weight, used by the piece (or the other way round) */}
+              {(() => {
+                const stockUnit = editIngUnit === 'custom' ? editIngCustomUnit || 'หน่วย' : editIngUnit;
+                const su = canonicalUnit(stockUnit);
+                const byMeasure = ['kg', 'g', 'l', 'ml'].includes(su);
+                const base = byMeasure ? countBaseOf({ unit: su }) : editIngCountBase;
+                const baseLabel = base === 'l' ? 'ลิตร' : 'กิโลกรัม';
+                const per = parseFloat(editIngCountPer);
+                const piece = byMeasure ? editIngCountUnit.trim() : stockUnit;
+                return (
+                  <div className="bg-slate-950/80 p-3.5 rounded-xl border border-sky-500/20 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sky-300 font-bold block">🦐 นับเป็นตัว/ชิ้น (ซื้อเป็นน้ำหนัก ใช้เป็นตัว)</label>
+                      <span className="text-[10px] text-slate-400">ระบุหรือไม่ก็ได้</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                      <span>1</span>
+                      {byMeasure ? (
+                        <span className="font-bold">{baseLabel}</span>
+                      ) : (
+                        <select
+                          aria-label="หน่วยน้ำหนักหรือปริมาตร"
+                          value={editIngCountBase}
+                          onChange={e => setEditIngCountBase(e.target.value as 'kg' | 'l')}
+                          className="bg-slate-900 border border-slate-700 rounded-xl px-2 py-2 text-slate-200"
+                        >
+                          <option value="kg">กิโลกรัม</option>
+                          <option value="l">ลิตร</option>
+                        </select>
+                      )}
+                      <span>≈</span>
+                      <input
+                        aria-label="จำนวนต่อน้ำหนัก"
+                        type="number"
+                        step="any"
+                        min="0"
+                        placeholder="เช่น 40"
+                        value={editIngCountPer}
+                        onChange={e => setEditIngCountPer(e.target.value)}
+                        className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sky-300 font-mono font-bold focus:outline-none focus:border-sky-500"
+                      />
+                      {byMeasure ? (
+                        <>
+                          <input
+                            aria-label="หน่วยนับ"
+                            type="text"
+                            list="edit-count-units"
+                            placeholder="ตัว"
+                            value={editIngCountUnit}
+                            onChange={e => setEditIngCountUnit(e.target.value)}
+                            className="w-20 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-sky-500"
+                          />
+                          <datalist id="edit-count-units">
+                            <option value="ตัว" />
+                            <option value="ชิ้น" />
+                            <option value="ลูก" />
+                            <option value="ฟอง" />
+                            <option value="หัว" />
+                          </datalist>
+                        </>
+                      ) : (
+                        <span className="font-bold">{stockUnit}</span>
+                      )}
+                    </div>
+                    {per > 0 && piece ? (
+                      <p className="text-[11px] text-sky-300/90 font-mono">
+                        {byMeasure
+                          ? `💡 สูตรเลือกหน่วย "${piece}" ได้: ใช้ 3 ${piece} = ตัดสต็อก ${Number((3 / per) * (su === 'g' || su === 'ml' ? 1000 : 1)).toFixed(3).replace(/\.?0+$/, '')} ${stockUnit}`
+                          : `💡 รับเข้าเป็น${baseLabel}ได้: รับ 1 ${baseLabel} = เพิ่มสต็อก ${per} ${stockUnit} และสูตรเลือกหน่วยกรัมได้`}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-slate-500">
+                        เช่น กุ้งรับเข้าเป็นกิโล แต่ใส่จานละ 3 ตัว: ใส่ 1 กิโลกรัม ≈ 40 ตัว แล้วในสูตรเลือกหน่วย "ตัว" ระบบจะตัดสต็อกเป็นกิโลให้ถูกต้อง
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="pt-2 flex items-center justify-end space-x-2">
                 <button

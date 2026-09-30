@@ -21,6 +21,48 @@ export function convertAmount(amount: number, from: string | undefined, to: stri
   return factor === undefined ? null : amount * factor;
 }
 
+type CountSource = Pick<Ingredient, 'unit' | 'countUnit' | 'countPerBase' | 'countBase'>;
+
+const MASS = ['kg', 'g'];
+const VOLUME = ['l', 'ml'];
+
+/** The piece unit of an ingredient with a piece conversion set (e.g. 'ตัว'), else '' */
+export function countUnitOf(ing: Partial<CountSource> | undefined | null): string {
+  const c = canonicalUnit(ing?.countUnit);
+  if (!c || !ing?.countPerBase || ing.countPerBase <= 0) return '';
+  if (MASS.includes(c) || VOLUME.includes(c)) return '';
+  return c;
+}
+
+/** kg or l: what the piece count is given per (follows the stock unit when it is a weight or volume) */
+export function countBaseOf(ing: Partial<CountSource>): 'kg' | 'l' {
+  const u = canonicalUnit(ing.unit);
+  if (MASS.includes(u)) return 'kg';
+  if (VOLUME.includes(u)) return 'l';
+  return ing.countBase === 'l' ? 'l' : 'kg';
+}
+
+/**
+ * Convert an amount of one ingredient between units, using its piece conversion when one side
+ * is its piece unit (1 kg shrimp ≈ 40 ตัว: 3 ตัว → 0.075 kg). null when it cannot be converted.
+ */
+export function convertForIngredient(amount: number, from: string | undefined, to: string | undefined, ing?: Partial<CountSource> | null): number | null {
+  const piece = countUnitOf(ing);
+  if (piece && ing) {
+    const f = canonicalUnit(from);
+    const t = canonicalUnit(to);
+    if (f === piece && t === piece) return amount;
+    const per = ing.countPerBase as number;
+    const base = countBaseOf(ing);
+    if (f === piece) return convertAmount(amount / per, base, to);
+    if (t === piece) {
+      const inBase = convertAmount(amount, from, base);
+      return inBase === null ? null : inBase * per;
+    }
+  }
+  return convertAmount(amount, from, to);
+}
+
 /**
  * Cost of one stock unit. Older data has bottle/litre prices typed into ingredients counted in ml
  * (e.g. fish sauce "150 ฿ per ml"); nobody pays ฿10 or more per millilitre, so such a price is read
@@ -47,8 +89,8 @@ export function calcRecipeItemCostAndDeduction(
   if (!ingredient) return { lineCost: 0, stockDeduction: 0, displayUnit: '' };
   const stockUnit = canonicalUnit(ingredient.unit);
   const unit = recipeUnit ? canonicalUnit(recipeUnit) : stockUnit;
-  // Units that cannot be converted (a recipe in g for an ingredient counted in pieces) are taken as-is
-  const stockDeduction = convertAmount(amountNeeded, unit, stockUnit) ?? amountNeeded;
+  // Units that cannot be converted are taken as-is; auditRecipes reports them so they get fixed
+  const stockDeduction = convertForIngredient(amountNeeded, unit, stockUnit, ingredient) ?? amountNeeded;
   return {
     lineCost: stockDeduction * effectiveUnitCost(ingredient),
     stockDeduction,
@@ -129,7 +171,7 @@ export function cartItemUnitCost(cartItem: Pick<CartItem, 'menuItem' | 'proteinC
 }
 
 export interface RecipeIssue {
-  kind: 'no-recipe' | 'missing-ingredient' | 'package-price' | 'protein-no-recipe';
+  kind: 'no-recipe' | 'missing-ingredient' | 'package-price' | 'protein-no-recipe' | 'unit-mismatch';
   menuItemId?: string;
   addOnId?: string;
   ingredientId?: string;
@@ -150,6 +192,16 @@ export function auditRecipes(menuItems: MenuItem[], addOns: AddOnOption[], ingre
         message: `${owner}: สูตรใช้วัตถุดิบที่ถูกลบไปแล้ว ${missing.length} รายการ ส่วนนี้จึงไม่ถูกตัดสต็อก`
       });
     }
+    (lines || []).forEach(r => {
+      const ing = byId.get(r.ingredientId);
+      if (!ing || !r.recipeUnit || convertForIngredient(1, r.recipeUnit, ing.unit, ing) !== null) return;
+      issues.push({
+        ...ref,
+        kind: 'unit-mismatch',
+        ingredientId: ing.id,
+        message: `${owner}: ใช้ ${ing.name} ${r.amountNeeded} ${r.recipeUnit} แต่สต็อกนับเป็น ${ing.unit} ระบบจึงตัด ${r.amountNeeded} ${ing.unit} ต่อจาน ให้ตั้ง "1 ${countBaseOf(ing) === 'l' ? 'ลิตร' : 'กิโลกรัม'} ≈ กี่${r.recipeUnit}" ที่วัตถุดิบ หรือแก้หน่วยในสูตร`
+      });
+    });
   };
   menuItems.forEach(m => {
     if (!m.recipe || m.recipe.length === 0) {
@@ -190,8 +242,24 @@ export function isShortOfStock(menuItem: MenuItem, ingredients: Ingredient[], pr
   });
 }
 
-/** Units a recipe line may use for an ingredient; the ingredient's own (canonical) unit comes first. */
-export function getAvailableRecipeUnits(ingUnit: string): { val: string; label: string }[] {
+/**
+ * Units a recipe line may use for an ingredient; the ingredient's own (canonical) unit comes first.
+ * Pass the ingredient to also offer its piece unit (e.g. ตัว) and, for pieces, weight units.
+ */
+export function getAvailableRecipeUnits(ingUnit: string, ing?: Partial<CountSource> | null): { val: string; label: string }[] {
+  const units = baseRecipeUnits(ingUnit);
+  const piece = countUnitOf(ing);
+  if (!piece || !ing) return units;
+  const extra =
+    canonicalUnit(ingUnit) === piece
+      ? countBaseOf(ing) === 'l'
+        ? [{ val: 'ml', label: 'มิลลิลิตร (ml)' }, { val: 'l', label: 'ลิตร (L)' }]
+        : [{ val: 'g', label: 'กรัม (g)' }, { val: 'kg', label: 'กิโลกรัม (kg)' }]
+      : [{ val: piece, label: `${ing.countUnit?.trim() || piece} (1 ${countBaseOf(ing) === 'l' ? 'L' : 'kg'} ≈ ${ing.countPerBase})` }];
+  return [...units, ...extra.filter(e => !units.some(u => u.val === e.val))];
+}
+
+function baseRecipeUnits(ingUnit: string): { val: string; label: string }[] {
   const norm = canonicalUnit(ingUnit);
   const label: Record<string, string> = { kg: 'กิโลกรัม (kg)', g: 'กรัม (g)', l: 'ลิตร (L)', ml: 'มิลลิลิตร (ml)' };
   if (norm === 'kg') return [{ val: 'kg', label: label.kg }, { val: 'g', label: label.g }];
