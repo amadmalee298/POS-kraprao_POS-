@@ -38,3 +38,18 @@ describe('piece counts (bought by weight, used by the piece)', () => {
     expect(auditRecipes(menu, [], [shrimpKg] as any).some(i => i.kind === 'unit-mismatch')).toBe(false);
   });
 });
+
+describe('bottle content (1 ขวด = 1500 ml)', () => {
+  const fishSauce = { id: 'f', name: 'น้ำปลา', unit: 'bottle', currentStock: 2, minStockAlert: 0, unitCost: 59, category: 'sauce', countUnit: 'bottle', countPerBase: 1 / 1.5, countBase: 'l' as const };
+
+  it('takes part of a bottle for a recipe in ml', () => {
+    const r = calcRecipeItemCostAndDeduction(fishSauce, 15, 'ml');
+    expect(r.stockDeduction).toBeCloseTo(0.01);
+    expect(r.lineCost).toBeCloseTo(0.59);
+  });
+
+  it('treats the unit id and its Thai name as the same unit', () => {
+    expect(calcRecipeItemCostAndDeduction(fishSauce, 1, 'ขวด').stockDeduction).toBe(1);
+    expect(getAvailableRecipeUnits('bottle', fishSauce).map(u => u.val)).toEqual(['ขวด', 'ml', 'l']);
+  });
+});

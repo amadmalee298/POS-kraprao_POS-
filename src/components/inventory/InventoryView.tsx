@@ -41,7 +41,11 @@ import {
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot, StockType } from '../../types';
 import { AIInventoryForecastPanel } from './AIInventoryForecastPanel';
-import { canonicalUnit, convertForIngredient, countBaseOf, countUnitOf, effectiveUnitCost } from '../../utils/recipeUtils';
+import { canonicalUnit, convertAmount, convertForIngredient, countBaseOf, countUnitOf, effectiveUnitCost } from '../../utils/recipeUtils';
+
+const MASS_UNITS = ['kg', 'g'];
+const VOLUME_UNITS = ['l', 'ml'];
+const MEASURE_UNITS = [...MASS_UNITS, ...VOLUME_UNITS];
 import { buildStockMovements, salesUsageByDay, withRunningBalance } from '../../utils/stockHistory';
 import { AIWasteAnalysisPanel } from './AIWasteAnalysisPanel';
 import { SmartAuditPanel } from './SmartAuditPanel';
@@ -125,6 +129,8 @@ export const InventoryView: React.FC = () => {
   const [editIngCountUnit, setEditIngCountUnit] = useState('');
   const [editIngCountPer, setEditIngCountPer] = useState('');
   const [editIngCountBase, setEditIngCountBase] = useState<'kg' | 'l'>('kg');
+  // Unit of the package size box: '__stock' = the stock unit; a weight/volume = content per package
+  const [editIngPackSizeUnit, setEditIngPackSizeUnit] = useState('__stock');
 
   // Inline Price Editing in Table
   const [inlineCostInputs, setInlineCostInputs] = useState<Record<string, string>>({});
@@ -575,6 +581,17 @@ export const InventoryView: React.FC = () => {
     setIngCustomUnit('');
   };
 
+  /** Thai name of a stock unit (e.g. 'bottle' → 'ขวด') */
+  const unitNameOf = (unit: string) => {
+    const u = ingredientUnits.find(x => x.id === unit || x.symbol === unit || x.name === unit);
+    return (u?.name || unit || '').split('/')[0].trim();
+  };
+  /** The package is one stock unit (package ขวด for an ingredient counted in bottles), or not set */
+  const packageIsStockUnit = (pkgUnit: string, stockUnit: string) => {
+    const p = pkgUnit.trim();
+    return !p || p === stockUnit || p === unitNameOf(stockUnit) || canonicalUnit(p) === canonicalUnit(stockUnit);
+  };
+
   const handleOpenEditIngredient = (ing: Ingredient) => {
     setEditingIng(ing);
     setEditIngName(ing.name);
@@ -608,6 +625,17 @@ export const InventoryView: React.FC = () => {
     setEditIngCountUnit(ing.countUnit || '');
     setEditIngCountPer(ing.countPerBase ? String(ing.countPerBase) : '');
     setEditIngCountBase(ing.countBase === 'l' ? 'l' : 'kg');
+    // Counted in bottles/packs with a content set: show it as "1 ขวด = 1500 ml"
+    const stockCanon = canonicalUnit(ing.unit);
+    if (!MEASURE_UNITS.includes(stockCanon) && countUnitOf(ing) === stockCanon && ing.countPerBase) {
+      const small = countBaseOf(ing) === 'l' ? 'ml' : 'g';
+      setEditIngPackSizeUnit(small);
+      setEditIngPackageUnit(ing.packageUnit || unitNameOf(ing.unit));
+      setEditIngPackageSize(String(Math.round((1000 / ing.countPerBase) * 1000) / 1000));
+      setEditIngPackCostInput('');
+    } else {
+      setEditIngPackSizeUnit('__stock');
+    }
 
     const parsedPkg = parseFloat(pkgSizeStr);
     if (!isNaN(parsedPkg) && parsedPkg > 0) {
@@ -666,11 +694,29 @@ export const InventoryView: React.FC = () => {
     const byMeasure = ['kg', 'g', 'l', 'ml'].includes(canonicalUnit(finalUnit));
     const pieceUnit = byMeasure ? editIngCountUnit.trim() : finalUnit;
     const hasCount = !!pieceUnit && countPer > 0;
-    const countFields = {
-      countUnit: hasCount ? pieceUnit : undefined,
-      countPerBase: hasCount ? countPer : undefined,
-      countBase: hasCount ? countBaseOf({ unit: finalUnit, countBase: editIngCountBase }) : undefined
-    };
+    let countFields: Partial<Ingredient> = byMeasure
+      ? {
+          countUnit: hasCount ? pieceUnit : undefined,
+          countPerBase: hasCount ? countPer : undefined,
+          countBase: hasCount ? countBaseOf({ unit: finalUnit, countBase: editIngCountBase }) : undefined
+        }
+      : {};
+    let packageSize = !isNaN(pkgSizeNum) && pkgSizeNum > 0 ? pkgSizeNum : undefined;
+    const sizeUnit = editIngPackSizeUnit;
+    if (byMeasure) {
+      // e.g. stock in g, package typed as 1 kg
+      if (packageSize && sizeUnit !== '__stock') packageSize = convertAmount(packageSize, sizeUnit, finalUnit) ?? packageSize;
+    } else if (packageIsStockUnit(editIngPackageUnit, finalUnit)) {
+      if (packageSize && sizeUnit !== '__stock') {
+        // Content of one bottle/pack (1 ขวด = 1500 ml): recipes may then use ml and take part of a bottle
+        const base = ['l', 'ml'].includes(canonicalUnit(sizeUnit)) ? 'l' : 'kg';
+        const inBase = convertAmount(packageSize, sizeUnit, base) || 0;
+        countFields = inBase > 0 ? { countUnit: finalUnit, countPerBase: 1 / inBase, countBase: base } : {};
+        packageSize = undefined;
+      } else if (sizeUnit === '__stock') {
+        countFields = { countUnit: undefined, countPerBase: undefined, countBase: undefined };
+      }
+    }
     updateIngredient({
       ...editingIng,
       name: editIngName.trim(),
@@ -682,7 +728,7 @@ export const InventoryView: React.FC = () => {
       stockType: editIngStockType || undefined,
       barcode: editIngBarcode.trim() || undefined,
       packageUnit: editIngPackageUnit.trim() || undefined,
-      packageSize: !isNaN(pkgSizeNum) && pkgSizeNum > 0 ? pkgSizeNum : undefined,
+      packageSize,
       ...countFields
     }, editIngStock > editingIng.currentStock ? 'restock' : 'manual_adjustment', 'แก้ยอดจากหน้าต่างแก้ไขข้อมูลวัตถุดิบ');
 
@@ -3124,22 +3170,47 @@ export const InventoryView: React.FC = () => {
                     <label className="block text-[11px] text-slate-400 mb-1">
                       ขนาดบรรจุต่อ 1 {editIngPackageUnit || 'หน่วย'}
                     </label>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center gap-1.5">
                       <input
                         type="number"
                         step="any"
                         placeholder="เช่น 680"
                         value={editIngPackageSize}
                         onChange={e => handleEditPackageSizeChange(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-emerald-300 font-mono font-bold focus:outline-none focus:border-emerald-500"
+                        className="min-w-0 flex-1 w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-emerald-300 font-mono font-bold focus:outline-none focus:border-emerald-500"
                       />
-                      <span className="text-xs text-slate-400 font-bold shrink-0">
-                        {editIngUnit === 'custom' ? editIngCustomUnit || 'หน่วย' : editIngUnit}
-                      </span>
+                      {(() => {
+                        const stockUnit = editIngUnit === 'custom' ? editIngCustomUnit || 'หน่วย' : editIngUnit;
+                        const su = canonicalUnit(stockUnit);
+                        const opts = MASS_UNITS.includes(su)
+                          ? [['g', 'g'], ['kg', 'kg']]
+                          : VOLUME_UNITS.includes(su)
+                            ? [['ml', 'ml'], ['l', 'ลิตร']]
+                            : packageIsStockUnit(editIngPackageUnit, stockUnit)
+                              ? [['ml', 'ml'], ['l', 'ลิตร'], ['g', 'กรัม'], ['kg', 'กิโลกรัม']]
+                              : [];
+                        const extra = opts.filter(([v]) => v !== su);
+                        if (extra.length === 0) {
+                          return <span className="text-xs text-slate-400 font-bold shrink-0">{unitNameOf(stockUnit)}</span>;
+                        }
+                        return (
+                          <select
+                            aria-label="หน่วยของขนาดบรรจุ"
+                            value={extra.some(([v]) => v === editIngPackSizeUnit) ? editIngPackSizeUnit : '__stock'}
+                            onChange={e => setEditIngPackSizeUnit(e.target.value)}
+                            className="shrink-0 w-[4.5rem] bg-slate-900 border border-slate-700 rounded-xl px-1.5 py-2 text-[11px] text-slate-200 font-bold focus:outline-none focus:border-emerald-500"
+                          >
+                            <option value="__stock">{unitNameOf(stockUnit)}</option>
+                            {extra.map(([v, label]) => (
+                              <option key={v} value={v}>{label}</option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </div>
                   </div>
 
-                  {parseFloat(editIngPackageSize) > 0 && (
+                  {parseFloat(editIngPackageSize) > 0 && editIngPackSizeUnit === '__stock' && (
                     <div className="col-span-2 bg-slate-900/90 border border-emerald-500/30 rounded-xl p-3">
                       <div className="flex items-center justify-between mb-1.5">
                         <label className="text-xs text-emerald-300 font-bold">
@@ -3169,10 +3240,16 @@ export const InventoryView: React.FC = () => {
                     </div>
                   )}
                 </div>
-                {editIngPackageUnit && editIngPackageSize && (
+                {editIngPackageSize && editIngPackSizeUnit !== '__stock' && !MEASURE_UNITS.includes(canonicalUnit(editIngUnit === 'custom' ? editIngCustomUnit : editIngUnit)) ? (
                   <p className="text-[11px] text-amber-300/90 font-mono">
-                    💡 ตัวอย่าง: เมื่อรับเข้า 1 {editIngPackageUnit} ระบบจะเพิ่มสต็อก {editIngPackageSize} {editIngUnit === 'custom' ? editIngCustomUnit : editIngUnit}
+                    💡 1 {unitNameOf(editIngUnit === 'custom' ? editIngCustomUnit : editIngUnit)} = {editIngPackageSize} {editIngPackSizeUnit}: สูตรเลือกหน่วย {['l', 'ml'].includes(editIngPackSizeUnit) ? 'ml' : 'g'} ได้ ระบบตัดสต็อกเป็นเศษของ{unitNameOf(editIngUnit === 'custom' ? editIngCustomUnit : editIngUnit)}ให้
                   </p>
+                ) : (
+                  editIngPackageUnit && editIngPackageSize && (
+                    <p className="text-[11px] text-amber-300/90 font-mono">
+                      💡 ตัวอย่าง: เมื่อรับเข้า 1 {editIngPackageUnit} ระบบจะเพิ่มสต็อก {editIngPackSizeUnit === '__stock' ? editIngPackageSize : convertAmount(parseFloat(editIngPackageSize), editIngPackSizeUnit, editIngUnit === 'custom' ? editIngCustomUnit : editIngUnit) ?? editIngPackageSize} {unitNameOf(editIngUnit === 'custom' ? editIngCustomUnit : editIngUnit)}
+                    </p>
+                  )
                 )}
               </div>
 
@@ -3181,6 +3258,8 @@ export const InventoryView: React.FC = () => {
                 const stockUnit = editIngUnit === 'custom' ? editIngCustomUnit || 'หน่วย' : editIngUnit;
                 const su = canonicalUnit(stockUnit);
                 const byMeasure = ['kg', 'g', 'l', 'ml'].includes(su);
+                // Bottles/packs set their content in the package box above
+                if (!byMeasure) return null;
                 const base = byMeasure ? countBaseOf({ unit: su }) : editIngCountBase;
                 const baseLabel = base === 'l' ? 'ลิตร' : 'กิโลกรัม';
                 const per = parseFloat(editIngCountPer);
