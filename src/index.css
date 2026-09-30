@@ -14,3 +14,17 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/*
+ * Centered dialogs: when one is taller than the screen (phones), the overlay scrolls and the
+ * dialog starts at the top instead of being cut off above and below with no way to reach it.
+ * Dialogs that fit stay centered (auto margins). Bottom sheets (items-end) are left alone.
+ */
+.fixed.inset-0.flex.items-center.justify-center:not(.items-end) {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-items: flex-start;
+}
+.fixed.inset-0.flex.items-center.justify-center:not(.items-end) > * {
+  margin-block: auto;
+}

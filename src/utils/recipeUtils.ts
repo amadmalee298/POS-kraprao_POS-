@@ -7,6 +7,12 @@ export function canonicalUnit(unit: string | undefined): string {
   if (['g', 'gram', 'กรัม', 'ก'].includes(u)) return 'g';
   if (['l', 'liter', 'litre', 'ลิตร', 'ล'].includes(u)) return 'l';
   if (['ml', 'มิลลิลิตร', 'มล'].includes(u)) return 'ml';
+  // Counted units: the unit list's ids/symbols and their Thai names are the same unit
+  if (['pcs', 'piece', 'ชิ้น', 'ฟอง / ชิ้น'].includes(u)) return 'pcs';
+  if (['bottle', 'ขวด'].includes(u)) return 'ขวด';
+  if (['can', 'กระป๋อง'].includes(u)) return 'กระป๋อง';
+  if (['pack', 'แพ็ค', 'แพค', 'แพ็ค / ห่อ'].includes(u)) return 'pack';
+  if (['bag', 'ถุง', 'ถุง / กระสอบ'].includes(u)) return 'ถุง';
   return u;
 }
 
