@@ -5,7 +5,7 @@ import { useSharedList } from '../../hooks/useSharedList';
 import type { Ingredient, PrepBatch, PrepRecipe } from '../../types';
 import { planPrep, yieldPercent } from '../../utils/prep';
 import { matchIngredient } from '../../utils/stockIntake';
-import { convertAmount, effectiveUnitCost } from '../../utils/recipeUtils';
+import { convertForIngredient, effectiveUnitCost } from '../../utils/recipeUtils';
 
 /**
  * Kitchen prep: draw raw ingredients from stock, cook them, and receive the prepped item (e.g.
@@ -117,7 +117,7 @@ export const PrepProductionPanel: React.FC = () => {
     const inputs = t.inputs
       .map(line => {
         const ing = line.names.map(n => matchIngredient(n, raw)).find(Boolean) as Ingredient | undefined;
-        const qty = ing ? convertAmount(line.quantity, line.unit, ing.unit) : null;
+        const qty = ing ? convertForIngredient(line.quantity, line.unit, ing.unit, ing) : null;
         // A unit that cannot be converted (e.g. ขวด) keeps the number for the shop to check
         return { ingredientId: ing?.id || '', quantity: String(Math.round((qty ?? line.quantity) * 1000) / 1000) };
       })

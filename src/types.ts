@@ -170,6 +170,14 @@ export interface Ingredient {
   barcode?: string;
   packageUnit?: string; // เช่น 'ขวด', 'ลัง', 'ถุง', 'แพ็ค', 'กล่อง', 'กระป๋อง'
   packageSize?: number; // เช่น 680 (1 packageUnit = 680 ของหน่วย unit หลัก เช่น 1 ขวด = 680 ml)
+  /**
+   * Counting by the piece for something bought by weight or volume (or the other way round):
+   * 1 countBase ≈ countPerBase countUnit, e.g. 1 kg of shrimp ≈ 40 ตัว. Recipes, stock issues
+   * and bills may then use either unit and are converted into the stock unit.
+   */
+  countUnit?: string;
+  countPerBase?: number;
+  countBase?: 'kg' | 'l';
   isFrequent?: boolean; // รายการใช้บ่อย (หมุดปักให้อยู่ด้านบน)
   /**
    * What kind of stock this is (accounting): food and packaging sold with it are inventory
