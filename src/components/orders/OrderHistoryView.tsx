@@ -25,9 +25,11 @@ import {
   History,
   CloudCheck,
   Phone,
-  FileText
+  FileText,
+  Ban
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
+import { CancelOrderModal } from '../pos/CancelOrderModal';
 import { countsAsRevenue } from '../../utils/orderUtils';
 import { Order, PaymentMethod } from '../../types';
 import { printReceiptViaWindow } from '../../utils/printReceipt';
@@ -61,6 +63,8 @@ export const OrderHistoryView: React.FC = () => {
 
   // Detail Modal
   const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<Order | null>(null);
+  // Bill being cancelled (reason, approver PIN and stock return are asked in the cancel dialog)
+  const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
   const [isSyncingFirestore, setIsSyncingFirestore] = useState(false);
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
 
@@ -798,6 +802,16 @@ export const OrderHistoryView: React.FC = () => {
                           >
                             <Printer className="w-3.5 h-3.5" />
                           </button>
+                          {ord.status !== 'cancelled' && (
+                            <button
+                              onClick={() => setOrderToCancel(ord)}
+                              className="p-1.5 bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800/60 rounded-lg transition active:scale-95"
+                              title="ยกเลิกบิล"
+                              aria-label={`ยกเลิกบิล ${ord.orderNumber}`}
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1030,6 +1044,15 @@ export const OrderHistoryView: React.FC = () => {
 
             {/* Modal Actions Footer */}
             <div className="p-4 border-t border-slate-800 bg-slate-950 flex items-center justify-end space-x-2">
+              {selectedOrderForDetail.status !== 'cancelled' && (
+                <button
+                  onClick={() => setOrderToCancel(selectedOrderForDetail)}
+                  className="mr-auto px-3 py-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/60 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 active:scale-95"
+                >
+                  <Ban className="w-4 h-4" />
+                  <span>ยกเลิกบิล</span>
+                </button>
+              )}
               <button
                 onClick={() => setSelectedOrderForDetail(null)}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition"
@@ -1051,6 +1074,13 @@ export const OrderHistoryView: React.FC = () => {
           </div>
         </div>
       )}
+
+      <CancelOrderModal
+        isOpen={!!orderToCancel}
+        onClose={() => setOrderToCancel(null)}
+        order={orderToCancel}
+        onSuccess={() => setSelectedOrderForDetail(null)}
+      />
     </div>
   );
 };
