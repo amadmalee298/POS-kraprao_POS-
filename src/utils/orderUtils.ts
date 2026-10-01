@@ -209,17 +209,20 @@ export function orderVatBreakdown(order: Pick<Order, 'grandTotal' | 'vatAmount'>
 }
 
 /**
- * Items of an order that came from the cloud (e.g. a customer's QR order) carry only names and
- * ids. Re-attach the shop's own menu items and add-ons so recipes are known for stock deduction.
+ * The menu items and add-ons of an order with their recipes, for stock. An item saved with its
+ * recipe keeps it (what was deducted at the time of sale, even if the recipe changed since);
+ * items from the cloud (e.g. a customer's QR order) carry only names and ids, so the shop's own
+ * menu items and add-ons are re-attached.
  */
 export function resolveItemsForStock(items: CartItem[], menuItems: MenuItem[], addOns: AddOnOption[]): CartItem[] {
   const menuById = new Map(menuItems.map(m => [m.id, m]));
   const addOnById = new Map(addOns.map(a => [a.id, a]));
   const addOnByName = new Map(addOns.map(a => [a.name, a]));
+  const hasRecipe = (a: AddOnOption) => !!a.recipe?.length || (!!a.ingredientId && !!a.ingredientAmount);
   return items.map(item => ({
     ...item,
-    menuItem: menuById.get(item.menuItem?.id) || item.menuItem,
-    selectedAddOns: (item.selectedAddOns || []).map(a => addOnById.get(a.id) || addOnByName.get(a.name) || a)
+    menuItem: item.menuItem?.recipe?.length ? item.menuItem : menuById.get(item.menuItem?.id) || item.menuItem,
+    selectedAddOns: (item.selectedAddOns || []).map(a => (hasRecipe(a) ? a : addOnById.get(a.id) || addOnByName.get(a.name) || a))
   }));
 }
 

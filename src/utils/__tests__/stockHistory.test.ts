@@ -59,3 +59,16 @@ describe('forecast', () => {
     expect(egg.suggestedOrderQty).toBe(0);
   });
 });
+
+describe('cancelled bills on the stock card', () => {
+  const porkUsed = (o: Order) => salesUsageByDay([o], [pork, rice], [menu], []).find(r => r.ingredientId === 'pork')?.amount || 0;
+
+  it('keeps the usage of a bill cancelled without putting the food back', () => {
+    expect(porkUsed({ ...order('a', '2026-09-20T10:00:00.000Z', 2, 'cancelled'), cancelStockUsed: true })).toBe(300);
+  });
+
+  it('drops a bill whose ingredients went back to stock (and older cancelled bills)', () => {
+    expect(porkUsed({ ...order('b', '2026-09-20T10:00:00.000Z', 2, 'cancelled'), cancelStockUsed: false })).toBe(0);
+    expect(porkUsed(order('c', '2026-09-20T10:00:00.000Z', 2, 'cancelled'))).toBe(0);
+  });
+});

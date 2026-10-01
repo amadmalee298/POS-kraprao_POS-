@@ -38,3 +38,19 @@ describe('resolveItemsForStock', () => {
     expect(resolved.quantity).toBe(2);
   });
 });
+
+describe('resolveItemsForStock keeps the recipe of the time of sale', () => {
+  it('uses the recipe saved on the bill when it has one', () => {
+    const shopMenu = [{ id: 'm1', name: 'กะเพราไก่', recipe: [{ ingredientId: 'chicken', amountNeeded: 200 }] }] as unknown as MenuItem[];
+    const sold = {
+      cartItemId: 'c1',
+      quantity: 1,
+      menuItem: { id: 'm1', name: 'กะเพราไก่', recipe: [{ ingredientId: 'chicken', amountNeeded: 150 }] },
+      selectedAddOns: [{ id: 'egg', name: 'เพิ่มไข่ดาว', price: 10, ingredientId: 'egg-old', ingredientAmount: 1 }]
+    } as unknown as CartItem;
+    const shopAddOns = [{ id: 'egg', name: 'เพิ่มไข่ดาว', price: 10, ingredientId: 'egg-new', ingredientAmount: 2 }] as AddOnOption[];
+    const [resolved] = resolveItemsForStock([sold], shopMenu, shopAddOns);
+    expect(resolved.menuItem.recipe?.[0].amountNeeded).toBe(150);
+    expect(resolved.selectedAddOns[0].ingredientId).toBe('egg-old');
+  });
+});
