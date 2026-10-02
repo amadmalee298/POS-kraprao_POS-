@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Bell, CheckCircle2, Download, ExternalLink, Printer, RotateCcw, X } from 'lucide-react';
+import { Archive, Bell, CheckCircle2, Download, ExternalLink, FileText, Image as ImageIcon, Loader2, Paperclip, Printer, RotateCcw, Trash2, X } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { useSharedList } from '../../hooks/useSharedList';
 import type { PayrollAdjustment } from '../../types';
@@ -27,6 +27,8 @@ import { payrollSettings } from '../../utils/payroll';
 import { sellerInfo } from '../../utils/seller';
 import { documentHtml, printDocument, WhtCertificate } from '../../utils/staffDocs';
 import { localDay } from '../../utils/stockHistory';
+import { buildAccountantPack, receiptFileName } from '../../utils/accountantPack';
+import { addProof, dataUrlBytes, loadProof, openProof, removeProof } from '../../services/filingProofs';
 
 const baht = (n: number) => `฿${(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const monthName = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
@@ -66,7 +68,7 @@ function filingData(item: FilingItem, src: FilingSources, ctx: { orders: any[]; 
 
 /** Filings due to government offices: what is due this month, the figures, the attachment files and whether it was filed */
 export const GovFilingPanel: React.FC = () => {
-  const { staffMembers, shifts, settings, currentBranch, orders, expenses, currentUser, branches } = usePOS();
+  const { staffMembers, shifts, settings, currentBranch, orders, expenses, incomes, currentUser, branches } = usePOS();
   const today = localDay(new Date().toISOString());
   const [month, setMonth] = useState(today.slice(0, 7));
   const [branchId, setBranchId] = useState<string>('all');
@@ -76,6 +78,9 @@ export const GovFilingPanel: React.FC = () => {
   const [marking, setMarking] = useState<FilingItem | null>(null);
   const [remindOn, setRemindOn] = useState(readRemindOn);
   const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState('');
+  const [packYear, setPackYear] = useState(Number(today.slice(0, 4)) - (today.slice(5, 7) <= '03' ? 1 : 0));
+  const [withReceipts, setWithReceipts] = useState(true);
   const shop = sellerInfo(settings, currentBranch);
 
   const src: FilingSources = useMemo(
@@ -120,6 +125,93 @@ export const GovFilingPanel: React.FC = () => {
       localStorage.setItem(REMIND_KEY, next ? '1' : '0');
     } catch {
       // this visit only
+    }
+  };
+
+  // ---------- Proof files ----------
+  const attachProofs = async (rec: FilingRecord, files: File[]) => {
+    setBusy(rec.id);
+    const added: NonNullable<FilingRecord['proofs']> = [];
+    const errors: string[] = [];
+    for (const f of files) {
+      try {
+        added.push(await addProof(currentBranch.id, f, currentUser?.name));
+      } catch (err) {
+        errors.push(`${f.name}: ${(err as Error).message}`);
+      }
+    }
+    if (added.length) setRecords(prev => prev.map(r => (r.id === rec.id ? { ...r, proofs: [...(r.proofs || []), ...added] } : r)));
+    setBusy('');
+    setMsg(errors.length ? `แนบไม่สำเร็จ: ${errors.join(' · ')}` : `แนบหลักฐาน ${added.length} ไฟล์แล้ว`);
+  };
+  const viewProof = async (id: string) => {
+    const tab = window.open('', '_blank');
+    const data = await loadProof(currentBranch.id, id);
+    if (data) openProof(data, tab);
+    else {
+      tab?.close();
+      setMsg('เปิดไฟล์ไม่ได้ (ไม่มีในเครื่องนี้และเชื่อม cloud ไม่ได้)');
+    }
+  };
+  const deleteProof = async (rec: FilingRecord, id: string) => {
+    if (!window.confirm('ลบไฟล์หลักฐานนี้?')) return;
+    setRecords(prev => prev.map(r => (r.id === rec.id ? { ...r, proofs: (r.proofs || []).filter(x => x.id !== id) } : r)));
+    await removeProof(currentBranch.id, id);
+  };
+
+  // ---------- Year's pack for the accountant ----------
+  const downloadPack = async () => {
+    setBusy('pack');
+    try {
+      const { zipSync, strToU8 } = await import('fflate');
+      const files = buildAccountantPack({
+        year: packYear,
+        branchId,
+        shop,
+        vatRegistered: src.vatRegistered,
+        orders,
+        expenses,
+        incomes,
+        staff: staffMembers,
+        shifts,
+        adjustments,
+        payroll: src.payroll,
+        certificates: certs,
+        records,
+        today
+      });
+      const entries: Record<string, Uint8Array> = {};
+      files.forEach(f => (entries[f.path] = strToU8(f.text)));
+      let missing = 0;
+      for (const r of records.filter(x => x.period.startsWith(String(packYear)))) {
+        for (const pf of r.proofs || []) {
+          const data = await loadProof(currentBranch.id, pf.id);
+          if (!data) {
+            missing++;
+            continue;
+          }
+          entries[`หลักฐานการยื่น/${FILINGS[r.code].name.replace(/[\\/]/g, '-')}_${r.period}_${pf.name.replace(/[\\/:*?"<>|]/g, '')}`] = dataUrlBytes(data);
+        }
+      }
+      if (withReceipts) {
+        expenses
+          .filter(e => (branchId === 'all' || e.branchId === branchId) && e.date.startsWith(String(packYear)) && e.receiptImage?.startsWith('data:'))
+          .forEach(e => (entries[`ใบเสร็จค่าใช้จ่าย/${receiptFileName(e)}`] = dataUrlBytes(e.receiptImage!)));
+      }
+      const zip = zipSync(entries, { level: 6 });
+      const url = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `accounting_pack_${packYear + 543}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      setMsg(`ดาวน์โหลดชุดเอกสารปี ${packYear + 543} แล้ว (${Object.keys(entries).length} ไฟล์)${missing ? ` · เปิดหลักฐานไม่ได้ ${missing} ไฟล์ (ลองต่อเน็ตแล้วทำใหม่)` : ''}`);
+    } catch (err) {
+      setMsg(`สร้างไฟล์ไม่สำเร็จ: ${(err as Error).message}`);
+    } finally {
+      setBusy('');
     }
   };
 
@@ -217,6 +309,34 @@ export const GovFilingPanel: React.FC = () => {
                   ยื่นแล้ว {filingDate(rec.filedAt)}{rec.refNo ? ` · อ้างอิง ${rec.refNo}` : ''}{rec.amountPaid ? ` · ชำระ ${baht(rec.amountPaid)}` : ''}{rec.by ? ` · โดย ${rec.by}` : ''}
                 </div>
               )}
+              {rec && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(rec.proofs || []).map(pf => (
+                    <span key={pf.id} className="inline-flex items-center gap-1 h-8 pl-2 pr-1 rounded-lg bg-slate-950 border border-slate-700 text-[11px]">
+                      <button type="button" onClick={() => viewProof(pf.id)} className="inline-flex items-center gap-1 max-w-[150px] truncate" title={pf.name}>
+                        {pf.kind === 'pdf' ? <FileText className="w-3.5 h-3.5 shrink-0" /> : <ImageIcon className="w-3.5 h-3.5 shrink-0" />}
+                        <span className="truncate">{pf.name}</span>
+                      </button>
+                      <button type="button" aria-label={`ลบไฟล์ ${pf.name}`} onClick={() => deleteProof(rec, pf.id)} className="w-6 h-6 flex items-center justify-center text-rose-300"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </span>
+                  ))}
+                  <label className={`h-8 px-2.5 rounded-lg border border-dashed border-slate-600 text-slate-300 inline-flex items-center gap-1 cursor-pointer text-[11px] ${busy === rec.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                    {busy === rec.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Paperclip className="w-3.5 h-3.5" />} แนบหลักฐาน (รูป/PDF)
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      multiple
+                      className="hidden"
+                      aria-label={`แนบหลักฐาน ${def.name} ${item.periodLabel}`}
+                      onChange={e => {
+                        const files = Array.from(e.target.files || []);
+                        e.target.value = '';
+                        if (files.length) attachProofs(rec, files);
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-1.5 pt-1">
                 {(data.pp30 || t) && (
@@ -239,6 +359,30 @@ export const GovFilingPanel: React.FC = () => {
             </div>
           );
         })}
+      </div>
+
+      <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+        <div className="text-sm font-bold text-slate-100 flex items-center gap-1.5"><Archive className="w-4 h-4" /> ส่งให้นักบัญชี (ชุดเอกสารทั้งปี)</div>
+        <p className="text-[11px] text-slate-400">
+          ไฟล์ .zip ไฟล์เดียว: งบกำไรขาดทุนรายเดือน รายงานภาษีขาย/ภาษีซื้อ ค่าใช้จ่าย รายได้อื่น เงินเดือน 50 ทวิ สถานะการยื่นแบบ หลักฐานที่แนบ และรูปใบเสร็จค่าใช้จ่าย (เปิดด้วย Excel ได้)
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-[11px] text-slate-400">
+            ปีบัญชี
+            <select value={packYear} onChange={e => setPackYear(Number(e.target.value))} className={`${input} block mt-1`}>
+              {[0, 1, 2].map(k => {
+                const y = Number(today.slice(0, 4)) - k;
+                return <option key={y} value={y}>{y + 543}</option>;
+              })}
+            </select>
+          </label>
+          <label className="h-10 flex items-center gap-1.5 text-slate-300">
+            <input type="checkbox" checked={withReceipts} onChange={e => setWithReceipts(e.target.checked)} className="w-4 h-4 accent-orange-500" /> รวมรูปใบเสร็จค่าใช้จ่าย
+          </label>
+          <button type="button" onClick={downloadPack} disabled={busy === 'pack'} className="h-10 px-4 rounded-xl bg-orange-600 text-white font-bold flex items-center gap-1.5 disabled:opacity-60">
+            {busy === 'pack' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} ดาวน์โหลดชุดเอกสาร (.zip)
+          </button>
+        </div>
       </div>
 
       <p className="text-[10px] text-slate-500">
@@ -290,6 +434,7 @@ const MarkFiledModal: React.FC<{ item: FilingItem; suggested: number; today: str
         >
           บันทึก
         </button>
+        <p className="text-[11px] text-slate-500">บันทึกแล้วกด "แนบหลักฐาน" ที่การ์ดเพื่อเก็บใบยื่นแบบหรือใบเสร็จชำระภาษี</p>
       </div>
     </div>
   );

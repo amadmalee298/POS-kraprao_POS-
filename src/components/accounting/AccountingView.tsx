@@ -20,7 +20,8 @@ import {
   vatInside,
   vatRateOf,
   withLiveStatus,
-  downloadCsv
+  downloadCsv,
+  INCOME_CATEGORY_LABELS
 } from '../../utils/accounting';
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import {
@@ -157,17 +158,7 @@ const categoryLabels: Record<ExpenseCategory, string> = {
   other: 'ค่าใช้จ่ายอื่นๆ'
 };
 
-export const incomeCategoryLabels: Record<IncomeCategory, string> = {
-  catering: 'งานจัดเลี้ยง / เหมาบูธ',
-  ad_sponsor: 'สปอนเซอร์ / ป้ายโฆษณา',
-  recycling: 'ขายของรีไซเคิล / น้ำมันพืชเก่า',
-  interest: 'ดอกเบี้ยรับ / เงินปันผล',
-  rental: 'ค่าเช่าพื้นที่ / หน้าร้าน',
-  asset_sale: 'ขายสินทรัพย์ / อุปกรณ์เก่า',
-  subsidy: 'เงินช่วยเหลือ / เงินอุดหนุนรัฐ',
-  delivery_subsidy: 'เงินชดเชย / เงินคืนแพลตฟอร์ม',
-  other: 'รายได้เบ็ดเตล็ดอื่นๆ'
-};
+export const incomeCategoryLabels: Record<IncomeCategory, string> = INCOME_CATEGORY_LABELS;
 
 export const incomePaymentMethodLabels: Record<string, string> = {
   promptpay: 'พร้อมเพย์ / QR Code',

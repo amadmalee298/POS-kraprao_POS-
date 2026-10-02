@@ -54,6 +54,19 @@ export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
  * Selling and administrative expense lines, in statement order. Not here: ingredient purchases
  * (stock, charged as cost of sales) and equipment purchases (assets, charged as depreciation).
  */
+/** Thai names of other-income categories */
+export const INCOME_CATEGORY_LABELS: Record<IncomeCategory, string> = {
+  catering: 'งานจัดเลี้ยง / เหมาบูธ',
+  ad_sponsor: 'สปอนเซอร์ / ป้ายโฆษณา',
+  recycling: 'ขายของรีไซเคิล / น้ำมันพืชเก่า',
+  interest: 'ดอกเบี้ยรับ / เงินปันผล',
+  rental: 'ค่าเช่าพื้นที่ / หน้าร้าน',
+  asset_sale: 'ขายสินทรัพย์ / อุปกรณ์เก่า',
+  subsidy: 'เงินช่วยเหลือ / เงินอุดหนุนรัฐ',
+  delivery_subsidy: 'เงินชดเชย / เงินคืนแพลตฟอร์ม',
+  other: 'รายได้เบ็ดเตล็ดอื่นๆ'
+};
+
 export const SGA_CATEGORIES: ExpenseCategory[] = ['salary', 'rent', 'utilities', 'supplies', 'marketing', 'other'];
 
 export const DEFAULT_USEFUL_LIFE_YEARS = 5;
