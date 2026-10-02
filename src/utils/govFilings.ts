@@ -373,6 +373,8 @@ export interface FilingRecord {
   amountPaid?: number;
   note?: string;
   by?: string;
+  /** Proof of filing / payment (files are stored separately, see services/filingProofs) */
+  proofs?: { id: string; name: string; kind: 'image' | 'pdf'; size: number; addedAt: string; by?: string }[];
 }
 
 /** Days left (negative = late) and a label for it */

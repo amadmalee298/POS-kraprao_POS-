@@ -1900,6 +1900,31 @@ export async function saveBranchDoc(branchId: string, key: string, data: Record<
   }
 }
 
+/** Read a shared document once (null when missing or offline) */
+export async function loadBranchDoc(branchId: string, key: string): Promise<DocumentData | null> {
+  if (!dbInstance || !navigator.onLine) return null;
+  await waitForFirebaseAuth();
+  try {
+    const snap = await getDoc(doc(dbInstance, 'branches', branchId, 'config', key));
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    console.warn(`[Firebase Service] Failed to read shared document ${key}:`, err);
+    return null;
+  }
+}
+
+export async function deleteBranchDoc(branchId: string, key: string): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
+  try {
+    await deleteDoc(doc(dbInstance, 'branches', branchId, 'config', key));
+    return true;
+  } catch (err) {
+    console.warn(`[Firebase Service] Failed to delete shared document ${key}:`, err);
+    return false;
+  }
+}
+
 /**
  * Claim a once-per-day job (e.g. the daily summary message) for one device only. Returns true for
  * the device that gets it; false when another device already did it today.
