@@ -23,6 +23,7 @@ import {
   Clock,
   CalendarDays,
   Wallet,
+  Landmark,
   KeyRound,
   RefreshCw,
   ShieldAlert,
@@ -143,7 +144,8 @@ export const SidebarDrawer: React.FC = () => {
   // Payslips and withholding tax certificates, listed with the other documents
   const staffDocLinks: { tab: SettingsTab; section?: string; label: string; icon: React.ElementType }[] = [
     { tab: 'scheduling' as SettingsTab, section: 'monthly', label: 'สลิปเงินเดือน', icon: Wallet },
-    { tab: 'staff_docs' as SettingsTab, label: 'หนังสือรับรอง 50 ทวิ', icon: FileText }
+    { tab: 'staff_docs' as SettingsTab, label: 'หนังสือรับรอง 50 ทวิ', icon: FileText },
+    { tab: 'gov_filing' as SettingsTab, label: 'ยื่นเอกสารราชการ (ภาษี/ประกันสังคม)', icon: Landmark }
   ].filter(l => canOpenSettingsPart(l.tab, permissions));
 
   const allMenuItems: {
