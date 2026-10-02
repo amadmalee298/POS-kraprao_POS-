@@ -3302,6 +3302,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       cancelledBy,
       // Kept on the stock card when the food was made and not put back
       cancelStockUsed: tookStock && !restocked,
+      stockReturnedAt: restocked ? now : undefined,
       updatedAt: now,
       isSynced: !effectiveOffline
     };
@@ -3313,7 +3314,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cancelReason: reason,
         cancelNote: note,
         cancelledBy,
-        cancelStockUsed: updated.cancelStockUsed
+        cancelStockUsed: updated.cancelStockUsed,
+        stockReturnedAt: updated.stockReturnedAt
       }).catch(err => {
         console.warn('[POS Order Sync] Failed to update cancelled order status in Firestore:', err);
       });

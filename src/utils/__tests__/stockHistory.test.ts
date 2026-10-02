@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildStockMovements, forecastInventory, salesUsageByDay, withRunningBalance } from '../stockHistory';
+import { buildStockMovements, cancelReturns, forecastInventory, salesUsageByDay, withRunningBalance } from '../stockHistory';
 import type { Ingredient, MenuItem, Order, StockAdjustmentLog } from '../../types';
 
 const pork: Ingredient = { id: 'pork', name: 'หมูสับ', unit: 'g', unitCost: 0.2, currentStock: 3000, minStockAlert: 500, category: 'meat' } as Ingredient;
@@ -70,5 +70,32 @@ describe('cancelled bills on the stock card', () => {
   it('drops a bill whose ingredients went back to stock (and older cancelled bills)', () => {
     expect(porkUsed({ ...order('b', '2026-09-20T10:00:00.000Z', 2, 'cancelled'), cancelStockUsed: false })).toBe(0);
     expect(porkUsed(order('c', '2026-09-20T10:00:00.000Z', 2, 'cancelled'))).toBe(0);
+  });
+});
+
+describe('stock returned by a cancelled bill', () => {
+  const cancelled = {
+    ...order('r', '2026-09-20T10:00:00.000Z', 2, 'cancelled'),
+    orderNumber: '#KAP-9',
+    cancelStockUsed: false,
+    stockReturnedAt: '2026-09-20T12:00:00.000Z',
+    cancelledBy: { userName: 'อาห์มัด', role: 'admin' }
+  } as Order;
+
+  it('shows the sale and a separate return, netting to zero', () => {
+    const sales = salesUsageByDay([cancelled], [pork, rice], [menu], []);
+    const returns = cancelReturns([cancelled], [pork, rice], [menu], []);
+    const moves = buildStockMovements([], sales, [pork, rice], returns).filter(m => m.ingredientId === 'pork');
+    expect(moves.map(m => [m.type, m.change])).toEqual([
+      ['IN', 300],
+      ['OUT', -300]
+    ]);
+    expect(moves[0].note).toBe('คืนเข้าจากยกเลิกบิล #KAP-9');
+    expect(moves[0].operator).toBe('อาห์มัด');
+  });
+
+  it('is not counted as usage in the forecast', () => {
+    const rows = forecastInventory([pork], [cancelled], [menu], [], 3, new Date('2026-09-21T00:00:00.000Z'));
+    expect(rows[0].dailyUsage).toBe(0);
   });
 });
