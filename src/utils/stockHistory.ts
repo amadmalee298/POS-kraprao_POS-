@@ -11,8 +11,11 @@ export const localDay = (iso: string): string => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-/** Orders whose ingredients left the stock: everything except cancelled and not-yet-approved QR orders. */
-const usedStock = (o: Order) => o.status !== 'cancelled' && o.status !== 'pending-qr';
+/**
+ * Orders whose ingredients left the stock: everything except not-yet-approved QR orders and
+ * cancelled bills whose ingredients went back to stock (or never left it).
+ */
+const usedStock = (o: Order) => (o.status === 'cancelled' ? !!o.cancelStockUsed : o.status !== 'pending-qr');
 
 export interface DailySalesUsage {
   day: string;

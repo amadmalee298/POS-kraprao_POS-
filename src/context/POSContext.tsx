@@ -3282,7 +3282,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Food that was never cooked goes back to stock. A QR order still waiting for approval
     // never took anything out.
-    if (options?.restock && current.status !== 'pending-qr') {
+    const tookStock = current.status !== 'pending-qr';
+    const restocked = !!options?.restock && tookStock;
+    if (restocked) {
       returnStockForItems(resolveItemsForStock(current.items, menuItems, addOns));
     }
 
@@ -3298,6 +3300,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       cancelReason: reason,
       cancelNote: note,
       cancelledBy,
+      // Kept on the stock card when the food was made and not put back
+      cancelStockUsed: tookStock && !restocked,
       updatedAt: now,
       isSynced: !effectiveOffline
     };
@@ -3305,7 +3309,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Real-time Push to Firestore
     if (!effectiveOffline && isFirebaseAvailable()) {
-      updateOrderStatusInFirestore(current.id, 'cancelled', { cancelReason: reason, cancelNote: note, cancelledBy }).catch(err => {
+      updateOrderStatusInFirestore(current.id, 'cancelled', {
+        cancelReason: reason,
+        cancelNote: note,
+        cancelledBy,
+        cancelStockUsed: updated.cancelStockUsed
+      }).catch(err => {
         console.warn('[POS Order Sync] Failed to update cancelled order status in Firestore:', err);
       });
     }

@@ -285,6 +285,7 @@ function buildOrderPayload(order: Order, branch: Pick<Branch, 'id' | 'name'>, no
   cancelledBy: order.cancelledBy || null,
   cancelReason: order.cancelReason || null,
   cancelNote: order.cancelNote || null,
+  cancelStockUsed: order.cancelStockUsed === true,
   syncedAt: nowIso,
   isOfflineOrder: false,
   isSynced: true,
@@ -765,6 +766,7 @@ export function docToOrder(docId: string, data: any): Order {
     cancelledBy: data.cancelledBy,
     cancelReason: data.cancelReason,
     cancelNote: data.cancelNote,
+    cancelStockUsed: data.cancelStockUsed === true,
     isQrOrder: Boolean(data.isQrOrder),
     orderSource: data.orderSource || 'pos',
     paymentStatus: data.paymentStatus === 'unpaid' ? 'unpaid' : 'paid',
@@ -1553,6 +1555,7 @@ export async function updateOrderStatusInFirestore(
     cancelledBy?: { userId?: string; userName: string; role: string; cancelledAt?: string };
     cancelReason?: string;
     cancelNote?: string;
+    cancelStockUsed?: boolean;
   }
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
@@ -1568,7 +1571,12 @@ export async function updateOrderStatusInFirestore(
         isSynced: true,
         ...(extra?.acceptedAt ? { acceptedAt: extra.acceptedAt } : {}),
         ...(status === 'cancelled'
-          ? { cancelledBy: extra?.cancelledBy, cancelReason: extra?.cancelReason, cancelNote: extra?.cancelNote }
+          ? {
+              cancelledBy: extra?.cancelledBy,
+              cancelReason: extra?.cancelReason,
+              cancelNote: extra?.cancelNote,
+              cancelStockUsed: extra?.cancelStockUsed === true
+            }
           : {})
       }),
       updatedAt: serverTimestamp(),

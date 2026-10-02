@@ -121,6 +121,11 @@ export interface Order {
   cancelledBy?: CancelledInfo;
   cancelReason?: string;
   cancelNote?: string;
+  /**
+   * Cancelled after its ingredients left the stock and they were not put back (the food was
+   * made). The stock card still counts its usage. Missing on older cancelled bills = not counted.
+   */
+  cancelStockUsed?: boolean;
   isQrOrder?: boolean;
   /** 'unpaid' for orders placed before payment (customer QR orders). Missing = paid. */
   paymentStatus?: 'paid' | 'unpaid';
