@@ -17,6 +17,12 @@ export const localDay = (iso: string): string => {
  */
 const usedStock = (o: Order) => (o.status === 'cancelled' ? !!o.cancelStockUsed : o.status !== 'pending-qr');
 
+/**
+ * Orders whose ingredients left the stock at the time of sale, including cancelled bills whose
+ * ingredients were put back later (their return is a separate movement).
+ */
+const tookStockAtSale = (o: Order) => usedStock(o) || (o.status === 'cancelled' && !!o.stockReturnedAt);
+
 export interface DailySalesUsage {
   day: string;
   /** Time of the last order in this group (sales are grouped per hour) */
@@ -39,7 +45,7 @@ export function salesUsageByDay(
 ): DailySalesUsage[] {
   const byKey = new Map<string, DailySalesUsage & { ids: Set<string> }>();
   orders.forEach(o => {
-    if (!usedStock(o)) return;
+    if (!tookStockAtSale(o)) return;
     const t = new Date(o.createdAt).getTime();
     if (!Number.isFinite(t) || t < sinceMs) return;
     const day = localDay(o.createdAt);
@@ -55,6 +61,34 @@ export function salesUsageByDay(
     });
   });
   return Array.from(byKey.values()).map(({ ids, ...r }) => ({ ...r, orderCount: ids.size }));
+}
+
+export interface CancelReturn {
+  time: string; // when the stock went back
+  ingredientId: string;
+  amount: number; // in the ingredient's stock unit
+  orderNumber: string;
+  operator: string;
+}
+
+/** Ingredients put back to stock by cancelled bills, one row per bill and ingredient. */
+export function cancelReturns(
+  orders: Order[],
+  ingredients: Ingredient[],
+  menuItems: MenuItem[],
+  addOns: AddOnOption[],
+  sinceMs = 0
+): CancelReturn[] {
+  const rows: CancelReturn[] = [];
+  orders.forEach(o => {
+    if (o.status !== 'cancelled' || !o.stockReturnedAt) return;
+    const t = new Date(o.stockReturnedAt).getTime();
+    if (!Number.isFinite(t) || t < sinceMs) return;
+    computeSaleStockDeductions(resolveItemsForStock(o.items || [], menuItems, addOns), ingredients).forEach((amount, ingredientId) =>
+      rows.push({ time: o.stockReturnedAt!, ingredientId, amount, orderNumber: o.orderNumber, operator: o.cancelledBy?.userName || '' })
+    );
+  });
+  return rows;
 }
 
 export type MovementType = 'IN' | 'OUT' | 'ADJUST';
@@ -77,7 +111,8 @@ const OUT_REASONS = new Set(['waste', 'spoilage', 'expired', 'damaged', 'cooking
 export function buildStockMovements(
   logs: StockAdjustmentLog[],
   sales: DailySalesUsage[],
-  ingredients: Ingredient[]
+  ingredients: Ingredient[],
+  returns: CancelReturn[] = []
 ): StockMovement[] {
   const byId = new Map(ingredients.map(i => [i.id, i]));
   const fromLogs: StockMovement[] = logs.map(l => ({
@@ -102,7 +137,18 @@ export function buildStockMovements(
     note: `ขาย ${s.orderCount} ออเดอร์`,
     operator: 'ระบบขาย'
   }));
-  return [...fromLogs, ...fromSales].sort((a, b) => b.time.localeCompare(a.time));
+  const fromReturns: StockMovement[] = returns.map(r => ({
+    id: `cancel-return-${r.orderNumber}-${r.ingredientId}`,
+    time: new Date(r.time).toISOString(),
+    ingredientId: r.ingredientId,
+    ingredientName: byId.get(r.ingredientId)?.name || r.ingredientId,
+    unit: byId.get(r.ingredientId)?.unit || '',
+    type: 'IN',
+    change: Number(r.amount.toFixed(4)),
+    note: `คืนเข้าจากยกเลิกบิล ${r.orderNumber}`,
+    operator: r.operator || 'ระบบขาย'
+  }));
+  return [...fromLogs, ...fromSales, ...fromReturns].sort((a, b) => b.time.localeCompare(a.time));
 }
 
 /**

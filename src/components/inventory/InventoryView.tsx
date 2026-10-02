@@ -46,7 +46,7 @@ import { canonicalUnit, convertAmount, convertForIngredient, countBaseOf, countU
 const MASS_UNITS = ['kg', 'g'];
 const VOLUME_UNITS = ['l', 'ml'];
 const MEASURE_UNITS = [...MASS_UNITS, ...VOLUME_UNITS];
-import { buildStockMovements, salesUsageByDay, withRunningBalance } from '../../utils/stockHistory';
+import { buildStockMovements, cancelReturns, salesUsageByDay, withRunningBalance } from '../../utils/stockHistory';
 import { AIWasteAnalysisPanel } from './AIWasteAnalysisPanel';
 import { SmartAuditPanel } from './SmartAuditPanel';
 import { AdjustmentLogModal } from './AdjustmentLogModal';
@@ -487,7 +487,8 @@ export const InventoryView: React.FC = () => {
     return buildStockMovements(
       stockAdjustmentLogs.filter(l => new Date(l.timestamp).getTime() >= since),
       sales,
-      ingredients
+      ingredients,
+      cancelReturns(orders, ingredients, menuItems, addOns, since)
     );
   }, [orders, ingredients, menuItems, addOns, stockAdjustmentLogs, dateFilter]);
 

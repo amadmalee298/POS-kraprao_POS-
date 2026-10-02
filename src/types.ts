@@ -126,6 +126,8 @@ export interface Order {
    * made). The stock card still counts its usage. Missing on older cancelled bills = not counted.
    */
   cancelStockUsed?: boolean;
+  /** When the ingredients of this cancelled bill went back to stock (shown as "คืนเข้า" on the stock card) */
+  stockReturnedAt?: string;
   isQrOrder?: boolean;
   /** 'unpaid' for orders placed before payment (customer QR orders). Missing = paid. */
   paymentStatus?: 'paid' | 'unpaid';
