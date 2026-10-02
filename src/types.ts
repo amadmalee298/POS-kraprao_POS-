@@ -512,6 +512,12 @@ export interface StaffMember {
   socialSecurity?: boolean;
   /** Overtime is paid (missing = yes); off = hours past the shift earn no OT rate */
   otEnabled?: boolean;
+  /** For payslips and the withholding tax certificate (50 ทวิ) */
+  taxId?: string; // 13-digit ID card / tax number
+  address?: string;
+  bankAccount?: string; // where the pay goes, e.g. "กสิกร 123-4-56789-0"
+  /** Income tax is withheld from the pay (ภ.ง.ด.1, estimated by the Revenue Department's method) */
+  withholdTax?: boolean;
 }
 
 /** A bonus or deduction for one person in one month (e.g. ค่าเบิกล่วงหน้า) */

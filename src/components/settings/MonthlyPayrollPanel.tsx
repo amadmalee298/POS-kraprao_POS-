@@ -5,7 +5,11 @@ import { useSharedList } from '../../hooks/useSharedList';
 import type { PayrollAdjustment, StaffMember } from '../../types';
 import { downloadCsv } from '../../utils/accounting';
 import { localDay } from '../../utils/stockHistory';
-import { MonthlyPay, monthlyPayroll, payrollSettings } from '../../utils/payroll';
+import { MonthlyPay, monthlyPayroll, monthsOfYearUpTo, payrollSettings, payrollTotals } from '../../utils/payroll';
+import { sellerInfo } from '../../utils/seller';
+import { documentHtml, payslipPage, printDocument } from '../../utils/staffDocs';
+import { isValidThaiTaxId } from '../../utils/tax';
+import { monthlySalaryWithholding } from '../../utils/withholding';
 
 const baht = (n: number) => `฿${(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const PAY_TYPE_TH = { hourly: 'รายชั่วโมง', daily: 'รายวัน', monthly: 'รายเดือน' } as const;
@@ -14,28 +18,6 @@ const lastDay = (m: string) => {
   const [y, mo] = m.split('-').map(Number);
   return `${m}-${String(new Date(y, mo, 0).getDate()).padStart(2, '0')}`;
 };
-
-const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
-
-function printPayslip(p: MonthlyPay, month: string, shopName: string, adjustments: PayrollAdjustment[]) {
-  const w = window.open('', '_blank', 'width=420,height=640');
-  if (!w) return;
-  const row = (l: string, v: string) => `<tr><td>${esc(l)}</td><td style="text-align:right">${esc(v)}</td></tr>`;
-  const adj = adjustments
-    .filter(a => a.staffId === p.staffId && a.month === month)
-    .map(a => row(`${a.kind === 'bonus' ? 'เพิ่ม' : 'หัก'}: ${a.note || '-'}`, `${a.kind === 'bonus' ? '' : '−'}${baht(a.amount)}`))
-    .join('');
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>สลิปเงินเดือน ${esc(p.name)}</title>
-<style>body{font-family:sans-serif;padding:16px;color:#111}h2,h3{margin:4px 0}table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 0;border-bottom:1px solid #eee}.t td{font-weight:bold;border-top:2px solid #111}</style></head><body>
-<h2>${esc(shopName)}</h2><h3>สลิปเงินเดือน ${esc(monthName(month))}</h3>
-<p>${esc(p.name)} · ${esc(p.role)}<br>${esc(PAY_TYPE_TH[p.payType])} (${esc(p.rateText)})</p>
-<table>${row('วันทำงาน', `${p.daysWorked} วัน · ${p.hours} ชม.`)}${row('ชั่วโมง OT', `${p.otHours} ชม.`)}${row('มาสาย', `${p.lateCount} ครั้ง (${p.lateMinutes} นาที)`)}${row('ขาดงาน', `${p.absentCount} วัน`)}
-${row('ค่าจ้าง', baht(p.basePay))}${row('ค่าล่วงเวลา (OT)', baht(p.otPay))}${adj}${p.sso ? row('หักประกันสังคม', `−${baht(p.sso)}`) : ''}
-<tr class="t"><td>รับสุทธิ</td><td style="text-align:right">${esc(baht(p.net))}</td></tr></table>
-<p style="margin-top:32px;font-size:12px">ลงชื่อผู้รับเงิน ............................................ วันที่ ............</p>
-<script>window.onload=()=>window.print()</script></body></html>`);
-  w.document.close();
-}
 
 export const MonthlyPayrollPanel: React.FC = () => {
   const { staffMembers, shifts, updateStaffMember, settings, updateSettings, expenses, addExpense, currentBranch } = usePOS();
@@ -53,17 +35,30 @@ export const MonthlyPayrollPanel: React.FC = () => {
 
   const rows = useMemo(() => monthlyPayroll(staffMembers, shifts, month, adjustments, cfg, today), [staffMembers, shifts, month, adjustments, cfg, today]);
   const total = rows.reduce(
-    (t, r) => ({ net: t.net + r.net, gross: t.gross + r.gross, ot: t.ot + r.otPay, sso: t.sso + r.sso, deductions: t.deductions + r.deductions }),
-    { net: 0, gross: 0, ot: 0, sso: 0, deductions: 0 }
+    (t, r) => ({ net: t.net + r.net, gross: t.gross + r.gross, ot: t.ot + r.otPay, sso: t.sso + r.sso, tax: t.tax + r.tax, deductions: t.deductions + r.deductions }),
+    { net: 0, gross: 0, ot: 0, sso: 0, tax: 0, deductions: 0 }
   );
   const ref = `PAYROLL-${currentBranch.id}-${month}`;
+
+  // Payslips: this month plus the year so far for each person
+  const printSlips = (list: MonthlyPay[]) => {
+    if (list.length === 0) return;
+    const ytd = payrollTotals(staffMembers, shifts, monthsOfYearUpTo(month), adjustments, cfg, today);
+    const payDate = month === today.slice(0, 7) ? today : lastDay(month);
+    const shop = sellerInfo(settings, currentBranch);
+    const pages = list.map(p =>
+      payslipPage({ shop, month, pay: p, staff: staffMembers.find(s => s.id === p.staffId), adjustments, ytd: ytd.get(p.staffId), payDate })
+    );
+    const title = list.length === 1 ? `สลิปเงินเดือน ${list[0].name} ${monthName(month)}` : `สลิปเงินเดือน ${monthName(month)}`;
+    if (!printDocument(documentHtml(title, pages))) setDone('เบราว์เซอร์บล็อกหน้าต่างพิมพ์ กรุณาอนุญาต pop-up แล้วลองใหม่');
+  };
   const booked = expenses.some(e => e.refNumber === ref);
 
   const exportCsv = () =>
     downloadCsv(
       `payroll_${month}.csv`,
-      ['พนักงาน', 'ตำแหน่ง', 'ประเภท', 'อัตรา', 'วันทำงาน', 'ชั่วโมง', 'OT ชม.', 'สาย (ครั้ง)', 'สาย (นาที)', 'ขาด (วัน)', 'ค่าจ้าง', 'ค่า OT', 'เงินเพิ่ม', 'เงินหัก', 'ประกันสังคม', 'รวมก่อนหัก', 'รับสุทธิ'],
-      rows.map(r => [r.name, r.role, PAY_TYPE_TH[r.payType], r.rateText, r.daysWorked, r.hours, r.otHours, r.lateCount, r.lateMinutes, r.absentCount, r.basePay, r.otPay, r.bonus, r.deductions, r.sso, r.gross, r.net])
+      ['พนักงาน', 'ตำแหน่ง', 'ประเภท', 'อัตรา', 'วันทำงาน', 'ชั่วโมง', 'OT ชม.', 'สาย (ครั้ง)', 'สาย (นาที)', 'ขาด (วัน)', 'ค่าจ้าง', 'ค่า OT', 'เงินเพิ่ม', 'เงินหัก', 'ประกันสังคม', 'ภาษีหัก ณ ที่จ่าย', 'รวมก่อนหัก', 'รับสุทธิ'],
+      rows.map(r => [r.name, r.role, PAY_TYPE_TH[r.payType], r.rateText, r.daysWorked, r.hours, r.otHours, r.lateCount, r.lateMinutes, r.absentCount, r.basePay, r.otPay, r.bonus, r.deductions, r.sso, r.tax, r.gross, r.net])
     );
 
   const bookExpense = () => {
@@ -79,7 +74,7 @@ export const MonthlyPayrollPanel: React.FC = () => {
       vatAmount: 0,
       netAmount: Math.round(total.gross * 100) / 100,
       refNumber: ref,
-      note: `${rows.filter(r => r.gross > 0).length} คน · รับสุทธิ ${baht(total.net)} · หักประกันสังคม ${baht(total.sso)} · หักอื่น ${baht(total.deductions)}`
+      note: `${rows.filter(r => r.gross > 0).length} คน · รับสุทธิ ${baht(total.net)} · หักประกันสังคม ${baht(total.sso)}${total.tax ? ` · ภาษีหัก ณ ที่จ่าย ${baht(total.tax)}` : ''} · หักอื่น ${baht(total.deductions)}`
     });
     setDone(`ลงบัญชีค่าแรง ${monthName(month)} แล้ว (หมวดเงินเดือน)`);
   };
@@ -105,6 +100,7 @@ export const MonthlyPayrollPanel: React.FC = () => {
         <button type="button" onClick={bookExpense} disabled={booked || total.gross <= 0} className="h-10 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold flex items-center gap-1.5 disabled:opacity-50">
           <BookOpenCheck className="w-4 h-4" /> {booked ? 'ลงบัญชีเดือนนี้แล้ว' : 'ลงบัญชีค่าแรง'}
         </button>
+        <button type="button" onClick={() => printSlips(rows.filter(r => r.gross > 0))} disabled={!rows.some(r => r.gross > 0)} className="h-10 px-3 rounded-xl border border-slate-700 text-slate-200 flex items-center gap-1.5 disabled:opacity-50"><Printer className="w-4 h-4" /> พิมพ์สลิปทุกคน</button>
         <button type="button" onClick={() => setShowCfg(s => !s)} className="h-10 px-3 rounded-xl border border-slate-700 text-slate-300">ตั้งค่าประกันสังคม/มาสาย</button>
       </div>
 
@@ -139,7 +135,7 @@ export const MonthlyPayrollPanel: React.FC = () => {
           ['รวมจ่ายสุทธิ', baht(total.net), 'text-emerald-300'],
           ['ค่าแรงรวม (ก่อนหัก)', baht(total.gross), 'text-slate-100'],
           ['ค่า OT รวม', baht(total.ot), 'text-amber-300'],
-          ['หักประกันสังคม', baht(total.sso), 'text-sky-300']
+          [total.tax ? 'หักประกันสังคม / ภาษี' : 'หักประกันสังคม', total.tax ? `${baht(total.sso)} / ${baht(total.tax)}` : baht(total.sso), 'text-sky-300']
         ].map(([l, v, c]) => (
           <div key={l} className="p-3 rounded-2xl bg-slate-900 border border-slate-800">
             <div className="text-[11px] text-slate-400">{l}</div>
@@ -159,7 +155,7 @@ export const MonthlyPayrollPanel: React.FC = () => {
               <th className="p-2 text-right">ค่าจ้าง</th>
               <th className="p-2 text-right">ค่า OT</th>
               <th className="p-2 text-right">เพิ่ม / หัก</th>
-              <th className="p-2 text-right">ประกันสังคม</th>
+              <th className="p-2 text-right">ประกันสังคม / ภาษี</th>
               <th className="p-2 text-right">รับสุทธิ</th>
               <th className="p-2"></th>
             </tr>
@@ -184,13 +180,16 @@ export const MonthlyPayrollPanel: React.FC = () => {
                   {r.deductions > 0 && <div className="text-rose-300">−{baht(r.deductions)}</div>}
                   {!r.bonus && !r.deductions && '-'}
                 </td>
-                <td className="p-2 text-right">{r.sso ? `−${baht(r.sso)}` : '-'}</td>
+                <td className="p-2 text-right">
+                  {r.sso ? `−${baht(r.sso)}` : '-'}
+                  {r.tax > 0 && <div className="text-[10px] text-rose-300">ภาษี −{baht(r.tax)}</div>}
+                </td>
                 <td className="p-2 text-right font-bold text-emerald-300">{baht(r.net)}</td>
                 <td className="p-2">
                   <div className="flex gap-1 justify-end">
                     <button type="button" title="ตั้งค่าค่าจ้าง" aria-label={`ตั้งค่าค่าจ้าง ${r.name}`} onClick={() => setEditPay(staffMembers.find(s => s.id === r.staffId) || null)} className="w-9 h-9 rounded-lg border border-slate-700 flex items-center justify-center"><Pencil className="w-4 h-4" /></button>
                     <button type="button" title="เพิ่ม/หักเงิน" aria-label={`เพิ่มหรือหักเงิน ${r.name}`} onClick={() => setAdjFor(r)} className="w-9 h-9 rounded-lg border border-slate-700 flex items-center justify-center"><Plus className="w-4 h-4" /></button>
-                    <button type="button" title="พิมพ์สลิป" aria-label={`พิมพ์สลิป ${r.name}`} onClick={() => printPayslip(r, month, settings.shopName || currentBranch.name, adjustments)} className="w-9 h-9 rounded-lg border border-slate-700 flex items-center justify-center"><Printer className="w-4 h-4" /></button>
+                    <button type="button" title="พิมพ์สลิป" aria-label={`พิมพ์สลิป ${r.name}`} onClick={() => printSlips([r])} className="w-9 h-9 rounded-lg border border-slate-700 flex items-center justify-center"><Printer className="w-4 h-4" /></button>
                   </div>
                 </td>
               </tr>
@@ -243,6 +242,15 @@ const PaySettingsModal: React.FC<{ staff: StaffMember; onClose: () => void; onSa
   const [ot, setOt] = useState(String(staff.otRateMultiplier || 1.5));
   const [otOn, setOtOn] = useState(staff.otEnabled !== false);
   const [sso, setSso] = useState(!!staff.socialSecurity);
+  const [taxOn, setTaxOn] = useState(!!staff.withholdTax);
+  const [taxId, setTaxId] = useState(staff.taxId || '');
+  const [address, setAddress] = useState(staff.address || '');
+  const [bank, setBank] = useState(staff.bankAccount || '');
+  const idDigits = taxId.replace(/\D/g, '');
+  const idBad = idDigits.length > 0 && !isValidThaiTaxId(idDigits);
+  // Rough monthly pay (26 working days) to show what the withholding would be
+  const monthlyGuess = payType === 'monthly' ? Number(monthly) || 0 : payType === 'daily' ? (Number(daily) || 0) * 26 : (Number(hourly) || 0) * 8 * 26;
+  const taxGuess = monthlySalaryWithholding(monthlyGuess, sso ? Math.min(Math.max(monthlyGuess, 1650), 17500) * 0.05 : 0);
   const input = 'w-full h-11 px-3 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-sm';
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-3" onClick={onClose}>
@@ -272,6 +280,24 @@ const PaySettingsModal: React.FC<{ staff: StaffMember; onClose: () => void; onSa
         <label className="flex items-center gap-2 text-slate-300">
           <input type="checkbox" checked={sso} onChange={e => setSso(e.target.checked)} className="w-5 h-5 accent-orange-500" /> หักประกันสังคม
         </label>
+        <label className="flex items-center gap-2 text-slate-300">
+          <input type="checkbox" checked={taxOn} onChange={e => setTaxOn(e.target.checked)} className="w-5 h-5 accent-orange-500" /> หักภาษีเงินได้ ณ ที่จ่าย (ภ.ง.ด.1)
+        </label>
+        {taxOn && (
+          <p className="text-[11px] text-slate-500">
+            ระบบประมาณการตามวิธีของกรมสรรพากร (หักค่าใช้จ่าย 50% ไม่เกิน 1 แสน ลดหย่อนส่วนตัว 6 หมื่น และประกันสังคม) · ค่าจ้างประมาณนี้หักเดือนละ ~฿{taxGuess.toLocaleString('th-TH')}
+          </p>
+        )}
+        <div className="pt-2 border-t border-slate-800 space-y-2">
+          <p className="text-[11px] text-slate-400">สำหรับสลิปเงินเดือนและหนังสือรับรอง 50 ทวิ (ไม่บังคับ)</p>
+          <label className="block text-slate-400">
+            เลขบัตรประชาชน / เลขผู้เสียภาษี 13 หลัก
+            <input inputMode="numeric" value={taxId} onChange={e => setTaxId(e.target.value)} placeholder="1234567890123" className={`${input} mt-1 ${idBad ? 'border-rose-500' : ''}`} />
+            {idBad && <span className="text-rose-300 text-[11px]">เลขไม่ถูกต้อง ตรวจสอบอีกครั้ง</span>}
+          </label>
+          <label className="block text-slate-400">ที่อยู่<input value={address} onChange={e => setAddress(e.target.value)} className={`${input} mt-1`} /></label>
+          <label className="block text-slate-400">บัญชีรับเงินเดือน<input value={bank} onChange={e => setBank(e.target.value)} placeholder="เช่น กสิกร 123-4-56789-0" className={`${input} mt-1`} /></label>
+        </div>
         <button
           type="button"
           onClick={() =>
@@ -283,7 +309,11 @@ const PaySettingsModal: React.FC<{ staff: StaffMember; onClose: () => void; onSa
               monthlySalary: Number(monthly) || undefined,
               otRateMultiplier: Number(ot) || 1.5,
               otEnabled: otOn,
-              socialSecurity: sso
+              socialSecurity: sso,
+              withholdTax: taxOn,
+              taxId: idDigits || undefined,
+              address: address.trim() || undefined,
+              bankAccount: bank.trim() || undefined
             })
           }
           className="w-full h-11 rounded-xl bg-orange-600 font-bold"

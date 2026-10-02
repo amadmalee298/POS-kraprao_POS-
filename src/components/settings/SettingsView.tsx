@@ -66,6 +66,7 @@ import { StaffPinClockTerminal } from './StaffPinClockTerminal';
 import { onSettingsTabRequest, SettingsTab, takePendingSettingsTab } from '../../utils/settingsNav';
 import { canOpenSettingsPart } from '../../utils/access';
 import { PrinterSettingsPanel } from './PrinterSettingsPanel';
+import { WhtCertificatePanel } from './WhtCertificatePanel';
 import { AttendanceSettingsPanel, ShopClockQR } from '../attendance/AttendanceSettingsPanel';
 import { needsQr, openMobileClock, terminalClockAllowed } from '../../utils/clock';
 
@@ -990,6 +991,19 @@ export const SettingsView: React.FC = () => {
             <span>🖨️ เครื่องพิมพ์ใบเสร็จ (Printer)</span>
           </button>
           )}
+          {canOpenSettingsPart('staff_docs', permissions) && (
+          <button
+            onClick={() => setSettingsTab('staff_docs')}
+            className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
+              settingsTab === 'staff_docs'
+                ? 'bg-slate-800 text-amber-400 shadow-md border border-slate-700'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>📄 หนังสือรับรอง 50 ทวิ</span>
+          </button>
+          )}
         </div>
 
         {/* Save Confirmation Toast */}
@@ -1005,6 +1019,14 @@ export const SettingsView: React.FC = () => {
       <div className="flex-1 p-6 overflow-y-auto space-y-6">
         {!partAllowed ? null : settingsTab === 'printer' ? (
           <PrinterSettingsPanel />
+        ) : settingsTab === 'staff_docs' ? (
+          <div className="max-w-5xl space-y-3 animate-in fade-in">
+            <div>
+              <h2 className="text-base font-bold text-slate-100">หนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ)</h2>
+              <p className="text-[11px] text-slate-400">ออกให้พนักงานรายปี และผู้รับเงินอื่นที่ร้านหักภาษีไว้ · พิมพ์ 2 ฉบับตามแบบกรมสรรพากร · สลิปเงินเดือนพิมพ์ได้ที่ ตารางงาน เงินเดือน → สรุปรายเดือน</p>
+            </div>
+            <WhtCertificatePanel />
+          </div>
         ) : settingsTab === 'pins' ? (
           <div className="max-w-5xl space-y-6 animate-in fade-in">
             {/* MANAGER AUTHORIZATION STATUS BANNER */}

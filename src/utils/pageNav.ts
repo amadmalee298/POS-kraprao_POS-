@@ -1,5 +1,5 @@
 /** Opening a page on a given section from the side menu (e.g. stock → "ผลิต/เตรียมวัตถุดิบ") */
-export type SectionPage = 'inventory' | 'recipes' | 'po' | 'accounting';
+export type SectionPage = 'inventory' | 'recipes' | 'po' | 'accounting' | 'scheduling';
 
 const EVENT = 'open-page-section';
 // A request stays valid briefly, so a page that mounts more than once while loading still sees it

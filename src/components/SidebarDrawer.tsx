@@ -42,7 +42,7 @@ const STOCK_GROUP: ActiveTab[] = ['inventory', 'recipes', 'po', 'accounting'];
 // Documents and customers fold under one header; LINE/Telegram sits with the settings
 const DOCS_GROUP: ActiveTab[] = ['quotation', 'tax_receipt', 'order_history', 'crm'];
 const IN_SETTINGS: ActiveTab[] = ['line_notify'];
-const PAGE_SECTIONS: Record<SectionPage, { id: string; label: string }[]> = {
+const PAGE_SECTIONS: Partial<Record<SectionPage, { id: string; label: string }[]>> = {
   inventory: [
     { id: 'current', label: 'วัตถุดิบคงเหลือ' },
     { id: 'smart_audit', label: 'ตรวจนับด้วยการสแกน (Smart Audit)' },
@@ -140,6 +140,11 @@ export const SidebarDrawer: React.FC = () => {
     { tab: 'backup', label: 'สำรอง & กู้คืนข้อมูล', icon: HardDrive }
   ];
   const settingsItems = allSettingsItems.filter(i => canOpenSettingsPart(i.tab, permissions));
+  // Payslips and withholding tax certificates, listed with the other documents
+  const staffDocLinks: { tab: SettingsTab; section?: string; label: string; icon: React.ElementType }[] = [
+    { tab: 'scheduling' as SettingsTab, section: 'monthly', label: 'สลิปเงินเดือน', icon: Wallet },
+    { tab: 'staff_docs' as SettingsTab, label: 'หนังสือรับรอง 50 ทวิ', icon: FileText }
+  ].filter(l => canOpenSettingsPart(l.tab, permissions));
 
   const allMenuItems: {
     id: ActiveTab;
@@ -320,12 +325,33 @@ export const SidebarDrawer: React.FC = () => {
             >
               <span className="flex items-center space-x-3">
                 <Receipt className="w-4 h-4 shrink-0 text-slate-400" />
-                <span>เอกสาร ใบเสร็จ & ลูกค้า</span>
+                <span>เอกสาร ใบเสร็จ ลูกค้า & พนักงาน</span>
               </span>
               <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${folds.docs ? 'rotate-180' : ''}`} />
             </button>
           )}
-          {folds.docs && <div className="ml-6 pl-2 border-l border-slate-800 space-y-0.5">{docItems.map(renderItem)}</div>}
+          {folds.docs && (
+            <div className="ml-6 pl-2 border-l border-slate-800 space-y-0.5">
+              {docItems.map(renderItem)}
+              {/* Staff paperwork lives in the settings (owner only) */}
+              {staffDocLinks.map(link => (
+                <button
+                  key={link.label}
+                  type="button"
+                  onClick={() => {
+                    if (link.section) requestPageSection('scheduling', link.section);
+                    requestSettingsTab(link.tab);
+                    setActiveTab('settings');
+                    setIsDrawerOpen(false);
+                  }}
+                  className="w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition text-left text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
+                >
+                  <link.icon className="w-4 h-4 shrink-0 text-slate-400" />
+                  <span className="truncate">{link.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Stock, recipes, purchasing and accounts: each opens to the sections of its page */}
           {stockItems.map(item => {
