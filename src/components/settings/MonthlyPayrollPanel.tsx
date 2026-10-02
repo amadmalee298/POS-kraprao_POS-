@@ -63,7 +63,9 @@ export const MonthlyPayrollPanel: React.FC = () => {
 
   const bookExpense = () => {
     if (booked || total.gross <= 0) return;
-    if (!window.confirm(`ลงบัญชีค่าแรง ${monthName(month)} เป็นค่าใช้จ่าย ${baht(total.gross)}?`)) return;
+    // The employer pays the same social security contribution again on top of the wages
+    const employerSso = Math.round(total.sso * 100) / 100;
+    if (!window.confirm(`ลงบัญชีค่าแรง ${monthName(month)} เป็นค่าใช้จ่าย ${baht(total.gross)}${employerSso ? ` และเงินสมทบประกันสังคมส่วนนายจ้าง ${baht(employerSso)}` : ''}?`)) return;
     addExpense({
       branchId: currentBranch.id,
       date: month === today.slice(0, 7) ? today : lastDay(month),
@@ -76,7 +78,21 @@ export const MonthlyPayrollPanel: React.FC = () => {
       refNumber: ref,
       note: `${rows.filter(r => r.gross > 0).length} คน · รับสุทธิ ${baht(total.net)} · หักประกันสังคม ${baht(total.sso)}${total.tax ? ` · ภาษีหัก ณ ที่จ่าย ${baht(total.tax)}` : ''} · หักอื่น ${baht(total.deductions)}`
     });
-    setDone(`ลงบัญชีค่าแรง ${monthName(month)} แล้ว (หมวดเงินเดือน)`);
+    if (employerSso > 0) {
+      addExpense({
+        branchId: currentBranch.id,
+        date: month === today.slice(0, 7) ? today : lastDay(month),
+        category: 'salary',
+        title: `เงินสมทบประกันสังคมส่วนนายจ้าง ${monthName(month)}`,
+        amount: employerSso,
+        includeVat: false,
+        vatAmount: 0,
+        netAmount: employerSso,
+        refNumber: `${ref}-SSO`,
+        note: `${rows.filter(r => r.sso > 0).length} คน · นายจ้างสมทบเท่ากับส่วนที่หักจากพนักงาน`
+      });
+    }
+    setDone(`ลงบัญชีค่าแรง ${monthName(month)} แล้ว (หมวดเงินเดือน)${employerSso ? ' พร้อมเงินสมทบส่วนนายจ้าง' : ''}`);
   };
 
   const saveAdj = () => {

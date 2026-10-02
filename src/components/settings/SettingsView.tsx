@@ -67,6 +67,7 @@ import { onSettingsTabRequest, SettingsTab, takePendingSettingsTab } from '../..
 import { canOpenSettingsPart } from '../../utils/access';
 import { PrinterSettingsPanel } from './PrinterSettingsPanel';
 import { WhtCertificatePanel } from './WhtCertificatePanel';
+import { GovFilingPanel } from './GovFilingPanel';
 import { AttendanceSettingsPanel, ShopClockQR } from '../attendance/AttendanceSettingsPanel';
 import { needsQr, openMobileClock, terminalClockAllowed } from '../../utils/clock';
 
@@ -1004,6 +1005,19 @@ export const SettingsView: React.FC = () => {
             <span>📄 หนังสือรับรอง 50 ทวิ</span>
           </button>
           )}
+          {canOpenSettingsPart('gov_filing', permissions) && (
+          <button
+            onClick={() => setSettingsTab('gov_filing')}
+            className={`px-4 py-2 rounded-xl font-bold text-xs transition flex items-center space-x-2 shrink-0 ${
+              settingsTab === 'gov_filing'
+                ? 'bg-slate-800 text-amber-400 shadow-md border border-slate-700'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>🏛️ ยื่นเอกสารราชการ</span>
+          </button>
+          )}
         </div>
 
         {/* Save Confirmation Toast */}
@@ -1019,6 +1033,14 @@ export const SettingsView: React.FC = () => {
       <div className="flex-1 p-6 overflow-y-auto space-y-6">
         {!partAllowed ? null : settingsTab === 'printer' ? (
           <PrinterSettingsPanel />
+        ) : settingsTab === 'gov_filing' ? (
+          <div className="max-w-5xl space-y-3 animate-in fade-in">
+            <div>
+              <h2 className="text-base font-bold text-slate-100">ยื่นเอกสารราชการ</h2>
+              <p className="text-[11px] text-slate-400">สิ่งที่ต้องยื่นกรมสรรพากร ประกันสังคม และหน่วยงานอื่นในแต่ละเดือน พร้อมตัวเลขและรายชื่อแนบจากข้อมูลในระบบ · ร้านหรือนักบัญชียื่นเองที่เว็บของหน่วยงาน</p>
+            </div>
+            <GovFilingPanel />
+          </div>
         ) : settingsTab === 'staff_docs' ? (
           <div className="max-w-5xl space-y-3 animate-in fade-in">
             <div>

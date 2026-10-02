@@ -32,6 +32,7 @@ import { QrOrderAlert } from './components/QrOrderAlert';
 import { NotificationSettingsSync } from './components/NotificationSettingsSync';
 import { TelegramInboxPoller } from './components/telegram/TelegramInboxPoller';
 import { SheetsScriptAutoSync } from './components/sheets/SheetsScriptAutoSync';
+import { FilingReminder } from './components/filings/FilingReminder';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
 import { canOpenTab, firstAllowedTab } from './utils/access';
 import { MobileClockPage, readClockHash } from './components/attendance/MobileClockPage';
@@ -190,6 +191,7 @@ const MainLayout: React.FC = () => {
       <NotificationSettingsSync />
       <TelegramInboxPoller />
       <SheetsScriptAutoSync />
+      <FilingReminder />
 
       {/* Visual Conflict Resolver Modal for Local vs Cloud Mismatch */}
       <SyncConflictResolverModal
