@@ -1,4 +1,5 @@
 import type { PayrollAdjustment, PayrollSettings, ShiftEntry, StaffMember } from '../types';
+import { monthlySalaryWithholding } from './withholding';
 
 /**
  * Monthly pay from the time clock. Regular hours are those up to the scheduled shift (at least
@@ -66,6 +67,8 @@ export interface MonthlyPay {
   bonus: number;
   deductions: number;
   sso: number;
+  /** Income tax withheld (ภ.ง.ด.1), 0 when not withheld */
+  tax: number;
   gross: number;
   net: number;
 }
@@ -121,6 +124,7 @@ export function monthlyPayroll(
           ? Math.round((Math.min(Math.max(wage, settings.ssoMinWage), settings.ssoMaxWage) * settings.ssoRate) / 100)
           : 0;
       const gross = wage + bonus;
+      const tax = s.withholdTax ? monthlySalaryWithholding(gross, sso) : 0;
       return {
         staffId: s.id,
         name: s.name,
@@ -144,8 +148,9 @@ export function monthlyPayroll(
         bonus: r2(bonus),
         deductions: r2(deductions),
         sso,
+        tax,
         gross: r2(gross),
-        net: r2(gross - deductions - sso)
+        net: r2(gross - deductions - sso - tax)
       };
     })
     .filter(p => p.daysWorked > 0 || p.payType === 'monthly' || p.bonus > 0 || p.deductions > 0 || staff.find(s => s.id === p.staffId)?.status !== 'inactive');
@@ -158,3 +163,52 @@ export function addHours(t: string, hours: number): string {
   const total = (m + Math.round(hours * 60)) % 1440;
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
+
+export interface PayTotals {
+  gross: number;
+  tax: number;
+  sso: number;
+  net: number;
+  months: number; // months with pay
+}
+
+/** Pay added up over several months per person (for year-to-date figures and the 50 ทวิ certificate) */
+export function payrollTotals(
+  staff: StaffMember[],
+  shifts: ShiftEntry[],
+  months: string[], // YYYY-MM
+  adjustments: PayrollAdjustment[],
+  settings: PayrollSettings,
+  today: string
+): Map<string, PayTotals> {
+  const totals = new Map<string, PayTotals>();
+  // A monthly salary is counted from the month of the person's first recorded shift (before that
+  // they may not have worked here yet)
+  const firstMonth = new Map<string, string>();
+  shifts.forEach(sh => {
+    const m = (sh.date || '').slice(0, 7);
+    if (m && (!firstMonth.has(sh.staffId) || m < firstMonth.get(sh.staffId)!)) firstMonth.set(sh.staffId, m);
+  });
+  months.forEach(m => {
+    monthlyPayroll(staff, shifts, m, adjustments, settings, today).forEach(p => {
+      if (p.gross <= 0) return;
+      const first = firstMonth.get(p.staffId);
+      if (first && m < first) return;
+      const t = totals.get(p.staffId) || { gross: 0, tax: 0, sso: 0, net: 0, months: 0 };
+      totals.set(p.staffId, {
+        gross: r2(t.gross + p.gross),
+        tax: r2(t.tax + p.tax),
+        sso: r2(t.sso + p.sso),
+        net: r2(t.net + p.net),
+        months: t.months + 1
+      });
+    });
+  });
+  return totals;
+}
+
+/** "2026-01" … up to and including `month` in the same year */
+export const monthsOfYearUpTo = (month: string): string[] => {
+  const [y, m] = month.split('-').map(Number);
+  return Array.from({ length: m }, (_, i) => `${y}-${String(i + 1).padStart(2, '0')}`);
+};

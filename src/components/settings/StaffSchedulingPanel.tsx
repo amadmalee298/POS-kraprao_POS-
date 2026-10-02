@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { MonthlyPayrollPanel } from './MonthlyPayrollPanel';
+import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { AttendanceHistoryPanel } from './AttendanceHistoryPanel';
 import { StaffMember, ShiftEntry, ShiftType, PayrollSummary, ShiftSwapRequest, ShiftRequestType, StaffPermissions } from '../../types';
 import { exportToPDF, exportToPNG, printElement } from '../../utils/exportDocument';
@@ -99,7 +100,10 @@ export const StaffSchedulingPanel: React.FC = () => {
   } = usePOS();
 
   // Active Sub-Tab
-  const [subTab, setSubTab] = useState<'roster' | 'timeclock' | 'tracking' | 'requests' | 'payroll' | 'monthly' | 'history' | 'staff'>('roster');
+  type SubTab = 'roster' | 'timeclock' | 'tracking' | 'requests' | 'payroll' | 'monthly' | 'history' | 'staff';
+  const [subTab, setSubTab] = useState<SubTab>(() => takePageSection<SubTab>('scheduling') || 'roster');
+  // Opened from the side menu on a section (e.g. เอกสาร → สลิปเงินเดือน)
+  useEffect(() => onPageSectionRequest<SubTab>('scheduling', setSubTab), []);
 
   // Week Selector Offset (0 = current week, -1 = last week, +1 = next week)
   const [weekOffset, setWeekOffset] = useState<number>(0);
