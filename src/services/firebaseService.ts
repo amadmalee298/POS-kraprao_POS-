@@ -2501,3 +2501,16 @@ export async function publishPublicMenu(branchId: string, menu: object): Promise
     return false;
   }
 }
+
+/** What the customer payment display at the counter shows (see utils/customerDisplay). */
+export async function publishPaymentDisplay(branchId: string, display: object): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
+  try {
+    await setDoc(doc(dbInstance, 'payment_display', branchId), { ...display, updatedAt: serverTimestamp() });
+    return true;
+  } catch (err) {
+    console.warn('[Firebase Service] Could not update the payment display:', err);
+    return false;
+  }
+}

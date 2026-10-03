@@ -18,6 +18,8 @@ interface Props {
   onPaid: (charge: GatewayCharge) => void;
   /** Shown instead when the gateway cannot be used (amount too small, server down) */
   fallback: React.ReactNode;
+  /** The QR on screen (null while the plain PromptPay fallback is shown), e.g. for the customer display */
+  onQrChange?: (qr: { qr?: string; pending: boolean; paid: boolean } | null) => void;
 }
 
 const POLL_MS = 3000;
@@ -26,7 +28,7 @@ const POLL_MS = 3000;
  * PromptPay QR from the payment gateway: exact amount, one QR per bill, and the bill knows by
  * itself when the customer has paid (no slip checking).
  */
-export const GatewayPromptPayPanel: React.FC<Props> = ({ amount, reference, serverUrl, size = 220, onPaid, fallback }) => {
+export const GatewayPromptPayPanel: React.FC<Props> = ({ amount, reference, serverUrl, size = 220, onPaid, fallback, onQrChange }) => {
   const [charge, setCharge] = useState<GatewayCharge | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -37,6 +39,15 @@ export const GatewayPromptPayPanel: React.FC<Props> = ({ amount, reference, serv
   onPaidRef.current = onPaid;
 
   const tooSmall = amount < GATEWAY_MIN_AMOUNT;
+
+  const onQrChangeRef = useRef(onQrChange);
+  onQrChangeRef.current = onQrChange;
+  const showingFallback = tooSmall || useFallback;
+  useEffect(() => {
+    onQrChangeRef.current?.(
+      showingFallback ? null : { qr: charge?.qr, pending: charge?.status === 'pending', paid: !!charge?.paid }
+    );
+  }, [showingFallback, charge?.qr, charge?.status, charge?.paid]);
 
   const create = useCallback(async () => {
     setLoading(true);

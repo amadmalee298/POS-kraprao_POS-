@@ -7,6 +7,7 @@ import { resolvePromptPayId } from '../../utils/promptpay';
 import { PromptPayQR } from '../common/PromptPayQR';
 import { GatewayPromptPayPanel } from '../common/GatewayPromptPayPanel';
 import { gatewayEnabled } from '../../services/paymentGateway';
+import { useCustomerDisplay } from '../../hooks/useCustomerDisplay';
 
 interface QuickPayModalProps {
   isOpen: boolean;
@@ -65,6 +66,16 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
     }
   }, [isOpen]);
 
+  // The same QR on the customer display at the counter (when this device drives one)
+  const [gatewayQr, setGatewayQr] = useState<{ qr?: string; pending: boolean; paid: boolean } | null>(null);
+  const customerDisplay = useCustomerDisplay({
+    active: isOpen && tab === 'promptpay',
+    amount: grandTotal,
+    promptPayId: resolvePromptPayId(settings, currentBranch),
+    label: subtitle || '',
+    gateway: gatewayEnabled(settings) ? gatewayQr : null
+  });
+
   // Keyboard: Esc closes, Enter confirms
   useEffect(() => {
     if (!isOpen) return;
@@ -100,6 +111,7 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
     if (!canConfirm) return;
     if (tab === 'promptpay' && useGateway && !gatewayPaid && !window.confirm('ระบบยังไม่ได้รับยอดจากการสแกนนี้\nตรวจสลิปหรือแอปธนาคารแล้ว ยืนยันชำระเลยหรือไม่?')) return;
     const method: PaymentMethod = tab === 'cash' ? 'cash' : tab === 'promptpay' ? 'promptpay' : otherMethod;
+    if (method === 'promptpay') customerDisplay.markPaid(grandTotal);
     onConfirm(method, isCash ? received : grandTotal, isCash ? Math.max(0, change) : 0);
   };
 
@@ -207,9 +219,13 @@ export const QuickPayModal: React.FC<QuickPayModalProps> = ({
             size={200}
             onPaid={() => {
               setGatewayPaid(true);
-              if (settings.merchantSettings?.autoConfirmPayment === true) onConfirm('promptpay', grandTotal, 0);
+              if (settings.merchantSettings?.autoConfirmPayment === true) {
+                customerDisplay.markPaid(grandTotal);
+                onConfirm('promptpay', grandTotal, 0);
+              }
             }}
             fallback={staticQr}
+            onQrChange={setGatewayQr}
           />
         )}
 
