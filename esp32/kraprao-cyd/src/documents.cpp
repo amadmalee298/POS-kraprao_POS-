@@ -21,6 +21,38 @@ bool fsBool(JsonVariantConst v, bool fallback) {
   return v["booleanValue"].is<bool>() ? v["booleanValue"].as<bool>() : fallback;
 }
 
+// Whole numbers too big for a float (epoch milliseconds)
+uint64_t fsUint64(JsonVariantConst v) {
+  if (v["integerValue"].is<const char *>()) return strtoull(v["integerValue"].as<const char *>(), nullptr, 10);
+  if (v["doubleValue"].is<double>()) return uint64_t(v["doubleValue"].as<double>());
+  return 0;
+}
+
+std::vector<uint8_t> base64Decode(const char *in) {
+  auto value = [](char c) -> int {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+  };
+  std::vector<uint8_t> out;
+  uint32_t buf = 0;
+  int bits = 0;
+  for (; *in; in++) {
+    const int v = value(*in);
+    if (v < 0) continue;  // padding / whitespace
+    buf = (buf << 6) | uint32_t(v);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push_back(uint8_t(buf >> bits));
+    }
+  }
+  return out;
+}
+
 JsonArrayConst fsArray(JsonVariantConst v) { return v["arrayValue"]["values"].as<JsonArrayConst>(); }
 JsonObjectConst fsMap(JsonVariantConst v) { return v["mapValue"]["fields"].as<JsonObjectConst>(); }
 
@@ -189,4 +221,29 @@ Totals calculateTotals(float subtotal, const Menu &menu) {
     }
   }
   return t;
+}
+
+// ---------------------------------------------------------------------------
+// Payment display
+// ---------------------------------------------------------------------------
+PaymentDisplay *parsePaymentDisplay(JsonObjectConst f) {
+  auto *p = new PaymentDisplay();
+  const String state = fsString(f["state"]);
+  if (state == "waiting" || state == "paid") p->state = state;
+  p->amount = fsNumber(f["amount"]);
+  p->label = fsString(f["label"]);
+  p->shopName = fsString(f["shopName"]);
+  p->payload = fsString(f["payload"]);
+  p->session = fsString(f["session"]);
+  p->expiresAt = fsUint64(f["expiresAt"]);
+  const int size = int(fsNumber(f["qrSize"]));
+  if (p->payload.isEmpty() && size > 0 && size <= 240) {
+    p->qrBits = base64Decode(fsString(f["qrBits"]).c_str());
+    // A truncated picture is useless: show it only when every row arrived
+    if (p->qrBits.size() == size_t((size + 7) / 8) * size) p->qrSize = size;
+    else p->qrBits.clear();
+  }
+  // Waiting without any QR to show is the same as idle
+  if (p->state == "waiting" && p->payload.isEmpty() && p->qrSize == 0) p->state = "idle";
+  return p;
 }

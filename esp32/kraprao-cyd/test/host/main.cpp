@@ -1,6 +1,7 @@
 // Host test tool for documents.cpp
 //   menu-test parse <public_menu.json>                 -> what the terminal understood (JSON)
 //   menu-test order <public_menu.json> <id> <now>      -> order body the terminal would POST
+//   menu-test paydisplay <payment_display.json>       -> what the payment screen understood
 // The order uses a fixed cart (see buildCart) that emulator-check.ts recomputes on its own.
 #include <fstream>
 #include <iostream>
@@ -53,6 +54,28 @@ int main(int argc, char **argv) {
   std::stringstream ss;
   ss << in.rdbuf();
   const std::string json = ss.str();
+
+  if (std::string(argv[1]) == "paydisplay") {
+    JsonDocument raw;
+    if (deserializeJson(raw, json.c_str())) return 1;
+    PaymentDisplay *p = parsePaymentDisplay(raw["fields"].as<JsonObjectConst>());
+    JsonDocument out;
+    out["state"] = p->state;
+    out["amount"] = p->amount;
+    out["label"] = p->label;
+    out["shopName"] = p->shopName;
+    out["payload"] = p->payload;
+    out["qrSize"] = p->qrSize;
+    out["qrBytes"] = p->qrBits.size();
+    out["session"] = p->session;
+    out["expiresAt"] = std::to_string(p->expiresAt);
+    // Checksum of the bitmap so the test can compare it with what the POS packed
+    uint32_t sum = 0;
+    for (uint8_t b : p->qrBits) sum = sum * 31 + b;
+    out["qrChecksum"] = sum;
+    serializeJson(out, std::cout);
+    return 0;
+  }
 
   JsonDocument filter;
   buildMenuFilter(filter);

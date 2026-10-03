@@ -17,6 +17,12 @@
 #ifndef CYD_PANEL
 #define CYD_PANEL 1  // 1 = ILI9341, 2 = ILI9341 with inverted colours, 3 = ST7789 (2-USB boards)
 #endif
+#ifndef DEVICE_MODE
+#define DEVICE_MODE 0  // 0 = order terminal, 1 = payment QR display at the counter
+#endif
+#ifndef PAYMENT_POLL_MS
+#define PAYMENT_POLL_MS 1500
+#endif
 #ifndef SCREEN_ROTATION
 #define SCREEN_ROTATION 0  // 0 = portrait, 2 = portrait upside down
 #endif
@@ -116,6 +122,28 @@ struct TrackedOrder {
 Totals calculateTotals(float subtotal, const Menu &menu);
 
 // ---------------------------------------------------------------------------
+// Payment display (payment_display/{branchId}, written by the cashier's POS;
+// see src/utils/customerDisplay.ts in the web app)
+// ---------------------------------------------------------------------------
+struct PaymentDisplay {
+  String state = "idle";  // idle | waiting | paid
+  float amount = 0;
+  String label;
+  String shopName;
+  String payload;               // PromptPay QR text, or empty when the QR is a bitmap
+  std::vector<uint8_t> qrBits;  // qrSize x qrSize, rows of (qrSize+7)/8 bytes, MSB first, 1 = dark
+  int qrSize = 0;
+  String session;
+  uint64_t expiresAt = 0;  // epoch ms; 0 = never
+
+  // What to show now: an expired QR or "paid" screen falls back to idle
+  String effectiveState(uint64_t nowMs) const {
+    if (state != "idle" && expiresAt && nowMs && nowMs > expiresAt) return "idle";
+    return state;
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Network task <-> UI
 // ---------------------------------------------------------------------------
 enum EventType : uint8_t {
@@ -125,19 +153,22 @@ enum EventType : uint8_t {
   EV_ORDER_SENT,   // id, number
   EV_ORDER_FAILED, // id, msg
   EV_ORDER_STATUS, // id, status
+  EV_PAYMENT,      // payment = new PaymentDisplay (UI takes ownership)
 };
 
 struct NetEvent {
   EventType type;
   bool ok;
   Menu *menu;
+  PaymentDisplay *payment;
   char id[48];
   char number[24];
   char status[16];
   char msg[120];
 };
 
-void cloudBegin();                        // starts the network task (core 0)
+void cloudBegin(bool paymentMode);       // starts the network task (core 0)
+uint64_t epochMs();                       // wall clock in ms, 0 until NTP has set it
 bool cloudPoll(NetEvent &ev);             // UI side: next event, if any
 void cloudRequestMenu();                  // reload the menu now
 void cloudSubmitOrder(OrderDraft *draft); // network task takes ownership
@@ -161,5 +192,6 @@ String thaiDisplay(const String &text);
 String promptPayPayload(const String &id, float amount);
 
 // UI (ui.cpp)
+bool uiPaymentMode();  // saved mode (settings), DEVICE_MODE by default
 void uiBegin();
 void uiHandleEvent(const NetEvent &ev);

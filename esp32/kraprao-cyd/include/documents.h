@@ -13,3 +13,5 @@ void buildMenuFilter(JsonDocument &filter);
 Menu *parseMenu(JsonObjectConst fields);
 // Body for POST .../documents/orders?documentId=<id>; `now` is an ISO-8601 UTC time
 String buildOrderBody(const OrderDraft &draft, const String &now);
+// `fields` of payment_display/{branchId} -> PaymentDisplay (caller owns it)
+PaymentDisplay *parsePaymentDisplay(JsonObjectConst fields);

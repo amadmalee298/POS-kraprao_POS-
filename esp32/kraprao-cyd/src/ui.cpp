@@ -10,6 +10,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <lvgl.h>
+#include <time.h>
 
 #include "app.h"
 
@@ -35,7 +36,7 @@ constexpr float MAX_ORDER_TOTAL = 50000;    // firestore.rules refuse bigger QR 
 constexpr uint32_t ORDER_COOLDOWN_MS = 30000;
 constexpr size_t MAX_ORDERS_SHOWN = 6;
 
-enum Page { P_LOADING, P_MENU, P_ITEM, P_CART, P_ORDERS, P_KEYPAD, P_SETTINGS };
+enum Page { P_LOADING, P_MENU, P_ITEM, P_CART, P_ORDERS, P_KEYPAD, P_SETTINGS, P_PAY };
 enum KeypadMode { KP_PIN_SETTINGS, KP_PIN_TABLE, KP_TABLE };
 
 // --- state ------------------------------------------------------------------
@@ -51,6 +52,17 @@ bool online = false;
 String netText = "กำลังเชื่อม Wi-Fi…";
 String menuError;
 Page page = P_LOADING;
+
+// Payment display mode (QR at the counter)
+bool paymentMode = false;
+PaymentDisplay *pay = nullptr;
+String payShown = "-";  // state + session on screen
+String paidSession;     // "paid" screens are timed by this device, not by the POS clock
+uint32_t paidSeenAt = 0;
+constexpr uint32_t PAID_SCREEN_MS = 8000;
+lv_obj_t *clockLabel = nullptr;
+lv_image_dsc_t qrImage;
+std::vector<uint8_t> qrImageData;
 
 // Order being sent: the same id is reused on retry so Firestore never gets it twice
 String pendingId;
@@ -98,6 +110,7 @@ void clearMenuDependents() {
   itemAddButton = nullptr;
   keypadLabel = nullptr;
   wifiIcon = nullptr;
+  clockLabel = nullptr;
 }
 
 lv_obj_t *newPage(Page p) {
@@ -288,6 +301,13 @@ void showCart();
 void showOrders();
 void showKeypad(KeypadMode mode);
 void showSettings();
+void showPay();
+
+void goHome() {
+  if (paymentMode) showPay();
+  else if (menu || pendingMenu) showMenu();
+  else showLoading();
+}
 
 // --- header -------------------------------------------------------------------
 String tableText() {
@@ -330,6 +350,7 @@ void header(lv_obj_t *scr, const String &title, lv_event_cb_t back) {
   lv_obj_add_event_cb(t, onTitleLongPress, LV_EVENT_LONG_PRESSED, nullptr);
 
   wifiIcon = label(h, LV_SYMBOL_WIFI, online ? C_GREEN : C_RED, &lv_font_montserrat_16);
+  if (paymentMode) return;
 
   const int active = activeOrders();
   lv_obj_t *o = button(h, active ? String(LV_SYMBOL_BELL " ") + active : String(LV_SYMBOL_BELL),
@@ -867,10 +888,7 @@ void showKeypad(KeypadMode mode) {
   keypadMode = mode;
   keypadValue = mode == KP_TABLE ? table : String("");
   lv_obj_t *scr = newPage(P_KEYPAD);
-  header(scr, mode == KP_TABLE ? "เลขโต๊ะ" : "ใส่ PIN", [](lv_event_t *) {
-    if (menu) showMenu();
-    else showLoading();
-  });
+  header(scr, mode == KP_TABLE ? "เลขโต๊ะ" : "ใส่ PIN", [](lv_event_t *) { goHome(); });
   lv_obj_t *top = row(scr, 0);
   lv_obj_set_height(top, 50);
   lv_obj_set_flex_align(top, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -890,10 +908,7 @@ void showKeypad(KeypadMode mode) {
 // --- settings -----------------------------------------------------------------------
 void showSettings() {
   lv_obj_t *scr = newPage(P_SETTINGS);
-  header(scr, "ตั้งค่าเครื่อง", [](lv_event_t *) {
-    if (menu) showMenu();
-    else showLoading();
-  });
+  header(scr, "ตั้งค่าเครื่อง", [](lv_event_t *) { goHome(); });
   lv_obj_t *b = body(scr);
 
   lv_obj_t *info = card(b);
@@ -902,15 +917,27 @@ void showSettings() {
   label(info, String("สาขา: ") + (menu ? menu->branchName : String(BRANCH_ID)), C_MUTED);
   para(info, online ? "Wi-Fi " + WiFi.localIP().toString() + " (" + WiFi.RSSI() + " dBm)" : netText,
        online ? C_GREEN : C_RED);
-  label(info, String("เมนู ") + (menu ? String(menu->items.size()) + " รายการ" : String("ยังไม่โหลด")), C_MUTED);
+  label(info, paymentMode ? String("โหมด: จอ QR ชำระเงิน") : String("โหมด: รับออเดอร์"), C_ACCENT);
+  if (!paymentMode)
+    label(info, String("เมนู ") + (menu ? String(menu->items.size()) + " รายการ" : String("ยังไม่โหลด")), C_MUTED);
   label(info, String("RAM ว่าง ") + ESP.getFreeHeap() / 1024 + " KB", C_MUTED);
 
   auto full = [](lv_obj_t *btn) { lv_obj_set_size(btn, LV_PCT(100), 40); };
-  full(button(b, "เปลี่ยนเลขโต๊ะ", C_BORDER, [](lv_event_t *) { showKeypad(KP_TABLE); }));
-  full(button(b, LV_SYMBOL_REFRESH " โหลดเมนูใหม่", C_BORDER, [](lv_event_t *) {
-    cloudRequestMenu();
-    toast("กำลังโหลดเมนู…", C_AMBER, 1500);
-  }));
+  if (!paymentMode) {
+    full(button(b, "เปลี่ยนเลขโต๊ะ", C_BORDER, [](lv_event_t *) { showKeypad(KP_TABLE); }));
+    full(button(b, LV_SYMBOL_REFRESH " โหลดเมนูใหม่", C_BORDER, [](lv_event_t *) {
+      cloudRequestMenu();
+      toast("กำลังโหลดเมนู…", C_AMBER, 1500);
+    }));
+  }
+  full(button(b, paymentMode ? "เปลี่ยนเป็นโหมดรับออเดอร์" : "เปลี่ยนเป็นโหมดจอ QR ชำระเงิน", C_BORDER,
+              [](lv_event_t *) {
+                Preferences prefs;
+                prefs.begin("pos", false);
+                prefs.putUChar("mode", paymentMode ? 0 : 1);
+                prefs.end();
+                ESP.restart();
+              }));
   full(button(b, "ปรับจอสัมผัส", C_BORDER, [](lv_event_t *) { displayCalibrate(); }));
   full(button(b, "ทดสอบเสียง/ไฟ", C_BORDER, [](lv_event_t *) {
     beep(2);
@@ -924,11 +951,145 @@ void showSettings() {
   full(button(b, LV_SYMBOL_POWER " รีสตาร์ท", C_RED, [](lv_event_t *) { ESP.restart(); }));
 }
 
+// --- payment display (QR at the counter) ---------------------------------------------
+void onPayLongPress(lv_event_t *) { showKeypad(KP_PIN_SETTINGS); }
+
+String clockText() {
+  const uint64_t ms = epochMs();
+  if (!ms) return "";
+  const time_t t = time_t(ms / 1000) + TZ_OFFSET_SEC;
+  struct tm tm;
+  gmtime_r(&t, &tm);
+  char b[8];
+  snprintf(b, sizeof(b), "%02d:%02d", tm.tm_hour, tm.tm_min);
+  return b;
+}
+
+// 1-bit QR picture (payment gateway) as an LVGL indexed image: palette white, black
+const lv_image_dsc_t *qrBitmap(const PaymentDisplay &p) {
+  const uint32_t stride = (p.qrSize + 7) / 8;
+  qrImageData.assign(8, 0);
+  const lv_color32_t white = lv_color32_make(255, 255, 255, 255);
+  const lv_color32_t black = lv_color32_make(0, 0, 0, 255);
+  memcpy(qrImageData.data(), &white, 4);
+  memcpy(qrImageData.data() + 4, &black, 4);
+  qrImageData.insert(qrImageData.end(), p.qrBits.begin(), p.qrBits.end());
+  lv_image_cache_drop(&qrImage);  // same descriptor, new picture
+  memset(&qrImage, 0, sizeof(qrImage));
+  qrImage.header.magic = LV_IMAGE_HEADER_MAGIC;
+  qrImage.header.cf = LV_COLOR_FORMAT_I1;
+  qrImage.header.w = p.qrSize;
+  qrImage.header.h = p.qrSize;
+  qrImage.header.stride = stride;
+  qrImage.data = qrImageData.data();
+  qrImage.data_size = qrImageData.size();
+  return &qrImage;
+}
+
+lv_obj_t *payPage() {
+  lv_obj_t *scr = newPage(P_PAY);
+  lv_obj_t *p = plain(scr);
+  lv_obj_set_size(p, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(p, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(p, 6, 0);
+  lv_obj_set_style_pad_row(p, 4, 0);
+  lv_obj_add_flag(p, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(p, onPayLongPress, LV_EVENT_LONG_PRESSED, nullptr);
+  return p;
+}
+
+lv_obj_t *centered(lv_obj_t *parent, const String &text, uint32_t color, const lv_font_t *font = nullptr) {
+  lv_obj_t *l = para(parent, text, color, font);
+  lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+  return l;
+}
+
+String payState() {
+  if (!pay) return "idle";
+  if (pay->state == "paid")
+    return pay->session == paidSession && millis() - paidSeenAt < PAID_SCREEN_MS ? String("paid") : String("idle");
+  return pay->effectiveState(epochMs());
+}
+
+void showPay() {
+  const String state = payState();
+  payShown = state + "|" + (pay ? pay->session : String(""));
+  const String shop = pay && !pay->shopName.isEmpty() ? pay->shopName : String(DEVICE_NAME);
+
+  // A bill on screen keeps the backlight on (main.cpp dims after inactivity)
+  if (state != "idle") lv_display_trigger_activity(nullptr);
+
+  if (state == "waiting") {
+    lv_obj_t *p = payPage();
+    centered(p, "สแกนจ่ายด้วยพร้อมเพย์", C_TEXT);
+    centered(p, pay->amount > 0 ? baht(pay->amount) : String("ใส่ยอดในแอปธนาคาร"), C_ACCENT, &font_th_24);
+    if (!pay->payload.isEmpty()) {
+      lv_obj_t *qr = lv_qrcode_create(p);
+      lv_qrcode_set_size(qr, 188);
+      lv_qrcode_set_dark_color(qr, lv_color_black());
+      lv_qrcode_set_light_color(qr, lv_color_white());
+      lv_qrcode_update(qr, pay->payload.c_str(), pay->payload.length());
+      lv_obj_set_style_border_color(qr, lv_color_white(), 0);
+      lv_obj_set_style_border_width(qr, 5, 0);
+    } else {
+      lv_obj_t *img = lv_image_create(p);
+      lv_image_set_src(img, qrBitmap(*pay));
+      lv_obj_set_style_border_color(img, lv_color_white(), 0);
+      lv_obj_set_style_border_width(img, 3, 0);
+    }
+    String foot = pay->label;
+    if (!foot.isEmpty()) foot += " · ";
+    centered(p, foot + shop, C_MUTED);
+    return;
+  }
+
+  if (state == "paid") {
+    lv_obj_t *p = payPage();
+    lv_obj_t *circle = plain(p);
+    lv_obj_set_size(circle, 96, 96);
+    lv_obj_set_style_radius(circle, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(circle, hex(C_GREEN), 0);
+    lv_obj_set_style_bg_opa(circle, LV_OPA_COVER, 0);
+    lv_obj_t *ok = label(circle, LV_SYMBOL_OK, 0x06210f, &lv_font_montserrat_48);
+    lv_obj_center(ok);
+    centered(p, "ชำระเงินเรียบร้อย", C_GREEN, &font_th_24);
+    if (pay->amount > 0) centered(p, baht(pay->amount), C_TEXT, &font_th_24);
+    centered(p, "ขอบคุณค่ะ", C_MUTED);
+    return;
+  }
+
+  // Idle: the shop and the time
+  lv_obj_t *p = payPage();
+  centered(p, shop, C_ACCENT, &font_th_24);
+  centered(p, "ยินดีต้อนรับ", C_TEXT);
+  clockLabel = centered(p, clockText(), C_MUTED, &font_th_24);
+  centered(p, online ? String("ชำระด้วย QR พร้อมเพย์ได้ที่นี่") : netText, online ? C_MUTED : C_RED);
+}
+
+void payTick(lv_timer_t *) {
+  if (page != P_PAY) return;
+  const String state = payState();
+  if (state + "|" + (pay ? pay->session : String("")) != payShown) {
+    showPay();  // a QR or "paid" screen ran out
+    return;
+  }
+  if (clockLabel) lv_label_set_text(clockLabel, clockText().c_str());
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
 // Public
 // ---------------------------------------------------------------------------
+bool uiPaymentMode() {
+  Preferences prefs;
+  prefs.begin("pos", true);
+  const bool on = prefs.getUChar("mode", DEVICE_MODE) == 1;
+  prefs.end();
+  return on;
+}
+
 void uiBegin() {
   lv_display_t *disp = lv_display_get_default();
   lv_theme_t *theme = lv_theme_default_init(disp, hex(C_ACCENT), hex(0xff8a3d), true, &font_th_18);
@@ -939,7 +1100,13 @@ void uiBegin() {
   table = prefs.getString("table", DEFAULT_TABLE);
   prefs.end();
   orderType = table.isEmpty() ? "takeaway" : "dine-in";
-  showLoading();
+  paymentMode = uiPaymentMode();
+  if (paymentMode) {
+    lv_timer_create(payTick, 1000, nullptr);
+    showPay();
+  } else {
+    showLoading();
+  }
 }
 
 void uiHandleEvent(const NetEvent &ev) {
@@ -949,7 +1116,31 @@ void uiHandleEvent(const NetEvent &ev) {
       netText = ev.msg;
       if (wifiIcon) lv_obj_set_style_text_color(wifiIcon, hex(online ? C_GREEN : C_RED), 0);
       if (page == P_LOADING) showLoading();
+      if (page == P_PAY && clockLabel) showPay();  // idle screen shows the connection
       break;
+
+    case EV_PAYMENT: {
+      const String before = payShown;
+      delete pay;
+      pay = ev.payment;
+      // A new "paid" (not an old one found after a restart) shows for PAID_SCREEN_MS from now
+      const uint64_t now = epochMs();
+      if (pay->state == "paid" && pay->session != paidSession && !(now && pay->expiresAt && now > pay->expiresAt + 60000)) {
+        paidSession = pay->session;
+        paidSeenAt = millis();
+      }
+      const String state = payState();
+      if (page == P_PAY && state + "|" + pay->session != before) {
+        showPay();
+        if (state == "paid") {
+          beep(2);
+          ledFor(false, true, false, 5000);
+        }
+      } else if (page == P_PAY && state == "waiting") {
+        showPay();  // same bill, new amount or QR
+      }
+      break;
+    }
 
     case EV_MENU_LOADED: {
       const bool first = menu == nullptr && pendingMenu == nullptr;

@@ -17,10 +17,13 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { initializeApp } from 'firebase/app';
 import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth } from 'firebase/auth';
-import { connectFirestoreEmulator, doc, getDoc, getFirestore, setDoc } from 'firebase/firestore';
+import { connectFirestoreEmulator, doc, getDoc, getFirestore, serverTimestamp, setDoc } from 'firebase/firestore';
+import QRCode from 'qrcode';
 import { buildPublicMenu } from '../../../../src/utils/publicMenu';
 import { DEFAULT_CATEGORIES, INITIAL_MENU_ITEMS, INITIAL_SETTINGS, STANDARD_ADD_ONS } from '../../../../src/data/initialData';
 import { calculateOrderTotals } from '../../../../src/utils/tax';
+import { DISPLAY_QR_SIZE, packQrBitmap, paidDisplay, waitingDisplay } from '../../../../src/utils/customerDisplay';
+import { generatePromptPayPayload } from '../../../../src/utils/promptpay';
 
 const PROJECT = 'demo-kraprao';
 const BRANCH = 'branch-test';
@@ -152,6 +155,57 @@ async function main() {
   check((await post(orderId, body)).status === 409, 'resending the same order id gives 409 (treated as sent)');
   const skipApproval = body.replace('"stringValue":"pending-qr"', '"stringValue":"pending"');
   check((await post(`${orderId}x`, skipApproval)).status === 403, 'rules still refuse an order that skips approval');
+
+  // 5. Payment display: the cashier's POS publishes, the terminal (payment mode) reads
+  const snapshots = process.env.SNAPSHOT_DIR;
+  const readDisplay = async (name: string) => {
+    const res = await fetch(`${FS}/payment_display/${BRANCH}`, { headers: { Authorization: `Bearer ${token}` } });
+    const file = join(snapshots || dir, `${name}.json`);
+    writeFileSync(file, await res.text());
+    return { status: res.status, parsed: JSON.parse(execFileSync(TOOL, ['paydisplay', file]).toString()) };
+  };
+  // Same write as publishPaymentDisplay() in firebaseService.ts
+  const publishDisplay = (d: object) => setDoc(doc(db, 'payment_display', BRANCH), { ...d, updatedAt: serverTimestamp() });
+
+  const payload = generatePromptPayPayload('0891234567', 214);
+  const waiting = waitingDisplay({ amount: 214, label: 'โต๊ะ 5', shopName: 'สาขาทดสอบ', session: 'bill-1', payload });
+  await publishDisplay(waiting);
+  const w = await readDisplay('pay-waiting');
+  check(w.status === 200, `terminal can read payment_display (${w.status})`);
+  check(w.parsed.state === 'waiting' && w.parsed.amount === 214 && w.parsed.payload === payload && w.parsed.label === 'โต๊ะ 5',
+    'waiting: amount, PromptPay text and label');
+  check(w.parsed.expiresAt === String(waiting.expiresAt), 'expiry time kept to the millisecond');
+
+  // Gateway bills send the QR picture as a bitmap (drawn here from a real QR code)
+  const qr = QRCode.create(generatePromptPayPayload('0891234567', 99.5), { errorCorrectionLevel: 'M' }).modules;
+  const scale = Math.floor(DISPLAY_QR_SIZE / (qr.size + 8));
+  const offset = Math.floor((DISPLAY_QR_SIZE - qr.size * scale) / 2);
+  const rgba: number[] = [];
+  for (let y = 0; y < DISPLAY_QR_SIZE; y++)
+    for (let x = 0; x < DISPLAY_QR_SIZE; x++) {
+      const mx = Math.floor((x - offset) / scale), my = Math.floor((y - offset) / scale);
+      const dark = mx >= 0 && my >= 0 && mx < qr.size && my < qr.size && qr.data[my * qr.size + mx];
+      rgba.push(...(dark ? [0, 0, 0, 255] : [255, 255, 255, 255]));
+    }
+  const qrBits = packQrBitmap(rgba, DISPLAY_QR_SIZE);
+  await publishDisplay(waitingDisplay({ amount: 99.5, label: '#A-012', shopName: 'สาขาทดสอบ', session: 'bill-2', qrBits, qrSize: DISPLAY_QR_SIZE }));
+  const g = await readDisplay('pay-bitmap');
+  let sum = 0;
+  for (const b of Array.from(atob(qrBits), c => c.charCodeAt(0))) sum = (Math.imul(sum, 31) + b) >>> 0;
+  check(g.parsed.state === 'waiting' && g.parsed.payload === '' && g.parsed.qrSize === DISPLAY_QR_SIZE && g.parsed.qrBytes === (DISPLAY_QR_SIZE / 8) * DISPLAY_QR_SIZE,
+    `gateway QR arrives as a ${DISPLAY_QR_SIZE}x${DISPLAY_QR_SIZE} bitmap`);
+  check(g.parsed.qrChecksum === sum, 'bitmap bytes identical to what the POS packed');
+
+  await publishDisplay(paidDisplay({ amount: 99.5, label: '#A-012', shopName: 'สาขาทดสอบ', session: 'bill-2' }));
+  const paid = await readDisplay('pay-paid');
+  check(paid.parsed.state === 'paid' && paid.parsed.amount === 99.5 && paid.parsed.session === 'bill-2', 'paid screen data');
+
+  const anonWrite = await fetch(`${FS}/payment_display/${BRANCH}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: { state: { stringValue: 'paid' } } })
+  });
+  check(anonWrite.status === 403, 'customers / terminals cannot write the payment display');
 
   console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
   process.exit(failures ? 1 : 0);

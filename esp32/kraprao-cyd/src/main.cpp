@@ -44,7 +44,7 @@ void setup() {
 
   displayBegin();
   uiBegin();
-  cloudBegin();
+  cloudBegin(uiPaymentMode());
 }
 
 void loop() {

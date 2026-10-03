@@ -1,9 +1,11 @@
 // Screenshot simulator: runs the terminal's real UI code (src/ui.cpp + LVGL + Thai fonts) on a
 // computer, taps through an order, and saves each 240x320 screen as a PPM image.
-//   sim <public_menu.json> <out-dir>
+//   sim order <public_menu.json> <out-dir>     ordering terminal
+//   sim pay <snapshot-dir> <out-dir>           payment display (pay-*.json from test/host/run.sh)
 // The network task is replaced by events this file sends, as cloud.cpp would.
 #include <lvgl.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -29,6 +31,16 @@ static OrderDraft *submitted = nullptr;
 void cloudSubmitOrder(OrderDraft *d) { submitted = d; }
 String newOrderId() { return "ord-1790000000000-k7xm2a"; }
 String newOrderNumber(const String &table) { return "#Q" + table + "-K7XM"; }
+int simDeviceMode = 0;
+static uint64_t epochAtStart = 0;
+uint64_t epochMs() { return epochAtStart + fakeMs; }
+
+static std::string readFile(const std::string &path) {
+  std::ifstream in(path);
+  std::stringstream ss;
+  ss << in.rdbuf();
+  return ss.str();
+}
 
 // --- display / touch ---------------------------------------------------------------------
 static uint16_t fb[240 * 320];
@@ -126,9 +138,15 @@ static NetEvent event(EventType type) {
   return ev;
 }
 
+static int payScenario(const std::string &dir);
+
 int main(int argc, char **argv) {
-  if (argc < 3) return 2;
-  outDir = argv[2];
+  if (argc < 4) return 2;
+  const std::string mode = argv[1];
+  outDir = argv[3];
+  epochAtStart = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::system_clock::now().time_since_epoch()).count();
+  simDeviceMode = mode == "pay" ? 1 : 0;
 
   lv_init();
   lv_tick_set_cb([]() -> uint32_t { return fakeMs; });
@@ -140,10 +158,8 @@ int main(int argc, char **argv) {
   lv_indev_set_read_cb(indev, readTouch);
 
   // Menu from the emulator run (test/host/run.sh)
-  std::ifstream in(argv[1]);
-  std::stringstream ss;
-  ss << in.rdbuf();
-  const std::string json = ss.str();
+  if (mode == "pay") return payScenario(argv[2]);
+  const std::string json = readFile(argv[2]);
   JsonDocument filter;
   buildMenuFilter(filter);
   JsonDocument doc;
@@ -194,5 +210,35 @@ int main(int argc, char **argv) {
   shot("10-pin");
   tapKey("ok");
   shot("11-settings");
+  return 0;
+}
+
+// Payment display: idle -> PromptPay QR -> gateway bitmap QR -> paid -> back to idle by itself
+static NetEvent payEvent(const std::string &file) {
+  JsonDocument raw;
+  deserializeJson(raw, readFile(file).c_str());
+  NetEvent ev = event(EV_PAYMENT);
+  ev.payment = parsePaymentDisplay(raw["fields"].as<JsonObjectConst>());
+  return ev;
+}
+
+static int payScenario(const std::string &dir) {
+  // Run the clock from when the snapshots were written (a waiting QR lasts 10 minutes)
+  NetEvent first = payEvent(dir + "/pay-waiting.json");
+  epochAtStart = first.payment->expiresAt - 10 * 60 * 1000 + 1000 - fakeMs;
+  delete first.payment;
+  uiBegin();
+  NetEvent net = event(EV_NET_STATE);
+  strcpy(net.msg, "Wi-Fi 192.168.1.51");
+  uiHandleEvent(net);
+  shot("20-pay-idle");
+  uiHandleEvent(payEvent(dir + "/pay-waiting.json"));
+  shot("21-pay-promptpay");
+  uiHandleEvent(payEvent(dir + "/pay-bitmap.json"));
+  shot("22-pay-gateway");
+  uiHandleEvent(payEvent(dir + "/pay-paid.json"));
+  shot("23-pay-paid");
+  run(9000);  // the "paid" screen expires
+  shot("24-pay-back-to-idle");
   return 0;
 }

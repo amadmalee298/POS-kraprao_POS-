@@ -26,6 +26,6 @@ cat > "$OUT/emu/firebase.json" <<'JSON'
 JSON
 
 cd "$ROOT"
-MENU_TEST="$OUT/menu-test" MENU_SNAPSHOT="$OUT/menu.json" npx -y firebase-tools@latest emulators:exec --config "$OUT/emu/firebase.json" \
+MENU_TEST="$OUT/menu-test" MENU_SNAPSHOT="$OUT/menu.json" SNAPSHOT_DIR="$OUT" npx -y firebase-tools@latest emulators:exec --config "$OUT/emu/firebase.json" \
   --only firestore,auth --project demo-kraprao \
   "cd '$ROOT' && npx vite-node esp32/kraprao-cyd/test/host/emulator-check.ts"

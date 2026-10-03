@@ -15,6 +15,7 @@ import {
   supported,
   writePrinterConfig
 } from '../../services/receiptPrinter';
+import { CustomerDisplayPanel } from './CustomerDisplayPanel';
 
 const METHODS: { id: PrinterMethod; label: string; hint: string; icon: React.ElementType; ok: () => boolean }[] = [
   { id: 'browser', label: 'หน้าต่างพิมพ์ของเบราว์เซอร์', hint: 'ใช้ได้ทุกเครื่อง รวม iPhone/iPad (AirPrint) และเครื่องพิมพ์ที่ติดตั้งในคอมพิวเตอร์', icon: MonitorSmartphone, ok: () => true },
@@ -207,6 +208,8 @@ export const PrinterSettingsPanel: React.FC = () => {
           </div>
         )}
       </div>
+
+      <CustomerDisplayPanel />
 
       <details className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
         <summary className="font-bold text-slate-100 cursor-pointer">เลือกวิธีไหนดี</summary>

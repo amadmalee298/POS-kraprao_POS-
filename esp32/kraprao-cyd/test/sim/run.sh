@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the real UI (src/ui.cpp) with LVGL for the computer and saves screenshots of an order.
-# Needs the menu snapshot from test/host/run.sh and ImageMagick (convert) for the PNGs.
+# Needs the menu and payment-display snapshots from test/host/run.sh and ImageMagick (convert) for the PNGs.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 FW="$(cd "$HERE/../.." && pwd)"
@@ -14,8 +14,9 @@ FLAGS="-O1 -w -DARDUINO=100 -DARDUINOJSON_ENABLE_ARDUINO_STREAM=0 -DARDUINOJSON_
   -DARDUINOJSON_ENABLE_PROGMEM=0 -DLV_CONF_INCLUDE_SIMPLE -DLV_LVGL_H_INCLUDE_SIMPLE \
   -I$HERE -I$FW/test/host -I$FW/include -I$LVGL -I$FW/.pio/libdeps/cyd/ArduinoJson/src"
 
-# LVGL (once)
-if [ ! -f "$OBJ/liblvgl.a" ]; then
+# LVGL (again whenever lv_conf.h changes)
+if [ ! -f "$OBJ/liblvgl.a" ] || [ "$FW/include/lv_conf.h" -nt "$OBJ/liblvgl.a" ]; then
+  rm -f "$OBJ"/*.o
   find "$LVGL/src" -name '*.c' | xargs -P"$(nproc)" -I{} sh -c 'gcc '"$FLAGS"' -c "{}" -o "'"$OBJ"'/$(echo "{}" | md5sum | cut -c1-12).o"'
   ar rcs "$OBJ/liblvgl.a" "$OBJ"/*.o
 fi
@@ -26,7 +27,8 @@ g++ -std=gnu++17 $FLAGS -o "$OUT/sim" "$HERE/sim.cpp" "$FW/src/ui.cpp" "$FW/src/
   "$OBJ/f18.o" "$OBJ/f24.o" "$OBJ/liblvgl.a"
 
 rm -f "$OUT"/*.ppm
-"$OUT/sim" "$OUT/menu.json" "$OUT"
+"$OUT/sim" order "$OUT/menu.json" "$OUT"
+"$OUT/sim" pay "$OUT" "$OUT"
 for f in "$OUT"/*.ppm; do
   convert "$f" -filter point -resize 200% "$SHOTS/$(basename "${f%.ppm}").png"
 done

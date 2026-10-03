@@ -68,6 +68,13 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
+    // QR of the bill being paid, for the customer display at the counter (ESP32 payment screen).
+    // The display signs in anonymously; only staff devices write.
+    match /payment_display/{branchId} {
+      allow read: if signedIn();
+      allow write: if isStaff() && reasonableSize();
+    }
+
     match /orders/{orderId} {
       allow list: if isStaff();
       // Customers follow the status of their own QR order (by its unguessable id)

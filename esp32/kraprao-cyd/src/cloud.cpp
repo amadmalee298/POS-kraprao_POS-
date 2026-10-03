@@ -41,6 +41,9 @@ String idToken;
 String refreshToken;
 uint32_t tokenExpiresAt = 0;  // millis()
 bool menuLoaded = false;
+bool paymentMode = false;
+uint32_t lastPaymentPoll = 0;
+String lastPaymentSignature = "-";
 uint32_t lastMenuAttempt = 0;
 uint32_t lastStatusPoll = 0;
 
@@ -305,6 +308,70 @@ void pollStatuses() {
 }
 
 // ---------------------------------------------------------------------------
+// Payment display: one small document read every PAYMENT_POLL_MS over a connection that stays
+// open (a fresh TLS handshake each time would take about a second on the ESP32)
+// ---------------------------------------------------------------------------
+WiFiClientSecure *keepAliveClient = nullptr;
+HTTPClient keepAliveHttp;
+
+int getKeepAlive(const String &url, String &response) {
+  if (!keepAliveClient) {
+    keepAliveClient = new WiFiClientSecure();
+    keepAliveClient->setCACert(GOOGLE_ROOT_CA);
+    keepAliveHttp.setReuse(true);
+    keepAliveHttp.setConnectTimeout(10000);
+    keepAliveHttp.setTimeout(10000);
+  }
+  if (!keepAliveHttp.begin(*keepAliveClient, url)) return -1;
+  addCommonHeaders(keepAliveHttp, true);
+  const int code = keepAliveHttp.GET();
+  if (code > 0) response = keepAliveHttp.getString();
+  keepAliveHttp.end();
+  if (code <= 0) keepAliveClient->stop();
+  return code;
+}
+
+void pollPaymentDisplay() {
+  lastPaymentPoll = millis();
+  String err;
+  if (!ensureSignedIn(err)) {
+    emit(EV_NET_STATE, true, err);
+    return;
+  }
+  String response;
+  const int code = getKeepAlive(FIRESTORE_BASE + "/payment_display/" + BRANCH_ID, response);
+  PaymentDisplay *p = nullptr;
+  if (code == 200) {
+    JsonDocument doc;
+    if (deserializeJson(doc, response)) return;
+    response = "";
+    p = parsePaymentDisplay(doc["fields"].as<JsonObjectConst>());
+  } else if (code == 404) {
+    p = new PaymentDisplay();  // the POS has not used the display yet
+  } else {
+    if (code == 401) idToken = "";
+    if (code == 403) emit(EV_NET_STATE, true, "ไม่มีสิทธิ์อ่านจอ QR (deploy firestore.rules ล่าสุด)");
+    return;
+  }
+  // Only changes go to the UI
+  const String signature = p->state + "|" + p->session + "|" + String(double(p->expiresAt), 0) + "|" +
+                           String(p->amount, 2) + "|" + p->payload.length() + "|" + p->qrBits.size();
+  if (signature == lastPaymentSignature) {
+    delete p;
+    return;
+  }
+  lastPaymentSignature = signature;
+  NetEvent ev{};
+  ev.type = EV_PAYMENT;
+  ev.ok = true;
+  ev.payment = p;
+  if (xQueueSend(eventQueue, &ev, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    delete p;
+    lastPaymentSignature = "-";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Task
 // ---------------------------------------------------------------------------
 void netTask(void *) {
@@ -332,7 +399,7 @@ void netTask(void *) {
     }
 
     Job job;
-    if (xQueueReceive(jobQueue, &job, pdMS_TO_TICKS(300)) == pdTRUE) {
+    if (xQueueReceive(jobQueue, &job, pdMS_TO_TICKS(paymentMode ? 50 : 300)) == pdTRUE) {
       switch (job.type) {
         case JOB_MENU: loadMenu(); break;
         case JOB_ORDER: submitOrder(job.draft); break;
@@ -348,6 +415,10 @@ void netTask(void *) {
     }
 
     const uint32_t now = millis();
+    if (paymentMode) {
+      if (now - lastPaymentPoll >= PAYMENT_POLL_MS) pollPaymentDisplay();
+      continue;
+    }
     if (now - lastMenuAttempt > (menuLoaded ? MENU_REFRESH_MS : MENU_RETRY_MS) || lastMenuAttempt == 0) {
       loadMenu();
     } else if (!tracked.empty() && now - lastStatusPoll > STATUS_POLL_MS) {
@@ -361,7 +432,8 @@ void netTask(void *) {
 // ---------------------------------------------------------------------------
 // Public API (called from the UI task)
 // ---------------------------------------------------------------------------
-void cloudBegin() {
+void cloudBegin(bool paymentDisplay) {
+  paymentMode = paymentDisplay;
   jobQueue = xQueueCreate(8, sizeof(Job));
   eventQueue = xQueueCreate(16, sizeof(NetEvent));
   Preferences prefs;
@@ -370,6 +442,8 @@ void cloudBegin() {
   prefs.end();
   xTaskCreatePinnedToCore(netTask, "net", 16 * 1024, nullptr, 1, nullptr, 0);
 }
+
+uint64_t epochMs() { return clockReady() ? nowMs() : 0; }
 
 bool cloudPoll(NetEvent &ev) { return xQueueReceive(eventQueue, &ev, 0) == pdTRUE; }
 
