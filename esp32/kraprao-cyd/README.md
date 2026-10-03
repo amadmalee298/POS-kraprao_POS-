@@ -16,9 +16,11 @@
 |---|---|---|---|---|
 | ![](docs/screens/02-menu.png) | ![](docs/screens/04-dish-options.png) | ![](docs/screens/06-cart.png) | ![](docs/screens/08-order-promptpay.png) | ![](docs/screens/09-ready.png) |
 
-ภาพหน้าจอได้จากโค้ด UI จริง (`src/ui.cpp` + LVGL + ฟอนต์ไทย) รันบนคอมพิวเตอร์ด้วย `test/sim/run.sh`
+ภาพหน้าจอได้จากโค้ด UI จริง (`src/ui.cpp` + LVGL + ฟอนต์ไทย) รันบนคอมพิวเตอร์ด้วย `test/sim/run.sh` ยังไม่ใช่ภาพถ่ายจากบอร์ดจริง (ในภาพลำดับการทำงาน กรอบจอและกล่องข้อความฝั่ง POS เป็นภาพประกอบ)
 
 ## ทำงานร่วมกับ POS อย่างไร
+
+![ลำดับการทำงานโหมดจอรับออเดอร์](docs/flow-ordering.png)
 
 ```
  จอ ESP32 ──(Wi-Fi, HTTPS)──▶ Firebase ◀──── แอป POS / KDS ของร้าน
@@ -35,6 +37,8 @@
 - ราคา, VAT และเงื่อนไขทั้งหมดคำนวณแบบเดียวกับหน้า QR บนเว็บ (`calculateOrderTotals`) จำกัด 40 ชิ้น/ออเดอร์ และเว้น 30 วินาทีระหว่างออเดอร์
 
 ## โหมดจอ QR ชำระเงิน
+
+![ลำดับการทำงานโหมดจอ QR ชำระเงิน](docs/flow-payment-qr.png)
 
 ```
  POS แคชเชียร์ ──เขียน──▶ payment_display/{สาขา} ◀──อ่านทุก 1.5 วินาที── จอ ESP32 หน้าเคาน์เตอร์
