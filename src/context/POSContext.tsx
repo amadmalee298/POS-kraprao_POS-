@@ -359,7 +359,7 @@ interface POSContextType {
   addExpense: (expense: Omit<Expense, 'id'>) => Expense;
   updateExpense: (expenseId: string, patch: Partial<Expense>) => void;
   deleteExpense: (expenseId: string) => void;
-  addIncome: (income: Omit<OtherIncome, 'id'>) => void;
+  addIncome: (income: Omit<OtherIncome, 'id'>) => OtherIncome;
   updateIncome: (incomeOrId: string | OtherIncome, updates?: Partial<OtherIncome>) => void;
   deleteIncome: (incomeId: string) => void;
 
@@ -3887,6 +3887,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.warn('[POSContext] Failed to sync income to Firestore:', err);
       });
     }
+  return newInc;
   };
 
   const updateIncome = (arg1: string | OtherIncome, arg2?: Partial<OtherIncome>) => {

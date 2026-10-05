@@ -3,12 +3,18 @@ import { Inbox } from 'lucide-react';
 import { getStoredCredentials } from '../../services/notificationService';
 import { clientClaudeKey, vercelBase } from '../../services/receiptScan';
 import { INBOX_STATUS_EVENT, inboxEnabledHere, readInboxStatus, setInboxEnabledHere } from '../../services/telegramInbox';
+import { BotMode, readBotMode, writeBotMode } from '../../services/telegramBot';
 import { hasBackend } from '../../utils/apiClient';
 
 /** Switch this device on as the one that receives receipt photos from Telegram, with setup steps. */
 export const TelegramInboxSettings: React.FC = () => {
   const [enabled, setEnabled] = useState(inboxEnabledHere);
   const [status, setStatus] = useState(readInboxStatus);
+  const [mode, setMode] = useState<BotMode>(readBotMode);
+  const chooseMode = (m: BotMode) => {
+    writeBotMode(m);
+    setMode(m);
+  };
 
   useEffect(() => {
     const refresh = () => {
@@ -26,7 +32,7 @@ export const TelegramInboxSettings: React.FC = () => {
     <div className="bg-slate-900 border border-slate-800 p-5 rounded-3xl space-y-3 shadow-xl text-xs text-slate-300">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sky-300 font-bold text-sm">
-          <Inbox className="w-5 h-5" /> รับบิลจาก Telegram (ส่งรูปใบเสร็จ/บิลเงินสด → รออนุมัติ)
+          <Inbox className="w-5 h-5" /> บอทบันทึกบัญชีใน Telegram (ส่งสลิป/บิล หรือพิมพ์จด)
         </div>
         <button
           type="button"
@@ -40,16 +46,37 @@ export const TelegramInboxSettings: React.FC = () => {
         </button>
       </div>
       <p className="text-slate-400">
-        เปิดที่ <strong>เครื่องเดียว</strong> ที่เปิดแอปค้างไว้ในร้าน (เช่น แท็บเล็ตแคชเชียร์) เครื่องนี้จะเช็กบอททุก 20 วินาที อ่านยอดด้วย AI
-        แล้วส่งเข้า “การเงิน → บิลจาก Telegram” ให้ผู้จัดการอนุมัติ
+        เปิดที่ <strong>เครื่องเดียว</strong> ที่เปิดแอปค้างไว้ในร้าน (เช่น แท็บเล็ตแคชเชียร์) เครื่องนี้จะคอยรับข้อความจากบอท อ่านสลิป/บิลด้วย AI
+        แล้วตอบกลับเป็นการ์ดสรุปพร้อมปุ่ม ดูใบแทนใบเสร็จ · เพิ่มรูป · แก้ไข · ลบ เหมือนบอทบัญชีใน LINE
       </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="วิธีบันทึกบิลจาก Telegram">
+        {(
+          [
+            ['auto', 'บันทึกทันที (แนะนำ)', 'ส่งสลิปแล้วบันทึกเป็นรายจ่ายเลย สร้างใบรับรองแทนใบเสร็จให้อัตโนมัติ แก้ไข/ลบได้จากปุ่มในแชท'],
+            ['approve', 'รอผู้จัดการอนุมัติ', 'บิลเข้า “การเงิน → บิลจาก Telegram” ให้ผู้จัดการตรวจก่อน และรับของเข้าสต็อกได้ตอนอนุมัติ']
+          ] as [BotMode, string, string][]
+        ).map(([m, label, hint]) => (
+          <button
+            key={m}
+            type="button"
+            role="radio"
+            aria-checked={mode === m}
+            onClick={() => chooseMode(m)}
+            className={`text-left p-3 rounded-2xl border transition ${mode === m ? 'border-sky-500 bg-sky-950/40 text-sky-100' : 'border-slate-700 text-slate-300'}`}
+          >
+            <div className="font-bold">{mode === m ? '◉' : '○'} {label}</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">{hint}</div>
+          </button>
+        ))}
+      </div>
 
       {enabled && (
         <div className={`p-3 rounded-xl border ${status.error ? 'bg-rose-950/40 border-rose-800/60 text-rose-200' : 'bg-emerald-950/30 border-emerald-700/40 text-emerald-200'}`}>
           {status.error
             ? `ยังรับบิลไม่ได้: ${status.error}`
             : status.lastCheck
-              ? `กำลังรับบิล · เช็กล่าสุด ${new Date(status.lastCheck).toLocaleTimeString('th-TH')}`
+              ? `บอททำงานอยู่ · เช็กล่าสุด ${new Date(status.lastCheck).toLocaleTimeString('th-TH')}`
               : 'กำลังเริ่ม...'}
         </div>
       )}
@@ -69,14 +96,26 @@ export const TelegramInboxSettings: React.FC = () => {
       <details className="rounded-2xl bg-slate-950 border border-slate-800 p-3">
         <summary className="font-bold cursor-pointer">วิธีตั้งค่า</summary>
         <ol className="list-decimal pl-5 mt-2 space-y-1.5">
-          <li>ใส่ Telegram Bot Token และ Group Chat ID ด้านบน แล้วกดบันทึก (ใช้บอทและกลุ่มเดียวกับการแจ้งเตือน)</li>
+          <li>ใส่ Telegram Bot Token และ Group Chat ID ด้านบน แล้วกดบันทึก (ใช้บอทและกลุ่มเดียวกับการแจ้งเตือน หรือใช้แชทส่วนตัวกับบอทก็ได้)</li>
           <li>
-            ถ้าส่งรูปในกลุ่ม: ใน Telegram คุยกับ <strong>@BotFather</strong> พิมพ์ /setprivacy เลือกบอทของร้าน แล้วเลือก <strong>Disable</strong> (ไม่เช่นนั้นบอทจะไม่เห็นรูปในกลุ่ม)
+            ถ้าใช้ในกลุ่ม: ใน Telegram คุยกับ <strong>@BotFather</strong> พิมพ์ /setprivacy เลือกบอทของร้าน แล้วเลือก <strong>Disable</strong> (ไม่เช่นนั้นบอทจะไม่เห็นรูปและข้อความในกลุ่ม)
             หรือตั้งบอทเป็นแอดมินของกลุ่ม
           </li>
-          <li>เปิดสวิตช์ด้านบนที่เครื่องที่เปิดแอปค้างไว้</li>
-          <li>ส่งรูปใบเสร็จหรือบิลเงินสดเข้ากลุ่ม บอทจะตอบว่า “รับบิลแล้ว รออนุมัติ” พร้อมยอดที่อ่านได้ ถ้าเป็นเงินรับ ให้พิมพ์ “รายรับ” ใต้รูป</li>
-          <li>ผู้จัดการเปิด “การเงิน → บิลจาก Telegram” ตรวจ แก้ไข แล้วกดอนุมัติ ระบบบันทึกเป็นค่าใช้จ่าย/รายรับพร้อมรูปบิล และบอทแจ้งกลับในกลุ่ม</li>
+          <li>เปิดสวิตช์ด้านบนที่เครื่องที่เปิดแอปค้างไว้ แล้วพิมพ์ <strong>/menu</strong> ในแชท จะมีปุ่มเมนูขึ้นใต้ช่องพิมพ์</li>
+          <li>
+            <strong>ส่งบิล:</strong> ส่งรูปสลิปโอนเงิน ใบเสร็จ หรือบิลเงินสด บอทตอบ “✅ บันทึกเรียบร้อย” พร้อมการ์ดสรุป (ยอด วันที่ หมวดหมู่ ร้านค้า เอกสาร)
+            ถ้าเป็นเงินรับ ให้พิมพ์ “รายรับ” ใต้รูป
+          </li>
+          <li>
+            <strong>พิมพ์จด:</strong> พิมพ์ <code>จ่าย ค่าผัก 135 บาท ร้านค้า ป้าแดง</code> หรือ <code>รับ 500 ค่าจัดเลี้ยง</code> (ใส่ <code>วันที่ 5/10/69</code> ได้ ไม่ใส่ = วันนี้)
+          </li>
+          <li>
+            <strong>ปุ่มใต้การ์ด:</strong> 📄 ดูใบแทนใบเสร็จ (ส่ง PDF ในแชท) · ➕ เพิ่มรูปสินค้า · ✏️ แก้ไข หมวดหมู่/ยอด/รายการ/วันที่/ร้านค้า/โน้ต · 🗑 ลบ
+          </li>
+          <li>
+            <strong>เมนู:</strong> 📊 สรุปวันนี้ / 📅 สรุปเดือนนี้ (ยอดขาย รายรับ รายจ่าย คงเหลือ) · 🧾 รายการล่าสุด · 📁 Google Drive (พิมพ์ “ขอ link google drive” ก็ได้)
+          </li>
+          <li>ลายเซ็นผู้เบิกและผู้อนุมัติบนใบรับรองแทนใบเสร็จ เซ็นได้ในหน้า “การเงิน → ค่าใช้จ่าย” ของระบบ POS</li>
         </ol>
       </details>
     </div>

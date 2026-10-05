@@ -3,6 +3,7 @@ import { blobToBase64, htmlToPdfBlob } from '../utils/htmlToPdf';
 import { documentHtml, type Party } from '../utils/staffDocs';
 import { expenseDocName, expenseDocPages, expenseDriveFolder } from '../utils/substituteReceipt';
 import { saveFileToDrive } from './sheetsScript';
+import { DRIVE_FOLDER_KEY } from './telegramBot';
 
 /**
  * An expense's documents into the shop's Google Drive (through the shop's Apps Script):
@@ -27,6 +28,12 @@ export async function saveExpenseToDrive(e: Expense, shop: Party & { phone?: str
     // A script from before Drive support answers without a file link
     if (!r.fileUrl) throw new Error('โค้ด Apps Script ยังเป็นเวอร์ชันเก่า: คัดลอกโค้ดใหม่จากหน้าตั้งค่า Google Sheets แล้วเผยแพร่เวอร์ชันใหม่');
     saved.push({ name, url: r.fileUrl, savedAt: new Date().toISOString() });
+    // Remembered for the Telegram bot's "ขอ link google drive"
+    try {
+      if (r.folderUrl) localStorage.setItem(DRIVE_FOLDER_KEY, r.folderUrl);
+    } catch {
+      // storage unavailable
+    }
   };
 
   const isPdfProof = !!e.receiptImage?.startsWith('data:application/pdf');

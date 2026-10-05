@@ -26,13 +26,19 @@ export function telegramForm(params: Record<string, unknown>): URLSearchParams {
   return form;
 }
 
-export async function telegramCall<T = any>(token: string, method: string, params: Record<string, unknown> = {}): Promise<T> {
+export async function telegramCall<T = any>(token: string, method: string, params: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
   // Sent as a form (a "simple" request): Telegram answers the browser's CORS preflight for JSON
   // with an error status, so JSON requests from a web page are blocked
-  const res = await fetch(`${API}/bot${cleanBotToken(token)}/${method}`, { method: 'POST', body: telegramForm(params) });
+  const res = await fetch(`${API}/bot${cleanBotToken(token)}/${method}`, { method: 'POST', body: telegramForm(params), signal });
   const data = await res.json().catch(() => ({}));
   if (!data.ok) {
-    if (data.error_code === 409) throw new Error('บอทนี้ตั้ง webhook ไว้ที่อื่น จึงรับรูปแบบนี้ไม่ได้ (ต้องลบ webhook ก่อน)');
+    if (data.error_code === 409) {
+      throw new Error(
+        /webhook/i.test(data.description || '')
+          ? 'บอทนี้ตั้ง webhook ไว้ที่อื่น จึงรับรูปแบบนี้ไม่ได้ (ต้องลบ webhook ก่อน)'
+          : 'มีอีกเครื่องเปิดรับบิลจาก Telegram อยู่ (เปิดได้ทีละเครื่อง)'
+      );
+    }
     if (data.error_code === 401) throw new Error('Telegram Bot Token ไม่ถูกต้อง');
     throw new Error(data.description || `Telegram ตอบกลับผิดพลาด (${res.status})`);
   }
