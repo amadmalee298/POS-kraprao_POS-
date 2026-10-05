@@ -876,6 +876,18 @@ export const fetchRecentOrdersFromFirestore = fetchCentralOrdersFromFirestore;
 /**
  * Push a single expense entry to central Firebase
  */
+/**
+ * Purchase photos that fit in the expense's cloud record (Firestore documents hold at most 1 MB):
+ * when they would not fit they stay on this device (and in Google Drive) only.
+ */
+function cloudPurchaseImages(expense: Expense, maxEach = Infinity): { name: string; dataUrl: string }[] | null {
+  const imgs = (expense.purchaseImages || []).filter(i => i.dataUrl && i.dataUrl.length <= maxEach);
+  if (imgs.length === 0) return null;
+  const others = (expense.receiptImage?.length || 0) + JSON.stringify(expense.substituteReceipt || {}).length;
+  const total = imgs.reduce((t, i) => t + i.dataUrl.length, 0);
+  return others + total < 900_000 ? imgs : null;
+}
+
 export async function syncExpenseToFirestore(expense: Expense, branch?: Branch): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
   await waitForFirebaseAuth();
@@ -901,6 +913,7 @@ export async function syncExpenseToFirestore(expense: Expense, branch?: Branch):
       receiptImageName: expense.receiptImageName || null,
       substituteReceipt: expense.substituteReceipt || null,
       driveFiles: expense.driveFiles || null,
+      purchaseImages: cloudPurchaseImages(expense),
       syncedAt: nowIso,
       updatedAt: serverTimestamp()
     };
@@ -932,6 +945,7 @@ export async function syncExpenseToFirestore(expense: Expense, branch?: Branch):
             receiptImageName: expense.receiptImageName || null,
       substituteReceipt: expense.substituteReceipt || null,
       driveFiles: expense.driveFiles || null,
+      purchaseImages: cloudPurchaseImages(expense, 150_000),
             syncedAt: new Date().toISOString(),
             updatedAt: serverTimestamp()
           },
@@ -999,6 +1013,7 @@ export async function syncExpensesBatchToFirestore(expenses: Expense[], branch?:
           receiptImageName: expense.receiptImageName || null,
       substituteReceipt: expense.substituteReceipt || null,
       driveFiles: expense.driveFiles || null,
+      purchaseImages: cloudPurchaseImages(expense, 150_000),
           syncedAt: nowIso,
           updatedAt: serverTimestamp()
         },
@@ -1146,7 +1161,8 @@ export function subscribeToCentralExpenses(
             receiptImage: d.receiptImage || undefined,
             receiptImageName: d.receiptImageName || undefined,
             substituteReceipt: d.substituteReceipt || undefined,
-            driveFiles: Array.isArray(d.driveFiles) ? d.driveFiles : undefined
+            driveFiles: Array.isArray(d.driveFiles) ? d.driveFiles : undefined,
+            purchaseImages: Array.isArray(d.purchaseImages) && d.purchaseImages.length ? d.purchaseImages : undefined
           });
         });
         onUpdate(list, removedIds);

@@ -197,6 +197,14 @@ export const GovFilingPanel: React.FC = () => {
         expenses
           .filter(e => (branchId === 'all' || e.branchId === branchId) && e.date.startsWith(String(packYear)) && e.receiptImage?.startsWith('data:'))
           .forEach(e => (entries[`ใบเสร็จค่าใช้จ่าย/${receiptFileName(e)}`] = dataUrlBytes(e.receiptImage!)));
+        // Photos of what was bought, next to the receipt
+        expenses
+          .filter(e => (branchId === 'all' || e.branchId === branchId) && e.date.startsWith(String(packYear)) && e.purchaseImages?.length)
+          .forEach(e =>
+            e.purchaseImages!.forEach((img, i) => {
+              if (img.dataUrl.startsWith('data:image/')) entries[`ใบเสร็จค่าใช้จ่าย/${receiptFileName({ ...e, receiptImage: img.dataUrl }).replace(/\.(jpg|png)$/, `_สินค้า${i + 1}.$1`)}`] = dataUrlBytes(img.dataUrl);
+            })
+          );
       }
       const zip = zipSync(entries, { level: 6 });
       const url = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));

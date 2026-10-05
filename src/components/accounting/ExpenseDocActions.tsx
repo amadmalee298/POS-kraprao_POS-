@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { CloudUpload, ExternalLink, FileSignature, Loader2, PenLine } from 'lucide-react';
+import { CloudUpload, ExternalLink, FileSignature, Image as ImageIcon, Loader2, PenLine } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { useSharedList } from '../../hooks/useSharedList';
 import { SavedSignature, SignaturePad } from '../common/SignaturePad';
@@ -7,7 +7,7 @@ import { driveEnabled, hasExpenseDocs, saveExpenseToDrive } from '../../services
 import type { Expense } from '../../types';
 import { sellerInfo } from '../../utils/seller';
 import { documentHtml, printDocument } from '../../utils/staffDocs';
-import { proofPage, substituteReceiptPage } from '../../utils/substituteReceipt';
+import { expenseDocPages } from '../../utils/substituteReceipt';
 
 /** Saving an expense's documents to Google Drive, shared by the expense form and the list */
 export function useExpenseDrive() {
@@ -60,8 +60,8 @@ export function useSavedSignatures() {
 
 /** Print the ใบรับรองแทนใบเสร็จรับเงิน (with the payment proof page when there is one) */
 export function printSubstituteReceipt(e: Expense, shop: ReturnType<typeof sellerInfo>): boolean {
-  const pages = [substituteReceiptPage(e, shop), proofPage(e)].filter(Boolean);
-  return printDocument(documentHtml(`ใบรับรองแทนใบเสร็จ ${e.substituteReceipt?.docNo || ''}`, pages));
+  const pages = expenseDocPages(e, shop);
+  return printDocument(documentHtml(e.substituteReceipt ? `ใบรับรองแทนใบเสร็จ ${e.substituteReceipt.docNo}` : `หลักฐานรายจ่าย ${e.title}`, pages));
 }
 
 /** Buttons on an expense: the substitute receipt, and its copy in Google Drive */
@@ -71,7 +71,7 @@ export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<t
   const [signing, setSigning] = useState<'spender' | 'approver' | null>(null);
   const saved = e.driveFiles?.[0];
   const sr = e.substituteReceipt;
-  if (!sr && !saved && !(drive.enabled && hasExpenseDocs(e))) return null;
+  if (!sr && !saved && !e.purchaseImages?.length && !(drive.enabled && hasExpenseDocs(e))) return null;
 
   const sign = (who: 'spender' | 'approver', dataUrl: string, remember: boolean) => {
     if (!sr) return;
@@ -117,6 +117,16 @@ export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<t
           className="h-8 px-2 rounded-lg border border-amber-700/60 bg-amber-950/30 text-amber-200 text-[11px] inline-flex items-center gap-1"
         >
           <FileSignature className="w-3.5 h-3.5" /> ใบรับรองแทนใบเสร็จ {e.substituteReceipt.docNo}
+        </button>
+      )}
+      {!sr && !!e.purchaseImages?.length && (
+        <button
+          type="button"
+          onClick={() => printSubstituteReceipt(e, sellerInfo(settings, currentBranch))}
+          title="ดู / พิมพ์หลักฐานการซื้อ"
+          className="h-8 px-2 rounded-lg border border-slate-700 text-slate-300 text-[11px] inline-flex items-center gap-1"
+        >
+          <ImageIcon className="w-3.5 h-3.5" /> รูปการซื้อ ({e.purchaseImages.length})
         </button>
       )}
       {saved ? (

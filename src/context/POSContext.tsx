@@ -1031,8 +1031,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               hasNew = true;
             } else {
               const existing = localMap.get(ce.id)!;
-              if (existing.amount !== ce.amount || existing.category !== ce.category || existing.title !== ce.title || existing.note !== ce.note) {
-                localMap.set(ce.id, { ...existing, ...ce });
+              // Signatures and Drive links added on another device count as changes too
+              const docsChanged =
+                JSON.stringify(existing.substituteReceipt || null) !== JSON.stringify(ce.substituteReceipt || null) ||
+                JSON.stringify(existing.driveFiles || null) !== JSON.stringify(ce.driveFiles || null);
+              if (docsChanged || existing.amount !== ce.amount || existing.category !== ce.category || existing.title !== ce.title || existing.note !== ce.note) {
+                // Pictures the cloud copy left out (too big for it) stay as they are on this device
+                localMap.set(ce.id, {
+                  ...existing,
+                  ...ce,
+                  receiptImage: ce.receiptImage || existing.receiptImage,
+                  purchaseImages: ce.purchaseImages || existing.purchaseImages
+                });
                 hasNew = true;
               }
             }
@@ -2362,8 +2372,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.warn('[POS Storage Sync] ⚠️ LocalStorage quota exceeded or save error. Performing self-healing storage compaction...', storageErr);
         // Prune heavy image payloads while keeping all core business, stock, financial and accounting data 100% intact
         const compactedExpenses = expenses.map(e => {
-          if (e.receiptImage && e.receiptImage.length > 50000) {
-            return { ...e, receiptImage: undefined };
+          if ((e.receiptImage && e.receiptImage.length > 50000) || e.purchaseImages?.length) {
+            return { ...e, receiptImage: e.receiptImage && e.receiptImage.length > 50000 ? undefined : e.receiptImage, purchaseImages: undefined };
           }
           return e;
         });
@@ -3793,7 +3803,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       } catch (e) {
         console.warn('Failed to cache expense immediately, retrying compact', e);
         try {
-          const compact = updated.map(item => (item.receiptImage && item.receiptImage.length > 50000) ? { ...item, receiptImage: undefined } : item);
+          const compact = updated.map(item =>
+            (item.receiptImage && item.receiptImage.length > 50000) || item.purchaseImages?.length
+              ? { ...item, receiptImage: item.receiptImage && item.receiptImage.length > 50000 ? undefined : item.receiptImage, purchaseImages: undefined }
+              : item
+          );
           localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(compact));
         } catch (e2) {
           console.warn('Failed to cache compact expenses', e2);
