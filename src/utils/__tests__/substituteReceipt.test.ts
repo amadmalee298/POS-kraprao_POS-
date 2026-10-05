@@ -37,6 +37,16 @@ describe('ใบรับรองแทนใบเสร็จรับเง�
     expect(html).toContain('ผู้อนุมัติ');
   });
 
+  it('shows drawn signatures above the lines and the approval date', () => {
+    const sig = 'data:image/png;base64,iVBORw0KGgo=';
+    const signed = substituteReceiptPage(exp({ substituteReceipt: { docNo: '2569/10-001', spender: 'อาห์มัด', approver: 'เจ้าของ', spenderSignature: sig, approverSignature: sig, approvedAt: '2026-10-06' } }), shop);
+    expect(signed.match(/alt="ลายเซ็น"/g)).toHaveLength(2);
+    expect(signed).toContain('6 ตุลาคม 2569');
+    // Unsigned: blank space kept so the paper can be signed by hand
+    expect(substituteReceiptPage(exp(), shop)).not.toContain('alt="ลายเซ็น"');
+    expect(substituteReceiptPage(exp({ substituteReceipt: { docNo: 'x', spender: 'a', spenderSignature: 'javascript:alert(1)' } }), shop)).not.toContain('javascript:');
+  });
+
   it('numbers documents per month', () => {
     const list = [exp(), exp({ substituteReceipt: { docNo: '2569/10-007', spender: '' } }), exp({ date: '2026-09-30', substituteReceipt: { docNo: '2569/09-050', spender: '' } })];
     expect(nextSubstituteNo(list, '2026-10-20')).toBe('2569/10-008');

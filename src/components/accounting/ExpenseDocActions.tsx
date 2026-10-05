@@ -1,6 +1,8 @@
 import React, { useCallback, useState } from 'react';
-import { CloudUpload, ExternalLink, FileSignature, Loader2 } from 'lucide-react';
+import { CloudUpload, ExternalLink, FileSignature, Loader2, PenLine } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
+import { useSharedList } from '../../hooks/useSharedList';
+import { SavedSignature, SignaturePad } from '../common/SignaturePad';
 import { driveEnabled, hasExpenseDocs, saveExpenseToDrive } from '../../services/expenseDrive';
 import type { Expense } from '../../types';
 import { sellerInfo } from '../../utils/seller';
@@ -33,7 +35,27 @@ export function useExpenseDrive() {
     [settings, currentBranch, updateExpense]
   );
 
-  return { enabled, save, busyId, message, setMessage };
+  // One list for the whole page (each row would otherwise open its own cloud listener)
+  const signatures = useSavedSignatures();
+
+  return { enabled, save, busyId, message, setMessage, signatures };
+}
+
+/** Signatures remembered per person, shared by the shop's devices */
+export function useSavedSignatures() {
+  const [list, setList] = useSharedList<SavedSignature>('signatures', 'POS_SIGNATURES');
+  const find = useCallback((name?: string) => (name ? list.find(s => s.name.trim() === name.trim()) : undefined), [list]);
+  const remember = useCallback(
+    (name: string, dataUrl: string) => {
+      if (!name.trim()) return;
+      setList(prev => [
+        { id: `sig-${Date.now()}`, name: name.trim(), dataUrl, updatedAt: new Date().toISOString() },
+        ...prev.filter(s => s.name.trim() !== name.trim())
+      ]);
+    },
+    [setList]
+  );
+  return { find, remember };
 }
 
 /** Print the ใบรับรองแทนใบเสร็จรับเงิน (with the payment proof page when there is one) */
@@ -44,11 +66,49 @@ export function printSubstituteReceipt(e: Expense, shop: ReturnType<typeof selle
 
 /** Buttons on an expense: the substitute receipt, and its copy in Google Drive */
 export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<typeof useExpenseDrive> }> = ({ expense: e, drive }) => {
-  const { settings, currentBranch } = usePOS();
+  const { settings, currentBranch, updateExpense, permissions } = usePOS();
+  const signatures = drive.signatures;
+  const [signing, setSigning] = useState<'spender' | 'approver' | null>(null);
   const saved = e.driveFiles?.[0];
-  if (!e.substituteReceipt && !saved && !(drive.enabled && hasExpenseDocs(e))) return null;
+  const sr = e.substituteReceipt;
+  if (!sr && !saved && !(drive.enabled && hasExpenseDocs(e))) return null;
+
+  const sign = (who: 'spender' | 'approver', dataUrl: string, remember: boolean) => {
+    if (!sr) return;
+    const name = (who === 'spender' ? sr.spender : sr.approver) || '';
+    if (remember) signatures.remember(name, dataUrl);
+    const next: Expense = {
+      ...e,
+      substituteReceipt: who === 'spender' ? { ...sr, spenderSignature: dataUrl } : { ...sr, approverSignature: dataUrl, approvedAt: new Date().toISOString().slice(0, 10) }
+    };
+    updateExpense(e.id, { substituteReceipt: next.substituteReceipt });
+    setSigning(null);
+    // The copy in Drive is replaced with the signed one
+    if (drive.enabled) void drive.save(next);
+  };
+
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
+      {sr && !sr.spenderSignature && (
+        <button type="button" onClick={() => setSigning('spender')} title="เซ็นชื่อผู้เบิกจ่าย" className="h-8 px-2 rounded-lg border border-sky-700/60 bg-sky-950/30 text-sky-200 text-[11px] inline-flex items-center gap-1">
+          <PenLine className="w-3.5 h-3.5" /> เซ็นผู้เบิก
+        </button>
+      )}
+      {/* Approving is for the owner / managers (who may open the settings) */}
+      {sr && !sr.approverSignature && permissions.canAccessSettings && (
+        <button type="button" onClick={() => setSigning('approver')} title="เซ็นอนุมัติ" className="h-8 px-2 rounded-lg border border-violet-700/60 bg-violet-950/30 text-violet-200 text-[11px] inline-flex items-center gap-1">
+          <PenLine className="w-3.5 h-3.5" /> เซ็นอนุมัติ
+        </button>
+      )}
+      {signing && sr && (
+        <SignaturePad
+          title={signing === 'spender' ? 'ลายเซ็นผู้เบิกจ่าย' : 'ลายเซ็นผู้อนุมัติ'}
+          name={(signing === 'spender' ? sr.spender : sr.approver) || ''}
+          saved={signatures.find(signing === 'spender' ? sr.spender : sr.approver)}
+          onSave={(d, r) => sign(signing, d, r)}
+          onClose={() => setSigning(null)}
+        />
+      )}
       {e.substituteReceipt && (
         <button
           type="button"

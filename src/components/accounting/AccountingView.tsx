@@ -25,6 +25,7 @@ import {
 } from '../../utils/accounting';
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import { ExpenseDocActions, ExpenseDriveBulk, useExpenseDrive } from './ExpenseDocActions';
+import { SignaturePad } from '../common/SignaturePad';
 import { nextSubstituteNo } from '../../utils/substituteReceipt';
 import { hasExpenseDocs } from '../../services/expenseDrive';
 import {
@@ -363,7 +364,7 @@ const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boo
 };
 
 export const AccountingView: React.FC = () => {
-  const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [], currentUser, users } = usePOS();
+  const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [], currentUser, users, permissions } = usePOS();
   const expenseDrive = useExpenseDrive();
 
   const {
@@ -489,6 +490,9 @@ export const AccountingView: React.FC = () => {
   const [expSpender, setExpSpender] = useState('');
   const [expPayee, setExpPayee] = useState('');
   const [expApprover, setExpApprover] = useState('');
+  const [expSpenderSig, setExpSpenderSig] = useState('');
+  const [expApproverSig, setExpApproverSig] = useState('');
+  const [signingFor, setSigningFor] = useState<'spender' | 'approver' | null>(null);
   const [isCompressingReceipt, setIsCompressingReceipt] = useState(false);
   const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<{
     url: string;
@@ -646,6 +650,8 @@ export const AccountingView: React.FC = () => {
     setExpReceiptName(null);
     setExpSubstitute(null);
     setExpPayee('');
+    setExpSpenderSig('');
+    setExpApproverSig('');
     setExpAutoUpdateStock(false);
     setExpStockEntries([]);
     setExpenseFormError(null);
@@ -1295,7 +1301,10 @@ export const AccountingView: React.FC = () => {
               docNo: nextSubstituteNo(expenses, chosenDate),
               spender: expSpender.trim() || currentUser?.name || '',
               approver: expApprover.trim() || ownerName || undefined,
-              payee: expPayee.trim() || undefined
+              payee: expPayee.trim() || undefined,
+              spenderSignature: expSpenderSig || undefined,
+              approverSignature: expApproverSig || undefined,
+              approvedAt: expApproverSig ? chosenDate : undefined
             }
           }
         : {})
@@ -1361,6 +1370,8 @@ export const AccountingView: React.FC = () => {
     setExpReceiptName(null);
     setExpSubstitute(null);
     setExpPayee('');
+    setExpSpenderSig('');
+    setExpApproverSig('');
     setExpAutoUpdateStock(false);
     setExpStockEntries([]);
   };
@@ -5289,6 +5300,42 @@ export const AccountingView: React.FC = () => {
                       <input value={expApprover} onChange={e => setExpApprover(e.target.value)} placeholder={users.find(u => u.role === 'admin')?.name || 'เจ้าของร้าน'} className="mt-1 w-full h-10 px-3 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs" />
                     </label>
                   </div>
+                )}
+                {(expSubstitute ?? !expIncludeVat) && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {([
+                      ['spender', 'เซ็นชื่อผู้เบิกจ่าย', expSpenderSig, setExpSpenderSig],
+                      ...(permissions.canAccessSettings ? [['approver', 'เซ็นอนุมัติ', expApproverSig, setExpApproverSig]] : [])
+                    ] as [('spender' | 'approver'), string, string, (v: string) => void][]).map(([who, label, sig, setSig]) => (
+                      <span key={who} className="inline-flex items-center gap-1.5">
+                        {sig ? (
+                          <>
+                            <img src={sig} alt={label} className="h-10 max-w-[120px] object-contain bg-white rounded-lg px-1.5" />
+                            <button type="button" onClick={() => setSig('')} className="text-[10px] text-rose-300 underline">ลบ</button>
+                          </>
+                        ) : (
+                          <button type="button" onClick={() => setSigningFor(who)} className="h-9 px-3 rounded-lg border border-sky-700/60 bg-sky-950/30 text-sky-200 text-[11px] font-bold">
+                            ✍️ {label}
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                    <span className="text-[10px] text-slate-500">เซ็นทีหลังได้ที่รายการค่าใช้จ่าย</span>
+                  </div>
+                )}
+                {signingFor && (
+                  <SignaturePad
+                    title={signingFor === 'spender' ? 'ลายเซ็นผู้เบิกจ่าย' : 'ลายเซ็นผู้อนุมัติ'}
+                    name={signingFor === 'spender' ? expSpender.trim() || currentUser?.name || '' : expApprover.trim() || users.find(u => u.role === 'admin')?.name || ''}
+                    saved={expenseDrive.signatures.find(signingFor === 'spender' ? expSpender.trim() || currentUser?.name : expApprover.trim() || users.find(u => u.role === 'admin')?.name)}
+                    onSave={(dataUrl, remember) => {
+                      const name = signingFor === 'spender' ? expSpender.trim() || currentUser?.name || '' : expApprover.trim() || users.find(u => u.role === 'admin')?.name || '';
+                      if (remember) expenseDrive.signatures.remember(name, dataUrl);
+                      (signingFor === 'spender' ? setExpSpenderSig : setExpApproverSig)(dataUrl);
+                      setSigningFor(null);
+                    }}
+                    onClose={() => setSigningFor(null)}
+                  />
                 )}
                 {expenseDrive.enabled && <p className="text-[10px] text-emerald-300/80">บันทึกแล้วจะเก็บเอกสารลง Google Drive ให้อัตโนมัติ</p>}
               </div>

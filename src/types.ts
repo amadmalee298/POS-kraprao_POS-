@@ -308,7 +308,16 @@ export interface Expense {
    * No receipt from the seller (market stalls, street vendors): the shop issues its own
    * ใบรับรองแทนใบเสร็จรับเงิน, signed by the person who paid and the approver.
    */
-  substituteReceipt?: { docNo: string; spender: string; approver?: string; payee?: string };
+  substituteReceipt?: {
+    docNo: string;
+    spender: string;
+    approver?: string;
+    payee?: string;
+    /** Signatures drawn in the app (small PNG data URLs) */
+    spenderSignature?: string;
+    approverSignature?: string;
+    approvedAt?: string;
+  };
   /** Copies of this expense's documents saved in the shop's Google Drive */
   driveFiles?: { name: string; url: string; savedAt: string }[];
 }

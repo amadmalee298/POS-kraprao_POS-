@@ -56,12 +56,18 @@ ${shop.phone ? `โทร: ${esc(shop.phone)}` : ''}
 <p style="font-size:13px;line-height:1.8">ข้าพเจ้า ${esc(sr?.spender || '......................................')} (ผู้เบิกจ่าย)<br>
 ขอรับรองว่า รายจ่ายข้างต้นนี้ไม่อาจเรียกเก็บใบเสร็จรับเงินจากผู้รับได้ และข้าพเจ้าได้จ่ายไปในงานของ ${esc(shop.name || 'กิจการ')} โดยแท้
 ตั้งแต่วันที่ ${esc(thaiShortDate(e.date))} ถึงวันที่ ${esc(thaiShortDate(e.date))}</p>
-<div class="sig" style="margin-top:22mm;font-size:13px">
-<div>______________________________<br>(${esc(spender)})<br>ผู้เบิกจ่าย</div>
-<div>______________________________<br>(${esc(approver)})<br>ผู้อนุมัติ</div>
+<div class="sig" style="margin-top:14mm;font-size:13px">
+<div>${signatureImg(sr?.spenderSignature)}______________________________<br>(${esc(spender)})<br>ผู้เบิกจ่าย</div>
+<div>${signatureImg(sr?.approverSignature)}______________________________<br>(${esc(approver)})<br>ผู้อนุมัติ${sr?.approvedAt ? `<br><span class="small muted">${esc(thaiLongDate(sr.approvedAt))}</span>` : ''}</div>
 </div>
 </div>`;
 }
+
+/** A drawn signature sitting on the signature line (an empty box of the same height when unsigned) */
+const signatureImg = (dataUrl?: string) =>
+  dataUrl?.startsWith('data:image/')
+    ? `<img src="${dataUrl}" alt="ลายเซ็น" style="display:block;height:16mm;max-width:60mm;margin:0 auto -3mm;object-fit:contain">`
+    : '<div style="height:13mm"></div>';
 
 /** The payment proof (transfer slip / photo of the bill) on its own page */
 export function proofPage(e: Pick<Expense, 'title' | 'date' | 'amount' | 'receiptImage'>, heading = 'หลักฐานการชำระเงิน'): string {
