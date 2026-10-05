@@ -803,6 +803,10 @@ export interface PendingReceipt {
   decidedBy?: string;
   decidedAt?: string;
   recordId?: string; // expense or income created on approval
+  /** A smaller copy of the photo, kept with the entry (Telegram keeps several sizes) */
+  storeFileId?: string;
+  /** The bot's card about this entry in the chat (updated when the entry changes) */
+  cardMessageId?: number;
 }
 
 /** A kitchen prep recipe: raw ingredients drawn from stock and cooked into a stocked item (e.g. ซอสกะเพรา, เนื้อบดปรุงสุก) */
