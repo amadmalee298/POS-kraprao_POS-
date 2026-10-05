@@ -26,6 +26,10 @@ import {
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import { ExpenseDocActions, ExpenseDriveBulk, useExpenseDrive } from './ExpenseDocActions';
 import { SignaturePad } from '../common/SignaturePad';
+import { compressImageFile } from '../../utils/imageCompressor';
+
+/** Photos of the goods bought that one expense may carry */
+const MAX_PURCHASE_PHOTOS = 3;
 import { nextSubstituteNo } from '../../utils/substituteReceipt';
 import { hasExpenseDocs } from '../../services/expenseDrive';
 import {
@@ -493,6 +497,22 @@ export const AccountingView: React.FC = () => {
   const [expSpenderSig, setExpSpenderSig] = useState('');
   const [expApproverSig, setExpApproverSig] = useState('');
   const [signingFor, setSigningFor] = useState<'spender' | 'approver' | null>(null);
+  const [expPurchaseImages, setExpPurchaseImages] = useState<{ name: string; dataUrl: string }[]>([]);
+  const [isAddingPurchasePhoto, setIsAddingPurchasePhoto] = useState(false);
+  const addPurchasePhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
+    e.target.value = '';
+    if (!files.length) return;
+    setIsAddingPurchasePhoto(true);
+    try {
+      const room = MAX_PURCHASE_PHOTOS - expPurchaseImages.length;
+      // Smaller than the payment slip: several photos must still fit in the expense's cloud record
+      const added = await Promise.all(files.slice(0, room).map(async f => ({ name: f.name || 'รูปสินค้า.jpg', dataUrl: await compressImageFile(f, 1000, 0.7) })));
+      setExpPurchaseImages(prev => [...prev, ...added].slice(0, MAX_PURCHASE_PHOTOS));
+    } finally {
+      setIsAddingPurchasePhoto(false);
+    }
+  };
   const [isCompressingReceipt, setIsCompressingReceipt] = useState(false);
   const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<{
     url: string;
@@ -652,6 +672,7 @@ export const AccountingView: React.FC = () => {
     setExpPayee('');
     setExpSpenderSig('');
     setExpApproverSig('');
+    setExpPurchaseImages([]);
     setExpAutoUpdateStock(false);
     setExpStockEntries([]);
     setExpenseFormError(null);
@@ -1295,6 +1316,7 @@ export const AccountingView: React.FC = () => {
       note: expNote.trim(),
       receiptImage: expReceiptImage || undefined,
       receiptImageName: expReceiptName || undefined,
+      purchaseImages: expPurchaseImages.length ? expPurchaseImages : undefined,
       ...(useSubstitute
         ? {
             substituteReceipt: {
@@ -1372,6 +1394,7 @@ export const AccountingView: React.FC = () => {
     setExpPayee('');
     setExpSpenderSig('');
     setExpApproverSig('');
+    setExpPurchaseImages([]);
     setExpAutoUpdateStock(false);
     setExpStockEntries([]);
   };
@@ -5467,6 +5490,44 @@ export const AccountingView: React.FC = () => {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* PHOTOS OF WHAT WAS BOUGHT */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-medium text-xs flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5 text-sky-400" /> รูปหลักฐานการซื้อสินค้า (ไม่บังคับ · สูงสุด {MAX_PURCHASE_PHOTOS} รูป)
+                  </span>
+                  {isAddingPurchasePhoto && <Loader2 className="w-4 h-4 animate-spin text-slate-400" />}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {expPurchaseImages.map((img, i) => (
+                    <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden border border-slate-700 bg-slate-950">
+                      <img src={img.dataUrl} alt={img.name} className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        aria-label={`ลบรูป ${img.name}`}
+                        onClick={() => setExpPurchaseImages(prev => prev.filter((_, k) => k !== i))}
+                        className="absolute top-1 right-1 w-6 h-6 rounded-full bg-slate-950/80 text-rose-300 flex items-center justify-center"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  {expPurchaseImages.length < MAX_PURCHASE_PHOTOS && (
+                    <>
+                      <label className="w-20 h-20 rounded-xl border border-dashed border-slate-600 text-slate-400 text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer hover:border-sky-500">
+                        <Camera className="w-5 h-5" /> ถ่ายรูป
+                        <input type="file" accept="image/*" capture="environment" className="hidden" aria-label="ถ่ายรูปหลักฐานการซื้อ" onChange={addPurchasePhotos} />
+                      </label>
+                      <label className="w-20 h-20 rounded-xl border border-dashed border-slate-600 text-slate-400 text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer hover:border-sky-500">
+                        <ImageIcon className="w-5 h-5" /> เลือกรูป
+                        <input type="file" accept="image/*" multiple className="hidden" aria-label="เลือกรูปหลักฐานการซื้อ" onChange={addPurchasePhotos} />
+                      </label>
+                    </>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500">เช่น รูปสินค้าที่ซื้อ ป้ายราคา หรือร้านค้า · แนบท้ายเอกสารและเก็บลง Google Drive ด้วย</p>
               </div>
 
               <button

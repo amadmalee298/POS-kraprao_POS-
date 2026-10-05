@@ -80,6 +80,31 @@ ${isPdf ? '<p class="small">(ไฟล์ PDF แนบแยกไว้ใน�
 </div>`;
 }
 
+/** Photos of what was bought, two to a page */
+export function purchasePhotoPages(e: Pick<Expense, 'title' | 'date' | 'amount' | 'purchaseImages'>): string[] {
+  const imgs = (e.purchaseImages || []).filter(i => i.dataUrl?.startsWith('data:image/'));
+  const pages: string[] = [];
+  for (let i = 0; i < imgs.length; i += 2) {
+    const pair = imgs.slice(i, i + 2);
+    pages.push(`<div class="page a4">
+<h2>หลักฐานการซื้อสินค้า${imgs.length > 2 ? ` (${i / 2 + 1}/${Math.ceil(imgs.length / 2)})` : ''}</h2>
+<div class="small muted">${esc(e.title)} · ${esc(thaiLongDate(e.date))} · ${money(e.amount)} บาท</div>
+${pair.map(p => `<img src="${p.dataUrl}" alt="${esc(p.name)}" style="display:block;max-width:100%;max-height:${pair.length > 1 ? 118 : 240}mm;margin:5mm auto 0;object-fit:contain">`).join('')}
+</div>`);
+  }
+  return pages;
+}
+
+/** Every page of an expense's documents: the substitute receipt, payment proof and purchase photos */
+export function expenseDocPages(e: Expense, shop: Party & { phone?: string }): string[] {
+  const isPdfProof = !!e.receiptImage?.startsWith('data:application/pdf');
+  return [
+    e.substituteReceipt ? substituteReceiptPage(e, shop) : '',
+    e.receiptImage && !isPdfProof ? proofPage(e, e.substituteReceipt ? 'หลักฐานการชำระเงิน' : 'ใบเสร็จ / หลักฐานการชำระเงิน') : '',
+    ...purchasePhotoPages(e)
+  ].filter(Boolean);
+}
+
 /** Drive folder for an expense: รายจ่าย/2569-10 */
 export const expenseDriveFolder = (date: string) => `รายจ่าย/${Number(date.slice(0, 4)) + 543}-${date.slice(5, 7)}`;
 

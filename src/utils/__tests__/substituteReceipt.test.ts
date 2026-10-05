@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { expenseDocName, expenseDriveFolder, nextSubstituteNo, proofPage, substituteReceiptPage } from '../substituteReceipt';
+import { expenseDocName, expenseDocPages, expenseDriveFolder, nextSubstituteNo, proofPage, purchasePhotoPages, substituteReceiptPage } from '../substituteReceipt';
 import { appsScriptCode, SCRIPT_VERSION } from '../../services/sheetsScript';
 import type { Expense } from '../../types';
 
@@ -56,6 +56,19 @@ describe('ใบรับรองแทนใบเสร็จรับเง�
   it('adds the payment proof page only when there is a picture', () => {
     expect(proofPage(exp())).toBe('');
     expect(proofPage(exp({ receiptImage: 'data:image/jpeg;base64,AAA' }))).toContain('<img');
+  });
+
+  it('puts purchase photos two to a page after the receipt and the slip', () => {
+    const img = (n: number) => ({ name: `p${n}.jpg`, dataUrl: `data:image/jpeg;base64,P${n}` });
+    expect(purchasePhotoPages(exp({ purchaseImages: [img(1), img(2), img(3)] }))).toHaveLength(2);
+    expect(purchasePhotoPages(exp({ purchaseImages: [img(1), { name: 'x', dataUrl: 'javascript:1' }] }))).toHaveLength(1);
+    const pages = expenseDocPages(exp({ receiptImage: 'data:image/jpeg;base64,S', purchaseImages: [img(1)] }), shop);
+    expect(pages).toHaveLength(3);
+    expect(pages[0]).toContain('ใบรับรองแทนใบเสร็จรับเงิน');
+    expect(pages[1]).toContain('หลักฐานการชำระเงิน');
+    expect(pages[2]).toContain('หลักฐานการซื้อสินค้า');
+    // A normal expense with only photos still has a document
+    expect(expenseDocPages(exp({ substituteReceipt: undefined, purchaseImages: [img(1)] }), shop)).toHaveLength(1);
   });
 
   it('names the Drive folder and file', () => {

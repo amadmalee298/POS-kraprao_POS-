@@ -318,6 +318,8 @@ export interface Expense {
     approverSignature?: string;
     approvedAt?: string;
   };
+  /** Photos showing what was bought (the goods, the stall's price board...), besides the payment proof */
+  purchaseImages?: { name: string; dataUrl: string }[];
   /** Copies of this expense's documents saved in the shop's Google Drive */
   driveFiles?: { name: string; url: string; savedAt: string }[];
 }
