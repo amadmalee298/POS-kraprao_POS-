@@ -161,6 +161,8 @@ export function toPendingData(r: VerifiedReceiptData, fallbackDate: string): Non
 export interface InboxStatus {
   lastCheck?: string;
   error?: string;
+  /** The app is in the background, so the bot waits (messages are kept by Telegram until it is back) */
+  paused?: boolean;
   /** A chat that sent photos but is not the shop's chat (shown so the owner can find its ID) */
   ignoredChatId?: string;
   ignoredChatName?: string;
@@ -201,3 +203,23 @@ export function setInboxEnabledHere(on: boolean) {
 }
 
 export const baht = (n: number) => `฿${(Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+export const KEEP_AWAKE_KEY = 'POS_TG_KEEP_AWAKE';
+
+/** Keep this device's screen on while the bot runs (a sleeping iPad stops the bot) */
+export const keepAwakeHere = (): boolean => {
+  try {
+    return localStorage.getItem(KEEP_AWAKE_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+export function setKeepAwakeHere(on: boolean) {
+  try {
+    localStorage.setItem(KEEP_AWAKE_KEY, on ? '1' : '0');
+  } catch {
+    // storage unavailable
+  }
+  window.dispatchEvent(new Event(INBOX_STATUS_EVENT));
+}

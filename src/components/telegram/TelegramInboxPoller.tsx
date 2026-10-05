@@ -12,6 +12,7 @@ import {
   INBOX_OFFSET_KEY,
   INBOX_STATUS_EVENT,
   inboxEnabledHere,
+  keepAwakeHere,
   isIncomeCaption,
   pendingId,
   photoFromUpdate,
@@ -64,6 +65,9 @@ import { expenseDocName, expenseDocPages, nextSubstituteNo } from '../../utils/s
 /** Telegram holds the request open until something arrives, so replies feel instant */
 const LONG_POLL_S = 25;
 const RETRY_MS = 20_000;
+
+/** "Load failed" (Safari), "Failed to fetch" (Chrome), "NetworkError…" (Firefox) */
+const isNetworkError = (e: any) => e instanceof TypeError || /load failed|failed to fetch|network/i.test(e?.message || '');
 const KEEP_ITEMS = 300;
 const MAX_PURCHASE_PHOTOS = 3;
 
@@ -98,9 +102,35 @@ export const TelegramInboxPoller = () => {
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const [enabled, setEnabled] = useState(inboxEnabledHere);
+  const [keepAwake, setKeepAwake] = useState(keepAwakeHere);
+
+  // The screen kept on (Wake Lock: iOS 16.4+, Android Chrome); released when the app is hidden and asked again on return
+  useEffect(() => {
+    const nav = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } };
+    if (!enabled || !keepAwake || !nav.wakeLock) return;
+    let lock: { release: () => Promise<void> } | null = null;
+    let off = false;
+    const take = () => {
+      if (document.hidden || off) return;
+      nav.wakeLock!.request('screen').then(l => {
+        if (off) void l.release();
+        else lock = l;
+      }).catch(() => {});
+    };
+    take();
+    document.addEventListener('visibilitychange', take);
+    return () => {
+      off = true;
+      document.removeEventListener('visibilitychange', take);
+      void lock?.release().catch(() => {});
+    };
+  }, [enabled, keepAwake]);
 
   useEffect(() => {
-    const onChange = () => setEnabled(inboxEnabledHere());
+    const onChange = () => {
+      setEnabled(inboxEnabledHere());
+      setKeepAwake(keepAwakeHere());
+    };
     window.addEventListener(INBOX_STATUS_EVENT, onChange);
     return () => window.removeEventListener(INBOX_STATUS_EVENT, onChange);
   }, []);
@@ -601,16 +631,32 @@ export const TelegramInboxPoller = () => {
       }
     };
 
-    const controller = new AbortController();
-    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+    // The long poll in progress: dropped when the app goes to the background (iOS freezes the page
+    // and kills the connection, which would otherwise show as "Load failed")
+    let request: AbortController | null = null;
+    let wake: (() => void) | null = null;
+    /** Waits, but ends at once when the app comes back to the screen */
+    const sleep = (ms: number) =>
+      new Promise<void>(resolve => {
+        const t = setTimeout(done, ms);
+        function done() {
+          clearTimeout(t);
+          wake = null;
+          resolve();
+        }
+        wake = done;
+      });
+    let failures = 0;
+    let hiddenSince = 0;
 
     /** One round: waits up to LONG_POLL_S for something to arrive (answers buttons at once) */
     const tick = async (): Promise<boolean> => {
       const { telegramToken, telegramChatId } = getStoredCredentials();
       if (!telegramToken || !telegramChatId) {
-        writeInboxStatus({ lastCheck: new Date().toISOString(), error: 'ใส่ Telegram Bot Token และ Chat ID ก่อน' });
+        writeInboxStatus({ lastCheck: new Date().toISOString(), error: 'ใส่ Telegram Bot Token และ Chat ID ก่อน', paused: false });
         return false;
       }
+      const startedAt = Date.now();
       try {
         if (!commandsSet) {
           commandsSet = true;
@@ -618,13 +664,16 @@ export const TelegramInboxPoller = () => {
           telegramCall(telegramToken, 'setMyCommands', { commands: BOT_COMMANDS }).catch(() => {});
         }
         const offset = Number(localStorage.getItem(INBOX_OFFSET_KEY)) || 0;
-        writeInboxStatus({ lastCheck: new Date().toISOString(), error: '' });
+        request = new AbortController();
         const updates = await telegramCall<any[]>(
           telegramToken,
           'getUpdates',
           { offset, timeout: LONG_POLL_S, allowed_updates: ['message', 'channel_post', 'callback_query'] },
-          controller.signal
+          request.signal
         );
+        request = null;
+        failures = 0;
+        writeInboxStatus({ lastCheck: new Date().toISOString(), error: '', paused: false });
         for (const update of updates) {
           if (stopped) break;
           const chatId = String(update.callback_query?.message?.chat?.id ?? (update.message || update.channel_post)?.chat?.id ?? '');
@@ -643,30 +692,57 @@ export const TelegramInboxPoller = () => {
           // Confirm this update so Telegram does not send it again
           localStorage.setItem(INBOX_OFFSET_KEY, String(update.update_id + 1));
         }
-        writeInboxStatus({ lastCheck: new Date().toISOString(), error: '' });
         return true;
       } catch (e: any) {
+        request = null;
         if (stopped) return false;
-        writeInboxStatus({ lastCheck: new Date().toISOString(), error: e?.message || 'เชื่อมต่อ Telegram ไม่สำเร็จ' });
+        // Cut off by going to the background (or by us when hidden): not a fault, try again when shown
+        if (e?.name === 'AbortError' || document.hidden || hiddenSince >= startedAt) return true;
+        failures++;
+        // A dropped connection (phone network, waking up) usually works on the next try: only a
+        // repeated failure is shown
+        if (failures >= 3 || !isNetworkError(e)) {
+          writeInboxStatus({ lastCheck: new Date().toISOString(), error: e?.message || 'เชื่อมต่อ Telegram ไม่สำเร็จ', paused: false });
+        }
         return false;
       }
     };
 
     const loop = async () => {
       while (!stopped) {
-        // A hidden tab is left alone (the browser slows it down anyway); checked again when shown
+        // A hidden tab is left alone (iOS freezes it anyway); it starts again as soon as it is shown
         if (document.hidden) {
-          await sleep(3000);
+          await sleep(30_000);
           continue;
         }
         const ok = await tick();
-        if (!ok && !stopped) await sleep(RETRY_MS);
+        if (!ok && !stopped) await sleep(failures > 0 && failures < 3 ? 2000 * failures : RETRY_MS);
       }
     };
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        hiddenSince = Date.now();
+        writeInboxStatus({ paused: true });
+        request?.abort();
+      } else {
+        failures = 0;
+        writeInboxStatus({ paused: false });
+        wake?.();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    // iOS may skip visibilitychange when switching apps; these fire on return as well
+    window.addEventListener('pageshow', onVisibility);
+    window.addEventListener('focus', onVisibility);
     void loop();
     return () => {
       stopped = true;
-      controller.abort();
+      request?.abort();
+      wake?.();
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', onVisibility);
+      window.removeEventListener('focus', onVisibility);
     };
   }, [enabled, setItems]);
 

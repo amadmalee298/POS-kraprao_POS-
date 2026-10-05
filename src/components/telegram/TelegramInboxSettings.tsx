@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Inbox } from 'lucide-react';
 import { getStoredCredentials } from '../../services/notificationService';
 import { clientClaudeKey, vercelBase } from '../../services/receiptScan';
-import { INBOX_STATUS_EVENT, inboxEnabledHere, readInboxStatus, setInboxEnabledHere } from '../../services/telegramInbox';
+import { INBOX_STATUS_EVENT, inboxEnabledHere, keepAwakeHere, readInboxStatus, setInboxEnabledHere, setKeepAwakeHere } from '../../services/telegramInbox';
 import { BotMode, readBotMode, writeBotMode } from '../../services/telegramBot';
 import { hasBackend } from '../../utils/apiClient';
 
@@ -10,6 +10,7 @@ import { hasBackend } from '../../utils/apiClient';
 export const TelegramInboxSettings: React.FC = () => {
   const [enabled, setEnabled] = useState(inboxEnabledHere);
   const [status, setStatus] = useState(readInboxStatus);
+  const [keepAwake, setKeepAwake] = useState(keepAwakeHere);
   const [mode, setMode] = useState<BotMode>(readBotMode);
   const chooseMode = (m: BotMode) => {
     writeBotMode(m);
@@ -20,6 +21,7 @@ export const TelegramInboxSettings: React.FC = () => {
     const refresh = () => {
       setEnabled(inboxEnabledHere());
       setStatus(readInboxStatus());
+      setKeepAwake(keepAwakeHere());
     };
     window.addEventListener(INBOX_STATUS_EVENT, refresh);
     return () => window.removeEventListener(INBOX_STATUS_EVENT, refresh);
@@ -78,6 +80,19 @@ export const TelegramInboxSettings: React.FC = () => {
             : status.lastCheck
               ? `บอททำงานอยู่ · เช็กล่าสุด ${new Date(status.lastCheck).toLocaleTimeString('th-TH')}`
               : 'กำลังเริ่ม...'}
+        </div>
+      )}
+      {enabled && (
+        <div className="p-3 rounded-xl border border-amber-700/50 bg-amber-950/30 text-amber-100 space-y-2">
+          <p>
+            ⚠️ บอททำงานเฉพาะตอนที่แอปนี้ <strong>เปิดอยู่บนหน้าจอ</strong> ถ้าสลับไปแอปอื่นหรือจอดับ iPhone/iPad จะหยุดแอปไว้
+            ข้อความที่ส่งเข้ามาระหว่างนั้นไม่หาย บอทจะตอบทั้งหมดทันทีเมื่อกลับมาเปิดแอป
+          </p>
+          <p className="text-amber-200/80">แนะนำ: ใช้แท็บเล็ตหรือมือถือเครื่องเก่าที่เสียบชาร์จ เปิดแอปค้างไว้ที่ร้าน และเปิด “กันหน้าจอดับ” ด้านล่าง</p>
+          <label className="flex items-center gap-2 text-slate-100">
+            <input type="checkbox" checked={keepAwake} onChange={e => setKeepAwakeHere(e.target.checked)} className="w-5 h-5 accent-orange-500" />
+            กันหน้าจอดับขณะเปิดแอปนี้ (เครื่องนี้)
+          </label>
         </div>
       )}
       {status.ignoredChatId && status.ignoredChatId !== creds.telegramChatId && (
