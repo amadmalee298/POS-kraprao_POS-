@@ -356,7 +356,8 @@ interface POSContextType {
   deleteCashShift: (shiftId: string) => void;
 
   // Accounting operations
-  addExpense: (expense: Omit<Expense, 'id'>) => void;
+  addExpense: (expense: Omit<Expense, 'id'>) => Expense;
+  updateExpense: (expenseId: string, patch: Partial<Expense>) => void;
   deleteExpense: (expenseId: string) => void;
   addIncome: (income: Omit<OtherIncome, 'id'>) => void;
   updateIncome: (incomeOrId: string | OtherIncome, updates?: Partial<OtherIncome>) => void;
@@ -838,6 +839,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [cashShifts, setCashShifts] = useState<CashShift[]>(INITIAL_CASH_SHIFTS);
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
   const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES);
+  // Latest expenses for callbacks that run after an await (their render's copy may be old)
+  const expensesRef = useRef(expenses);
+  expensesRef.current = expenses;
   const [incomes, setIncomes] = useState<OtherIncome[]>(INITIAL_INCOMES);
   const [settings, setSettings] = useState<SystemSettings>(INITIAL_SETTINGS);
   const [securityLogs, setSecurityLogs] = useState<SecurityLogEntry[]>(INITIAL_SECURITY_LOGS);
@@ -3803,6 +3807,25 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.warn('[POSContext] Failed to sync expense to Firestore:', err);
       });
     }
+    return newExp;
+  };
+
+  /** Change details of a saved expense (e.g. links to its documents in Google Drive) */
+  const updateExpense = (expenseId: string, patch: Partial<Expense>) => {
+    // From the latest list (the caller may hold an older render's copy, e.g. after an upload)
+    const current = expensesRef.current.find(e => e.id === expenseId);
+    setExpenses(prev => {
+      const updated = prev.map(e => (e.id === expenseId ? { ...e, ...patch, id: e.id } : e));
+      try {
+        localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
+      } catch {
+        // kept in memory and in the cloud
+      }
+      return updated;
+    });
+    if (current && isFirebaseAvailable()) {
+      syncExpenseToFirestore({ ...current, ...patch, id: current.id }, currentBranch).catch(err => console.warn('[POSContext] Failed to sync updated expense:', err));
+    }
   };
 
   const deleteExpense = (expenseId: string) => {
@@ -4432,6 +4455,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteCashShift,
         addExpense,
         deleteExpense,
+        updateExpense,
         addIncome,
         updateIncome,
         deleteIncome,

@@ -32,7 +32,7 @@ body{margin:0;font-family:'Sarabun','Noto Sans Thai',Tahoma,sans-serif;color:#11
 h1{font-size:18px;margin:0}h2{font-size:15px;margin:0}
 .muted{color:#555}.small{font-size:11px}.right{text-align:right}.center{text-align:center}.bold{font-weight:700}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
-th,td{padding:4px 6px;vertical-align:top}
+th,td{padding:5px 7px 7px;vertical-align:middle;line-height:1.5}
 .grid th,.grid td{border:1px solid #333}
 .grid th{background:#f1f1f1}
 .box{border:1px solid #333;border-radius:4px;padding:6px 8px;margin-top:6px;font-size:12.5px}

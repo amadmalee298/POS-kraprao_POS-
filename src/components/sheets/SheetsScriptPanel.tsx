@@ -10,7 +10,9 @@ import {
   pingScript,
   readAutoMinutes,
   readLastPush,
-  writeAutoMinutes
+  writeAutoMinutes,
+  SCRIPT_VERSION,
+  DRIVE_ROOT_FOLDER
 } from '../../services/sheetsScript';
 
 const AUTO_OPTIONS = [
@@ -64,7 +66,7 @@ export const SheetsScriptPanel: React.FC = () => {
     setBusy('test');
     try {
       const r = await pingScript(url, secret);
-      updateSettings({ sheetsScript: { url: url.trim(), secret } });
+      updateSettings({ sheetsScript: { url: url.trim(), secret, saveDocsToDrive: saved?.saveDocsToDrive && (r.version || 1) >= SCRIPT_VERSION } });
       setSheetName(r.name || '');
       setShowSetup(false);
     } catch (e: any) {
@@ -79,6 +81,30 @@ export const SheetsScriptPanel: React.FC = () => {
     setBusy('send');
     try {
       await push();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  // Expense documents into Google Drive need the newer script (with saveFile)
+  const toggleDrive = async () => {
+    if (!saved?.url) return;
+    setError('');
+    if (saved.saveDocsToDrive) {
+      updateSettings({ sheetsScript: { ...saved, saveDocsToDrive: false } });
+      return;
+    }
+    setBusy('test');
+    try {
+      const r = await pingScript(saved.url, saved.secret);
+      if ((r.version || 1) < SCRIPT_VERSION) {
+        setError('โค้ด Apps Script ยังเป็นเวอร์ชันเก่า: กด "ดูวิธีตั้งค่า / คัดลอกโค้ดใหม่" วางแทนโค้ดเดิม แล้ว ทำให้ใช้งานได้ → จัดการการทำให้ใช้งานได้ → แก้ไข → เวอร์ชันใหม่ (ลิงก์เดิมใช้ต่อได้) และกดอนุญาตสิทธิ์ Google Drive');
+        setShowSetup(true);
+        return;
+      }
+      updateSettings({ sheetsScript: { ...saved, saveDocsToDrive: true } });
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -142,6 +168,16 @@ export const SheetsScriptPanel: React.FC = () => {
             </select>
             <p className="text-[10px] text-slate-500 mt-1">แนะนำให้เปิดเฉพาะเครื่องหลักของร้าน (เช่น แท็บเล็ตแคชเชียร์) เครื่องเดียว</p>
           </div>
+          <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1.5">
+            <label className="flex items-center gap-2 text-slate-200 text-xs font-bold">
+              <input type="checkbox" checked={!!saved?.saveDocsToDrive} onChange={toggleDrive} disabled={!!busy} className="w-5 h-5 accent-emerald-500" />
+              บันทึกเอกสารรายจ่ายลง Google Drive อัตโนมัติ
+            </label>
+            <p className="text-[10px] text-slate-500">
+              ทุกครั้งที่บันทึกรายจ่าย: ใบรับรองแทนใบเสร็จรับเงิน (ถ้ามี) และหลักฐานการชำระ เป็นไฟล์ PDF ในโฟลเดอร์ “{DRIVE_ROOT_FOLDER}/รายจ่าย/ปี-เดือน” ของบัญชี Google เดียวกับไฟล์ Sheets
+              · ต้องใช้โค้ด Apps Script เวอร์ชัน {SCRIPT_VERSION} ขึ้นไป
+            </p>
+          </div>
           {last && (
             <div className={`text-[11px] ${last.ok ? 'text-emerald-300' : 'text-rose-300'}`}>
               ล่าสุด {when(last.at)}: {last.message}
@@ -149,7 +185,7 @@ export const SheetsScriptPanel: React.FC = () => {
           )}
           <div className="flex gap-3 text-[11px]">
             <button type="button" onClick={() => setShowSetup(s => !s)} className="text-slate-400 underline underline-offset-2">
-              {showSetup ? 'ซ่อนวิธีตั้งค่า' : 'ดูวิธีตั้งค่า / เปลี่ยนลิงก์'}
+              {showSetup ? 'ซ่อนวิธีตั้งค่า' : 'ดูวิธีตั้งค่า / คัดลอกโค้ดใหม่'}
             </button>
             <button type="button" onClick={disconnect} className="text-rose-300 underline underline-offset-2">ยกเลิกการเชื่อม</button>
           </div>
@@ -177,6 +213,10 @@ export const SheetsScriptPanel: React.FC = () => {
           </li>
           <li>
             กด <b>ทำให้ใช้งานได้ (Deploy) → การทำให้ใช้งานได้รายการใหม่</b> → ประเภท <b>เว็บแอป</b> → เรียกใช้ในฐานะ <b>ฉัน</b> → ผู้ที่มีสิทธิ์เข้าถึง <b>ทุกคน</b> → ทำให้ใช้งานได้ แล้วกดอนุญาตสิทธิ์ (ถ้าขึ้น “Google ยังไม่ได้ยืนยันแอปนี้” ให้กด ขั้นสูง → ไปที่โปรเจกต์)
+            <p className="text-[10px] text-sky-300/90 mt-1">
+              เคยตั้งไว้แล้ว แค่อัปเดตโค้ด: วางโค้ดใหม่ → บันทึก → ทำให้ใช้งานได้ → <b>จัดการการทำให้ใช้งานได้</b> → รูปดินสอ → เวอร์ชัน <b>เวอร์ชันใหม่</b> → ทำให้ใช้งานได้ (ลิงก์ /exec เดิมใช้ต่อได้ ไม่ต้องวางใหม่)
+              · โค้ดเวอร์ชันนี้ขอสิทธิ์ Google Drive เพิ่ม เพื่อเก็บเอกสารรายจ่าย
+            </p>
           </li>
           <li>
             คัดลอก <b>URL ของเว็บแอป</b> (ลงท้ายด้วย /exec) มาวางแล้วกดทดสอบ

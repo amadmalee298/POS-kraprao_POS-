@@ -12,7 +12,17 @@ export interface ScriptReply {
   name?: string; // spreadsheet name
   url?: string; // spreadsheet URL
   rows?: number;
+  /** Script version: 2 and up can save files to Google Drive */
+  version?: number;
+  fileUrl?: string;
+  fileId?: string;
+  folderUrl?: string;
 }
+
+/** The script version this app expects (bump when the pasted code changes) */
+export const SCRIPT_VERSION = 2;
+/** Top folder in the shop's Google Drive for documents saved from the POS */
+export const DRIVE_ROOT_FOLDER = 'ครัวกะเพรา POS เอกสาร';
 
 /** A web app URL of a deployed Apps Script */
 export const isScriptUrl = (url: string) => /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec\/?$/.test((url || '').trim());
@@ -24,15 +34,19 @@ export const newScriptSecret = () => {
 };
 
 /** The script the shop pastes into Extensions → Apps Script of its spreadsheet */
-export const appsScriptCode = (secret: string) => `// ครัวกะเพรา POS → Google Sheets (วางแทนโค้ดทั้งหมดในไฟล์ Code.gs)
+export const appsScriptCode = (secret: string) => `// ครัวกะเพรา POS → Google Sheets + Google Drive (วางแทนโค้ดทั้งหมดในไฟล์ Code.gs)
+// เวอร์ชัน ${SCRIPT_VERSION}
 const SECRET = '${secret}';
+const VERSION = ${SCRIPT_VERSION};
+const ROOT_FOLDER = '${DRIVE_ROOT_FOLDER}';
 
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
     if (data.secret !== SECRET) return reply({ ok: false, error: 'รหัสลับไม่ตรงกับในแอป' });
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    if (data.ping) return reply({ ok: true, name: ss.getName(), url: ss.getUrl() });
+    if (data.ping) return reply({ ok: true, name: ss.getName(), url: ss.getUrl(), version: VERSION });
+    if (data.file) return saveFile(data.file);
 
     const lock = LockService.getScriptLock();
     lock.waitLock(30000);
@@ -59,6 +73,23 @@ function doPost(e) {
   } catch (err) {
     return reply({ ok: false, error: String(err) });
   }
+}
+
+// A document from the POS (e.g. an expense receipt) into Drive: ROOT_FOLDER/<folder>/<name>
+function saveFile(f) {
+  let folder = folderByName(DriveApp.getRootFolder(), ROOT_FOLDER);
+  String(f.folder || '').split('/').filter(String).forEach(function (part) { folder = folderByName(folder, part); });
+  const blob = Utilities.newBlob(Utilities.base64Decode(f.base64), f.mimeType || 'application/octet-stream', f.name || 'file');
+  // The same name again replaces the earlier copy
+  const old = folder.getFilesByName(blob.getName());
+  while (old.hasNext()) old.next().setTrashed(true);
+  const file = folder.createFile(blob);
+  return reply({ ok: true, version: VERSION, fileId: file.getId(), fileUrl: file.getUrl(), folderUrl: folder.getUrl() });
+}
+
+function folderByName(parent, name) {
+  const found = parent.getFoldersByName(name);
+  return found.hasNext() ? found.next() : parent.createFolder(name);
 }
 
 // Text is kept as text: never run as a formula, and codes like 0812 keep their leading zero
@@ -94,6 +125,16 @@ async function post(url: string, body: unknown): Promise<ScriptReply> {
 }
 
 export const pingScript = (url: string, secret: string) => post(url, { secret, ping: true });
+
+export interface DriveFileInput {
+  folder: string; // e.g. "รายจ่าย/2569-10"
+  name: string;
+  mimeType: string;
+  base64: string; // file content, no data: prefix
+}
+
+/** Save a file into the shop's Google Drive through the script (version 2 and up) */
+export const saveFileToDrive = (url: string, secret: string, file: DriveFileInput) => post(url, { secret, file });
 
 export const pushSheetsToScript = (url: string, secret: string, sheets: SheetRows[]) => post(url, { secret, sheets });
 

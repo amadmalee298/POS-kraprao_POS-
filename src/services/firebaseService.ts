@@ -899,6 +899,8 @@ export async function syncExpenseToFirestore(expense: Expense, branch?: Branch):
       date: expense.date,
       receiptImage: expense.receiptImage || null,
       receiptImageName: expense.receiptImageName || null,
+      substituteReceipt: expense.substituteReceipt || null,
+      driveFiles: expense.driveFiles || null,
       syncedAt: nowIso,
       updatedAt: serverTimestamp()
     };
@@ -928,6 +930,8 @@ export async function syncExpenseToFirestore(expense: Expense, branch?: Branch):
             date: expense.date,
             receiptImage: null,
             receiptImageName: expense.receiptImageName || null,
+      substituteReceipt: expense.substituteReceipt || null,
+      driveFiles: expense.driveFiles || null,
             syncedAt: new Date().toISOString(),
             updatedAt: serverTimestamp()
           },
@@ -993,6 +997,8 @@ export async function syncExpensesBatchToFirestore(expenses: Expense[], branch?:
           date: expense.date,
           receiptImage: safeImage,
           receiptImageName: expense.receiptImageName || null,
+      substituteReceipt: expense.substituteReceipt || null,
+      driveFiles: expense.driveFiles || null,
           syncedAt: nowIso,
           updatedAt: serverTimestamp()
         },
@@ -1138,7 +1144,9 @@ export function subscribeToCentralExpenses(
             refNumber: d.refNumber || '',
             note: d.note || '',
             receiptImage: d.receiptImage || undefined,
-            receiptImageName: d.receiptImageName || undefined
+            receiptImageName: d.receiptImageName || undefined,
+            substituteReceipt: d.substituteReceipt || undefined,
+            driveFiles: Array.isArray(d.driveFiles) ? d.driveFiles : undefined
           });
         });
         onUpdate(list, removedIds);
