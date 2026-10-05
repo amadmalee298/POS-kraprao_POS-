@@ -7,6 +7,7 @@ import { hasExpenseDocs } from '../../services/expenseDrive';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
 import { baht, captionTitle, downloadTelegramFile, telegramCall } from '../../services/telegramInbox';
+import { readBotMode } from '../../services/telegramBot';
 import { vercelBase } from '../../services/receiptScan';
 import { EXPENSE_CATEGORY_LABELS, isVatRegistered, round2, vatInside, vatRateOf } from '../../utils/accounting';
 import { stockTypeForExpenseCategory, stockTypeLabel } from '../../utils/stockTypes';
@@ -109,7 +110,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const patch = (id: string, change: Partial<PendingReceipt>) => setItems(prev => prev.map(p => (p.id === id ? { ...p, ...change } : p)));
 
   const loadImage = async (p: PendingReceipt) => {
-    if (images[p.id] || !token) return images[p.id];
+    if (images[p.id] || !token || !p.fileId) return images[p.id];
     const img = await compressBase64Image(await downloadTelegramFile(token, p.fileId, vercelBase(settings.merchantSettings?.serverUrl)), 900, 0.75);
     setImages(prev => ({ ...prev, [p.id]: img }));
     return img;
@@ -263,8 +264,10 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           <Send className="w-4 h-4 text-sky-400" /> บิลจาก Telegram รออนุมัติ ({waiting.length})
         </div>
         <p className="text-slate-400">
-          ส่งรูปใบเสร็จหรือบิลเงินสดเข้าแชท Telegram ของร้าน ระบบจะอ่านยอดให้ แล้วรอผู้จัดการตรวจและอนุมัติก่อนบันทึกเข้าบัญชี
-          ใส่คำว่า “รายรับ” ในข้อความใต้รูปถ้าเป็นเงินที่ร้านได้รับ · ตั้งค่าได้ที่หน้า “แจ้งเตือน Line/Telegram”
+          {readBotMode() === 'auto'
+            ? 'บอทตั้งเป็น “บันทึกทันที”: สลิปที่อ่านได้บันทึกเข้าบัญชีเลย (ดูได้ในประวัติด้านล่าง) ที่นี่จะมีเฉพาะบิลที่ AI อ่านไม่สำเร็จ'
+            : 'ส่งรูปใบเสร็จหรือบิลเงินสดเข้าแชท Telegram ของร้าน ระบบจะอ่านยอดให้ แล้วรอผู้จัดการตรวจและอนุมัติก่อนบันทึกเข้าบัญชี'}
+          {' '}ใส่คำว่า “รายรับ” ในข้อความใต้รูปถ้าเป็นเงินที่ร้านได้รับ · ตั้งค่าได้ที่หน้า “แจ้งเตือน Line/Telegram”
         </p>
         {!canApprove && <p className="text-amber-300">ต้องเข้าระบบด้วยบัญชีเจ้าของหรือผู้จัดการจึงจะอนุมัติได้</p>}
       </div>
@@ -285,7 +288,9 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         return (
           <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-[180px_1fr] gap-4 text-xs">
             <div className="space-y-2">
-              {images[p.id] ? (
+              {!p.fileId ? (
+                <div className="w-full h-20 rounded-xl border border-dashed border-slate-700 text-slate-500 flex items-center justify-center">พิมพ์จดในแชท (ไม่มีรูป)</div>
+              ) : images[p.id] ? (
                 <a href={images[p.id]} target="_blank" rel="noopener noreferrer">
                   <img src={images[p.id]} alt="รูปบิลจาก Telegram" className="w-full rounded-xl border border-slate-700" />
                 </a>
