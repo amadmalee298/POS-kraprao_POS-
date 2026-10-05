@@ -2,6 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ImageIcon, Loader2, Package, RefreshCw, Send, XCircle } from 'lucide-react';
 import type { ExpenseCategory, IncomeCategory, Ingredient, PendingReceipt } from '../../types';
 import { usePOS } from '../../context/POSContext';
+import { useExpenseDrive } from '../accounting/ExpenseDocActions';
+import { hasExpenseDocs } from '../../services/expenseDrive';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
 import { baht, captionTitle, downloadTelegramFile, telegramCall } from '../../services/telegramInbox';
@@ -60,6 +62,7 @@ const formFor = (p: PendingReceipt, ingredients: Ingredient[]): Form => ({
  */
 export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory, string> }> = ({ incomeLabels }) => {
   const { settings, currentBranch, currentUser, addExpense, addIncome, ingredients, addStockLot, receiveNewIngredient, ingredientCategories = [] } = usePOS();
+  const drive = useExpenseDrive();
   const [items, setItems] = useTelegramInbox();
   const [forms, setForms] = useState<Record<string, Form>>({});
   const [images, setImages] = useState<Record<string, string>>({});
@@ -133,7 +136,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
       const vatAmount = f.kind === 'expense' && f.includeVat ? vatInside(f.amount, vatRate) : 0;
       const recordId = `${p.id}-rec`;
       if (f.kind === 'expense') {
-        addExpense({
+        const saved = addExpense({
           branchId: currentBranch.id,
           date: f.date,
           category: f.category,
@@ -147,6 +150,8 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           receiptImage: image,
           receiptImageName: image ? `telegram-${p.messageId}.jpg` : undefined
         });
+        // The bill photo into Google Drive too, when the shop turned that on
+        if (drive.enabled && hasExpenseDocs(saved)) void drive.save(saved, true);
       } else {
         addIncome({
           branchId: currentBranch.id,

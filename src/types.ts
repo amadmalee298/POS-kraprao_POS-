@@ -304,6 +304,13 @@ export interface Expense {
   note?: string;
   receiptImage?: string; // Base64 data URL or URL of receipt / slip / transfer proof
   receiptImageName?: string;
+  /**
+   * No receipt from the seller (market stalls, street vendors): the shop issues its own
+   * ใบรับรองแทนใบเสร็จรับเงิน, signed by the person who paid and the approver.
+   */
+  substituteReceipt?: { docNo: string; spender: string; approver?: string; payee?: string };
+  /** Copies of this expense's documents saved in the shop's Google Drive */
+  driveFiles?: { name: string; url: string; savedAt: string }[];
 }
 
 export interface PaymentRecord {
@@ -434,6 +441,8 @@ export interface QrPaymentOption {
 export interface SheetsScriptSettings {
   url: string; // the web app URL of the deployed script (…/exec)
   secret: string; // written into the script; requests without it are refused
+  /** Save expense documents (receipts, ใบรับรองแทนใบเสร็จ) into Google Drive through the script */
+  saveDocsToDrive?: boolean;
 }
 
 export interface SystemSettings {

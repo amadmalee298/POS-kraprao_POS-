@@ -24,6 +24,9 @@ import {
   INCOME_CATEGORY_LABELS
 } from '../../utils/accounting';
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
+import { ExpenseDocActions, ExpenseDriveBulk, useExpenseDrive } from './ExpenseDocActions';
+import { nextSubstituteNo } from '../../utils/substituteReceipt';
+import { hasExpenseDocs } from '../../services/expenseDrive';
 import {
   BarChart3,
   TrendingUp,
@@ -360,7 +363,8 @@ const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boo
 };
 
 export const AccountingView: React.FC = () => {
-  const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [] } = usePOS();
+  const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [], currentUser, users } = usePOS();
+  const expenseDrive = useExpenseDrive();
 
   const {
     sortedIngredients,
@@ -479,6 +483,12 @@ export const AccountingView: React.FC = () => {
   const [expNote, setExpNote] = useState('');
   const [expReceiptImage, setExpReceiptImage] = useState<string | null>(null);
   const [expReceiptName, setExpReceiptName] = useState<string | null>(null);
+  // No receipt from the seller: issue a ใบรับรองแทนใบเสร็จรับเงิน (null = follow the VAT box:
+  // purchases without a tax invoice usually come with no receipt either)
+  const [expSubstitute, setExpSubstitute] = useState<boolean | null>(null);
+  const [expSpender, setExpSpender] = useState('');
+  const [expPayee, setExpPayee] = useState('');
+  const [expApprover, setExpApprover] = useState('');
   const [isCompressingReceipt, setIsCompressingReceipt] = useState(false);
   const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<{
     url: string;
@@ -634,6 +644,8 @@ export const AccountingView: React.FC = () => {
     setExpNote('');
     setExpReceiptImage(null);
     setExpReceiptName(null);
+    setExpSubstitute(null);
+    setExpPayee('');
     setExpAutoUpdateStock(false);
     setExpStockEntries([]);
     setExpenseFormError(null);
@@ -1261,8 +1273,10 @@ export const AccountingView: React.FC = () => {
     }
 
     const chosenDate = expDate || getLocalDateString();
+    const useSubstitute = expSubstitute ?? !expIncludeVat;
+    const ownerName = users.find(u => u.role === 'admin')?.name || '';
 
-    addExpense({
+    const savedExpense = addExpense({
       branchId: currentBranch.id,
       date: chosenDate,
       category: expCategory,
@@ -1274,8 +1288,20 @@ export const AccountingView: React.FC = () => {
       refNumber: expRefNumber.trim(),
       note: expNote.trim(),
       receiptImage: expReceiptImage || undefined,
-      receiptImageName: expReceiptName || undefined
+      receiptImageName: expReceiptName || undefined,
+      ...(useSubstitute
+        ? {
+            substituteReceipt: {
+              docNo: nextSubstituteNo(expenses, chosenDate),
+              spender: expSpender.trim() || currentUser?.name || '',
+              approver: expApprover.trim() || ownerName || undefined,
+              payee: expPayee.trim() || undefined
+            }
+          }
+        : {})
     });
+    // Copies of the documents into Google Drive, in the background
+    if (expenseDrive.enabled && hasExpenseDocs(savedExpense)) void expenseDrive.save(savedExpense);
 
     setSaveExpenseSuccess(`บันทึกค่าใช้จ่าย "${expTitle.trim()}" จำนวน ฿${money(expAmount)} (${chosenDate}) เรียบร้อยแล้ว`);
     setTimeout(() => {
@@ -1333,6 +1359,8 @@ export const AccountingView: React.FC = () => {
     setExpNote('');
     setExpReceiptImage(null);
     setExpReceiptName(null);
+    setExpSubstitute(null);
+    setExpPayee('');
     setExpAutoUpdateStock(false);
     setExpStockEntries([]);
   };
@@ -3814,6 +3842,12 @@ export const AccountingView: React.FC = () => {
         {/* TAB 3: EXPENSE LOG TABLE & MODAL */}
         {activeTab === 'expenses' && (
           <div className="space-y-4 sm:space-y-6">
+            {expenseDrive.message && (
+              <div role="status" className={`p-3 rounded-2xl border text-xs flex items-center justify-between gap-2 ${expenseDrive.message.ok ? 'bg-emerald-950/40 border-emerald-700/50 text-emerald-200' : 'bg-rose-950/40 border-rose-700/50 text-rose-200'}`}>
+                <span>{expenseDrive.message.text}</span>
+                <button type="button" onClick={() => expenseDrive.setMessage(null)} aria-label="ปิด" className="p-1 text-slate-400"><X className="w-4 h-4" /></button>
+              </div>
+            )}
             {/* Success Toast Banner */}
             {saveExpenseSuccess && (
               <div className="p-3.5 bg-rose-500/15 border border-rose-500/40 rounded-2xl flex items-center justify-between text-rose-300 text-xs shadow-lg animate-fade-in">
@@ -3966,6 +4000,7 @@ export const AccountingView: React.FC = () => {
                 <span className="font-mono text-rose-300">
                   รวมมูลค่าตามตัวกรอง: <strong>{money(filteredTotals.gross)} ฿</strong>
                 </span>
+                <ExpenseDriveBulk expenses={filteredExpenses} drive={expenseDrive} />
               </div>
 
               {/* Mobile Card List View */}
@@ -4050,6 +4085,7 @@ export const AccountingView: React.FC = () => {
                         <span className="text-[10px] text-slate-500 truncate max-w-[200px]">
                           {exp.note || 'ไม่มีหมายเหตุ'}
                         </span>
+                        <ExpenseDocActions expense={exp} drive={expenseDrive} />
                         <button
                           onClick={() => deleteExpense(exp.id)}
                           className="px-2.5 py-1 text-rose-400 hover:text-rose-300 bg-rose-950/40 border border-rose-800/40 rounded-lg text-xs flex items-center space-x-1 active:scale-95"
@@ -4098,6 +4134,7 @@ export const AccountingView: React.FC = () => {
                           <td className="py-3 px-3.5">
                             <div className="font-bold text-slate-100">{exp.title}</div>
                             {exp.note && <div className="text-[10px] text-slate-500 mt-0.5">{exp.note}</div>}
+                            <div className="mt-1"><ExpenseDocActions expense={exp} drive={expenseDrive} /></div>
                           </td>
                           <td className="py-3 px-3.5 font-mono text-slate-400 whitespace-nowrap">
                             {exp.refNumber || '-'}
@@ -5221,6 +5258,39 @@ export const AccountingView: React.FC = () => {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* NO RECEIPT FROM THE SELLER: ใบรับรองแทนใบเสร็จรับเงิน */}
+              <div className="p-3 rounded-xl border border-amber-700/40 bg-amber-950/20 space-y-2">
+                <label className="flex items-start gap-2 text-xs text-amber-100 font-bold">
+                  <input
+                    type="checkbox"
+                    checked={expSubstitute ?? !expIncludeVat}
+                    onChange={e => setExpSubstitute(e.target.checked)}
+                    className="w-5 h-5 mt-0.5 accent-amber-500 shrink-0"
+                  />
+                  <span>
+                    ไม่มีใบเสร็จจากผู้ขาย: ออก “ใบรับรองแทนใบเสร็จรับเงิน”
+                    <span className="block text-[10px] font-normal text-amber-200/70">เช่น ซื้อของตลาด ร้านริมทาง · รูปที่แนบด้านล่างจะเป็นหลักฐานการชำระในเอกสาร</span>
+                  </span>
+                </label>
+                {(expSubstitute ?? !expIncludeVat) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <label className="text-[11px] text-slate-400">
+                      ผู้เบิกจ่าย (คนที่จ่ายเงิน)
+                      <input value={expSpender} onChange={e => setExpSpender(e.target.value)} placeholder={currentUser?.name || 'ชื่อผู้จ่าย'} className="mt-1 w-full h-10 px-3 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs" />
+                    </label>
+                    <label className="text-[11px] text-slate-400">
+                      ผู้รับเงิน / ร้านที่ซื้อ (ไม่บังคับ)
+                      <input value={expPayee} onChange={e => setExpPayee(e.target.value)} placeholder="เช่น ร้านถุงเงิน" className="mt-1 w-full h-10 px-3 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs" />
+                    </label>
+                    <label className="text-[11px] text-slate-400">
+                      ผู้อนุมัติ
+                      <input value={expApprover} onChange={e => setExpApprover(e.target.value)} placeholder={users.find(u => u.role === 'admin')?.name || 'เจ้าของร้าน'} className="mt-1 w-full h-10 px-3 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs" />
+                    </label>
+                  </div>
+                )}
+                {expenseDrive.enabled && <p className="text-[10px] text-emerald-300/80">บันทึกแล้วจะเก็บเอกสารลง Google Drive ให้อัตโนมัติ</p>}
               </div>
 
               {/* ATTACH PAYMENT SLIP / RECEIPT */}
