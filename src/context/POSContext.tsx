@@ -3464,13 +3464,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Details are saved as given; the stock level keeps its current value and any difference
     // goes through moveStock (a delta with a history entry)
+    // A cost the caller did not change keeps the latest one: a delivery received in the same click
+    // may just have updated it (e.g. receiving goods, then remembering their package size)
+    const pendingCost = unitCostChanged ? undefined : pendingCostRef.current.get(cleanIng.id);
+    const saved: Ingredient = pendingCost === undefined ? cleanIng : { ...cleanIng, unitCost: pendingCost };
     setIngredients(prev => {
-      const next = prev.map(ing => (ing.id === cleanIng.id ? { ...cleanIng, currentStock: ing.currentStock } : ing));
-      persistIngredientsLocally(next, undefined, [cleanIng.id]);
+      const next = prev.map(ing => (ing.id === saved.id ? { ...saved, currentStock: ing.currentStock } : ing));
+      persistIngredientsLocally(next, undefined, [saved.id]);
       return next;
     });
 
-    syncIngredientToFirestore(cleanIng, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท', {
+    syncIngredientToFirestore(saved, currentBranch?.id || 'branch-1786349847821', currentBranch?.name || 'ครัวกะเพรา ตลาด กกท', {
       withStock: false
     }).catch(err => {
       console.warn('[POS Inventory Sync] Failed to sync updated ingredient to Cloud:', err);
@@ -3634,6 +3638,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     recordStockAdjustment(ingredientId, newStock, 'manual_adjustment');
   };
 
+  /** Costs set since the last render (state read in the same click does not have them yet) */
+  const pendingCostRef = useRef(new Map<string, number>());
+  useEffect(() => {
+    pendingCostRef.current.clear();
+  });
+
   const updateIngredientPriceAndRecalculate = (
     ingredientId: string,
     newUnitCost: number,
@@ -3644,6 +3654,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       : parseFloat(String(newUnitCost)) || 0;
 
     recentLocalIngredientUpdatesRef.current.set(ingredientId, Date.now());
+    pendingCostRef.current.set(ingredientId, cleanUnitCost);
 
     // 1. Update ingredient unit cost
     setIngredients(prev => {
@@ -3678,6 +3689,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: `lot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     };
     setStockLots(prev => [newLot, ...prev]);
+    // The ingredient's cost becomes the weighted average of the stock on hand and this delivery
+    // (food cost and stock value follow what was actually paid)
+    const ing = ingredients.find(i => i.id === lotData.ingredientId);
+    if (ing && lotData.unitCost > 0 && lotData.quantity > 0) {
+      const average = averageCostAfterPrep(ing, lotData.quantity, lotData.quantity * lotData.unitCost);
+      if (Math.abs(average - (ing.unitCost || 0)) > 1e-6) updateIngredientPriceAndRecalculate(ing.id, average);
+    }
     const pkg = lotData.packageQty && lotData.packageUnit ? ` (${lotData.packageQty} ${lotData.packageUnit})` : '';
     moveStock([
       {

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { splitBillCost } from '../../utils/stockIntake';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { countsAsRevenue, orderVatBreakdown } from '../../utils/orderUtils';
 import { useSharedList } from '../../hooks/useSharedList';
@@ -411,7 +412,10 @@ export const AccountingView: React.FC = () => {
   const vatRegistered = isVatRegistered(settings);
   const depreciationOptions = useMemo(() => ({ usefulLifeYears: settings.equipmentUsefulLifeYears || DEFAULT_USEFUL_LIFE_YEARS }), [settings.equipmentUsefulLifeYears]);
   const [telegramInbox] = useTelegramInbox();
-  const telegramWaiting = telegramInbox.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading').length;
+  // Bills to check, and goods the bot recorded that still have to be received into stock
+  const telegramWaiting = telegramInbox.filter(
+    p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading' || (p.status === 'approved' && p.stockPending && !p.stockAdded?.length)
+  ).length;
   const vatRate = vatRateOf(settings);
   const [activeTab, setActiveTab] = useState<ViewTab>(() => takePageSection<ViewTab>('accounting') || 'overview');
   // The side menu can open a section of this page directly
@@ -1342,14 +1346,16 @@ export const AccountingView: React.FC = () => {
     if (expAutoUpdateStock && expStockEntries.length > 0) {
       const validEntries = expStockEntries.filter(e => e.ingredientId && e.quantity > 0);
       if (validEntries.length > 0) {
+        // Stock is valued at cost: before VAT when the shop claims input VAT back. The bill is
+        // shared by the items' value at their current cost, not equally.
+        const costBasis = vatRegistered && expIncludeVat ? expAmount - vatInside(expAmount, vatRate) : expAmount;
+        const shares = splitBillCost(validEntries.map(e => ({ ingredientId: e.ingredientId, quantity: e.quantity })), ingredients, costBasis);
         validEntries.forEach((entry, idx) => {
           recordIngUsage(entry.ingredientId, 1);
           const matchedIng = ingredients.find(i => i.id === entry.ingredientId);
           if (matchedIng) {
             const qty = entry.quantity > 0 ? entry.quantity : 1;
-            // Stock is valued at cost: before VAT when the shop claims input VAT back
-            const costBasis = vatRegistered && expIncludeVat ? expAmount - vatInside(expAmount, vatRate) : expAmount;
-            const calcUnitCost = Number((costBasis / validEntries.length / qty).toFixed(2));
+            const calcUnitCost = Number((shares[idx] / qty).toFixed(4));
 
             let lotNote = `เพิ่มจากบันทึกค่าใช้จ่าย: ${expTitle.trim()}`;
             if (entry.usePackage && entry.packageUnit && entry.packageSize) {
@@ -1361,7 +1367,7 @@ export const AccountingView: React.FC = () => {
               lotNumber: `EXP-${Date.now().toString().slice(-6)}-${idx + 1}`,
               quantity: qty,
               unitCost: calcUnitCost,
-              receivedDate: new Date().toISOString().split('T')[0],
+              receivedDate: chosenDate,
               expiryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
               supplier: 'บันทึกค่าใช้จ่ายรายวัน',
               notes: lotNote,
