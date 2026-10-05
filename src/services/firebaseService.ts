@@ -1116,6 +1116,12 @@ export async function deleteIncomeFromFirestore(incomeId: string): Promise<boole
 }
 
 /**
+ * Changes from the last 45 days are followed live (older records are already on the devices;
+ * the documents carry their slip pictures, so a longer window would be heavy to load on phones)
+ */
+const recentCutoff = () => new Date(Date.now() - 45 * 86_400_000).toISOString();
+
+/**
  * Real-time listener for central expenses
  */
 export function subscribeToCentralExpenses(
@@ -1127,7 +1133,9 @@ export function subscribeToCentralExpenses(
 
   try {
     const colRef = collection(dbInstance, 'expenses');
-    const q = query(colRef, limit(limitCount));
+    // Records written or changed in the last months (every write stamps syncedAt). A plain
+    // limit would return the oldest documents and never the new ones once there are many.
+    const q = query(colRef, where('syncedAt', '>=', recentCutoff()), limit(limitCount));
 
     const unsubscribe = onSnapshot(
       q,
@@ -1191,7 +1199,7 @@ export function subscribeToCentralIncomes(
 
   try {
     const colRef = collection(dbInstance, 'incomes');
-    const q = query(colRef, limit(limitCount));
+    const q = query(colRef, where('syncedAt', '>=', recentCutoff()), limit(limitCount));
 
     const unsubscribe = onSnapshot(
       q,
@@ -1924,6 +1932,19 @@ export async function saveBranchDoc(branchId: string, key: string, data: Record<
   }
 }
 
+/** Change some fields of a shared document, keeping the others */
+export async function mergeBranchDoc(branchId: string, key: string, data: Record<string, unknown>): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
+  try {
+    await setDoc(doc(dbInstance, 'branches', branchId, 'config', key), { ...cleanForFirestore(data), updatedAt: serverTimestamp() }, { merge: true });
+    return true;
+  } catch (err) {
+    console.warn(`[Firebase Service] Failed to update shared document ${key}:`, err);
+    return false;
+  }
+}
+
 /** Read a shared document once (null when missing or offline) */
 export async function loadBranchDoc(branchId: string, key: string): Promise<DocumentData | null> {
   if (!dbInstance || !navigator.onLine) return null;
@@ -2507,6 +2528,21 @@ export async function signInShopAccount(email: string, password: string): Promis
     if (code.includes('network')) return { ok: false, error: 'เชื่อมต่ออินเทอร์เน็ตไม่ได้' };
     return { ok: false, error: err?.message || 'เข้าสู่ระบบไม่สำเร็จ' };
   }
+}
+
+/**
+ * The shop account's refresh token, for the Telegram bot on Vercel to work with the shop's data
+ * as this account (null when this device is not signed in with the shop account).
+ */
+export function shopAccountRefreshToken(): string | null {
+  const u = authInstance?.currentUser;
+  return u && !u.isAnonymous && u.email ? u.refreshToken : null;
+}
+
+/** The Firebase project this app uses (public values from firebase-applet-config.json) */
+export function firebaseWebConfig(): { projectId: string; apiKey: string; databaseId: string } {
+  const cfg = firebaseConfig as any;
+  return { projectId: cfg.projectId, apiKey: cfg.apiKey, databaseId: cfg.firestoreDatabaseId || '' };
 }
 
 export async function signOutShopAccount(): Promise<void> {

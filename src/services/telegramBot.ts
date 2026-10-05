@@ -1,18 +1,23 @@
 import type { Expense, ExpenseCategory, IncomeCategory, Order, OtherIncome } from '../types';
-import { EXPENSE_CATEGORY_LABELS, INCOME_CATEGORY_LABELS } from '../utils/accounting';
-import { cleanBotToken } from './telegramInbox';
+// .js: this file also runs in the Vercel bot (plain Node ESM); only import-free modules here
+import { EXPENSE_CATEGORY_LABELS, INCOME_CATEGORY_LABELS } from '../utils/categoryLabels.js';
+import { cleanBotToken } from './telegramInbox.js';
 
 /**
  * The shop's Telegram bot as a bookkeeping assistant (like the LINE bookkeeping bots): a slip or
  * bill photo is read and recorded straight away, the bot answers with a card of what was saved and
  * buttons to view the document, add photos, edit or delete it. Typing "จ่าย ค่าผัก 135 บาท" records
  * an entry without a photo, and the menu keyboard gives summaries and the Drive folder.
- * Everything here is plain logic; the poller (TelegramInboxPoller) does the Bot API calls.
+ * Everything here is plain logic; botEngine runs the conversation, on Vercel or in the app.
  */
 
 export const BOT_MODE_KEY = 'POS_TG_BOT_MODE';
 export const BOT_STATE_KEY = 'POS_TG_BOT_STATE';
 export const DRIVE_FOLDER_KEY = 'POS_DRIVE_FOLDER_URL';
+/** Shared documents of a branch (branches/{b}/config/…) for the bot on Vercel */
+export const BOT_CONFIG_DOC = 'telegram_bot';
+export const BOT_STATE_DOC = 'telegram_bot_state';
+export const INBOX_DOC = 'telegram_inbox';
 
 /** auto: record at once (edit afterwards in the chat) · approve: wait for a manager in the POS */
 export type BotMode = 'auto' | 'approve';
@@ -45,6 +50,10 @@ export interface TypedEntry {
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 export const ymdLocal = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+/** The shop's day (Thailand, UTC+7, no daylight saving) of a moment, also on a server running in UTC */
+export const bangkokDay = (iso: string | number | Date) => new Date(new Date(iso).getTime() + 7 * 3600_000).toISOString().slice(0, 10);
+export const bangkokToday = () => bangkokDay(Date.now());
 
 /** d/m, d/m/yy or d/m/yyyy, in Buddhist or Christian years (5/10/69, 5/10/26, 5/10/2569) */
 export function parseThaiDate(d: number, m: number, y: number | undefined, today: string): string | null {
@@ -224,7 +233,7 @@ type Button = { text: string; callback_data?: string; url?: string };
 export type InlineKeyboard = { inline_keyboard: Button[][] };
 
 /** Buttons under a saved entry. Callback data: "<action>:<record id>[:value]" (64 bytes at most) */
-export function entryKeyboard(e: Pick<Expense, 'id' | 'driveFiles'> | Pick<OtherIncome, 'id'>, kind: 'expense' | 'income'): InlineKeyboard {
+export function entryKeyboard(e: Pick<Expense, 'id' | 'driveFiles'> | Pick<OtherIncome, 'id'>, kind: 'expense' | 'income', docUrl?: string): InlineKeyboard {
   if (kind === 'income') {
     return { inline_keyboard: [[{ text: '✏️ แก้ไข', callback_data: `edit:${e.id}` }, { text: '🗑 ลบ', callback_data: `del:${e.id}` }]] };
   }
@@ -232,7 +241,7 @@ export function entryKeyboard(e: Pick<Expense, 'id' | 'driveFiles'> | Pick<Other
   return {
     inline_keyboard: [
       [
-        { text: '📄 ดูใบแทนใบเสร็จ', callback_data: `doc:${e.id}` },
+        docUrl ? { text: '📄 ดูใบแทนใบเสร็จ', url: docUrl } : { text: '📄 ดูใบแทนใบเสร็จ', callback_data: `doc:${e.id}` },
         { text: '➕ เพิ่มรูป', callback_data: `photo:${e.id}` }
       ],
       [{ text: '✏️ แก้ไข', callback_data: `edit:${e.id}` }, drive ? { text: '☁️ Drive', url: drive } : { text: '🗑 ลบ', callback_data: `del:${e.id}` }]
@@ -382,7 +391,6 @@ export function helpText(mode: BotMode): string {
 }
 
 const inMonth = (date: string, ym: string) => date.slice(0, 7) === ym;
-const localDay = (iso: string) => ymdLocal(new Date(iso));
 
 /** Totals for a day ("YYYY-MM-DD") or month ("YYYY-MM"): POS sales, other income and expenses */
 export function summaryText(
@@ -392,7 +400,7 @@ export function summaryText(
   const isDay = period.length === 10;
   const match = (date: string) => (isDay ? date.slice(0, 10) === period : inMonth(date, period));
   const sameBranch = (b?: string) => !data.branchId || !b || b === data.branchId;
-  const orders = data.orders.filter(o => sameBranch(o.branchId) && o.status !== 'cancelled' && o.paymentStatus !== 'unpaid' && match(localDay(o.createdAt)));
+  const orders = data.orders.filter(o => sameBranch(o.branchId) && o.status !== 'cancelled' && o.paymentStatus !== 'unpaid' && match(bangkokDay(o.createdAt)));
   const sales = orders.reduce((s, o) => s + (Number(o.grandTotal) || 0), 0);
   const expenses = data.expenses.filter(e => sameBranch(e.branchId) && match(e.date));
   const incomes = data.incomes.filter(i => sameBranch(i.branchId) && match(i.date));
@@ -445,6 +453,8 @@ export interface BotWaiting {
   field?: EditField;
   /** The card to refresh after the change */
   cardMessageId?: number;
+  /** Finished, except for the rest of this album (its caption "เสร็จ" came with the first photo) */
+  group?: string;
   until: number; // ms
 }
 

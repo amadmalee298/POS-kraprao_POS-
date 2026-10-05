@@ -31,6 +31,7 @@ import { SyncConflictResolverModal } from './components/SyncConflictResolverModa
 import { QrOrderAlert } from './components/QrOrderAlert';
 import { NotificationSettingsSync } from './components/NotificationSettingsSync';
 import { TelegramInboxPoller } from './components/telegram/TelegramInboxPoller';
+import { ExpenseDriveAutoSync } from './components/accounting/ExpenseDriveAutoSync';
 import { SheetsScriptAutoSync } from './components/sheets/SheetsScriptAutoSync';
 import { FilingReminder } from './components/filings/FilingReminder';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
@@ -190,6 +191,7 @@ const MainLayout: React.FC = () => {
       <QrOrderAlert />
       <NotificationSettingsSync />
       <TelegramInboxPoller />
+      <ExpenseDriveAutoSync />
       <SheetsScriptAutoSync />
       <FilingReminder />
 

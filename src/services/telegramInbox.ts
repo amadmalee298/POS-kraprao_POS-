@@ -50,6 +50,13 @@ export interface IncomingPhoto {
   chatId: string;
   messageId: number;
   fileId: string;
+  /** A size around 800 px, small enough to keep with the entry (same as fileId for files) */
+  storeFileId: string;
+  /** Bytes of the image sent as a file (0 when unknown); a photo is always at most 1280 px */
+  fileSize: number;
+  /** Album of several photos sent together */
+  mediaGroupId?: string;
+  senderId?: string;
   senderName: string;
   caption: string;
   date: string; // ISO
@@ -60,10 +67,17 @@ export function photoFromUpdate(update: any): IncomingPhoto | null {
   const msg = update?.message || update?.channel_post;
   if (!msg) return null;
   let fileId = '';
+  let storeFileId = '';
+  let fileSize = 0;
   if (Array.isArray(msg.photo) && msg.photo.length) {
-    fileId = [...msg.photo].sort((a, b) => (b.file_size || b.width * b.height) - (a.file_size || a.width * a.height))[0].file_id;
+    const sizes = [...msg.photo].sort((a, b) => (b.file_size || b.width * b.height) - (a.file_size || a.width * a.height));
+    fileId = sizes[0].file_id;
+    fileSize = sizes[0].file_size || 0;
+    storeFileId = (sizes.find(p => Math.max(p.width || 0, p.height || 0) <= 1000) || sizes[0]).file_id;
   } else if (msg.document && /^image\//.test(msg.document.mime_type || '')) {
     fileId = msg.document.file_id;
+    storeFileId = fileId;
+    fileSize = msg.document.file_size || 0;
   }
   if (!fileId) return null;
   const from = msg.from || {};
@@ -72,6 +86,10 @@ export function photoFromUpdate(update: any): IncomingPhoto | null {
     chatId: String(msg.chat?.id ?? ''),
     messageId: msg.message_id,
     fileId,
+    storeFileId,
+    fileSize,
+    mediaGroupId: msg.media_group_id || undefined,
+    senderId: from.id === undefined ? undefined : String(from.id),
     senderName: [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || msg.chat?.title || '',
     caption: msg.caption || '',
     date: new Date((msg.date || Date.now() / 1000) * 1000).toISOString()
@@ -161,6 +179,8 @@ export function toPendingData(r: VerifiedReceiptData, fallbackDate: string): Non
 export interface InboxStatus {
   lastCheck?: string;
   error?: string;
+  /** The app is in the background, so the bot waits (messages are kept by Telegram until it is back) */
+  paused?: boolean;
   /** A chat that sent photos but is not the shop's chat (shown so the owner can find its ID) */
   ignoredChatId?: string;
   ignoredChatName?: string;
@@ -201,3 +221,23 @@ export function setInboxEnabledHere(on: boolean) {
 }
 
 export const baht = (n: number) => `฿${(Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+export const KEEP_AWAKE_KEY = 'POS_TG_KEEP_AWAKE';
+
+/** Keep this device's screen on while the bot runs (a sleeping iPad stops the bot) */
+export const keepAwakeHere = (): boolean => {
+  try {
+    return localStorage.getItem(KEEP_AWAKE_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+export function setKeepAwakeHere(on: boolean) {
+  try {
+    localStorage.setItem(KEEP_AWAKE_KEY, on ? '1' : '0');
+  } catch {
+    // storage unavailable
+  }
+  window.dispatchEvent(new Event(INBOX_STATUS_EVENT));
+}

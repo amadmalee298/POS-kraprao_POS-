@@ -356,10 +356,10 @@ interface POSContextType {
   deleteCashShift: (shiftId: string) => void;
 
   // Accounting operations
-  addExpense: (expense: Omit<Expense, 'id'>) => Expense;
+  addExpense: (expense: Omit<Expense, 'id'> & { id?: string }) => Expense;
   updateExpense: (expenseId: string, patch: Partial<Expense>) => void;
   deleteExpense: (expenseId: string) => void;
-  addIncome: (income: Omit<OtherIncome, 'id'>) => OtherIncome;
+  addIncome: (income: Omit<OtherIncome, 'id'> & { id?: string }) => OtherIncome;
   updateIncome: (incomeOrId: string | OtherIncome, updates?: Partial<OtherIncome>) => void;
   deleteIncome: (incomeId: string) => void;
 
@@ -1011,7 +1011,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     });
 
-    const unsubExpenses = subscribeToCentralExpenses(100, (centralExpList, removedIds) => {
+    const unsubExpenses = subscribeToCentralExpenses(1000, (centralExpList, removedIds) => {
       setExpenses(prev => {
         let list = prev;
         let hasNew = false;
@@ -1034,8 +1034,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               // Signatures and Drive links added on another device count as changes too
               const docsChanged =
                 JSON.stringify(existing.substituteReceipt || null) !== JSON.stringify(ce.substituteReceipt || null) ||
-                JSON.stringify(existing.driveFiles || null) !== JSON.stringify(ce.driveFiles || null);
-              if (docsChanged || existing.amount !== ce.amount || existing.category !== ce.category || existing.title !== ce.title || existing.note !== ce.note) {
+                JSON.stringify(existing.driveFiles || null) !== JSON.stringify(ce.driveFiles || null) ||
+                // Photos added elsewhere (e.g. by the Telegram bot)
+                (ce.purchaseImages?.length || 0) > (existing.purchaseImages?.length || 0) ||
+                (!!ce.receiptImage && !existing.receiptImage);
+              if (
+                docsChanged ||
+                existing.amount !== ce.amount ||
+                existing.category !== ce.category ||
+                existing.title !== ce.title ||
+                existing.note !== ce.note ||
+                existing.date !== ce.date ||
+                existing.includeVat !== ce.includeVat ||
+                existing.vatAmount !== ce.vatAmount
+              ) {
                 // Pictures the cloud copy left out (too big for it) stay as they are on this device
                 localMap.set(ce.id, {
                   ...existing,
@@ -1061,7 +1073,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     });
 
-    const unsubIncomes = subscribeToCentralIncomes(100, (centralIncList, removedIds) => {
+    const unsubIncomes = subscribeToCentralIncomes(1000, (centralIncList, removedIds) => {
       setIncomes(prev => {
         let list = prev;
         let hasNew = false;
@@ -1081,7 +1093,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               hasNew = true;
             } else {
               const existing = localMap.get(ci.id)!;
-              if (existing.amount !== ci.amount || existing.category !== ci.category || existing.title !== ci.title || existing.note !== ci.note) {
+              if (existing.amount !== ci.amount || existing.category !== ci.category || existing.title !== ci.title || existing.note !== ci.note || existing.date !== ci.date || existing.payerName !== ci.payerName) {
                 localMap.set(ci.id, { ...existing, ...ci });
                 hasNew = true;
               }
@@ -3791,10 +3803,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deleteWasteLog = (_logId: string) => undefined;
 
   // Accounting functions
-  const addExpense = (expData: Omit<Expense, 'id'>) => {
+  const addExpense = (expData: Omit<Expense, 'id'> & { id?: string }) => {
     const newExp: Expense = {
       ...expData,
-      id: `exp-${Date.now()}`
+      id: expData.id || `exp-${Date.now()}`
     };
     setExpenses(prev => {
       const updated = [newExp, ...prev];
@@ -3860,11 +3872,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  const addIncome = (incData: Omit<OtherIncome, 'id'>) => {
+  const addIncome = (incData: Omit<OtherIncome, 'id'> & { id?: string }) => {
     const newInc: OtherIncome = {
       ...incData,
-      id: `inc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      createdAt: new Date().toISOString()
+      id: incData.id || `inc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: incData.createdAt || new Date().toISOString()
     };
     setIncomes(prev => {
       const updated = [newInc, ...prev];

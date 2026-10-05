@@ -1,5 +1,7 @@
 import type { Expense, ExpenseCategory, IncomeCategory, Order, OtherIncome, SystemSettings } from '../types';
 import { countsAsRevenue, orderVatBreakdown } from './orderUtils';
+// Kept in their own file so the Vercel bot can use them; re-exported for the app
+export { EXPENSE_CATEGORY_LABELS, INCOME_CATEGORY_LABELS } from './categoryLabels';
 import { cartItemUnitCost } from './recipeUtils';
 
 /**
@@ -38,35 +40,10 @@ export const claimableInputVat = (e: Pick<Expense, 'includeVat' | 'vatAmount'>, 
 /** Recorded incomes that are part of selling food (revenue from sales) rather than other income */
 export const SALES_INCOME_CATEGORIES: IncomeCategory[] = ['catering', 'delivery_subsidy'];
 
-/** Thai names of expense categories */
-export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
-  raw_material: 'ซื้อวัตถุดิบ',
-  salary: 'เงินเดือนและค่าแรง',
-  rent: 'ค่าเช่า',
-  utilities: 'ค่าน้ำ ค่าไฟ ค่าแก๊ส',
-  supplies: 'วัสดุสิ้นเปลือง',
-  equipment: 'ซื้ออุปกรณ์ (สินทรัพย์)',
-  marketing: 'โฆษณาและการตลาด',
-  other: 'ค่าใช้จ่ายอื่น'
-};
-
 /**
  * Selling and administrative expense lines, in statement order. Not here: ingredient purchases
  * (stock, charged as cost of sales) and equipment purchases (assets, charged as depreciation).
  */
-/** Thai names of other-income categories */
-export const INCOME_CATEGORY_LABELS: Record<IncomeCategory, string> = {
-  catering: 'งานจัดเลี้ยง / เหมาบูธ',
-  ad_sponsor: 'สปอนเซอร์ / ป้ายโฆษณา',
-  recycling: 'ขายของรีไซเคิล / น้ำมันพืชเก่า',
-  interest: 'ดอกเบี้ยรับ / เงินปันผล',
-  rental: 'ค่าเช่าพื้นที่ / หน้าร้าน',
-  asset_sale: 'ขายสินทรัพย์ / อุปกรณ์เก่า',
-  subsidy: 'เงินช่วยเหลือ / เงินอุดหนุนรัฐ',
-  delivery_subsidy: 'เงินชดเชย / เงินคืนแพลตฟอร์ม',
-  other: 'รายได้เบ็ดเตล็ดอื่นๆ'
-};
-
 export const SGA_CATEGORIES: ExpenseCategory[] = ['salary', 'rent', 'utilities', 'supplies', 'marketing', 'other'];
 
 export const DEFAULT_USEFUL_LIFE_YEARS = 5;
