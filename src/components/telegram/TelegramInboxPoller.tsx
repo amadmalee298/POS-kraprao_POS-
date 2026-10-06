@@ -5,7 +5,7 @@ import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
 import { scanReceiptImage, vercelBase } from '../../services/receiptScan';
 import { driveEnabled, hasExpenseDocs, saveExpenseToDrive } from '../../services/expenseDrive';
-import { isFirebaseAvailable, subscribeToBranchDoc } from '../../services/firebaseService';
+import { isFirebaseAvailable, mergeBranchDoc, subscribeToBranchDoc } from '../../services/firebaseService';
 import { BotContext, BotStore, handleBotUpdate } from '../../services/botEngine';
 import {
   baht,
@@ -73,9 +73,26 @@ export const TelegramInboxPoller = () => {
   const branchId = pos.currentBranch?.id;
   useEffect(() => {
     if (!branchId || !isFirebaseAvailable()) return;
-    return subscribeToBranchDoc(branchId, BOT_CONFIG_DOC, data => setOnServer(!!data?.webhook));
+    return subscribeToBranchDoc(branchId, BOT_CONFIG_DOC, data => {
+      setOnServer(!!data?.webhook);
+      setServerConfig(data);
+    });
   }, [branchId]);
   const enabled = enabledHere && !onServer;
+
+  // The bot on the server uses the shop's name, tax ID and address from the app's settings: kept
+  // the same whenever they change (on any device of the shop)
+  const [serverConfig, setServerConfig] = useState<Record<string, any> | null>(null);
+  const shop = sellerInfo(pos.settings, pos.currentBranch);
+  const shopNow = { name: shop.name, taxId: shop.taxId, address: shop.address, phone: shop.phone };
+  const shopKey = JSON.stringify(shopNow);
+  const vatNow = vatRateOf(pos.settings);
+  useEffect(() => {
+    if (!onServer || !branchId || !serverConfig) return;
+    const same = JSON.stringify(serverConfig.shop || {}) === shopKey && Number(serverConfig.vatRate) === vatNow;
+    if (!same) void mergeBranchDoc(branchId, BOT_CONFIG_DOC, { shop: shopNow, vatRate: vatNow });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onServer, branchId, shopKey, vatNow, serverConfig?.shop, serverConfig?.vatRate]);
 
   // The screen kept on (Wake Lock: iOS 16.4+, Android Chrome); released when the app is hidden and asked again on return
   useEffect(() => {

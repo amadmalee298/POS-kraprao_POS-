@@ -88,3 +88,18 @@ describe('AI error messages', () => {
     expect(friendlyAiError('something else')).toBe('something else');
   });
 });
+
+describe('names from captions and settings', () => {
+  it('does not take a caption without words as the entry name', async () => {
+    const { captionTitle } = await import('../../services/telegramInbox');
+    expect(captionTitle('/')).toBe('');
+    expect(captionTitle(' . 👍 ')).toBe('');
+    expect(captionTitle('ค่าผัก 2')).toBe('ค่าผัก 2');
+  });
+
+  it('names the shop as on the receipt header, everywhere', async () => {
+    const { sellerInfo } = await import('../seller');
+    expect(sellerInfo({ receiptHeader: ' ครัวกะเพรา จำกัด ', shopName: 'ชื่อเก่า' }, { name: 'สาขา' }).name).toBe('ครัวกะเพรา จำกัด');
+    expect(sellerInfo({ shopName: 'ร้าน' }, { name: 'สาขา' }).name).toBe('ร้าน');
+  });
+});

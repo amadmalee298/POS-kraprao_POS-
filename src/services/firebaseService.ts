@@ -1889,7 +1889,9 @@ export async function syncSettingsToFirestore(
     await setDoc(
       docRef,
       {
-        ...safeSettings,
+        // Firestore refuses a document with an undefined field anywhere: the whole save would fail
+        // and the old settings in the cloud would come back over the change
+        ...cleanForFirestore(safeSettings),
         updatedAt: serverTimestamp(),
         lastUpdatedIso: new Date().toISOString()
       },

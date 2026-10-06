@@ -51,15 +51,7 @@ export const TelegramServerSettings: React.FC<{ bot: ReturnType<typeof useServer
     void refresh();
   }, [refresh]);
 
-  // Shop details and the bot mode follow the app's settings
   const shop = sellerInfo(settings, currentBranch);
-  const shopKey = JSON.stringify(shop);
-  useEffect(() => {
-    if (!bot.onServer || !currentBranch?.id) return;
-    const want = { name: shop.name, taxId: shop.taxId, address: shop.address, phone: shop.phone };
-    if (JSON.stringify(bot.config?.shop || {}) !== JSON.stringify(want)) void updateServerBotConfig(currentBranch.id, { shop: want });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bot.onServer, shopKey, currentBranch?.id]);
 
   const activate = async () => {
     setBusy(true);
