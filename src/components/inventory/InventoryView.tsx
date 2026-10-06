@@ -261,15 +261,10 @@ export const InventoryView: React.FC = () => {
         packageSize: quickUsePackage ? quickPackageSize : undefined
       });
 
-      // Remember the package size, and the new purchase price when one was entered
+      // Remember the package size (the cost follows the delivery: addStockLot averages it in)
       const rememberPackage = quickUsePackage && (!ingredient.packageUnit || !ingredient.packageSize);
-      const newCost = !isNaN(paid) && paid > 0 && Math.abs(receivedUnitCost - ingredient.unitCost) > 1e-6;
-      if (rememberPackage || newCost) {
-        updateIngredient({
-          ...ingredient,
-          ...(rememberPackage ? { packageUnit: quickPackageUnit, packageSize: quickPackageSize } : {}),
-          ...(newCost ? { unitCost: receivedUnitCost } : {})
-        });
+      if (rememberPackage) {
+        updateIngredient({ ...ingredient, packageUnit: quickPackageUnit, packageSize: quickPackageSize });
       }
 
       setSavedIngId(ingredient.id);

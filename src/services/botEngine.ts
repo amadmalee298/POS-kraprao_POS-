@@ -91,6 +91,10 @@ export const MAX_PURCHASE_PHOTOS = 3;
 const FINISH_WORDS = /^(เสร็จ|เสร็จแล้ว|เรียบร้อย|ok|done|จบ|ครบ|ครบแล้ว)$/i;
 const AUTO_BY = 'บันทึกอัตโนมัติ (Telegram)';
 
+/** Expense categories whose goods go into stock (see utils/stockTypes) */
+const STOCK_CATEGORIES = new Set(['raw_material', 'supplies', 'equipment']);
+export const STOCK_NOTE = '📦 รอรับเข้าสต็อก: ผู้จัดการกดรับในระบบ POS (การเงิน → บิลจาก Telegram)';
+
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const vatInside = (gross: number, rate: number) => round2((gross * rate) / (100 + rate));
 const defaultId = (prefix: 'exp' | 'inc') => (prefix === 'exp' ? `exp-${Date.now()}` : `inc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
@@ -116,6 +120,9 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     entryKeyboard(rec, kind, kind === 'expense' ? ctx.docUrl?.(rec as Expense) : undefined);
   const cardText = (kind: 'expense' | 'income', rec: Expense | OtherIncome, heading?: string) =>
     kind === 'expense' ? expenseCard(rec as Expense, { heading, shopName: ctx.shop.name }) : incomeCard(rec as OtherIncome, { heading, shopName: ctx.shop.name });
+  /** The card, with a line while the goods still wait to be received into stock */
+  const fullCard = async (kind: 'expense' | 'income', rec: Expense | OtherIncome, heading?: string) =>
+    cardText(kind, rec, heading) + (kind === 'expense' && (await store.inboxByRecord(rec.id))?.stockPending ? `\n${STOCK_NOTE}` : '');
 
   const cardOf = async (id: string, heading?: string): Promise<{ text: string; keyboard?: unknown } | null> => {
     const e = id.startsWith('exp-') ? await store.getExpense(id) : null;
@@ -125,10 +132,10 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       const keyboard = mine
         ? keyboardFor(e, 'expense')
         : { inline_keyboard: [[docUrl ? { text: '📄 ดูเอกสาร', url: docUrl } : { text: '📄 ดูเอกสาร', callback_data: `doc:${id}` }]] };
-      return { text: cardText('expense', e, heading), keyboard };
+      return { text: await fullCard('expense', e, heading), keyboard };
     }
     const i = id.startsWith('inc-') ? await store.getIncome(id) : null;
-    if (i) return { text: cardText('income', i, heading), keyboard: (await madeByBot(id)) ? keyboardFor(i, 'income') : undefined };
+    if (i) return { text: await fullCard('income', i, heading), keyboard: (await madeByBot(id)) ? keyboardFor(i, 'income') : undefined };
     return null;
   };
 
@@ -141,7 +148,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       await store.updateExpense(e.id, { driveFiles: files });
       if (cardMessageId) {
         const saved = { ...e, driveFiles: files };
-        await editCard(cardMessageId, cardText('expense', saved), keyboardFor(saved, 'expense'));
+        await editCard(cardMessageId, await fullCard('expense', saved), keyboardFor(saved, 'expense'));
       }
     } catch (err: any) {
       await sendQuiet({ text: `⚠️ บันทึกลง Google Drive ไม่สำเร็จ: ${err?.message || ''}` });
@@ -197,7 +204,32 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
   /** Sends (or turns the "reading…" message into) the card, and remembers where it is */
   const showCard = async (saved: Saved, inboxId: string, replyTo?: number, editId?: number, warning?: string) => {
     const heading = warning ? `✅ <b>บันทึกเรียบร้อย</b>\n⚠️ ${warning}` : undefined;
-    const text = cardText(saved.kind, saved.rec, heading);
+    // Goods bought: received into stock by a manager in the POS (matching items to ingredients)
+    const forStock = saved.kind === 'expense' && STOCK_CATEGORIES.has(saved.rec.category);
+    if (forStock) {
+      const e = saved.rec as Expense;
+      const item = await store.inboxItem(inboxId);
+      await store.patchInbox(inboxId, {
+        stockPending: true,
+        data: {
+          lineItems: item?.data?.lineItems,
+          title: e.title,
+          vendorName: expenseVendor(e),
+          date: e.date,
+          category: e.category,
+          amount: e.amount,
+          includeVat: e.includeVat,
+          vatAmount: e.vatAmount,
+          netAmount: e.netAmount,
+          refNumber: e.refNumber || '',
+          note: item?.data?.note || '',
+          warnings: [],
+          verified: true,
+          confidenceScore: item?.data?.confidenceScore ?? 1
+        }
+      });
+    }
+    const text = await fullCard(saved.kind, saved.rec, heading);
     const keyboard = keyboardFor(saved.rec, saved.kind);
     let cardId = editId;
     if (editId) await editCard(editId, text, keyboard);
@@ -243,7 +275,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
         reply_to_message_id: photo.messageId,
         ...(done ? { reply_markup: mainMenuKeyboard() } : {})
       });
-      if (waiting.cardMessageId) await editCard(waiting.cardMessageId, cardText('expense', next), keyboardFor(next, 'expense'));
+      if (waiting.cardMessageId) await editCard(waiting.cardMessageId, await fullCard('expense', next), keyboardFor(next, 'expense'));
       if (next.driveFiles?.length) await toDrive(next, waiting.cardMessageId);
     } catch (err: any) {
       await sendQuiet({ text: `⚠️ เพิ่มรูปไม่สำเร็จ: ${err?.message || ''}\nลองส่งรูปนี้อีกครั้ง`, reply_to_message_id: photo.messageId });
@@ -306,12 +338,18 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       return;
     }
     if (action === 'setcat') {
-      if (isExpense && isExpenseCategory(value)) await store.updateExpense(id, { category: value });
+      if (isExpense && isExpenseCategory(value)) {
+        await store.updateExpense(id, { category: value });
+        const item = await store.inboxByRecord(id);
+        if (item && !item.stockAdded?.length && item.status === 'approved') {
+          await store.patchInbox(item.id, { stockPending: STOCK_CATEGORIES.has(value), ...(item.data ? { data: { ...item.data, category: value } } : {}) });
+        }
+      }
       else if (!isExpense && isIncomeCategory(value)) await store.updateIncome(id, { category: value });
       else return void (await answer());
       await answer('เปลี่ยนหมวดหมู่แล้ว');
       const changed = { ...rec, category: value } as Expense | OtherIncome;
-      if (cardMessage) await editCard(cardMessage, cardText(kind, changed, '✏️ <b>แก้ไขแล้ว</b>'), keyboardFor(changed, kind));
+      if (cardMessage) await editCard(cardMessage, await fullCard(kind, changed, '✏️ <b>แก้ไขแล้ว</b>'), keyboardFor(changed, kind));
       return;
     }
     if (action === 'ask') {
@@ -471,7 +509,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
         else next.note = [`ร้าน: ${change.vendor}`, ...(e.note || '').split(' · ').filter(p => p && !/^ร้าน: /.test(p))].join(' · ');
       }
       await store.updateExpense(e.id, { amount: next.amount, vatAmount: next.vatAmount, netAmount: next.netAmount, title: next.title, date: next.date, note: next.note, substituteReceipt: next.substituteReceipt });
-      if (waiting.cardMessageId) await editCard(waiting.cardMessageId, cardText('expense', next, '✏️ <b>แก้ไขแล้ว</b>'), keyboardFor(next, 'expense'));
+      if (waiting.cardMessageId) await editCard(waiting.cardMessageId, await fullCard('expense', next, '✏️ <b>แก้ไขแล้ว</b>'), keyboardFor(next, 'expense'));
       await send({ text: `✅ แก้ไข${EDIT_FIELD_LABELS[waiting.field]}แล้ว (${(expenseVendor(next) || next.title).replace(/[&<>]/g, '')} ${baht(next.amount)})`, reply_markup: mainMenuKeyboard() });
       if (next.driveFiles?.length) await toDrive(next, waiting.cardMessageId);
     } else if (i) {
@@ -484,7 +522,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       };
       await store.updateIncome(i.id, patch);
       const next = { ...i, ...patch };
-      if (waiting.cardMessageId) await editCard(waiting.cardMessageId, cardText('income', next, '✏️ <b>แก้ไขแล้ว</b>'), keyboardFor(next, 'income'));
+      if (waiting.cardMessageId) await editCard(waiting.cardMessageId, await fullCard('income', next, '✏️ <b>แก้ไขแล้ว</b>'), keyboardFor(next, 'income'));
       await send({ text: `✅ แก้ไข${EDIT_FIELD_LABELS[waiting.field]}แล้ว`, reply_markup: mainMenuKeyboard() });
     } else {
       await send({ text: 'ไม่พบรายการนี้แล้ว' });

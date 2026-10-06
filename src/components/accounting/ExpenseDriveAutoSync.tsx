@@ -6,6 +6,7 @@ import { mergeBranchDoc } from '../../services/firebaseService';
 import { getStoredCredentials } from '../../services/notificationService';
 import { BOT_STATE_DOC, DRIVE_FOLDER_KEY, entryKeyboard, expenseCard } from '../../services/telegramBot';
 import { telegramCall } from '../../services/telegramInbox';
+import { STOCK_NOTE } from '../../services/botEngine';
 import { docLinkUrl } from '../../utils/docLink';
 import { sellerInfo } from '../../utils/seller';
 
@@ -58,7 +59,7 @@ export const ExpenseDriveAutoSync = () => {
             await telegramCall(token, 'editMessageText', {
               chat_id: item.chatId,
               message_id: item.cardMessageId,
-              text: expenseCard(saved, { shopName: shop.name }),
+              text: expenseCard(saved, { shopName: shop.name }) + (item.stockPending && !item.stockAdded?.length ? `\n${STOCK_NOTE}` : ''),
               parse_mode: 'HTML',
               disable_web_page_preview: true,
               reply_markup: entryKeyboard(saved, 'expense', docUrl)

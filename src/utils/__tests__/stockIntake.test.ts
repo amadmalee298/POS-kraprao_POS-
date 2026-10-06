@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Ingredient } from '../../types';
-import { buildIntakeRows, matchIngredient, parseItemsFromText, quantityInName } from '../stockIntake';
+import { buildIntakeRows, matchIngredient, parseItemsFromText, quantityInName, splitBillCost } from '../stockIntake';
 
 const ing = (id: string, name: string, unit: string, unitCost = 0): Ingredient =>
   ({ id, name, unit, unitCost, currentStock: 0, minStockAlert: 0, category: 'meat' }) as Ingredient;
@@ -76,5 +76,33 @@ describe('new ingredients on a bill', () => {
       1000
     );
     expect(rows.map(r => r.cost)).toEqual([500, 500]);
+  });
+});
+
+describe('splitting a bill between the goods', () => {
+  const ings = [
+    { id: 'shrimp', name: 'กุ้ง', unit: 'kg', unitCost: 300 },
+    { id: 'squid', name: 'ปลาหมึก', unit: 'kg', unitCost: 100 }
+  ] as any[];
+
+  it('shares by value at the current cost, not equally', () => {
+    expect(splitBillCost([{ ingredientId: 'shrimp', quantity: 1 }, { ingredientId: 'squid', quantity: 1 }], ings, 800)).toEqual([600, 200]);
+  });
+
+  it('scales printed line amounts down to a total before VAT', () => {
+    // Lines print 535 + 107 = 642 including VAT; the stock costs 600 before VAT
+    expect(splitBillCost([{ ingredientId: 'shrimp', quantity: 1, lineAmount: 535 }, { ingredientId: 'squid', quantity: 1, lineAmount: 107 }], ings, 600)).toEqual([500, 100]);
+  });
+
+  it('keeps lines not taken into stock (delivery, bags) out of the stock cost', () => {
+    const costs = splitBillCost(
+      [
+        { ingredientId: 'shrimp', quantity: 2 },
+        { ingredientId: '', quantity: 1, lineAmount: 50, chosen: false } // ค่าส่ง
+      ],
+      ings,
+      650
+    );
+    expect(costs).toEqual([600, 0]);
   });
 });

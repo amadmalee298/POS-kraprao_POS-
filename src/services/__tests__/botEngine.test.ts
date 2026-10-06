@@ -195,4 +195,16 @@ describe('bot engine', () => {
     expect(mem.expenses.size).toBe(0);
     expect(mem.inbox()[0]).toMatchObject({ status: 'pending', data: { amount: 135 } });
   });
+
+  it('marks goods bought for receiving into stock, and stops when the category is changed', async () => {
+    const { mem, calls, photo, msg, cb, run } = setup();
+    await run(photo('F1')); // raw material
+    expect(mem.inbox()[0]).toMatchObject({ stockPending: true, data: { amount: 135, category: 'raw_material', title: 'จ่าย ป้าแดง ผักสด' } });
+    expect(calls.find(c => c.method === 'editMessageText')!.params.text).toContain('รอรับเข้าสต็อก');
+    await run(msg({ text: 'จ่าย ค่าแก๊ส 350' })); // utilities: no stock
+    expect(mem.inbox()[0].stockPending).toBeUndefined();
+    await run(cb('setcat:exp-1:rent'));
+    expect(mem.inbox().find(p => p.recordId === 'exp-1')!.stockPending).toBe(false);
+  });
 });
+

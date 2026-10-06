@@ -126,18 +126,42 @@ export function buildIntakeRows(items: BillItem[], ingredients: Ingredient[], to
 export const hasTarget = (r: Pick<IntakeRow, 'ingredientId' | 'newIngredient'>) => !!(r.ingredientId || r.newIngredient?.name.trim());
 
 export function allocateCosts<T extends IntakeRow & { lineAmount?: number }>(rows: T[], ingredients: Ingredient[], totalCost: number): T[] {
-  const byId = new Map(ingredients.map(i => [i.id, i]));
   const chosen = rows.filter(r => r.selected && hasTarget(r) && r.quantity > 0);
-  const priced = chosen.filter(r => (r.lineAmount || 0) > 0);
-  const unpriced = chosen.filter(r => !((r.lineAmount || 0) > 0));
-  const rest = Math.max(0, totalCost - priced.reduce((s, r) => s + (r.lineAmount || 0), 0));
-  const weightOf = (r: T) => r.quantity * effectiveUnitCost(byId.get(r.ingredientId) || {});
-  // Value shares need a known cost for every row; otherwise share equally
-  const weight = unpriced.every(r => weightOf(r) > 0) ? unpriced.reduce((s, r) => s + weightOf(r), 0) : 0;
-  return rows.map(r => {
-    if (!chosen.includes(r)) return { ...r, cost: 0 };
-    if ((r.lineAmount || 0) > 0) return { ...r, cost: r.lineAmount! };
-    const share = weight > 0 ? (rest * weightOf(r)) / weight : rest / unpriced.length;
-    return { ...r, cost: Math.round(share * 100) / 100 };
+  const costs = splitBillCost(
+    rows.map(r => ({ ingredientId: r.ingredientId, quantity: r.quantity, lineAmount: r.lineAmount, chosen: chosen.includes(r) })),
+    ingredients,
+    totalCost
+  );
+  return rows.map((r, i) => ({ ...r, cost: costs[i] }));
+}
+
+/**
+ * What each line of a bill cost, out of `totalCost` (what the stock cost the shop: before VAT
+ * when the VAT is claimed back). Only chosen lines get a cost.
+ * - A line with its own amount on the bill keeps it. The printed amounts include VAT and
+ *   discounts the total may not, so when they add up to more than the total they are scaled down.
+ * - Lines printed on the bill but not taken into stock (delivery, bags, a line left out) keep
+ *   their money out of the stock.
+ * - Lines without an amount share what is left, by their value at the ingredient's current cost
+ *   (equally when a cost is unknown).
+ */
+export function splitBillCost(
+  lines: { ingredientId: string; quantity: number; lineAmount?: number; chosen?: boolean }[],
+  ingredients: Ingredient[],
+  totalCost: number
+): number[] {
+  const byId = new Map(ingredients.map(i => [i.id, i]));
+  const total = Math.max(0, totalCost || 0);
+  const printed = lines.reduce((s, l) => s + Math.max(0, l.lineAmount || 0), 0);
+  const scale = printed > total && printed > 0 ? total / printed : 1;
+  const unpriced = lines.filter(l => l.chosen !== false && !((l.lineAmount || 0) > 0));
+  const rest = Math.max(0, total - printed * scale);
+  const weightOf = (l: (typeof lines)[number]) => l.quantity * effectiveUnitCost(byId.get(l.ingredientId) || {});
+  const weight = unpriced.length && unpriced.every(l => weightOf(l) > 0) ? unpriced.reduce((s, l) => s + weightOf(l), 0) : 0;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return lines.map(l => {
+    if (l.chosen === false) return 0;
+    if ((l.lineAmount || 0) > 0) return r2(l.lineAmount! * scale);
+    return r2(weight > 0 ? (rest * weightOf(l)) / weight : rest / unpriced.length);
   });
 }

@@ -109,3 +109,11 @@ describe('saving an expense to Drive', () => {
     await expect(saveExpenseToDrive(exp(), shop, settings)).rejects.toThrow('เวอร์ชันเก่า');
   });
 });
+
+describe('the remarks column', () => {
+  it('stays empty (the note is for the shop, not the document)', () => {
+    const html = substituteReceiptPage(exp({ note: 'ผักบุ้ง 2 กำ · จาก Telegram: สมชาย' }), { name: 'ร้าน', taxId: '', address: '' });
+    expect(html).not.toContain('ผักบุ้ง 2 กำ');
+    expect(html).not.toContain('จาก Telegram');
+  });
+});

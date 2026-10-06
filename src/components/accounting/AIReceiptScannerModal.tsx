@@ -34,7 +34,8 @@ import {
 } from 'lucide-react';
 import { ExpenseCategory } from '../../types';
 import { usePOS } from '../../context/POSContext';
-import { vatInside, vatRateOf } from '../../utils/accounting';
+import { isVatRegistered, vatInside, vatRateOf } from '../../utils/accounting';
+import { splitBillCost } from '../../utils/stockIntake';
 import { compressBase64Image } from '../../utils/imageCompressor';
 import { runReceiptOcr } from '../../utils/receiptOcr';
 import { apiUrl, hasBackend } from '../../utils/apiClient';
@@ -982,11 +983,14 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
     if (shouldUpdate && entriesToProcess.length > 0) {
       const validEntries = entriesToProcess.filter(e => e.ingredientId && e.quantity > 0);
       if (validEntries.length > 0) {
+        // Stock is valued at cost (before VAT when the shop claims it back), shared by the items' value
+        const costBasis = isVatRegistered(settings) && res.includeVat ? res.amount - vatInside(res.amount, vatRate) : res.amount;
+        const shares = splitBillCost(validEntries.map(e => ({ ingredientId: e.ingredientId, quantity: e.quantity })), ingredients, costBasis);
         validEntries.forEach((entry, idx) => {
           const matchedIng = ingredients.find(i => i.id === entry.ingredientId);
           if (matchedIng) {
             const qty = entry.quantity > 0 ? entry.quantity : 1;
-            const calcUnitCost = Number((res.amount / validEntries.length / qty).toFixed(2));
+            const calcUnitCost = Number((shares[idx] / qty).toFixed(4));
             
             let lotNote = `เพิ่มจากสแกนใบเสร็จ OCR: ${res.title}`;
             if (entry.usePackage && entry.packageUnit && entry.packageSize) {

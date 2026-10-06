@@ -807,6 +807,8 @@ export interface PendingReceipt {
   storeFileId?: string;
   /** The bot's card about this entry in the chat (updated when the entry changes) */
   cardMessageId?: number;
+  /** Recorded by the bot as a purchase of goods: waits for a manager to receive it into stock */
+  stockPending?: boolean;
 }
 
 /** A kitchen prep recipe: raw ingredients drawn from stock and cooked into a stocked item (e.g. ซอสกะเพรา, เนื้อบดปรุงสุก) */

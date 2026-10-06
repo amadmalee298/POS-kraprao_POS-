@@ -41,7 +41,7 @@ ${shop.phone ? `โทร: ${esc(shop.phone)}` : ''}
 <div class="right" style="font-size:13px;margin-top:2mm">วันที่: ${esc(thaiLongDate(e.date))}</div>
 <table class="grid" style="margin-top:4mm;font-size:13px">
 <tr><th style="width:9%">ลำดับ</th><th>รายละเอียด</th><th style="width:20%">จำนวนเงิน (บาท)</th><th style="width:18%">หมายเหตุ</th></tr>
-<tr><td class="center">1</td><td>${esc(detail)}</td><td class="right">${money(e.amount)}</td><td>${esc(e.note || '')}</td></tr>
+<tr><td class="center">1</td><td>${esc(detail)}</td><td class="right">${money(e.amount)}</td><td></td></tr>
 <tr class="bold"><td colspan="2" class="right">รวมทั้งสิ้น</td><td class="right">${money(e.amount)}</td><td></td></tr>
 </table>
 <p style="font-size:13px;margin-top:6mm">รวมทั้งสิ้น (ตัวอักษร) &nbsp;${esc(thaiBahtText(e.amount))}</p>

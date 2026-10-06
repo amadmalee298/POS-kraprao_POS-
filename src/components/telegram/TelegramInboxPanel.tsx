@@ -37,6 +37,9 @@ const billItems = (p: PendingReceipt): BillItem[] => {
 };
 
 const APPROVER_ROLES = ['admin', 'manager'];
+
+/** Recorded by the bot already (บันทึกทันที): only the goods still have to go into stock */
+const stockOnly = (p: PendingReceipt) => p.status === 'approved' && !!p.stockPending && !p.stockAdded?.length;
 const NEW_INGREDIENT_UNITS = ['kg', 'g', 'l', 'ml', 'ชิ้น', 'ฟอง', 'ขวด', 'ถุง', 'แพ็ค', 'กล่อง'];
 
 const formFor = (p: PendingReceipt, ingredients: Ingredient[]): Form => ({
@@ -75,8 +78,8 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const vatRate = vatRateOf(settings);
   const token = getStoredCredentials().telegramToken;
 
-  const waiting = useMemo(() => items.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading'), [items]);
-  const history = useMemo(() => items.filter(p => p.status === 'approved' || p.status === 'rejected').slice(0, 50), [items]);
+  const waiting = useMemo(() => items.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading' || stockOnly(p)), [items]);
+  const history = useMemo(() => items.filter(p => (p.status === 'approved' || p.status === 'rejected') && !stockOnly(p)).slice(0, 50), [items]);
 
   const form = (p: PendingReceipt) => forms[p.id] || formFor(p, ingredients);
   const vatRegistered = isVatRegistered(settings);
@@ -117,7 +120,9 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   };
 
   const reply = (p: PendingReceipt, text: string) =>
-    token ? telegramCall(token, 'sendMessage', { chat_id: p.chatId, reply_to_message_id: p.messageId, text }).catch(() => {}) : Promise.resolve();
+    token
+      ? telegramCall(token, 'sendMessage', { chat_id: p.chatId, reply_to_message_id: p.cardMessageId || p.messageId, allow_sending_without_reply: true, text }).catch(() => {})
+      : Promise.resolve();
 
   const approve = async (p: PendingReceipt) => {
     const f = form(p);
@@ -168,45 +173,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           slipImageName: image ? `telegram-${p.messageId}.jpg` : undefined
         });
       }
-      let stockAdded: PendingReceipt['stockAdded'];
-      const addedNames = new Map<string, string>();
-      const addedUnits = new Map<string, string>();
-      if (receivesStock(f)) {
-        const rows = stockRows(p, f).filter(r => r.selected && hasTarget(r) && r.quantity > 0);
-        const note = `บิลจาก Telegram: ${f.title.trim()}`;
-        rows.forEach((row, i) => {
-          if (!row.ingredientId && row.newIngredient) {
-            // First purchase of something the shop has never stocked: create it with this stock
-            const created = receiveNewIngredient(
-              {
-                name: row.newIngredient.name.trim(),
-                unit: row.newIngredient.unit,
-                category: row.newIngredient.category,
-                stockType: stockTypeForExpenseCategory(f.category) || 'inventory',
-                unitCost: Math.round((row.cost / row.quantity) * 10000) / 10000,
-                minStockAlert: 0
-              },
-              row.quantity,
-              note
-            );
-            row.ingredientId = created.id;
-            addedNames.set(created.id, `${created.name} (ใหม่)`);
-            addedUnits.set(created.id, created.unit);
-            return;
-          }
-          addStockLot({
-            ingredientId: row.ingredientId,
-            lotNumber: `TG-${p.messageId}-${i + 1}`,
-            quantity: row.quantity,
-            unitCost: round2(row.cost / row.quantity),
-            receivedDate: f.date,
-            expiryDate: '',
-            supplier: p.data?.vendorName || p.senderName || 'Telegram',
-            notes: note
-          });
-        });
-        stockAdded = rows.map(r => ({ ingredientId: r.ingredientId, quantity: r.quantity, cost: r.cost }));
-      }
+      const { stockAdded, stockText } = receivesStock(f) ? receiveStock(p, f) : { stockAdded: undefined, stockText: '' };
       const base = p.data || { vendorName: '', warnings: [], verified: false, confidenceScore: 0, vatAmount: 0, netAmount: 0 };
       patch(p.id, {
         status: 'approved',
@@ -218,15 +185,80 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         // What was actually recorded, for the history list
         data: { ...base, title: f.title.trim(), date: f.date, category: f.category, amount: round2(f.amount), includeVat: f.includeVat, vatAmount, netAmount: round2(f.amount - vatAmount), refNumber: f.refNumber.trim(), note: f.note }
       });
-      const stockText = stockAdded?.length
-        ? `\n📦 เข้าสต็อก: ${stockAdded
-            .map(s => `${addedNames.get(s.ingredientId) || ingredientById.get(s.ingredientId)?.name || ''} +${s.quantity} ${addedUnits.get(s.ingredientId) || ingredientById.get(s.ingredientId)?.unit || ''}`)
-            .join(', ')}`
-        : '';
       reply(p, `✅ อนุมัติแล้วโดย ${currentUser?.name || 'ผู้จัดการ'}\nบันทึกเป็น${f.kind === 'expense' ? 'ค่าใช้จ่าย' : 'รายรับ'} ${f.title.trim()} ${baht(f.amount)}${stockText}`);
     } finally {
       setBusy(null);
     }
+  };
+
+  /** Puts the bill's goods into stock (new ingredients created as needed); returns what was added */
+  const receiveStock = (p: PendingReceipt, f: Form): { stockAdded: PendingReceipt['stockAdded']; stockText: string } => {
+    let stockAdded: PendingReceipt['stockAdded'];
+    const addedNames = new Map<string, string>();
+    const addedUnits = new Map<string, string>();
+    {
+      const rows = stockRows(p, f).filter(r => r.selected && hasTarget(r) && r.quantity > 0);
+      const note = `บิลจาก Telegram: ${f.title.trim()}`;
+      rows.forEach((row, i) => {
+        if (!row.ingredientId && row.newIngredient) {
+          // First purchase of something the shop has never stocked: create it with this stock
+          const created = receiveNewIngredient(
+            {
+              name: row.newIngredient.name.trim(),
+              unit: row.newIngredient.unit,
+              category: row.newIngredient.category,
+              stockType: stockTypeForExpenseCategory(f.category) || 'inventory',
+              unitCost: Math.round((row.cost / row.quantity) * 10000) / 10000,
+              minStockAlert: 0
+            },
+            row.quantity,
+            note
+          );
+          row.ingredientId = created.id;
+          addedNames.set(created.id, `${created.name} (ใหม่)`);
+          addedUnits.set(created.id, created.unit);
+          return;
+        }
+        addStockLot({
+          ingredientId: row.ingredientId,
+          lotNumber: `TG-${p.messageId}-${i + 1}`,
+          quantity: row.quantity,
+          unitCost: Math.round((row.cost / row.quantity) * 10000) / 10000,
+          receivedDate: f.date,
+          expiryDate: '',
+          supplier: p.data?.vendorName || p.senderName || 'Telegram',
+          notes: note
+        });
+      });
+      stockAdded = rows.map(r => ({ ingredientId: r.ingredientId, quantity: r.quantity, cost: r.cost }));
+    }
+    const stockText = stockAdded?.length
+        ? `\n📦 เข้าสต็อก: ${stockAdded
+            .map(s => `${addedNames.get(s.ingredientId) || ingredientById.get(s.ingredientId)?.name || ''} +${s.quantity} ${addedUnits.get(s.ingredientId) || ingredientById.get(s.ingredientId)?.unit || ''}`)
+            .join(', ')}`
+        : '';
+    return { stockAdded, stockText };
+  };
+
+  /** Goods of an entry the bot recorded: into stock (the expense is already in the books) */
+  const receiveOnly = (p: PendingReceipt) => {
+    const f = form(p);
+    const rows = stockRows(p, f);
+    if (!rows.some(r => r.selected && hasTarget(r) && r.quantity > 0)) {
+      setError('เลือกวัตถุดิบและจำนวนอย่างน้อย 1 รายการ (หรือกด “ไม่ต้องรับเข้าสต็อก”)');
+      return;
+    }
+    const left = rows.filter(r => r.label && (!hasTarget(r) || !r.selected || !(r.quantity > 0)));
+    if (left.length && !window.confirm(`${left.map(r => r.label).join(', ')} จะไม่เข้าสต็อก (ยังไม่ได้เลือกวัตถุดิบ/จำนวน)\nรับเข้าต่อหรือไม่?`)) return;
+    setError(null);
+    const { stockAdded, stockText } = receiveStock(p, f);
+    patch(p.id, { stockPending: false, stockAdded });
+    reply(p, `📦 รับเข้าสต็อกแล้วโดย ${currentUser?.name || 'ผู้จัดการ'} (${f.title.trim()})${stockText}`);
+  };
+
+  const skipStock = (p: PendingReceipt) => {
+    if (!window.confirm('ไม่ต้องรับรายการนี้เข้าสต็อก? (รายจ่ายยังบันทึกไว้ตามเดิม)')) return;
+    patch(p.id, { stockPending: false });
   };
 
   const reject = (p: PendingReceipt) => {
@@ -265,7 +297,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         </div>
         <p className="text-slate-400">
           {readBotMode() === 'auto'
-            ? 'บอทตั้งเป็น “บันทึกทันที”: สลิปที่อ่านได้บันทึกเข้าบัญชีเลย (ดูได้ในประวัติด้านล่าง) ที่นี่จะมีเฉพาะบิลที่ AI อ่านไม่สำเร็จ'
+            ? 'บอทตั้งเป็น “บันทึกทันที”: สลิปที่อ่านได้บันทึกเข้าบัญชีเลย (ดูได้ในประวัติด้านล่าง) ที่นี่จะมีบิลที่ AI อ่านไม่สำเร็จ และบิลซื้อของที่รอรับเข้าสต็อก'
             : 'ส่งรูปใบเสร็จหรือบิลเงินสดเข้าแชท Telegram ของร้าน ระบบจะอ่านยอดให้ แล้วรอผู้จัดการตรวจและอนุมัติก่อนบันทึกเข้าบัญชี'}
           {' '}ใส่คำว่า “รายรับ” ในข้อความใต้รูปถ้าเป็นเงินที่ร้านได้รับ · ตั้งค่าได้ที่หน้า “แจ้งเตือน Line/Telegram”
         </p>
@@ -284,6 +316,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
 
       {waiting.map(p => {
         const f = form(p);
+        const only = stockOnly(p);
         const vat = f.kind === 'expense' && f.includeVat ? vatInside(f.amount, vatRate) : 0;
         return (
           <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-[180px_1fr] gap-4 text-xs">
@@ -334,6 +367,18 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                 </div>
               )}
 
+              {only ? (
+                <div className="p-3 rounded-xl border border-emerald-700/50 bg-emerald-950/30 text-emerald-100 space-y-0.5">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <Package className="w-4 h-4" /> รอรับเข้าสต็อก
+                  </div>
+                  <div>
+                    บอทบันทึกรายจ่ายแล้ว: {f.title} · {baht(f.amount)} · {f.date}
+                  </div>
+                  <div className="text-emerald-300/80">เลือกวัตถุดิบและจำนวนที่ได้รับ แล้วกด “รับเข้าสต็อก” (ไม่สร้างรายจ่ายซ้ำ)</div>
+                </div>
+              ) : (
+              <>
               <div className="grid grid-cols-2 gap-2" role="group" aria-label="ประเภท">
                 {(['expense', 'income'] as const).map(k => (
                   <button
@@ -405,13 +450,16 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                 </label>
               </div>
 
+              </>
+              )}
+
               {receivesStock(f) && (() => {
                 const rows = stockRows(p, f);
                 const chosen = rows.filter(r => r.selected && hasTarget(r) && r.quantity > 0);
                 return (
                   <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-3 space-y-2">
                     <div className="font-bold text-emerald-200 flex items-center gap-1.5">
-                      <Package className="w-4 h-4" /> รับเข้า{stockTypeLabel(stockTypeForExpenseCategory(f.category) || 'inventory')}เมื่ออนุมัติ ({chosen.length} รายการ)
+                      <Package className="w-4 h-4" /> รับเข้า{stockTypeLabel(stockTypeForExpenseCategory(f.category) || 'inventory')}{only ? '' : 'เมื่ออนุมัติ'} ({chosen.length} รายการ)
                     </div>
                     {rows.length === 0 && (
                       <p className="text-slate-400">
@@ -541,6 +589,21 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                 );
               })()}
 
+              {only ? (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={!canApprove}
+                    onClick={() => receiveOnly(p)}
+                    className="h-11 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 disabled:opacity-40"
+                  >
+                    <Package className="w-4 h-4" /> รับเข้าสต็อก
+                  </button>
+                  <button type="button" disabled={!canApprove} onClick={() => skipStock(p)} className="h-11 px-4 rounded-xl border border-slate-700 text-slate-300 disabled:opacity-40">
+                    ไม่ต้องรับเข้าสต็อก
+                  </button>
+                </div>
+              ) : (
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
                   type="button"
@@ -568,6 +631,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                   <RefreshCw className="w-4 h-4" /> อ่านใหม่
                 </button>
               </div>
+              )}
             </div>
           </div>
         );
