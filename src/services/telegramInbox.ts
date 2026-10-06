@@ -146,12 +146,15 @@ export async function downloadTelegramFile(token: string, fileId: string, relayB
 }
 
 /** The caption without the income/expense keyword, used as the entry's name */
-export const captionTitle = (caption: string) =>
-  caption
+export const captionTitle = (caption: string) => {
+  const text = caption
     .replace(/#?(รายรับ|รายจ่าย|รับเงิน|จ่ายเงิน|income|expense)\s*:?/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 80);
+  // A caption without words ("/", ".", "👍") is not a name for the entry
+  return /[\p{L}\p{N}]/u.test(text) ? text : '';
+};
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = ['rent', 'salary', 'utilities', 'raw_material', 'supplies', 'equipment', 'marketing', 'other'];
 

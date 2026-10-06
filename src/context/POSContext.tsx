@@ -428,6 +428,23 @@ const POSContext = createContext<POSContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_KEY = 'kaprao_pos_enterprise_v1';
 
+/** When this device last changed the shop settings (kept across reloads) */
+const SETTINGS_EDITED_KEY = 'POS_SETTINGS_EDITED_AT';
+const readSettingsEditedAt = (): string => {
+  try {
+    return localStorage.getItem(SETTINGS_EDITED_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+const writeSettingsEditedAt = (iso: string) => {
+  try {
+    localStorage.setItem(SETTINGS_EDITED_KEY, iso);
+  } catch {
+    // storage unavailable
+  }
+};
+
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Track recently updated menu item IDs and timestamps to protect local saves from being overwritten by stale cloud snapshots
   const recentLocalMenuUpdatesRef = useRef<Map<string, number>>(new Map());
@@ -844,6 +861,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   expensesRef.current = expenses;
   const [incomes, setIncomes] = useState<OtherIncome[]>(INITIAL_INCOMES);
   const [settings, setSettings] = useState<SystemSettings>(INITIAL_SETTINGS);
+  // The latest settings for callbacks set up once (e.g. the cloud listener)
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const [securityLogs, setSecurityLogs] = useState<SecurityLogEntry[]>(INITIAL_SECURITY_LOGS);
 
   const logSecurityEvent = (entry: Omit<SecurityLogEntry, 'id' | 'timestamp'>) => {
@@ -1292,6 +1312,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const unsubSettings = subscribeToBranchDoc(branchTargetId, 'settings', data => {
       if (!data) return;
       if (Date.now() - lastLocalSettingsEditRef.current < 5000) return;
+      // A change made here that never reached the cloud (offline, or a failed save) is not
+      // undone by the older cloud copy: it is sent again instead
+      const editedHere = readSettingsEditedAt();
+      const cloudAt = typeof data.lastUpdatedIso === 'string' ? data.lastUpdatedIso : '';
+      if (editedHere && cloudAt < editedHere) {
+        const local = settingsRef.current;
+        if (local && isFirebaseAvailable()) syncSettingsToFirestore(local, branchTargetId).catch(console.warn);
+        return;
+      }
       const { updatedAt: _u, lastUpdatedIso: _l, adminPin: _a, managerPin: _m, enableKitchenSound: _k, ...cloud } = data as Record<string, unknown>;
       setSettings(prev => {
         const next = { ...prev, ...(cloud as Partial<SystemSettings>) };
@@ -2523,6 +2552,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const updateSettings = (newSettings: Partial<SystemSettings>) => {
     lastLocalSettingsEditRef.current = Date.now();
+    writeSettingsEditedAt(new Date().toISOString());
     let newPromptPay = newSettings.promptpayMobileOrTaxId || newSettings.promptPayId;
     if (!newPromptPay && newSettings.qrPaymentMethods) {
       const pmPromptPay = newSettings.qrPaymentMethods.find(m => m.type === 'promptpay');
