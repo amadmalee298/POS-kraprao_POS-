@@ -66,9 +66,11 @@ const PAGE_SECTIONS: Partial<Record<SectionPage, { id: string; label: string }[]
     { id: 'suppliers', label: 'ซัพพลายเออร์' }
   ],
   accounting: [
-    { id: 'statement', label: 'งบกำไรขาดทุน (P&L)' },
-    { id: 'balance_sheet', label: 'งบแสดงฐานะการเงิน' },
+    { id: 'statement', label: 'งบกำไรขาดทุน' },
+    { id: 'balance_sheet', label: 'งบดุล (งบแสดงฐานะการเงิน)' },
     { id: 'cash_flow', label: 'งบกระแสเงินสด' },
+    { id: 'journal', label: 'สมุดรายวัน' },
+    { id: 'trial', label: 'งบทดลอง / ผังบัญชี' },
     { id: 'ar_ap', label: 'ลูกหนี้ / เจ้าหนี้' },
     { id: 'incomes', label: 'รายได้อื่น' },
     { id: 'expenses', label: 'ค่าใช้จ่าย / ภาษีซื้อ' },

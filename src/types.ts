@@ -322,6 +322,8 @@ export interface Expense {
   purchaseImages?: { name: string; dataUrl: string }[];
   /** Copies of this expense's documents saved in the shop's Google Drive */
   driveFiles?: { name: string; url: string; savedAt: string }[];
+  /** How it was paid (for the books): bank transfer/QR/card, cash outside the drawer, or the drawer. Missing = bank */
+  paidFrom?: 'bank' | 'cash' | 'drawer';
 }
 
 export interface PaymentRecord {
