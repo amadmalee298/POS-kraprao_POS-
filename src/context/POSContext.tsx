@@ -1053,6 +1053,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const existing = localMap.get(ce.id)!;
               // Signatures and Drive links added on another device count as changes too
               const docsChanged =
+                existing.paidFrom !== ce.paidFrom ||
                 JSON.stringify(existing.substituteReceipt || null) !== JSON.stringify(ce.substituteReceipt || null) ||
                 JSON.stringify(existing.driveFiles || null) !== JSON.stringify(ce.driveFiles || null) ||
                 // Photos added elsewhere (e.g. by the Telegram bot)

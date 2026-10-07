@@ -90,6 +90,7 @@ export function expenseFromDoc(d: any): Expense {
     receiptImage: d.receiptImage || undefined,
     receiptImageName: d.receiptImageName || undefined,
     substituteReceipt: d.substituteReceipt || undefined,
+    paidFrom: d.paidFrom || undefined,
     driveFiles: Array.isArray(d.driveFiles) ? d.driveFiles : undefined,
     purchaseImages: Array.isArray(d.purchaseImages) && d.purchaseImages.length ? d.purchaseImages : undefined
   };
@@ -130,6 +131,7 @@ export function expenseDoc(e: Expense): Record<string, unknown> {
     receiptImage: e.receiptImage || null,
     receiptImageName: e.receiptImageName || null,
     substituteReceipt: e.substituteReceipt || null,
+    paidFrom: e.paidFrom || null,
     driveFiles: e.driveFiles || null,
     purchaseImages: e.purchaseImages?.length ? e.purchaseImages : null,
     syncedAt: new Date().toISOString(),

@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { splitBillCost } from '../../utils/stockIntake';
+import { LedgerBooks, LedgerTab } from './LedgerBooks';
+import type { PaidFrom } from '../../utils/ledger';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { countsAsRevenue, orderVatBreakdown } from '../../utils/orderUtils';
 import { useSharedList } from '../../hooks/useSharedList';
@@ -9,7 +11,6 @@ import {
   DEFAULT_USEFUL_LIFE_YEARS,
   equipmentBookValue,
   buildBalanceSheet,
-  buildCashFlow,
   buildProfitAndLoss,
   claimableInputVat,
   expenseCost,
@@ -35,11 +36,9 @@ import { nextSubstituteNo } from '../../utils/substituteReceipt';
 import { hasExpenseDocs } from '../../services/expenseDrive';
 import {
   BarChart3,
-  TrendingUp,
   TrendingDown,
   DollarSign,
   Plus,
-  PieChart,
   Calendar,
   FileSpreadsheet,
   X,
@@ -50,14 +49,12 @@ import {
   ShoppingBag,
   Truck,
   Briefcase,
-  Zap,
   Layers,
   ArrowUpRight,
   ArrowDownRight,
   Percent,
-  CheckCircle2,
   Building2,
-  Receipt,
+  BookOpen,
   Search,
   Filter,
   FileDown,
@@ -65,13 +62,10 @@ import {
   Loader2,
   Eye,
   Info,
-  AlertTriangle,
   ChevronRight,
-  Scale,
   Banknote,
   ArrowDownLeft,
   Users,
-  CreditCard,
   Check,
   Clock,
   AlertCircle,
@@ -90,20 +84,6 @@ import {
   Image as ImageIcon,
   Send
 } from 'lucide-react';
-import {
-  ResponsiveContainer,
-  ComposedChart,
-  Bar,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  PieChart as RePieChart,
-  Pie,
-  Cell
-} from 'recharts';
 import { usePOS } from '../../context/POSContext';
 import {
   ExpenseCategory,
@@ -120,7 +100,9 @@ import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 
 type TimeHorizon = 'selected' | '6months' | 'year';
-type ViewTab = 'overview' | 'statement' | 'balance_sheet' | 'cash_flow' | 'ar_ap' | 'expenses' | 'incomes' | 'details' | 'telegram';
+type ViewTab = 'books' | 'ar_ap' | 'expenses' | 'incomes' | 'details' | 'telegram';
+/** Links from elsewhere (sidebar, other pages) to the statements, now in the ledger books */
+const LEGACY_TAB: Record<string, LedgerTab> = { overview: 'pnl', statement: 'pnl', balance_sheet: 'balance', cash_flow: 'cashflow', journal: 'journal', trial: 'trial' };
 
 interface MonthlyFinancialData {
   monthKey: string; // YYYY-MM
@@ -241,16 +223,6 @@ export const INCOME_TITLE_PRESETS: Record<IncomeCategory, string[]> = {
   ]
 };
 
-const EXPENSE_COLORS: Record<string, string> = {
-  'ต้นทุนวัตถุดิบ (COGS)': '#f97316', // Orange
-  'ซัพพลาย/ของใช้สิ้นเปลือง': '#14b8a6', // Teal
-  'ค่าเช่าสถานที่': '#38bdf8', // Sky
-  'ค่าแรง/เงินเดือน': '#a855f7', // Purple
-  'ค่าน้ำ/ค่าไฟ/แก๊ส': '#eab308', // Yellow
-  'การตลาด/โฆษณา': '#ec4899', // Pink
-  'ค่าใช้จ่ายอื่นๆ': '#64748b'  // Slate
-};
-
 export const EXPENSE_TITLE_PRESETS: Record<ExpenseCategory, string[]> = {
   raw_material: [
     'ซื้อวัตถุดิบสด CP / เบทาโกร',
@@ -317,13 +289,6 @@ export const EXPENSE_TITLE_PRESETS: Record<ExpenseCategory, string[]> = {
     'ค่าขนส่ง / ค่าเดินทางซื้อของ',
     'ค่าใช้จ่ายเบ็ดเตล็ดทั่วไป'
   ]
-};
-
-const REVENUE_COLORS: Record<string, string> = {
-  'ยอดขายหน้าร้าน POS': '#10b981', // Emerald
-  'แอปเดลิเวอรี (GP)': '#06b6d4', // Cyan
-  'บริการจัดเลี้ยง (Catering)': '#8b5cf6', // Violet
-  'รายได้อื่นๆ / ค่าโฆษณา': '#f59e0b'  // Amber
 };
 
 const getCurrentMonthKey = () => {
@@ -417,7 +382,16 @@ export const AccountingView: React.FC = () => {
     p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading' || (p.status === 'approved' && p.stockPending && !p.stockAdded?.length)
   ).length;
   const vatRate = vatRateOf(settings);
-  const [activeTab, setActiveTab] = useState<ViewTab>(() => takePageSection<ViewTab>('accounting') || 'overview');
+  const initialSection = useState(() => takePageSection<string>('accounting'))[0];
+  const [ledgerTab, setLedgerTab] = useState<LedgerTab>(() => LEGACY_TAB[initialSection || ''] || 'pnl');
+  const [activeTab, setActiveTabRaw] = useState<ViewTab>(() => (!initialSection || LEGACY_TAB[initialSection] ? 'books' : (initialSection as ViewTab)));
+  /** Old section names open the matching statement of the ledger books */
+  const setActiveTab = (t: string) => {
+    if (LEGACY_TAB[t]) {
+      setLedgerTab(LEGACY_TAB[t]);
+      setActiveTabRaw('books');
+    } else setActiveTabRaw(t as ViewTab);
+  };
   // The side menu can open a section of this page directly
   useEffect(() => onPageSectionRequest<ViewTab>('accounting', setActiveTab), []);
 
@@ -427,8 +401,6 @@ export const AccountingView: React.FC = () => {
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   const reportRef = useRef<HTMLDivElement>(null);
-  const cashFlowReportRef = useRef<HTMLDivElement>(null);
-
   // Income Form State
   const [incTitle, setIncTitle] = useState('');
   const [incTitleSelect, setIncTitleSelect] = useState('');
@@ -488,6 +460,8 @@ export const AccountingView: React.FC = () => {
   const [expCategory, setExpCategory] = useState<ExpenseCategory>('raw_material');
   // Input VAT can be claimed only with a full tax invoice; market and street purchases have none
   const [expIncludeVat, setExpIncludeVat] = useState(false);
+  /** How the expense was paid (which cash account the books take it from) */
+  const [expPaidFrom, setExpPaidFrom] = useState<PaidFrom>('bank');
   const [expRefNumber, setExpRefNumber] = useState('');
   const [expNote, setExpNote] = useState('');
   const [expReceiptImage, setExpReceiptImage] = useState<string | null>(null);
@@ -1021,14 +995,6 @@ export const AccountingView: React.FC = () => {
     return list;
   }, [selectedMonth, timeHorizon]);
 
-  const endOfMonthDate = useMemo(() => {
-    const [yStr, mStr] = selectedMonth.split('-');
-    const y = parseInt(yStr, 10) || new Date().getFullYear();
-    const m = parseInt(mStr, 10) || (new Date().getMonth() + 1);
-    const lastDay = new Date(y, m, 0).getDate();
-    return `${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
-  }, [selectedMonth]);
-
   // 2. Compute Monthly Financials for each month in monthsList
   const monthlyData: MonthlyFinancialData[] = useMemo(() => {
     return monthsList.map(monthKey => {
@@ -1108,18 +1074,6 @@ export const AccountingView: React.FC = () => {
       }
     );
   }, [monthlyData]);
-
-  // Cash flow of the months on screen
-  const inRange = (d: string) => monthsList.includes(monthOf(d));
-  const cashFlow = useMemo(
-    () =>
-      buildCashFlow(
-        { orders, expenses, incomes: incomes || [], receivables: arList, payables: apList, entries: cashFlowEntries },
-        { branchId: currentBranch.id, inPeriod: d => monthsList.includes(monthOf(d)) }
-      ),
-    [orders, expenses, incomes, arList, apList, cashFlowEntries, currentBranch.id, monthsList]
-  );
-  const periodCashFlowEntries = cashFlowEntries.filter(e => (!e.branchId || e.branchId === currentBranch.id) && inRange(e.date));
 
   // Tax Calculations for selected month
   const selectedBranchOrders = orders.filter(
@@ -1273,24 +1227,7 @@ export const AccountingView: React.FC = () => {
   }, [dailyFinancials, dailySearchQuery]);
 
   // Donut Chart Data: Revenue Breakdown
-  const revenueDonutData = [
-    { name: 'ยอดขายหน้าร้าน POS', value: rangeTotals.posSales },
-    { name: 'แอปเดลิเวอรี (GP)', value: rangeTotals.deliverySales },
-    { name: 'บริการจัดเลี้ยง (Catering)', value: rangeTotals.cateringSales },
-    { name: 'รายได้อื่นๆ / ค่าโฆษณา', value: rangeTotals.otherIncome }
-  ].filter(d => d.value > 0);
-
   // Donut Chart Data: Expenses & Costs Breakdown
-  const expenseDonutData = [
-    { name: 'ต้นทุนวัตถุดิบ (COGS)', value: rangeTotals.cogs },
-    { name: 'ซัพพลาย/ของใช้สิ้นเปลือง', value: rangeTotals.suppliesExpense },
-    { name: 'ค่าเช่าสถานที่', value: rangeTotals.rent },
-    { name: 'ค่าแรง/เงินเดือน', value: rangeTotals.salary },
-    { name: 'ค่าน้ำ/ค่าไฟ/แก๊ส', value: rangeTotals.utilities },
-    { name: 'การตลาด/โฆษณา', value: rangeTotals.marketing },
-    { name: 'ค่าใช้จ่ายอื่นๆ', value: rangeTotals.otherExpense }
-  ].filter(d => d.value > 0);
-
   // Handlers
   const handleCreateExpense = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1314,6 +1251,7 @@ export const AccountingView: React.FC = () => {
       title: expTitle.trim(),
       amount: expAmount,
       includeVat: expIncludeVat,
+      paidFrom: expPaidFrom,
       vatAmount,
       netAmount,
       refNumber: expRefNumber.trim(),
@@ -1663,12 +1601,6 @@ export const AccountingView: React.FC = () => {
     });
   };
 
-  const handleDeleteCF = (id: string) => {
-    if (window.confirm('คุณต้องการลบรายการกระแสเงินสดนี้ใช่หรือไม่?')) {
-      setCashFlowEntries(prev => prev.filter(item => item.id !== id));
-    }
-  };
-
   const handleExportCSV = () => {
     const headers = ['ประเภท', 'เลขที่/อ้างอิง', 'วันที่', 'รายการ', 'หมวดบัญชี', 'ยอดรวม VAT (บาท)', `VAT ${vatRate}%`, 'ยอดก่อน VAT / ต้นทุน (บาท)'];
     const rows: (string | number)[][] = [];
@@ -1749,85 +1681,6 @@ export const AccountingView: React.FC = () => {
       console.error('Failed to generate PDF report:', err);
       if (reportRef.current) {
         printElement(reportRef.current, `Financial Report ${selectedMonth}`);
-      }
-    } finally {
-      setIsGeneratingPDF(false);
-    }
-  };
-
-  const handleExportCashFlowCSV = () => {
-    const headers = ['วันที่', 'ประเภทกิจกรรม', 'ทิศทางเงินสด', 'รายการ/คำอธิบาย', 'เงินสดเข้า (+)', 'เงินสดออก (-)', 'กระแสเงินสดสุทธิ (บาท)'];
-    const rows: string[][] = [];
-
-    // Operating activities (direct method)
-    rows.push([monthsList[0] + ' ถึง ' + endOfMonthDate, 'กิจกรรมดำเนินงาน', 'รับ', 'เงินสดรับจากการขาย (รวม VAT)', cashFlow.receiptsFromSales.toFixed(2), '0.00', cashFlow.receiptsFromSales.toFixed(2)]);
-    rows.push([monthsList[0] + ' ถึง ' + endOfMonthDate, 'กิจกรรมดำเนินงาน', 'รับ', 'เงินสดรับจากรายได้อื่น', cashFlow.receiptsOther.toFixed(2), '0.00', cashFlow.receiptsOther.toFixed(2)]);
-    rows.push([monthsList[0] + ' ถึง ' + endOfMonthDate, 'กิจกรรมดำเนินงาน', 'จ่าย', 'เงินสดจ่ายค่าวัตถุดิบและค่าใช้จ่าย (รวม VAT)', '0.00', cashFlow.paidExpenses.toFixed(2), (-cashFlow.paidExpenses).toFixed(2)]);
-
-    // AR Collections
-    arList.forEach(ar => {
-      ar.payments.filter(p => inRange(p.date)).forEach(p => {
-        rows.push([
-          p.date,
-          'กิจกรรมดำเนินงาน (Operating)',
-          'รับชำระเงินจากลูกหนี้การค้า',
-          `ลูกหนี้: ${ar.customerName} (${ar.invoiceNumber}) - ${p.note || ''}`,
-          p.amount.toFixed(2),
-          '0.00',
-          p.amount.toFixed(2)
-        ]);
-      });
-    });
-
-    // AP Payments
-    apList.forEach(ap => {
-      ap.payments.filter(p => inRange(p.date)).forEach(p => {
-        rows.push([
-          p.date,
-          'กิจกรรมดำเนินงาน (Operating)',
-          'ชำระเงินให้เจ้าหนี้การค้า',
-          `เจ้าหนี้: ${ap.supplierName} (${ap.billNumber}) - ${p.note || ''}`,
-          '0.00',
-          p.amount.toFixed(2),
-          (-p.amount).toFixed(2)
-        ]);
-      });
-    });
-
-    // Investing & Financing Entries
-    periodCashFlowEntries.forEach(entry => {
-      const actLabel = entry.activityType === 'investing' ? 'กิจกรรมลงทุน (Investing)' : 'กิจกรรมจัดหาเงิน (Financing)';
-      const isIn = entry.flowType === 'inflow';
-      rows.push([
-        entry.date,
-        actLabel,
-        isIn ? 'รับเงินสดเข้า' : 'จ่ายเงินสดออก',
-        `${entry.title} (${entry.category}) ${entry.note ? '- ' + entry.note : ''}`,
-        isIn ? entry.amount.toFixed(2) : '0.00',
-        !isIn ? entry.amount.toFixed(2) : '0.00',
-        isIn ? entry.amount.toFixed(2) : (-entry.amount).toFixed(2)
-      ]);
-    });
-
-    downloadCsv(`CashFlow_Statement_${currentBranch.id}_${selectedMonth}.csv`, headers, rows);
-  };
-
-  const handleDownloadCashFlowPDF = async () => {
-    const targetEl = cashFlowReportRef.current || reportRef.current;
-    if (!targetEl) return;
-    setIsGeneratingPDF(true);
-
-    try {
-      const branchCleanName = (currentBranch?.name || 'Branch').replace(/[^a-zA-Z0-9ก-๙]/g, '_');
-      const fileName = `CashFlow_Statement_${branchCleanName}_${selectedMonth}.pdf`;
-      const ok = await exportToPDF(targetEl, fileName, 'a4', '#0f172a', 'cashflow-report-content');
-      if (!ok) {
-        printElement(targetEl, `Cash Flow Statement ${selectedMonth}`);
-      }
-    } catch (err) {
-      console.error('Failed to generate Cash Flow PDF:', err);
-      if (targetEl) {
-        printElement(targetEl, `Cash Flow Statement ${selectedMonth}`);
       }
     } finally {
       setIsGeneratingPDF(false);
@@ -1965,48 +1818,16 @@ export const AccountingView: React.FC = () => {
         <div className="flex items-center justify-between overflow-x-auto no-scrollbar gap-2 pt-1 border-t border-slate-800/60">
           <div className="flex space-x-1.5 sm:space-x-2 shrink-0">
             <button
-              onClick={() => setActiveTab('statement')}
+              onClick={() => setActiveTab('books')}
               className={`flex items-center space-x-1.5 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 whitespace-nowrap relative ${
-                activeTab === 'statement' || activeTab === 'overview'
+                activeTab === 'books'
                   ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
               }`}
             >
-              <Receipt className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              <span>งบกำไรขาดทุน (P&L)</span>
-              {(activeTab === 'statement' || activeTab === 'overview') && (
-                <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-rose-500 rounded-full" />
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveTab('balance_sheet')}
-              className={`flex items-center space-x-1.5 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 whitespace-nowrap relative ${
-                activeTab === 'balance_sheet'
-                  ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 shadow'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-              }`}
-            >
-              <Scale className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-              <span>งบแสดงฐานะการเงิน</span>
-              {activeTab === 'balance_sheet' && (
-                <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-rose-500 rounded-full" />
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveTab('cash_flow')}
-              className={`flex items-center space-x-1.5 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 whitespace-nowrap relative ${
-                activeTab === 'cash_flow'
-                  ? 'bg-sky-600/30 text-sky-300 border border-sky-500/40 shadow'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-              }`}
-            >
-              <Banknote className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-sky-400" />
-              <span>งบกระแสเงินสด</span>
-              {activeTab === 'cash_flow' && (
-                <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-sky-500 rounded-full" />
-              )}
+              <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span>บัญชีและงบการเงิน</span>
+              {activeTab === 'books' && <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-rose-500 rounded-full" />}
             </button>
 
             <button
@@ -2106,992 +1927,10 @@ export const AccountingView: React.FC = () => {
       <div className="flex-1 p-3 sm:p-6 overflow-y-auto">
         {/* Printable & Capture PDF Container */}
         <div ref={reportRef} id="accounting-report-content" className="space-y-4 sm:space-y-6 bg-slate-950 p-2 sm:p-4 rounded-2xl">
-          {/* Report header and key figures: profit and loss views only */}
-          {(activeTab === 'overview' || activeTab === 'statement') && (
-          <>
-          {/* Executive Report Header Band (Visible in PDF export) */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl">
-            <div className="space-y-1">
-              <div className="flex items-center space-x-2">
-                <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded text-[10px] font-bold uppercase tracking-wider">
-                  รายงานการเงิน
-                </span>
-                <span className="text-xs text-slate-400 font-mono">สาขา: {currentBranch.name}</span>
-              </div>
-              <h2 className="text-base sm:text-xl font-extrabold text-slate-100 flex items-center space-x-2">
-                <Building2 className="w-5 h-5 text-sky-400" />
-                <span>งบกำไรขาดทุน {timeHorizon === 'selected' ? selectedMonth : `${monthsList[0]} ถึง ${monthsList[monthsList.length - 1]}`}</span>
-              </h2>
-              <p className="text-xs text-slate-400">
-                {settings.shopName || currentBranch.name} · สรุปจากยอดขายและรายการที่บันทึกในระบบ
-              </p>
-            </div>
-            <div className="text-right text-xs text-slate-400 font-mono space-y-0.5 bg-slate-950 p-2.5 rounded-xl border border-slate-800 w-full sm:w-auto">
-              <div><strong className="text-slate-300">รอบเดือน:</strong> {selectedMonth}</div>
-              <div><strong className="text-slate-300">กำไรก่อนภาษี:</strong> <span className={rangeTotals.netProfit >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>฿{money(rangeTotals.netProfit)}</span></div>
-              <div className="text-[10px] text-slate-500">พิมพ์เมื่อ: {new Date().toLocaleDateString('th-TH')}</div>
-            </div>
-          </div>
-        {/* KPI Top Summary Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          {/* Revenue */}
-          <div className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex items-center justify-between">
-            <div>
-              <span className="text-xs font-semibold text-slate-400 block">
-                {timeHorizon === 'selected' ? 'รายได้รวม (ก่อน VAT)' : `รายได้รวม ${monthsList.length} เดือน (ก่อน VAT)`}
-              </span>
-              <span className="text-xl sm:text-2xl font-extrabold text-emerald-400 font-mono mt-0.5 block">
-                {money(rangeTotals.totalRevenue)} ฿
-              </span>
-              <div className="flex items-center space-x-1.5 text-[10px] text-slate-400 mt-0.5">
-                <span>ขาย: ฿{money(rangeTotals.salesRevenue)}</span>
-                <span>•</span>
-                <span>รายได้อื่น: ฿{money(rangeTotals.otherIncome)}</span>
-              </div>
-            </div>
-            <div className="p-2.5 sm:p-3 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20 shrink-0 ml-2">
-              <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6" />
-            </div>
-          </div>
+        {/* Statements: the double-entry books (profit and loss, balance sheet, cash flow, journal, trial balance, ledger) */}
+        {activeTab === 'books' && <LedgerBooks tab={ledgerTab} onTab={setLedgerTab} />}
 
-          {/* COGS */}
-          <div className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex items-center justify-between">
-            <div>
-              <span className="text-xs font-semibold text-slate-400 block">ต้นทุนขาย (วัตถุดิบ)</span>
-              <span className="text-xl sm:text-2xl font-extrabold text-orange-400 font-mono mt-0.5 block">
-                {money(rangeTotals.cogs)} ฿
-              </span>
-              <span className="text-[10px] text-slate-400 mt-0.5 block">
-                {pct(rangeTotals.cogs, rangeTotals.salesRevenue)}% ของยอดขาย{rangeTotals.estimatedCogs > 0 ? ' · บางเมนูเป็นค่าประมาณ' : ''}
-              </span>
-            </div>
-            <div className="p-2.5 sm:p-3 bg-orange-500/10 text-orange-400 rounded-xl border border-orange-500/20 shrink-0 ml-2">
-              <PieChart className="w-5 h-5 sm:w-6 sm:h-6" />
-            </div>
-          </div>
-
-          {/* OPEX */}
-          <div className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex items-center justify-between">
-            <div>
-              <span className="text-xs font-semibold text-slate-400 block">ค่าใช้จ่ายขายและบริหาร</span>
-              <span className="text-xl sm:text-2xl font-extrabold text-rose-400 font-mono mt-0.5 block">
-                {money(rangeTotals.totalOpex)} ฿
-              </span>
-              <span className="text-[10px] text-slate-400 mt-0.5 block">
-                เงินเดือน ค่าเช่า น้ำไฟ วัสดุ โฆษณา
-              </span>
-            </div>
-            <div className="p-2.5 sm:p-3 bg-rose-500/10 text-rose-400 rounded-xl border border-rose-500/20 shrink-0 ml-2">
-              <TrendingDown className="w-5 h-5 sm:w-6 sm:h-6" />
-            </div>
-          </div>
-
-          {/* Net Operating Profit */}
-          <div className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex items-center justify-between">
-            <div>
-              <span className="text-xs font-semibold text-slate-400 block">กำไร (ขาดทุน) ก่อนภาษี</span>
-              <span
-                className={`text-xl sm:text-2xl font-extrabold font-mono mt-0.5 block ${
-                  rangeTotals.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                }`}
-              >
-                {money(rangeTotals.netProfit)} ฿
-              </span>
-              <span className="text-[10px] text-slate-400 mt-0.5 block">
-                รอบบิล: {timeHorizon === 'selected' ? selectedMonth : `สะสม ${monthsList.length} เดือน`}
-              </span>
-            </div>
-            <div
-              className={`p-2.5 sm:p-3 rounded-xl border shrink-0 ml-2 ${
-                rangeTotals.netProfit >= 0
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                  : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
-              }`}
-            >
-              <DollarSign className="w-5 h-5 sm:w-6 sm:h-6" />
-            </div>
-          </div>
-        </div>
-          </>
-          )}
-
-        {/* TAB 1: OVERVIEW CHARTS */}
-        {activeTab === 'overview' && (
-          <div className="space-y-4 sm:space-y-6">
-            {/* Main Bar/Line Chart: Monthly Financial Trend */}
-            <div className="p-3.5 sm:p-5 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl space-y-3 sm:space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                <div>
-                  <h3 className="font-bold text-slate-100 text-xs sm:text-sm flex items-center space-x-2">
-                    <span>แผนภูมิแนวโน้มรายเดือน</span>
-                    <span className="px-1.5 py-0.5 bg-indigo-500/20 text-indigo-300 text-[9px] sm:text-[10px] rounded-full border border-indigo-500/30 font-mono">
-                      Dynamic Trend
-                    </span>
-                  </h3>
-                  <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
-                    สัดส่วนรายรับ ต้นทุน และยอดกำไรสุทธิแต่ละเดือน
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 text-[11px] sm:text-xs font-medium pt-1 sm:pt-0">
-                  <div className="flex items-center space-x-1.5">
-                    <div className="w-2.5 h-2.5 rounded bg-emerald-500"></div>
-                    <span className="text-slate-300">รายได้</span>
-                  </div>
-                  <div className="flex items-center space-x-1.5">
-                    <div className="w-2.5 h-2.5 rounded bg-rose-500"></div>
-                    <span className="text-slate-300">ต้นทุน/รายจ่าย</span>
-                  </div>
-                  <div className="flex items-center space-x-1.5">
-                    <div className="w-2.5 h-2.5 rounded bg-amber-400"></div>
-                    <span className="text-slate-300">กำไรสุทธิ</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="h-56 sm:h-72 w-full pt-1">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={monthlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
-                    <XAxis dataKey="monthLabel" stroke="#94a3b8" fontSize={10} tickLine={false} />
-                    <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: '#0f172a',
-                        borderColor: '#334155',
-                        borderRadius: '12px',
-                        color: '#f8fafc',
-                        fontSize: '11px',
-                        boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)'
-                      }}
-                      formatter={(value: any, name: any) => {
-                        const valNum = Number(value) || 0;
-                        if (name === 'totalRevenue') return [`฿${money(valNum)}`, 'รายได้รวม'];
-                        if (name === 'totalOpexPlusCogs') return [`฿${money(valNum)}`, 'ต้นทุน + ค่าใช้จ่าย'];
-                        if (name === 'netProfit') return [`฿${money(valNum)}`, 'กำไรสุทธิ (Net)'];
-                        return [`฿${money(valNum)}`, name];
-                      }}
-                    />
-                    <Bar
-                      dataKey="totalRevenue"
-                      name="totalRevenue"
-                      fill="#10b981"
-                      radius={[4, 4, 0, 0]}
-                      maxBarSize={35}
-                    />
-                    <Bar
-                      dataKey={d => d.cogs + d.totalOpex}
-                      name="totalOpexPlusCogs"
-                      fill="#f43f5e"
-                      radius={[4, 4, 0, 0]}
-                      maxBarSize={35}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="netProfit"
-                      name="netProfit"
-                      stroke="#f59e0b"
-                      strokeWidth={2.5}
-                      dot={{ r: 4, fill: '#f59e0b', strokeWidth: 1.5, stroke: '#0f172a' }}
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            {/* Side-by-Side Donut Charts: Revenue Breakdown vs. Expense Breakdown */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-              {/* Revenue Streams Donut Chart */}
-              <div className="p-3.5 sm:p-5 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl space-y-3">
-                <div className="border-b border-slate-800 pb-2 flex items-center justify-between">
-                  <div>
-                    <h3 className="font-bold text-slate-100 text-xs sm:text-sm flex items-center space-x-1.5">
-                      <ShoppingBag className="w-4 h-4 text-emerald-400" />
-                      <span>สัดส่วนช่องทางรายได้</span>
-                    </h3>
-                    <p className="text-[10px] sm:text-[11px] text-slate-400">
-                      POS, เดลิเวอรี และบริการจัดเลี้ยง
-                    </p>
-                  </div>
-                  <span className="font-mono text-emerald-400 font-bold text-xs">
-                    ฿{money(rangeTotals.totalRevenue)}
-                  </span>
-                </div>
-
-                <div className="h-48 sm:h-56 w-full flex items-center justify-center">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RePieChart>
-                      <Pie
-                        data={revenueDonutData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={48}
-                        outerRadius={75}
-                        paddingAngle={3}
-                        dataKey="value"
-                      >
-                        {revenueDonutData.map((entry, index) => (
-                          <Cell
-                            key={`cell-rev-${index}`}
-                            fill={REVENUE_COLORS[entry.name] || '#10b981'}
-                          />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: '#0f172a',
-                          borderColor: '#334155',
-                          borderRadius: '10px',
-                          color: '#fff',
-                          fontSize: '11px'
-                        }}
-                        formatter={(val: any) => `฿${money(Number(val))}`}
-                      />
-                    </RePieChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* Donut Legend Items */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-2 text-xs pt-1">
-                  {revenueDonutData.map((item, idx) => {
-                    const pct = rangeTotals.totalRevenue > 0 ? ((item.value / rangeTotals.totalRevenue) * 100).toFixed(1) : 0;
-                    return (
-                      <div key={idx} className="flex items-center justify-between p-2 bg-slate-950 border border-slate-800/80 rounded-xl">
-                        <div className="flex items-center space-x-2 truncate">
-                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: REVENUE_COLORS[item.name] }}></span>
-                          <span className="text-slate-300 font-medium truncate text-xs">{item.name}</span>
-                        </div>
-                        <div className="text-right shrink-0 font-mono ml-2">
-                          <span className="text-slate-200 font-bold block text-xs">{pct}%</span>
-                          <span className="text-[10px] text-slate-500">฿{money(item.value)}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Expense & Operating Cost Breakdown Donut Chart */}
-              <div className="p-3.5 sm:p-5 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl space-y-3">
-                <div className="border-b border-slate-800 pb-2 flex items-center justify-between">
-                  <div>
-                    <h3 className="font-bold text-slate-100 text-xs sm:text-sm flex items-center space-x-1.5">
-                      <TrendingDown className="w-4 h-4 text-rose-400" />
-                      <span>โครงสร้างต้นทุนและค่าใช้จ่าย</span>
-                    </h3>
-                    <p className="text-[10px] sm:text-[11px] text-slate-400">
-                      วัตถุดิบ, ค่าเช่า, เงินเดือน, น้ำไฟ
-                    </p>
-                  </div>
-                  <span className="font-mono text-rose-400 font-bold text-xs">
-                    ฿{money((rangeTotals.cogs + rangeTotals.totalOpex))}
-                  </span>
-                </div>
-
-                <div className="h-48 sm:h-56 w-full flex items-center justify-center">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RePieChart>
-                      <Pie
-                        data={expenseDonutData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={48}
-                        outerRadius={75}
-                        paddingAngle={3}
-                        dataKey="value"
-                      >
-                        {expenseDonutData.map((entry, index) => (
-                          <Cell
-                            key={`cell-exp-${index}`}
-                            fill={EXPENSE_COLORS[entry.name] || '#f43f5e'}
-                          />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: '#0f172a',
-                          borderColor: '#334155',
-                          borderRadius: '10px',
-                          color: '#fff',
-                          fontSize: '11px'
-                        }}
-                        formatter={(val: any) => `฿${money(Number(val))}`}
-                      />
-                    </RePieChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* Donut Legend Items */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-2 text-xs pt-1">
-                  {expenseDonutData.map((item, idx) => {
-                    const totalCost = rangeTotals.cogs + rangeTotals.totalOpex;
-                    const pct = totalCost > 0 ? ((item.value / totalCost) * 100).toFixed(1) : 0;
-                    return (
-                      <div key={idx} className="flex items-center justify-between p-2 bg-slate-950 border border-slate-800/80 rounded-xl">
-                        <div className="flex items-center space-x-2 truncate">
-                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: EXPENSE_COLORS[item.name] }}></span>
-                          <span className="text-slate-300 font-medium truncate text-xs">{item.name}</span>
-                        </div>
-                        <div className="text-right shrink-0 font-mono ml-2">
-                          <span className="text-slate-200 font-bold block text-xs">{pct}%</span>
-                          <span className="text-[10px] text-slate-500">฿{money(item.value)}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2: DETAILED P&L FINANCIAL STATEMENT TABLE */}
-        {activeTab === 'statement' && (
-          <div className="space-y-4 sm:space-y-6 print:bg-white print:text-black">
-            {/* Printable P&L Header */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 sm:space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-2">
-                <div>
-                  <h2 className="text-base sm:text-xl font-bold text-slate-100">
-                    งบกำไรขาดทุน
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    สาขา: <span className="text-sky-300 font-semibold">{currentBranch.name}</span> | รอบเวลา: {timeHorizon === 'selected' ? selectedMonth : `สะสม ${monthsList.length} เดือน`}
-                  </p>
-                </div>
-                <div className="text-left sm:text-right font-mono text-[11px] text-slate-400">
-                  <div>เลขประจำตัวผู้เสียภาษี: {currentBranch.taxId}</div>
-                  <div>ออกรายงานเมื่อ: {new Date().toLocaleDateString('th-TH')}</div>
-                </div>
-              </div>
-
-              {/* Profit and loss in the TFRS for NPAEs layout */}
-              <div className="space-y-3 sm:space-y-4 text-xs">
-                <p className="text-[11px] text-slate-400">
-                  หน่วย: บาท · {vatRegistered ? `ยอดขายและค่าใช้จ่ายแสดงก่อนภาษีมูลค่าเพิ่ม (VAT ${vatRate}%)` : 'ร้านไม่ได้จดทะเบียน VAT: ค่าใช้จ่ายรวม VAT ที่จ่ายไป'} · เกณฑ์คงค้างตามวันที่ขาย/วันที่บันทึก
-                </p>
-
-                <div className="space-y-1.5">
-                  <div className="font-bold text-sm text-slate-100">รายได้</div>
-                  <div className="pl-2 sm:pl-4 space-y-1 text-slate-300">
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>รายได้จากการขายหน้าร้าน (ทานที่ร้าน/กลับบ้าน)</span>
-                      <span className="font-mono">{money(rangeTotals.posSales)}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>รายได้จากการขายเดลิเวอรี</span>
-                      <span className="font-mono">{money(rangeTotals.deliverySales)}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>รายได้จากบริการจัดเลี้ยง</span>
-                      <span className="font-mono">{money(rangeTotals.cateringSales)}</span>
-                    </div>
-                    <div className="flex justify-between py-1.5 font-bold text-slate-100">
-                      <span>รวมรายได้จากการขายและบริการ</span>
-                      <span className="font-mono">{money(rangeTotals.salesRevenue)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex justify-between py-1.5 text-slate-300 border-b border-slate-800">
-                    <span>หัก ต้นทุนขาย (ต้นทุนวัตถุดิบของอาหารที่ขาย)</span>
-                    <span className="font-mono">({money(rangeTotals.cogs)})</span>
-                  </div>
-                  {rangeTotals.estimatedCogs > 0 && (
-                    <p className="text-[11px] text-amber-300">
-                      ต้นทุน ฿{money(rangeTotals.estimatedCogs)} เป็นค่าประมาณ (40% ของราคาขาย) เพราะเมนูนั้นยังไม่มีสูตร/ต้นทุน ใส่สูตรในหน้าเมนูเพื่อให้ตัวเลขถูกต้อง
-                    </p>
-                  )}
-                  <div className="flex items-center justify-between font-bold text-sm bg-indigo-950/40 border border-indigo-500/30 p-2.5 sm:p-3 rounded-xl text-indigo-200">
-                    <span>กำไรขั้นต้น <span className="font-normal text-[11px] opacity-80">({pct(rangeTotals.grossProfit, rangeTotals.salesRevenue)}% ของยอดขาย)</span></span>
-                    <span className="font-mono">{money(rangeTotals.grossProfit)}</span>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="font-bold text-sm text-slate-100">หัก ค่าใช้จ่ายในการขายและบริหาร</div>
-                  <div className="pl-2 sm:pl-4 space-y-1 text-slate-300">
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>เงินเดือนและค่าแรง</span>
-                      <span className="font-mono">{money(rangeTotals.salary)}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าเช่า</span>
-                      <span className="font-mono">{money(rangeTotals.rent)}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าน้ำ ค่าไฟ ค่าแก๊ส</span>
-                      <span className="font-mono">{money(rangeTotals.utilities)}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>วัสดุสิ้นเปลือง</span>
-                      <span className="font-mono">{money(rangeTotals.suppliesExpense)}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าโฆษณาและการตลาด</span>
-                      <span className="font-mono">{money(rangeTotals.marketing)}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าใช้จ่ายอื่น</span>
-                      <span className="font-mono">{money(rangeTotals.otherExpense)}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800/60">
-                      <span>ค่าเสื่อมราคาอุปกรณ์</span>
-                      <span className="font-mono">{money(rangeTotals.depreciation)}</span>
-                    </div>
-                    {rangeTotals.rawMaterialExpense > 0 && (
-                      <p className="text-[11px] text-slate-500 pt-1">
-                        ค่าซื้อวัตถุดิบ ฿{money(rangeTotals.rawMaterialExpense)} ไม่อยู่ในส่วนนี้: วัตถุดิบเป็นสินค้าคงเหลือ และถูกรับรู้เป็นต้นทุนขายเมื่ออาหารถูกขาย
-                      </p>
-                    )}
-                    {rangeTotals.equipmentPurchases > 0 && (
-                      <p className="text-[11px] text-slate-500 pt-1">
-                        ค่าซื้ออุปกรณ์ ฿{money(rangeTotals.equipmentPurchases)} บันทึกเป็นสินทรัพย์ และทยอยเป็นค่าเสื่อมราคาแบบเส้นตรง {depreciationOptions.usefulLifeYears} ปี
-                      </p>
-                    )}
-                    <div className="flex justify-between py-1.5 font-bold text-slate-100">
-                      <span>รวมค่าใช้จ่ายในการขายและบริหาร</span>
-                      <span className="font-mono">({money(rangeTotals.totalOpex)})</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-between py-1.5 font-bold text-slate-100 border-t border-slate-700">
-                  <span>กำไร (ขาดทุน) จากการดำเนินงาน</span>
-                  <span className="font-mono">{money(rangeTotals.operatingProfit)}</span>
-                </div>
-                <div className="flex justify-between py-1 text-slate-300">
-                  <span>บวก รายได้อื่น (ดอกเบี้ย ค่าเช่า ขายเศษวัสดุ/ทรัพย์สิน ฯลฯ)</span>
-                  <span className="font-mono">{money(rangeTotals.otherIncome)}</span>
-                </div>
-
-                <div
-                  className={`p-3.5 sm:p-4 rounded-2xl border flex items-center justify-between font-bold text-sm sm:text-base ${
-                    rangeTotals.netProfit >= 0 ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200' : 'bg-rose-950/60 border-rose-500/50 text-rose-200'
-                  }`}
-                >
-                  <div>
-                    <span>กำไร (ขาดทุน) ก่อนภาษีเงินได้</span>
-                    <span className="block text-[10px] sm:text-xs font-normal opacity-80 mt-0.5">
-                      อัตรากำไร {pct(rangeTotals.netProfit, rangeTotals.totalRevenue)}% ของรายได้รวม · ภาษีเงินได้คำนวณตามแบบ ภ.ง.ด.50/51 (นิติบุคคล) หรือ ภ.ง.ด.90/94 (บุคคลธรรมดา)
-                    </span>
-                  </div>
-                  <span className="font-mono font-black text-lg sm:text-2xl ml-2">{money(rangeTotals.netProfit)}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB: BALANCE SHEET (งบแสดงฐานะการเงิน) */}
-        {activeTab === 'balance_sheet' && (
-          <div className="space-y-4 sm:space-y-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-6">
-              {/* Header section */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                <div className="space-y-1">
-                  <div className="flex items-center space-x-2">
-                    <span className="px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded text-[10px] font-bold uppercase tracking-wider">
-                      งบแสดงฐานะการเงิน
-                    </span>
-                    <span className="text-xs text-slate-400 font-mono">สาขา: {currentBranch.name}</span>
-                  </div>
-                  <h2 className="text-lg sm:text-xl font-bold text-slate-100 flex items-center space-x-2">
-                    <Scale className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-400" />
-                    <span>งบแสดงฐานะการเงิน ณ วันนี้</span>
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    สมการบัญชี: สินทรัพย์ = หนี้สิน + ส่วนของเจ้าของ
-                  </p>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => {
-                      setEditBalanceForm({ ...balanceData });
-                      setIsEditBalanceModalOpen(true);
-                    }}
-                    className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 active:scale-95 shadow"
-                  >
-                    <Calculator className="w-4 h-4 text-sky-400" />
-                    <span>ปรับปรุงตัวเลขบัญชี</span>
-                  </button>
-                  <button
-                    onClick={() => window.print()}
-                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 active:scale-95 shadow"
-                  >
-                    <Printer className="w-4 h-4" />
-                    <span>พิมพ์งบฐานะการเงิน</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Accounting equation check */}
-              <div
-                role="status"
-                className={`p-3.5 rounded-xl border text-xs ${
-                  balanceSheet.balanced ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200' : 'bg-amber-950/40 border-amber-500/40 text-amber-200'
-                }`}
-              >
-                <div className="font-bold text-sm flex items-center gap-2">
-                  {balanceSheet.balanced ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertTriangle className="w-5 h-5 shrink-0" />}
-                  {balanceSheet.balanced ? 'สมดุล: สินทรัพย์ = หนี้สิน + ส่วนของเจ้าของ' : `ยังไม่สมดุล ต่างกัน ฿${money(balanceSheet.unreconciled)}`}
-                </div>
-                <div className="font-mono mt-1 opacity-80">
-                  ฿{money(balanceSheet.totalAssets)} = ฿{money(balanceSheet.totalLiabilities)} + ฿{money(balanceSheet.totalEquity)}
-                </div>
-                {!balanceSheet.balanced && (
-                  <p className="mt-1.5 text-amber-100/80">
-                    ส่วนต่างมาจากรายการที่ระบบไม่มีข้อมูล เช่น สต็อกและเงินสดตั้งต้นก่อนเริ่มใช้ระบบ เงินที่เจ้าของถอนไปใช้ส่วนตัว หรือการซื้อวัตถุดิบที่ไม่ได้บันทึก
-                    กด “ปรับปรุงตัวเลขบัญชี” เพื่อใส่ยอดเงินสด/ธนาคารที่นับได้จริงและทุนตั้งต้น
-                  </p>
-                )}
-              </div>
-              {liveCashOnHand < 0 && balanceData.overrideCashOnHand === undefined && (
-                <p className="text-xs text-rose-300">
-                  เงินสดที่คำนวณได้ติดลบ: มีรายจ่ายมากกว่ารายรับที่บันทึกไว้ ให้ใส่ทุน/เงินตั้งต้น หรือยอดเงินสดที่นับได้จริง
-                </p>
-              )}
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 text-xs">
-                {/* Assets */}
-                <div className="p-4 sm:p-5 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-1">
-                  <h3 className="text-base font-bold text-emerald-400 pb-2 border-b border-slate-800">สินทรัพย์</h3>
-                  <div className="text-slate-400 font-bold pt-2">สินทรัพย์หมุนเวียน</div>
-                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
-                      <div>
-                        <div className="text-slate-100">เงินสดและเงินฝากธนาคาร {balanceData.overrideCashOnHand !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
-                        <div className="text-[10px] text-slate-500">รับจากการขายและรายได้อื่น หักรายจ่ายที่บันทึก รวมเงินทุน</div>
-                      </div>
-                      <div className={`font-mono font-bold ${balanceSheet.cash < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.cash)}</div>
-                    </div>
-                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
-                      <div>
-                        <div className="text-slate-100">ลูกหนี้การค้า {balanceData.overrideAccountsReceivable !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
-                        <div className="text-[10px] text-slate-500">ยอดค้างรับตามใบแจ้งหนี้ในแท็บลูกหนี้/เจ้าหนี้</div>
-                      </div>
-                      <div className={`font-mono font-bold ${balanceSheet.receivables < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.receivables)}</div>
-                    </div>
-                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
-                      <div>
-                        <div className="text-slate-100">สินค้าคงเหลือ {balanceData.overrideInventoryAsset !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
-                        <div className="text-[10px] text-slate-500">
-                          วัตถุดิบและบรรจุภัณฑ์ในคลัง × ต้นทุนต่อหน่วย
-                          {(stockByType.supplies.items > 0 || stockByType.equipment.items > 0) &&
-                            ` · ไม่รวมวัสดุสิ้นเปลือง (ลงค่าใช้จ่ายแล้ว) และอุปกรณ์ในคลัง (นับจำนวนเท่านั้น)`}
-                        </div>
-                      </div>
-                      <div className={`font-mono font-bold ${balanceSheet.inventory < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.inventory)}</div>
-                    </div>
-                  <div className="flex justify-between py-1.5 font-bold text-slate-200">
-                    <span>รวมสินทรัพย์หมุนเวียน</span>
-                    <span className="font-mono">{money(balanceSheet.currentAssets)}</span>
-                  </div>
-                  <div className="text-slate-400 font-bold pt-2">สินทรัพย์ไม่หมุนเวียน</div>
-                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
-                      <div>
-                        <div className="text-slate-100">อุปกรณ์และเครื่องใช้ (สุทธิ)</div>
-                        <div className="text-[10px] text-slate-500">
-                          {equipmentBook.count > 0
-                            ? `ราคาทุน ฿${money(equipmentBook.cost)} หักค่าเสื่อมสะสม ฿${money(equipmentBook.accumulated)} (${depreciationOptions.usefulLifeYears} ปี)${balanceData.equipmentAssets ? ` + ยอดตั้งต้น ฿${money(balanceData.equipmentAssets)}` : ''}`
-                            : 'บันทึกค่าใช้จ่ายหมวด “ซื้ออุปกรณ์” จะมาอยู่ที่นี่ และคิดค่าเสื่อมราคาให้'}
-                        </div>
-                      </div>
-                      <div className={`font-mono font-bold ${balanceSheet.equipment < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.equipment)}</div>
-                    </div>
-                  <div className="flex items-center justify-between p-3 mt-2 bg-emerald-950/30 border border-emerald-500/30 rounded-xl text-emerald-300 font-bold">
-                    <span>รวมสินทรัพย์</span>
-                    <span className="font-mono text-base">{money(balanceSheet.totalAssets)}</span>
-                  </div>
-                </div>
-
-                {/* Liabilities and equity */}
-                <div className="p-4 sm:p-5 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-1">
-                  <h3 className="text-base font-bold text-rose-300 pb-2 border-b border-slate-800">หนี้สินและส่วนของเจ้าของ</h3>
-                  <div className="text-slate-400 font-bold pt-2">หนี้สินหมุนเวียน</div>
-                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
-                      <div>
-                        <div className="text-slate-100">เจ้าหนี้การค้า {balanceData.overrideAccountsPayable !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
-                        <div className="text-[10px] text-slate-500">ยอดค้างจ่ายตามบิลในแท็บลูกหนี้/เจ้าหนี้</div>
-                      </div>
-                      <div className={`font-mono font-bold ${balanceSheet.payables < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.payables)}</div>
-                    </div>
-                  {vatRegistered && (
-                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
-                      <div>
-                        <div className="text-slate-100">ภาษีมูลค่าเพิ่มค้างนำส่ง {balanceData.overrideVatPayable !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
-                        <div className="text-[10px] text-slate-500">ภาษีขาย หัก ภาษีซื้อ สะสม (ปรับเป็น 0 หลังยื่น ภ.พ.30 และชำระแล้ว)</div>
-                      </div>
-                      <div className={`font-mono font-bold ${balanceSheet.vatPayable < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.vatPayable)}</div>
-                    </div>
-                  )}
-                  <div className="flex justify-between py-1.5 font-bold text-slate-200">
-                    <span>รวมหนี้สิน</span>
-                    <span className="font-mono">{money(balanceSheet.totalLiabilities)}</span>
-                  </div>
-                  <div className="text-slate-400 font-bold pt-2">ส่วนของเจ้าของ</div>
-                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
-                      <div>
-                        <div className="text-slate-100">ทุน</div>
-                        <div className="text-[10px] text-slate-500">เงินที่เจ้าของนำมาลงทุนในร้าน</div>
-                      </div>
-                      <div className={`font-mono font-bold ${balanceSheet.ownerCapital < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.ownerCapital)}</div>
-                    </div>
-                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-800/60">
-                      <div>
-                        <div className="text-slate-100">กำไร (ขาดทุน) สะสม {balanceData.overrideRetainedEarnings !== undefined && <span className="ml-1 text-[10px] text-amber-300">(ปรับปรุงแล้ว)</span>}</div>
-                        <div className="text-[10px] text-slate-500">กำไรก่อนภาษีสะสมจากงบกำไรขาดทุนทุกงวด</div>
-                      </div>
-                      <div className={`font-mono font-bold ${balanceSheet.retainedEarnings < 0 ? 'text-rose-400' : 'text-slate-100'}`}>{money(balanceSheet.retainedEarnings)}</div>
-                    </div>
-                  <div className="flex justify-between py-1.5 font-bold text-slate-200">
-                    <span>รวมส่วนของเจ้าของ</span>
-                    <span className="font-mono">{money(balanceSheet.totalEquity)}</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3 mt-2 bg-rose-950/30 border border-rose-500/30 rounded-xl text-rose-200 font-bold">
-                    <span>รวมหนี้สินและส่วนของเจ้าของ</span>
-                    <span className="font-mono text-base">{money(balanceSheet.totalLiabilitiesAndEquity)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Ratios */}
-              <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800/90 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block">อัตราส่วนทุนหมุนเวียน (สินทรัพย์หมุนเวียน ÷ หนี้สินหมุนเวียน)</span>
-                  <span className="font-mono font-extrabold text-sky-400 text-base block">
-                    {balanceSheet.currentRatio === null ? 'ไม่มีหนี้สิน' : `${balanceSheet.currentRatio.toFixed(2)} เท่า`}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block">มากกว่า 1 เท่า = มีสินทรัพย์พอจ่ายหนี้ระยะสั้น</span>
-                </div>
-                <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block">หนี้สินต่อส่วนของเจ้าของ (D/E)</span>
-                  <span className="font-mono font-extrabold text-emerald-400 text-base block">
-                    {balanceSheet.debtToEquity === null ? 'ส่วนของเจ้าของติดลบหรือเป็นศูนย์' : `${balanceSheet.debtToEquity.toFixed(2)} เท่า`}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block">ยิ่งต่ำ ยิ่งพึ่งพาเงินกู้/เครดิตน้อย</span>
-                </div>
-                <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block">เงินทุนหมุนเวียนสุทธิ</span>
-                  <span className={`font-mono font-extrabold text-base block ${balanceSheet.workingCapital < 0 ? 'text-rose-400' : 'text-indigo-300'}`}>
-                    ฿{money(balanceSheet.workingCapital)}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block">สินทรัพย์หมุนเวียน หัก หนี้สินหมุนเวียน</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2.1: CASH FLOW STATEMENT (งบกระแสเงินสด) */}
-        {activeTab === 'cash_flow' && (
-          <div className="space-y-4 sm:space-y-6">
-            {/* Header Report Card */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-3.5">
-                <div className="space-y-1">
-                  <div className="flex items-center space-x-2">
-                    <span className="px-2 py-0.5 bg-sky-500/20 text-sky-300 border border-sky-500/30 rounded text-[10px] font-bold uppercase tracking-wider">
-                      CASH FLOW STATEMENT
-                    </span>
-                    <span className="text-xs text-slate-400 font-mono">สาขา: {currentBranch.name}</span>
-                  </div>
-                  <h2 className="text-base sm:text-xl font-extrabold text-slate-100 flex items-center space-x-2">
-                    <Banknote className="w-5 h-5 text-sky-400" />
-                    <span>รายงานงบกระแสเงินสดสำหรับผู้บริหาร ({selectedMonth})</span>
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    วิเคราะห์กระแสเงินสดเข้า-ออก 3 กิจกรรมหลัก: กิจกรรมดำเนินงาน (Operating), กิจกรรมลงทุน (Investing), กิจกรรมจัดหาเงิน (Financing)
-                  </p>
-                </div>
-
-                <div className="flex items-center space-x-2 flex-wrap">
-                  <button
-                    onClick={() => setIsAddCFModalOpen(true)}
-                    className="px-3 py-1.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow active:scale-95"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>+ เพิ่มรายการลงทุน/จัดหาเงิน</span>
-                  </button>
-
-                  <button
-                    onClick={handleExportCashFlowCSV}
-                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-400 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow active:scale-95"
-                    title="ดาวน์โหลดรายงานกระแสเงินสดเป็นไฟล์ CSV"
-                  >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span>Export CSV</span>
-                  </button>
-
-                  <button
-                    onClick={handleDownloadCashFlowPDF}
-                    disabled={isGeneratingPDF}
-                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow active:scale-95 border border-rose-500/40 disabled:opacity-50"
-                  >
-                    {isGeneratingPDF ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <FileDown className="w-3.5 h-3.5 text-rose-100" />
-                    )}
-                    <span>ดาวน์โหลด PDF</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Cash flow summary of the period */}
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs">
-                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">1. กิจกรรมดำเนินงาน</span>
-                  <span className={`font-mono font-bold text-sm block ${cashFlow.operating >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>฿{money(cashFlow.operating)}</span>
-                  <span className="text-[10px] text-slate-500 block truncate">รับจากขาย หัก จ่ายค่าใช้จ่าย</span>
-                </div>
-                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">2. กิจกรรมลงทุน</span>
-                  <span className={`font-mono font-bold text-sm block ${cashFlow.investing >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>฿{money(cashFlow.investing)}</span>
-                  <span className="text-[10px] text-slate-500 block truncate">ซื้อ/ขายอุปกรณ์</span>
-                </div>
-                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">3. กิจกรรมจัดหาเงิน</span>
-                  <span className={`font-mono font-bold text-sm block ${cashFlow.financing >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>฿{money(cashFlow.financing)}</span>
-                  <span className="text-[10px] text-slate-500 block truncate">เงินลงทุน เงินกู้ ถอนใช้ส่วนตัว</span>
-                </div>
-                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">เงินสดเพิ่ม (ลด) สุทธิ</span>
-                  <span className={`font-mono font-bold text-sm block ${cashFlow.netChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>฿{money(cashFlow.netChange)}</span>
-                  <span className="text-[10px] text-slate-500 block truncate">1 + 2 + 3</span>
-                </div>
-                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">กระแสเงินสดอิสระ</span>
-                  <span className={`font-mono font-bold text-sm block ${cashFlow.freeCashFlow >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>฿{money(cashFlow.freeCashFlow)}</span>
-                  <span className="text-[10px] text-slate-500 block truncate">ดำเนินงาน หัก ซื้ออุปกรณ์</span>
-                </div>
-                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px] block truncate">เงินสดคงเหลือ ณ วันนี้</span>
-                  <span className="font-mono font-bold text-sky-300 text-sm block">฿{money(activeCashOnHand)}</span>
-                  <span className="text-[10px] text-slate-500 block truncate">จากงบแสดงฐานะการเงิน</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Printable & Printable Ref Section */}
-            <div ref={cashFlowReportRef} id="cashflow-report-content" className="space-y-4">
-              {/* Detailed 3 Activity Breakdown */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                {/* 1. Operating Activities (direct method) */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
-                  <div className="border-b border-slate-800 pb-2 flex items-center justify-between">
-                    <h3 className="font-bold text-slate-100 text-xs sm:text-sm flex items-center space-x-1.5">
-                      <ShoppingBag className="w-4 h-4 text-emerald-400" />
-                      <span>1. กิจกรรมดำเนินงาน</span>
-                    </h3>
-                  </div>
-                  <div className="space-y-2 text-xs">
-                    <div className="flex justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                      <span>เงินสดรับจากการขาย (รวม VAT)</span>
-                      <span className="font-mono font-bold text-emerald-400">+฿{money(cashFlow.receiptsFromSales)}</span>
-                    </div>
-                    <div className="flex justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                      <span>เงินสดรับจากรายได้อื่นที่บันทึก</span>
-                      <span className="font-mono font-bold text-emerald-400">+฿{money(cashFlow.receiptsOther)}</span>
-                    </div>
-                    <div className="flex justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                      <span>เงินสดรับชำระจากลูกหนี้</span>
-                      <span className="font-mono font-bold text-emerald-400">+฿{money(cashFlow.receiptsFromReceivables)}</span>
-                    </div>
-                    <div className="flex justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                      <span>เงินสดจ่ายค่าวัตถุดิบและค่าใช้จ่าย (รวม VAT)</span>
-                      <span className="font-mono font-bold text-rose-400">-฿{money(cashFlow.paidExpenses)}</span>
-                    </div>
-                    <div className="flex justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                      <span>เงินสดจ่ายชำระเจ้าหนี้</span>
-                      <span className="font-mono font-bold text-rose-400">-฿{money(cashFlow.paidPayables)}</span>
-                    </div>
-                    <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-xs p-2 bg-emerald-950/30 rounded-lg border border-emerald-500/30 text-emerald-300">
-                      <span>เงินสดสุทธิจากกิจกรรมดำเนินงาน</span>
-                      <span className="font-mono">฿{money(cashFlow.operating)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 2. Investing Activities */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
-                  <div className="border-b border-slate-800 pb-2 flex items-center justify-between">
-                    <h3 className="font-bold text-slate-100 text-xs sm:text-sm flex items-center space-x-1.5">
-                      <Zap className="w-4 h-4 text-sky-400" />
-                      <span>2. กิจกรรมลงทุน (Investing)</span>
-                    </h3>
-                  </div>
-                  <div className="space-y-2 text-xs">
-                    {periodCashFlowEntries.filter(e => e.activityType === 'investing').length === 0 ? (
-                      <div className="p-4 bg-slate-950 rounded-lg text-center text-slate-500 text-xs">
-                        ไม่มีรายการลงทุนในงวดนี้
-                      </div>
-                    ) : (
-                      periodCashFlowEntries.filter(e => e.activityType === 'investing').map(e => (
-                        <div key={e.id} className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                          <div>
-                            <div className="font-bold text-slate-200">{e.title}</div>
-                            <div className="text-[10px] text-slate-400">{e.date} | {e.category}</div>
-                          </div>
-                          <span className={`font-mono font-bold ${e.flowType === 'inflow' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {e.flowType === 'inflow' ? '+' : '-'}฿{money(e.amount)}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                    <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-xs p-2 bg-sky-950/30 rounded-lg border border-sky-500/30 text-sky-300">
-                      <span>เงินสดสุทธิจากกิจกรรมลงทุน</span>
-                      <span className="font-mono">
-                        ฿{money(cashFlow.investing)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 3. Financing Activities */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
-                  <div className="border-b border-slate-800 pb-2 flex items-center justify-between">
-                    <h3 className="font-bold text-slate-100 text-xs sm:text-sm flex items-center space-x-1.5">
-                      <CreditCard className="w-4 h-4 text-indigo-400" />
-                      <span>3. กิจกรรมจัดหาเงิน (Financing)</span>
-                    </h3>
-                  </div>
-                  <div className="space-y-2 text-xs">
-                    {periodCashFlowEntries.filter(e => e.activityType === 'financing').length === 0 ? (
-                      <div className="p-4 bg-slate-950 rounded-lg text-center text-slate-500 text-xs">
-                        ไม่มีรายการจัดหาเงินในงวดนี้
-                      </div>
-                    ) : (
-                      periodCashFlowEntries.filter(e => e.activityType === 'financing').map(e => (
-                        <div key={e.id} className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
-                          <div>
-                            <div className="font-bold text-slate-200">{e.title}</div>
-                            <div className="text-[10px] text-slate-400">{e.date} | {e.category}</div>
-                          </div>
-                          <span className={`font-mono font-bold ${e.flowType === 'inflow' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {e.flowType === 'inflow' ? '+' : '-'}฿{money(e.amount)}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                    <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-xs p-2 bg-indigo-950/30 rounded-lg border border-indigo-500/30 text-indigo-300">
-                      <span>เงินสดสุทธิจากกิจกรรมจัดหาเงิน</span>
-                      <span className="font-mono">
-                        ฿{money(cashFlow.financing)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Cash Flow Ledger Table */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
-                    <FileSpreadsheet className="w-4 h-4 text-sky-400" />
-                    <span>ตารางสรุปสมุดกระแสเงินสดเข้า-ออกรายวัน (Cash Flow Movement Ledger)</span>
-                  </h3>
-                  <span className="text-xs text-slate-400 font-mono">จำนวน {periodCashFlowEntries.length + 2} รายการ</span>
-                </div>
-
-                <div className="overflow-x-auto rounded-xl border border-slate-800">
-                  <table className="w-full text-left text-xs text-slate-300">
-                    <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">
-                      <tr>
-                        <th className="py-2.5 px-3">วันที่</th>
-                        <th className="py-2.5 px-3">กิจกรรมหลัก</th>
-                        <th className="py-2.5 px-3">รายการ / คำอธิบาย</th>
-                        <th className="py-2.5 px-3 text-right font-bold text-emerald-400">เงินสดเข้า (+)</th>
-                        <th className="py-2.5 px-3 text-right font-bold text-rose-400">เงินสดออก (-)</th>
-                        <th className="py-2.5 px-3 text-right font-bold text-sky-300">กระแสเงินสดสุทธิ</th>
-                        <th className="py-2.5 px-3 text-center">จัดการ</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60">
-                      <tr className="hover:bg-slate-800/40 transition">
-                        <td className="py-2.5 px-3 font-mono">{endOfMonthDate}</td>
-                        <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded text-[10px] font-bold">
-                            Operating
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 font-medium text-slate-200">
-                          รับจากการขาย รายได้อื่น และลูกหนี้ (รวมทั้งงวด)
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-right text-emerald-400 font-bold">
-                          ฿{money(cashFlow.receiptsFromSales + cashFlow.receiptsOther + cashFlow.receiptsFromReceivables)}
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-right text-slate-500">-</td>
-                        <td className="py-2.5 px-3 font-mono text-right text-emerald-400 font-bold">
-                          +฿{money(cashFlow.receiptsFromSales + cashFlow.receiptsOther + cashFlow.receiptsFromReceivables)}
-                        </td>
-                        <td className="py-2.5 px-3 text-center text-slate-500">-</td>
-                      </tr>
-
-                      <tr className="hover:bg-slate-800/40 transition">
-                        <td className="py-2.5 px-3 font-mono">{endOfMonthDate}</td>
-                        <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 bg-rose-500/20 text-rose-300 rounded text-[10px] font-bold">
-                            Operating
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 font-medium text-slate-200">
-                          จ่ายค่าวัตถุดิบ ค่าใช้จ่าย และเจ้าหนี้ (รวมทั้งงวด)
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-right text-slate-500">-</td>
-                        <td className="py-2.5 px-3 font-mono text-right text-rose-400 font-bold">
-                          ฿{money(cashFlow.paidExpenses + cashFlow.paidPayables)}
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-right text-rose-400 font-bold">
-                          -฿{money(cashFlow.paidExpenses + cashFlow.paidPayables)}
-                        </td>
-                        <td className="py-2.5 px-3 text-center text-slate-500">-</td>
-                      </tr>
-
-                      {periodCashFlowEntries.map(e => (
-                        <tr key={e.id} className="hover:bg-slate-800/40 transition">
-                          <td className="py-2.5 px-3 font-mono">{e.date}</td>
-                          <td className="py-2.5 px-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              e.activityType === 'investing' ? 'bg-sky-500/20 text-sky-300' : 'bg-indigo-500/20 text-indigo-300'
-                            }`}>
-                              {e.activityType === 'investing' ? 'Investing' : 'Financing'}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <div className="font-bold text-slate-200">{e.title}</div>
-                            <div className="text-[10px] text-slate-400">{e.category} {e.note ? `• ${e.note}` : ''}</div>
-                          </td>
-                          <td className="py-2.5 px-3 font-mono text-right font-bold text-emerald-400">
-                            {e.flowType === 'inflow' ? `฿${money(e.amount)}` : '-'}
-                          </td>
-                          <td className="py-2.5 px-3 font-mono text-right font-bold text-rose-400">
-                            {e.flowType === 'outflow' ? `฿${money(e.amount)}` : '-'}
-                          </td>
-                          <td className={`py-2.5 px-3 font-mono text-right font-bold ${e.flowType === 'inflow' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {e.flowType === 'inflow' ? '+' : '-'}฿{money(e.amount)}
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <button
-                              onClick={() => handleDeleteCF(e.id)}
-                              className="text-slate-400 hover:text-rose-400 transition p-1"
-                              title="ลบรายการ"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2.2: ACCOUNTS RECEIVABLE & PAYABLE (ลูกหนี้ / เจ้าหนี้การค้า) */}
+        {/* ACCOUNTS RECEIVABLE & PAYABLE (ลูกหนี้ / เจ้าหนี้การค้า) */}
         {activeTab === 'ar_ap' && (
           <div className="space-y-4 sm:space-y-6">
             {/* Header & Sub-tab Bar */}
@@ -4929,6 +3768,30 @@ export const AccountingView: React.FC = () => {
                     onChange={e => setExpRefNumber(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm"
                   />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1">จ่ายด้วย</label>
+                <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="จ่ายด้วย">
+                  {(
+                    [
+                      ['bank', 'โอน / QR / บัตร'],
+                      ['cash', 'เงินสดนอกลิ้นชัก'],
+                      ['drawer', 'เงินสดจากลิ้นชัก']
+                    ] as [PaidFrom, string][]
+                  ).map(([v, label]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      role="radio"
+                      aria-checked={expPaidFrom === v}
+                      onClick={() => setExpPaidFrom(v)}
+                      className={`h-10 rounded-lg border text-[11px] font-bold ${expPaidFrom === v ? 'bg-rose-600/30 border-rose-500 text-rose-100' : 'border-slate-800 text-slate-400'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
               </div>
 

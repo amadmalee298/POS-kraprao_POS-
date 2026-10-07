@@ -195,6 +195,8 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       note: [includeVat && entry.vendor ? `ร้าน: ${entry.vendor}` : '', entry.note, `จาก Telegram: ${sender}`].filter(Boolean).join(' · '),
       receiptImage: image || undefined,
       receiptImageName: image ? imageName : undefined,
+      // A slip is a transfer; an entry typed without one was most likely paid in cash
+      paidFrom: image ? 'bank' : 'cash',
       substituteReceipt: includeVat ? undefined : { docNo, spender: sender, payee: entry.vendor || undefined }
     };
     await store.saveExpense(rec);
