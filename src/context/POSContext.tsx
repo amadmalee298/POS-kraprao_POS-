@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from 'react';
+import { DEFAULT_PIN_HASH, hashPin, isHashedPin } from '../utils/pins';
 import { bigStore } from '../utils/bigStore';
 import { averageCostAfterPrep } from '../utils/prep';
 import { localDay } from '../utils/stockHistory';
@@ -472,7 +473,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
   const [currentUser, setCurrentUser] = useState<User>(INITIAL_USERS[0]);
 
-  const updateUserPin = (userId: string, newPin: string) => {
+  const updateUserPin = (userId: string, plainPin: string) => {
+    const newPin = hashPin(plainPin);
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, pin: newPin } : u));
     setStaffMembers(prev => prev.map(s => s.id === userId ? { ...s, pin: newPin } : s));
     if (currentUser?.id === userId) {
@@ -2256,7 +2258,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               .filter((u: any) => u && !u.name?.includes('สมศักดิ์'))
               .map((u: any) => {
                 if (u.id === 'usr-admin' || u.name?.includes('สมศักดิ์')) {
-                  return { ...u, name: 'อาห์มัด (เจ้าของร้าน)', role: 'admin', pin: u.pin || '1234' };
+                  return { ...u, name: 'อาห์มัด (เจ้าของร้าน)', role: 'admin', pin: u.pin || DEFAULT_PIN_HASH };
                 }
                 return u;
               });
@@ -2393,7 +2395,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         id: staff.id,
         name: staff.name,
         role,
-        pin: staff.pin || '1234',
+        pin: staff.pin || DEFAULT_PIN_HASH,
         branchId: staff.branchId,
         avatarColor: existingUser?.avatarColor || colors[idx % colors.length],
         permissions: staff.permissions
@@ -2425,6 +2427,22 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setUsers(finalUsers);
     }
   }, [staffMembers, isStorageLoaded, users]);
+
+  // PINs are kept hashed: a PIN typed in anywhere (staff forms, older records, other devices on an
+  // older version) is replaced by its hash as soon as it is here
+  useEffect(() => {
+    if (!isStorageLoaded) return;
+    if (staffMembers.some(st => st.pin && !isHashedPin(st.pin))) {
+      setStaffMembers(prev => prev.map(st => (st.pin && !isHashedPin(st.pin) ? { ...st, pin: hashPin(st.pin) } : st)));
+    }
+  }, [staffMembers, isStorageLoaded]);
+  useEffect(() => {
+    if (!isStorageLoaded) return;
+    if (users.some(u => u.pin && !isHashedPin(u.pin))) {
+      setUsers(prev => prev.map(u => (u.pin && !isHashedPin(u.pin) ? { ...u, pin: hashPin(u.pin) } : u)));
+    }
+    if (currentUser?.pin && !isHashedPin(currentUser.pin)) setCurrentUser(prev => (prev ? { ...prev, pin: hashPin(prev.pin) } : prev));
+  }, [users, currentUser, isStorageLoaded]);
 
   // Keep categories in sync with all current menuItems so newly added/imported categories never disappear
   useEffect(() => {
@@ -4109,7 +4127,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             id: fallback.id,
             name: fallback.name,
             role: fallback.role as any,
-            pin: fallback.pin || '1234',
+            pin: fallback.pin || DEFAULT_PIN_HASH,
             avatarColor: 'from-amber-500 to-orange-600',
             permissions: fallback.permissions
           });

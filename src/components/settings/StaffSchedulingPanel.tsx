@@ -46,6 +46,7 @@ import { AttendanceHistoryPanel } from './AttendanceHistoryPanel';
 import { StaffMember, ShiftEntry, ShiftType, PayrollSummary, ShiftSwapRequest, ShiftRequestType, StaffPermissions } from '../../types';
 import { exportToPDF, exportToPNG, printElement } from '../../utils/exportDocument';
 import { StaffPinClockTerminal } from './StaffPinClockTerminal';
+import { DEFAULT_PIN_HASH, hashPin, isHashedPin } from '../../utils/pins';
 
 // Helper to format currency
 const formatTHB = (amount: number) => {
@@ -217,7 +218,7 @@ export const StaffSchedulingPanel: React.FC = () => {
     hourlyRate: 75,
     otRateMultiplier: 1.5,
     phone: '',
-    pin: '1234',
+    pin: '',
     permissions: {
       canAccessPOS: true,
       canAccessKDS: true,
@@ -435,7 +436,11 @@ export const StaffSchedulingPanel: React.FC = () => {
     e.preventDefault();
     if (!staffForm.name.trim()) return;
 
-    const pinToSave = staffForm.pin.trim() || '1234';
+    // A saved PIN is hashed: an empty box keeps the old one; a new person without a PIN gets the
+    // factory PIN, which must be changed at the first login
+    const existingPin = staffForm.id ? staffMembers.find(s => s.id === staffForm.id)?.pin : undefined;
+    const typedPin = staffForm.pin.trim();
+    const pinToSave = typedPin ? hashPin(typedPin) : existingPin || DEFAULT_PIN_HASH;
 
     if (staffForm.id) {
       const existing = staffMembers.find(s => s.id === staffForm.id);
@@ -464,7 +469,7 @@ export const StaffSchedulingPanel: React.FC = () => {
         pin: pinToSave,
         permissions: staffForm.permissions
       });
-      showToast(`เพิ่มพนักงานใหม่ ${staffForm.name} (PIN: ${pinToSave}) เรียบร้อยแล้ว`);
+      showToast(`เพิ่มพนักงานใหม่ ${staffForm.name} (PIN: ${typedPin || '1234 · ต้องเปลี่ยนตอนเข้าระบบครั้งแรก'}) เรียบร้อยแล้ว`);
     }
 
     setIsStaffModalOpen(false);
@@ -474,7 +479,7 @@ export const StaffSchedulingPanel: React.FC = () => {
       hourlyRate: 75,
       otRateMultiplier: 1.5,
       phone: '',
-      pin: '1234',
+      pin: '',
       permissions: {
         canAccessPOS: true,
         canAccessKDS: true,
@@ -1350,7 +1355,7 @@ export const StaffSchedulingPanel: React.FC = () => {
                   hourlyRate: 75,
                   otRateMultiplier: 1.5,
                   phone: '',
-                  pin: '1234',
+                  pin: '',
                   permissions: {
                     canAccessPOS: true,
                     canAccessKDS: true,
@@ -1402,7 +1407,7 @@ export const StaffSchedulingPanel: React.FC = () => {
                               hourlyRate: staff.hourlyRate,
                               otRateMultiplier: staff.otRateMultiplier || 1.5,
                               phone: staff.phone || '',
-                              pin: staff.pin || '1234',
+                              pin: isHashedPin(staff.pin) ? '' : staff.pin || '',
                               permissions: staff.permissions || {
                                 canAccessPOS: true,
                                 canAccessKDS: true
@@ -1442,7 +1447,7 @@ export const StaffSchedulingPanel: React.FC = () => {
                         <span className="text-[10px] text-slate-500 block">รหัส PIN 4 หลัก</span>
                         <div className="flex items-center space-x-1 mt-0.5">
                           <span className="font-mono font-bold text-amber-400 text-sm">
-                            {isMasked ? '••••' : (staff.pin || '1234')}
+                            {isMasked || isHashedPin(staff.pin) ? '••••' : staff.pin || '1234'}
                           </span>
                           <button
                             type="button"
@@ -1929,8 +1934,7 @@ export const StaffSchedulingPanel: React.FC = () => {
                       const val = e.target.value.replace(/\D/g, '').slice(0, 4);
                       setStaffForm(prev => ({ ...prev, pin: val }));
                     }}
-                    placeholder="1234"
-                    required
+                    placeholder={staffForm.id ? 'เว้นว่าง = ใช้ PIN เดิม' : 'เว้นว่าง = 1234 (ต้องเปลี่ยนตอนเข้าระบบ)'}
                     className="w-full bg-slate-950 border border-amber-500/40 rounded-xl px-3 py-2 text-amber-300 font-mono font-extrabold tracking-widest text-center"
                   />
                 </div>

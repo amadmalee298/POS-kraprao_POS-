@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { notePinAttempt, pinLockMessage, pinMatches } from '../utils/pins';
 import { X, Lock, ShieldAlert, KeyRound, Check } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
 import { isTypingInField } from '../utils/keyboard';
@@ -12,10 +13,6 @@ interface PinModalProps {
   requiredRole?: 'admin' | 'manager';
 }
 
-const MAX_PIN_ATTEMPTS = 5;
-const LOCKOUT_BASE_MS = 30_000;
-// Shared across modal instances so closing and reopening does not reset the counter
-const pinLockout = { failed: 0, until: 0 };
 
 export const PinModal: React.FC<PinModalProps> = ({
   isOpen,
@@ -36,9 +33,10 @@ export const PinModal: React.FC<PinModalProps> = ({
       return;
     }
 
-    if (Date.now() < pinLockout.until) {
-      const secs = Math.ceil((pinLockout.until - Date.now()) / 1000);
-      setError(`ใส่ PIN ผิดหลายครั้ง กรุณารอ ${secs} วินาที`);
+    // Shared by every PIN entry on this device and kept across reloads
+    const locked = pinLockMessage();
+    if (locked) {
+      setError(locked);
       setPin('');
       return;
     }
@@ -50,8 +48,8 @@ export const PinModal: React.FC<PinModalProps> = ({
       }
     }
 
-    if (currentPin === userToVerify.pin) {
-      pinLockout.failed = 0;
+    if (pinMatches(userToVerify.pin, currentPin)) {
+      notePinAttempt(true);
       logSecurityEvent({
         userId: userToVerify.id,
         userName: userToVerify.name,
@@ -74,10 +72,7 @@ export const PinModal: React.FC<PinModalProps> = ({
         status: 'FAILED',
         details: `รหัส PIN ไม่ถูกต้องขณะยืนยันตัวตนสำหรับผู้ใช้ ${userToVerify.name}`
       });
-      pinLockout.failed += 1;
-      if (pinLockout.failed % MAX_PIN_ATTEMPTS === 0) {
-        pinLockout.until = Date.now() + LOCKOUT_BASE_MS * (pinLockout.failed / MAX_PIN_ATTEMPTS);
-      }
+      notePinAttempt(false);
       setError('รหัสพนักงาน (PIN) ไม่ถูกต้อง!');
       setPin('');
     }
