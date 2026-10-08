@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { bigStore, bigStoreEntries, flushBigStore } from '../../utils/bigStore';
 import { compressImageFile } from '../../utils/imageCompressor';
 import { MerchantConnectionModal } from '../common/MerchantConnectionModal';
 import { gatewayEnabled } from '../../services/paymentGateway';
@@ -819,7 +820,7 @@ export const SettingsView: React.FC = () => {
   const handleExportJSON = () => {
     const backupData = {
       timestamp: new Date().toISOString(),
-      localStorage: { ...localStorage }
+      localStorage: { ...localStorage, ...bigStoreEntries() }
     };
 
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupData, null, 2));
@@ -840,10 +841,12 @@ export const SettingsView: React.FC = () => {
           const parsed = JSON.parse(e.target?.result as string);
           if (parsed && parsed.localStorage) {
             Object.keys(parsed.localStorage).forEach(key => {
-              localStorage.setItem(key, parsed.localStorage[key]);
+              bigStore.setItem(key, parsed.localStorage[key]);
             });
-            alert('นำเข้าข้อมูลสำเร็จ! ระบบจะทำการรีโหลดหน้าจอ');
-            window.location.reload();
+            flushBigStore().then(() => {
+              alert('นำเข้าข้อมูลสำเร็จ! ระบบจะทำการรีโหลดหน้าจอ');
+              window.location.reload();
+            });
           }
         } catch (err) {
           alert('ไฟล์สำรองไม่ถูกต้อง ไม่สามารถนำเข้าได้');

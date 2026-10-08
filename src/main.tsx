@@ -9,7 +9,8 @@ import './index.css';
 const tableLink = readTableFromUrl(window.location.search);
 // A document link from the Telegram bot (#doc=…) opens just that document (no login)
 const docCode = window.location.hash.startsWith('#doc=') ? window.location.hash.slice(5) : '';
-const App = lazy(() => import('./App.tsx'));
+// The staff app's local data is read from the browser's database before the app starts
+const App = lazy(() => import('./utils/bigStore.ts').then(m => m.hydrateBigStore()).then(() => import('./App.tsx')));
 const DocLinkPage = lazy(() => import('./components/docs/DocLinkPage.tsx').then(m => ({ default: m.DocLinkPage })));
 const CustomerOrderPage = lazy(() => import('./components/customer/CustomerOrderPage.tsx'));
 

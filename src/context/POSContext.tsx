@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from 'react';
+import { bigStore } from '../utils/bigStore';
 import { averageCostAfterPrep } from '../utils/prep';
 import { localDay } from '../utils/stockHistory';
 import { effectivePermissions } from '../utils/access';
@@ -708,7 +709,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const delSet = new Set(delList.filter(id => typeof id === 'string' && (id.startsWith('menu-') || id.startsWith('doc_') || /^[a-zA-Z0-9_-]+$/.test(id))).map(s => String(s).trim().toLowerCase()));
 
       let loaded: MenuItem[] = [];
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
@@ -719,7 +720,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       if (loaded.length === 0) {
         try {
-          const sep = localStorage.getItem('POS_MENU_ITEMS_DATA');
+          const sep = bigStore.getItem('POS_MENU_ITEMS_DATA');
           if (sep) {
             const parsedSep = JSON.parse(sep);
             if (Array.isArray(parsedSep) && parsedSep.length > 0) {
@@ -742,7 +743,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const delSet = new Set(delList.filter(id => typeof id === 'string' && (id.startsWith('ing-') || id.startsWith('doc_') || /^[a-zA-Z0-9_-]+$/.test(id))).map(s => String(s).trim().toLowerCase()));
 
       let loaded: Ingredient[] = [];
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
@@ -753,7 +754,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       if (loaded.length === 0) {
         try {
-          const sep = localStorage.getItem('POS_INGREDIENTS_DATA');
+          const sep = bigStore.getItem('POS_INGREDIENTS_DATA');
           if (sep) {
             const parsedSep = JSON.parse(sep);
             if (Array.isArray(parsedSep) && parsedSep.length > 0) {
@@ -1012,7 +1013,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         pushBack = result.pushBack;
         if (!result.changed) return prev;
         try {
-          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
+          bigStore.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
         } catch (e) {
           console.warn('[POS Real-Time Sync] Failed to cache synced orders', e);
         }
@@ -1093,7 +1094,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         if (!hasNew) return prev;
         try {
-          localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(list));
+          bigStore.setItem('POS_EXPENSES_DATA', JSON.stringify(list));
         } catch (e) {
           console.warn('Failed to cache synced expenses', e);
         }
@@ -1133,7 +1134,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         if (!hasNew) return prev;
         try {
-          localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(list));
+          bigStore.setItem('POS_INCOMES_DATA', JSON.stringify(list));
         } catch (e) {
           console.warn('Failed to cache synced incomes', e);
         }
@@ -1157,7 +1158,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         if (!cloudMenuList || cloudMenuList.length === 0) {
           if (changed) {
-            try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(currentList)); } catch (e) {}
+            try { bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(currentList)); } catch (e) {}
             return currentList;
           }
           return prev;
@@ -1222,12 +1223,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!changed) return prev;
         const merged = Array.from(localMap.values());
         try {
-          localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(merged));
-          const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+          bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(merged));
+          const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
           if (saved) {
             const parsed = JSON.parse(saved);
             parsed.menuItems = merged;
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+            bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
           }
         } catch (e) {}
         return merged;
@@ -1252,12 +1253,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!cloudIngList || cloudIngList.length === 0) {
           if (changed) {
             try {
-              localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(currentList));
-              const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+              bigStore.setItem('POS_INGREDIENTS_DATA', JSON.stringify(currentList));
+              const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
               if (saved) {
                 const parsed = JSON.parse(saved);
                 parsed.ingredients = currentList;
-                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+                bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
               }
             } catch (e) {}
             return currentList;
@@ -1303,12 +1304,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!changed) return prev;
         const merged = Array.from(localMap.values());
         try {
-          localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(merged));
-          const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+          bigStore.setItem('POS_INGREDIENTS_DATA', JSON.stringify(merged));
+          const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
           if (saved) {
             const parsed = JSON.parse(saved);
             parsed.ingredients = merged;
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+            bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
           }
         } catch (e) {}
         return merged;
@@ -1362,7 +1363,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setMenuItems(prev => {
           const filtered = prev.filter(m => !deletedSet.menuIds.has(m.id));
           if (filtered.length !== prev.length) {
-            try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(filtered)); } catch (e) {}
+            try { bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(filtered)); } catch (e) {}
             return filtered;
           }
           return prev;
@@ -1374,7 +1375,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setIngredients(prev => {
           const filtered = prev.filter(i => !deletedSet.ingredientIds.has(i.id));
           if (filtered.length !== prev.length) {
-            try { localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(filtered)); } catch (e) {}
+            try { bigStore.setItem('POS_INGREDIENTS_DATA', JSON.stringify(filtered)); } catch (e) {}
             return filtered;
           }
           return prev;
@@ -1386,7 +1387,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setOrders(prev => {
           const filtered = prev.filter(o => !deletedSet.orderIds.has(o.id) && !deletedSet.orderIds.has(`ord-${o.id}`));
           if (filtered.length !== prev.length) {
-            try { localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(filtered)); } catch (e) {}
+            try { bigStore.setItem('POS_ORDERS_DATA', JSON.stringify(filtered)); } catch (e) {}
             return filtered;
           }
           return prev;
@@ -1715,7 +1716,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         newOrUpdatedCount = result.newOrUpdated;
         if (!result.changed) return prev;
         try {
-          localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
+          bigStore.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
         } catch (e) {
           console.warn('[POS Cloud Pull] Failed to cache POS_ORDERS_DATA', e);
         }
@@ -1752,7 +1753,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const result = mergeCloudOrders(prev, res.orders);
               if (!result.changed) return prev;
               try {
-                localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
+                bigStore.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
               } catch {
                 // storage full: kept in memory
               }
@@ -1765,7 +1766,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             if (add.length === 0) return prev;
             const next = [...prev, ...add].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
             try {
-              localStorage.setItem(key, JSON.stringify(next));
+              bigStore.setItem(key, JSON.stringify(next));
             } catch {
               // storage full: kept in memory
             }
@@ -1829,12 +1830,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           });
           const merged = Array.from(ingMap.values());
           try {
-            localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(merged));
-            const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+            bigStore.setItem('POS_INGREDIENTS_DATA', JSON.stringify(merged));
+            const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
             if (saved) {
               const parsed = JSON.parse(saved);
               parsed.ingredients = merged;
-              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+              bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
             }
           } catch (e) {}
           ingCount = merged.length;
@@ -1865,12 +1866,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           });
           const merged = Array.from(menuMap.values());
           try {
-            localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(merged));
-            const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+            bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(merged));
+            const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
             if (saved) {
               const parsed = JSON.parse(saved);
               parsed.menuItems = merged;
-              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+              bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
             }
           } catch (e) {}
           menuCount = merged.length;
@@ -1997,7 +1998,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const updatedMenus = Array.from(menuMap.values());
         setMenuItems(updatedMenus);
         try {
-          localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(updatedMenus));
+          bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(updatedMenus));
         } catch (e) {}
       }
 
@@ -2028,7 +2029,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const updatedIngs = Array.from(ingMap.values());
         setIngredients(updatedIngs);
         try {
-          localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(updatedIngs));
+          bigStore.setItem('POS_INGREDIENTS_DATA', JSON.stringify(updatedIngs));
         } catch (e) {}
       }
 
@@ -2073,7 +2074,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       console.log(`[POS Storage Sync] Initializing LocalStorage data load for key '${LOCAL_STORAGE_KEY}'...`);
 
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object') {
@@ -2088,7 +2089,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             });
           }
           try {
-            const sepOrders = localStorage.getItem('POS_ORDERS_DATA');
+            const sepOrders = bigStore.getItem('POS_ORDERS_DATA');
             if (sepOrders) {
               const parsedSep = JSON.parse(sepOrders);
               if (Array.isArray(parsedSep) && parsedSep.length > 0) {
@@ -2150,7 +2151,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           // Fallback to separate key ONLY if main state was empty
           if (loadedMenuItems.length === 0) {
             try {
-              const sepMenu = localStorage.getItem('POS_MENU_ITEMS_DATA');
+              const sepMenu = bigStore.getItem('POS_MENU_ITEMS_DATA');
               if (sepMenu) {
                 const parsedSep = JSON.parse(sepMenu);
                 if (Array.isArray(parsedSep) && parsedSep.length > 0) {
@@ -2186,7 +2187,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           let loadedIngredients: Ingredient[] = (parsed.ingredients && Array.isArray(parsed.ingredients)) ? parsed.ingredients : [];
           if (loadedIngredients.length === 0) {
             try {
-              const sepIng = localStorage.getItem('POS_INGREDIENTS_DATA');
+              const sepIng = bigStore.getItem('POS_INGREDIENTS_DATA');
               if (sepIng) {
                 const parsedSep = JSON.parse(sepIng);
                 if (Array.isArray(parsedSep) && parsedSep.length > 0) {
@@ -2213,7 +2214,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           let loadedExpenses: Expense[] = (parsed.expenses && Array.isArray(parsed.expenses)) ? parsed.expenses : [];
           if (loadedExpenses.length === 0) {
             try {
-              const sepExp = localStorage.getItem('POS_EXPENSES_DATA');
+              const sepExp = bigStore.getItem('POS_EXPENSES_DATA');
               if (sepExp) {
                 const parsedSep = JSON.parse(sepExp);
                 if (Array.isArray(parsedSep) && parsedSep.length > 0) {
@@ -2229,7 +2230,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           let loadedIncomes: OtherIncome[] = (parsed.incomes && Array.isArray(parsed.incomes)) ? parsed.incomes : [];
           if (loadedIncomes.length === 0) {
             try {
-              const sepInc = localStorage.getItem('POS_INCOMES_DATA');
+              const sepInc = bigStore.getItem('POS_INCOMES_DATA');
               if (sepInc) {
                 const parsedSep = JSON.parse(sepInc);
                 if (Array.isArray(parsedSep) && parsedSep.length > 0) {
@@ -2291,7 +2292,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       } else {
         console.log('[POS Storage Sync] ℹ️ No prior LocalStorage state found. Initializing new POS session.');
         try {
-          const sepOrders = localStorage.getItem('POS_ORDERS_DATA');
+          const sepOrders = bigStore.getItem('POS_ORDERS_DATA');
           if (sepOrders) {
             const parsedSep = JSON.parse(sepOrders);
             if (Array.isArray(parsedSep) && parsedSep.length > 0) {
@@ -2303,7 +2304,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           console.warn('[POS Storage Sync] Failed to recover POS_ORDERS_DATA on empty session', e);
         }
         try {
-          const sepIng = localStorage.getItem('POS_INGREDIENTS_DATA');
+          const sepIng = bigStore.getItem('POS_INGREDIENTS_DATA');
           if (sepIng) {
             const parsedSep = JSON.parse(sepIng);
             if (Array.isArray(parsedSep) && parsedSep.length > 0) {
@@ -2313,7 +2314,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
         } catch (e) {}
         try {
-          const sepMenu = localStorage.getItem('POS_MENU_ITEMS_DATA');
+          const sepMenu = bigStore.getItem('POS_MENU_ITEMS_DATA');
           if (sepMenu) {
             const parsedSep = JSON.parse(sepMenu);
             if (Array.isArray(parsedSep) && parsedSep.length > 0) {
@@ -2481,7 +2482,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         savedAt: new Date().toISOString()
       };
       try {
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
+        bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
       } catch (storageErr) {
         console.warn('[POS Storage Sync] ⚠️ LocalStorage quota exceeded or save error. Performing self-healing storage compaction...', storageErr);
         // Prune heavy image payloads while keeping all core business, stock, financial and accounting data 100% intact
@@ -2502,19 +2503,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           expenses: compactedExpenses,
           incomes: compactedIncomes
         };
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compactedState));
+        bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compactedState));
         console.log('[POS Storage Sync] ✅ Successfully recovered and saved state after image compaction.');
       }
       try {
-        localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(orders));
+        bigStore.setItem('POS_ORDERS_DATA', JSON.stringify(orders));
       } catch (backupErr) {
         console.warn('[POS Storage Sync] ⚠️ Failed to save POS_ORDERS_DATA backup:', backupErr);
       }
       try {
-        localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(ingredients));
+        bigStore.setItem('POS_INGREDIENTS_DATA', JSON.stringify(ingredients));
       } catch (backupErr) {}
       try {
-        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(menuItems));
+        bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(menuItems));
       } catch (backupErr) {}
       try {
         localStorage.setItem('POS_DELETED_MENU_IDS', JSON.stringify(deletedMenuItemIds));
@@ -2706,15 +2707,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!prev.some(p => p.id === m.id)) next.push(m);
       });
       try {
-        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+        bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
+        const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
           parsed.menuItems = next;
           parsed.deletedMenuItemIds = (parsed.deletedMenuItemIds || []).filter(
             (id: string) => !ids.has(id.toLowerCase()) && !names.has(id.toLowerCase())
           );
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
         }
       } catch (e) {}
       return next;
@@ -2762,13 +2763,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setMenuItems(prev => {
       const next = prev.filter(m => !idsToDelete.includes(m.id));
       try {
-        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+        bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
+        const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
           parsed.menuItems = next;
           parsed.deletedMenuItemIds = Array.from(new Set([...(parsed.deletedMenuItemIds || []), ...idsToDelete]));
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
         }
       } catch (e) {}
       return next;
@@ -2816,12 +2817,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const next = Array.from(currentMap.values());
       try {
-        localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+        bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next));
+        const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
           parsed.menuItems = next;
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
         }
       } catch (e) {}
 
@@ -2859,7 +2860,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         return m;
       });
-      try { localStorage.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next)); } catch (e) {}
+      try { bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(next)); } catch (e) {}
       const target = next.find(m => m.id === menuItemId);
       if (target && isFirebaseAvailable() && !effectiveOffline) {
         syncSingleMenuItemToFirestore(target).catch(console.warn);
@@ -3279,13 +3280,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const next = prev.map(ord => (normalizeOrderId(ord.id) === key ? updated : ord));
       // Synchronously write to LocalStorage immediately so page refresh retains state
       try {
-        localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(next));
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+        bigStore.setItem('POS_ORDERS_DATA', JSON.stringify(next));
+        const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
           parsed.orders = next;
           parsed.savedAt = updated.updatedAt;
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
         }
       } catch (e) {
         console.warn('[POS Order Sync] Error writing order status to LocalStorage:', e);
@@ -3489,8 +3490,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Helper to persist ingredients locally to both separate key and master state
   const persistIngredientsLocally = (next: Ingredient[], delIdsToAdd?: string[], delIdsToRemove?: string[]) => {
     try {
-      localStorage.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next));
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      bigStore.setItem('POS_INGREDIENTS_DATA', JSON.stringify(next));
+      const saved = bigStore.getItem(LOCAL_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         parsed.ingredients = next;
@@ -3501,7 +3502,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const removeSet = new Set(delIdsToRemove.map(s => s.toLowerCase()));
           parsed.deletedIngredientIds = (parsed.deletedIngredientIds || []).filter((id: string) => !removeSet.has(id.toLowerCase()));
         }
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+        bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
       }
     } catch (e) {
       console.warn('[POSContext] Failed to persist ingredients locally:', e);
@@ -3932,7 +3933,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setExpenses(prev => {
       const updated = [newExp, ...prev];
       try {
-        localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
+        bigStore.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
       } catch (e) {
         console.warn('Failed to cache expense immediately, retrying compact', e);
         try {
@@ -3941,7 +3942,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               ? { ...item, receiptImage: item.receiptImage && item.receiptImage.length > 50000 ? undefined : item.receiptImage, purchaseImages: undefined }
               : item
           );
-          localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(compact));
+          bigStore.setItem('POS_EXPENSES_DATA', JSON.stringify(compact));
         } catch (e2) {
           console.warn('Failed to cache compact expenses', e2);
         }
@@ -3964,7 +3965,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setExpenses(prev => {
       const updated = prev.map(e => (e.id === expenseId ? { ...e, ...patch, id: e.id } : e));
       try {
-        localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
+        bigStore.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
       } catch {
         // kept in memory and in the cloud
       }
@@ -3979,7 +3980,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setExpenses(prev => {
       const updated = prev.filter(e => e.id !== expenseId);
       try {
-        localStorage.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
+        bigStore.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
       } catch (e) {
         console.warn('Failed to cache expense deletion', e);
       }
@@ -4002,12 +4003,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIncomes(prev => {
       const updated = [newInc, ...prev];
       try {
-        localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
+        bigStore.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
       } catch (e) {
         console.warn('Failed to cache income immediately, retrying compact', e);
         try {
           const compact = updated.map(item => (item.slipImage && item.slipImage.length > 50000) ? { ...item, slipImage: undefined } : item);
-          localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(compact));
+          bigStore.setItem('POS_INCOMES_DATA', JSON.stringify(compact));
         } catch (e2) {
           console.warn('Failed to cache compact incomes', e2);
         }
@@ -4044,7 +4045,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
       });
       try {
-        localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
+        bigStore.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
       } catch (e) {
         console.warn('Failed to cache updated income', e);
       }
@@ -4062,7 +4063,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIncomes(prev => {
       const updated = prev.filter(inc => inc.id !== incomeId);
       try {
-        localStorage.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
+        bigStore.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
       } catch (e) {
         console.warn('Failed to cache deleted income', e);
       }
@@ -4454,7 +4455,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIncomes(INITIAL_INCOMES);
     setSettings(INITIAL_SETTINGS);
     setCart([]);
-    localStorage.removeItem(LOCAL_STORAGE_KEY);
+    bigStore.removeItem(LOCAL_STORAGE_KEY);
   };
 
   const cleanSlateForProduction = () => {
@@ -4470,7 +4471,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSecurityLogs([]);
     setIngredients(prev => prev.map(ing => ({ ...ing, currentStock: 0 })));
     setCart([]);
-    localStorage.removeItem(LOCAL_STORAGE_KEY);
+    bigStore.removeItem(LOCAL_STORAGE_KEY);
   };
 
   const sendDailySummaryNotification = async (channel: 'telegram' | 'line' | 'both' = 'both') => {

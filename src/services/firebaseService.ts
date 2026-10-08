@@ -1,6 +1,9 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   collection,
   doc,
   setDoc,
@@ -99,11 +102,15 @@ try {
     }
   }
 
-  // If named firestoreDatabaseId is provided in config, use it; otherwise fallback to default
-  if (cfg.firestoreDatabaseId) {
-    dbInstance = getFirestore(app, cfg.firestoreDatabaseId);
-  } else {
-    dbInstance = getFirestore(app);
+  // The cloud data this device has seen is kept in the browser's database (IndexedDB), so the
+  // app opens with it offline and does not read everything again after a reload; shared by tabs.
+  // A named firestoreDatabaseId in the config is used, otherwise the default database.
+  try {
+    const settings = { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) };
+    dbInstance = cfg.firestoreDatabaseId ? initializeFirestore(app, settings, cfg.firestoreDatabaseId) : initializeFirestore(app, settings);
+  } catch (cacheErr) {
+    console.warn('[Firebase Service] Offline cache unavailable, using memory:', cacheErr);
+    dbInstance = cfg.firestoreDatabaseId ? getFirestore(app, cfg.firestoreDatabaseId) : getFirestore(app);
   }
   isInitialized = true;
 
