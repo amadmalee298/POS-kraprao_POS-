@@ -77,16 +77,23 @@ export const AIInventoryForecastPanel: React.FC = () => {
       dailyConsumptionRate: Number(r.dailyUsage.toFixed(2)),
       daysUntilStockout: r.daysLeft ?? 99,
       riskLevel: r.riskLevel,
-      isHighDemand: r.daysLeft !== null && r.daysLeft <= 7,
+      isHighDemand: r.dailyUsage > 0 && r.daysLeft !== null && r.daysLeft <= 7,
       suggestedReorderQty: r.suggestedOrderQty,
       estimatedReorderCost: r.estimatedCost,
       forecastNote:
-        r.daysLeft === null
+        r.currentStock <= 0
+          ? `หมดแล้ว${r.dailyUsage > 0 ? ` · ใช้เฉลี่ย ${Number(r.dailyUsage.toFixed(2))} ${r.unit}/วัน` : ''}`
+          : r.dailyUsage <= 0
           ? r.riskLevel === 'CRITICAL'
             ? `ต่ำกว่าจุดเตือน (${r.minStockAlert} ${r.unit}) · ยังไม่มียอดใช้จากการขายใน ${r.daysOfData || 14} วันล่าสุด`
             : `ยังไม่มียอดใช้จากการขายใน 14 วันล่าสุด`
           : `ใช้เฉลี่ย ${Number(r.dailyUsage.toFixed(2))} ${r.unit}/วัน (จาก ${r.daysOfData} วันที่มีการขาย) · พอใช้อีก ${r.daysLeft} วัน`,
-      supplierAdvice: r.suggestedOrderQty > 0 ? `สั่ง ${r.suggestedOrderQty} ${r.unit} ให้พอ ${days} วัน + จุดเตือน` : undefined
+      supplierAdvice:
+        r.suggestedOrderQty > 0
+          ? r.dailyUsage > 0
+            ? `สั่ง ${r.suggestedOrderQty} ${r.unit} ให้พอ ${days} วัน + จุดเตือน`
+            : `สั่ง ${r.suggestedOrderQty} ${r.unit} ให้กลับมาเป็น 2 เท่าของจุดเตือน`
+          : undefined
     }));
     setForecastItems(generated);
     setSourceEngine('sales-data');
@@ -394,7 +401,7 @@ export const AIInventoryForecastPanel: React.FC = () => {
                       </span>
                       <span className="text-xs text-slate-400 font-bold">{item.unit}</span>
                       <span className="text-[11px] text-slate-500">
-                        (ขั้นต่ำ: {item.minStockAlert} {item.unit})
+                        (จุดเตือน: {item.minStockAlert} {item.unit})
                       </span>
                     </div>
                   </div>
@@ -404,9 +411,15 @@ export const AIInventoryForecastPanel: React.FC = () => {
                     <div className="flex justify-between items-center text-xs">
                       <span className="text-slate-400 font-medium">ประมาณการใช้งานได้อีก:</span>
                       <span className={`font-mono font-black ${
-                        isCritical ? 'text-rose-400' : isWarning ? 'text-amber-400' : 'text-emerald-400'
+                        isCritical ? 'text-rose-400' : isWarning ? 'text-amber-400' : !item.dailyConsumptionRate ? 'text-slate-400' : 'text-emerald-400'
                       }`}>
-                        {item.daysUntilStockout >= 90 ? '90+ วัน' : `${item.daysUntilStockout} วัน`}
+                        {item.currentStock <= 0
+                          ? 'หมดแล้ว'
+                          : !item.dailyConsumptionRate
+                            ? 'ยังไม่มีข้อมูลการใช้'
+                            : item.daysUntilStockout >= 90
+                              ? '90+ วัน'
+                              : `${item.daysUntilStockout} วัน`}
                       </span>
                     </div>
 
@@ -416,7 +429,7 @@ export const AIInventoryForecastPanel: React.FC = () => {
                           isCritical ? 'bg-rose-500' : isWarning ? 'bg-amber-500' : 'bg-emerald-500'
                         }`}
                         style={{
-                          width: `${Math.min(100, Math.max(5, (item.daysUntilStockout / 10) * 100))}%`
+                          width: `${item.currentStock <= 0 || !item.dailyConsumptionRate ? 0 : Math.min(100, Math.max(5, (item.daysUntilStockout / 10) * 100))}%`
                         }}
                       />
                     </div>

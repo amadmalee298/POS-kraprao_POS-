@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
-import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType } from '../../utils/stockTypes';
+import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType, isLowStock } from '../../utils/stockTypes';
 import { StockIssuePanel } from './StockIssuePanel';
 import {
   PackageCheck,
@@ -49,7 +49,8 @@ import { canonicalUnit, convertAmount, convertForIngredient, countBaseOf, countU
 const MASS_UNITS = ['kg', 'g'];
 const VOLUME_UNITS = ['l', 'ml'];
 const MEASURE_UNITS = [...MASS_UNITS, ...VOLUME_UNITS];
-import { buildStockMovements, cancelReturns, salesUsageByDay, withRunningBalance } from '../../utils/stockHistory';
+import { buildStockMovements, cancelReturns, localDay, salesUsageByDay, withRunningBalance } from '../../utils/stockHistory';
+import { expiryState, latestLotByIngredient } from '../../utils/stockLots';
 import { AIWasteAnalysisPanel } from './AIWasteAnalysisPanel';
 import { SmartAuditPanel } from './SmartAuditPanel';
 import { AdjustmentLogModal } from './AdjustmentLogModal';
@@ -384,14 +385,33 @@ export const InventoryView: React.FC = () => {
   const [lotNotes, setLotNotes] = useState('');
 
   // Filtering for Tab 1
-  const lowStockCount = ingredients.filter(i => i.currentStock <= i.minStockAlert).length;
+  const lowStockCount = ingredients.filter(isLowStock).length;
+
+  // Each ingredient's latest delivery, and whether it is past (or close to) its expiry date
+  const latestLots = useMemo(() => latestLotByIngredient(stockLots), [stockLots]);
+  const todayLocal = localDay(new Date().toISOString());
+  const expiryOf = (ingId: string) => {
+    const lot = latestLots.get(ingId);
+    return { lot, state: lot && ingredients.find(i => i.id === ingId)?.currentStock ? expiryState(lot.expiryDate, todayLocal) : null };
+  };
+  const expiryCounts = useMemo(() => {
+    let expired = 0;
+    let soon = 0;
+    ingredients.forEach(i => {
+      const lot = latestLots.get(i.id);
+      const st = lot && i.currentStock > 0 ? expiryState(lot.expiryDate, todayLocal) : null;
+      if (st === 'expired') expired++;
+      else if (st === 'soon') soon++;
+    });
+    return { expired, soon };
+  }, [ingredients, latestLots, todayLocal]);
 
   const filteredIngredients = ingredients
     .filter(ing => {
       const matchesSearch = ing.name.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesCat = categoryFilter === 'all' || ing.category === categoryFilter;
       const matchesType = stockTypeFilter === 'all' || stockTypeOf(ing) === stockTypeFilter;
-      const matchesLow = !onlyLowStock || ing.currentStock <= ing.minStockAlert;
+      const matchesLow = !onlyLowStock || isLowStock(ing);
       return matchesSearch && matchesCat && matchesType && matchesLow;
     })
     .sort((a, b) => {
@@ -532,7 +552,11 @@ export const InventoryView: React.FC = () => {
   const totalIn = sumBy('IN');
   const totalOut = -sumBy('OUT');
   const totalAdjust = sumBy('ADJUST');
-  const totalsUnit = singleIngredient ? singleIngredient.unit : 'หน่วย (เลือกวัตถุดิบเพื่อดูยอดรวม)';
+  const totalsUnit = singleIngredient?.unit || '';
+  // Across ingredients the amounts are in different units: count the entries instead
+  const countBy = (type: string) => filteredLogs.filter(l => l.type === type).length;
+  const totalTile = (type: 'IN' | 'OUT' | 'ADJUST', amount: number, sign: string) =>
+    singleIngredient ? `${sign}${Number(Math.abs(amount).toFixed(3))} ${totalsUnit}` : `${countBy(type)} รายการ`;
 
   // Stock card of one ingredient with running balance (worked back from today's stock)
   const stockCardIngredient = singleIngredient || ingredients[0];
@@ -802,7 +826,7 @@ export const InventoryView: React.FC = () => {
     const targetList = filteredIngredients.length > 0 ? filteredIngredients : ingredients;
 
     const rows = targetList.map(ing => {
-      const isLow = ing.currentStock <= ing.minStockAlert;
+      const isLow = isLowStock(ing);
       const catTh = categoryNames[ing.category] || ing.category;
       const totalVal = ing.currentStock * effectiveUnitCost(ing);
 
@@ -1224,8 +1248,71 @@ export const InventoryView: React.FC = () => {
               </div>
             )}
 
+            {(expiryCounts.expired > 0 || expiryCounts.soon > 0) && (
+              <div className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-xs font-bold">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                {expiryCounts.expired > 0 && <span className="text-rose-300">ล็อตล่าสุดหมดอายุแล้ว {expiryCounts.expired} รายการ</span>}
+                {expiryCounts.soon > 0 && <span className="text-amber-300">ใกล้หมดอายุ (ภายใน 3 วัน) {expiryCounts.soon} รายการ</span>}
+                <span className="text-slate-400 font-normal">ตรวจของแล้วตัดของเสีย หรือรับเข้าล็อตใหม่</span>
+              </div>
+            )}
+
+            {/* Phones: one card per ingredient (the table needs a wide screen) */}
+            <div className="md:hidden space-y-2">
+              {filteredIngredients.map(ing => {
+                const isLow = isLowStock(ing);
+                const { lot, state } = expiryOf(ing.id);
+                const isSelected = selectedIngIds.includes(ing.id);
+                return (
+                  <div key={ing.id} className={`rounded-2xl border p-3 space-y-2 ${isSelected ? 'border-amber-500/60 bg-amber-500/10' : isLow ? 'border-rose-500/40 bg-slate-900' : 'border-slate-800 bg-slate-900'}`}>
+                    <div className="flex items-start gap-2">
+                      <button type="button" onClick={() => handleToggleSelectRow(ing.id)} className="p-1 text-slate-400" title={isSelected ? 'ยกเลิกเลือก' : 'เลือกรายการนี้'}>
+                        {isSelected ? <CheckSquare className="w-4 h-4 text-amber-400" /> : <Square className="w-4 h-4 text-slate-600" />}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-slate-100 flex items-center gap-1.5 flex-wrap">
+                          <span className="truncate">{ing.name}</span>
+                          <button type="button" onClick={() => toggleIngredientFrequent(ing.id)} className={ing.isFrequent ? 'text-amber-400' : 'text-slate-600'} title="ปักหมุดวัตถุดิบใช้บ่อย">
+                            <Star className={`w-3.5 h-3.5 ${ing.isFrequent ? 'fill-amber-400' : ''}`} />
+                          </button>
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          ทุน {ing.unitCost.toLocaleString('th-TH')} ฿/{ing.unit}
+                          {lot ? ` · ล็อต ${lot.lotNumber}${lot.expiryDate ? ` หมดอายุ ${lot.expiryDate}` : ''}` : ''}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className={`font-mono font-black text-lg leading-tight ${isLow ? 'text-rose-400' : 'text-slate-100'}`}>
+                          {ing.currentStock.toLocaleString()} <span className="text-xs font-bold">{ing.unit}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500">จุดเตือน {ing.minStockAlert} {ing.unit}</div>
+                      </div>
+                    </div>
+                    {(isLow || state) && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {isLow && <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-bold border border-rose-500/30">วัตถุดิบใกล้หมด</span>}
+                        {state === 'expired' && <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-bold border border-rose-500/30">ล็อตหมดอายุแล้ว</span>}
+                        {state === 'soon' && <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30">ใกล้หมดอายุ</span>}
+                      </div>
+                    )}
+                    <div className="grid grid-cols-4 gap-1.5">
+                      <button type="button" onClick={() => handleOpenQuickAddStock(ing)} className="col-span-2 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-center gap-1">
+                        <PackagePlus className="w-3.5 h-3.5" /> เติมสต็อก
+                      </button>
+                      <button type="button" onClick={() => handleOpenQuickLogWaste(ing)} className="py-2 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold">
+                        ของเสีย
+                      </button>
+                      <button type="button" onClick={() => handleOpenEditIngredient(ing)} className="py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold">
+                        แก้ไข
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
             {/* Current Stock Table with Horizontal Scroll Safety */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-slate-300 min-w-[750px]">
                   <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">
@@ -1247,18 +1334,15 @@ export const InventoryView: React.FC = () => {
                       <th className="py-3.5 px-4 whitespace-nowrap">รายการวัตถุดิบ</th>
                       <th className="py-3.5 px-4 whitespace-nowrap">รหัสล็อต / หมดอายุ</th>
                       <th className="py-3.5 px-4 whitespace-nowrap">ราคาทุนเฉลี่ย</th>
-                      <th className="py-3.5 px-4 whitespace-nowrap">เกณฑ์ขั้นต่ำ</th>
+                      <th className="py-3.5 px-4 whitespace-nowrap">คงเหลือ (จุดเตือน)</th>
                       <th className="py-3.5 px-4 whitespace-nowrap text-center">จัดการปรับยอด</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
                     {filteredIngredients.map((ing, idx) => {
                       const isSelected = selectedIngIds.includes(ing.id);
-                      const isLow = ing.currentStock <= ing.minStockAlert;
-                      const lot = stockLots.find(l => l.ingredientId === ing.id) || {
-                        lotNumber: `LOT-${ing.category.toUpperCase()}-0${idx + 1}`,
-                        expiryDate: '2026-08-15'
-                      };
+                      const isLow = isLowStock(ing);
+                      const { lot, state: expiry } = expiryOf(ing.id);
 
                       return (
                         <tr
@@ -1316,8 +1400,16 @@ export const InventoryView: React.FC = () => {
 
                           {/* รหัสล็อต / หมดอายุ */}
                           <td className="py-3.5 px-4 whitespace-nowrap">
-                            <div className="font-mono text-amber-400 font-bold text-xs">{lot.lotNumber}</div>
-                            <div className="text-[10px] text-slate-400 font-mono">EXP: {lot.expiryDate}</div>
+                            {lot ? (
+                              <>
+                                <div className="font-mono text-amber-400 font-bold text-xs">{lot.lotNumber}</div>
+                                {lot.expiryDate && <div className="text-[10px] text-slate-400 font-mono">EXP: {lot.expiryDate}</div>}
+                                {expiry === 'expired' && <span className="mt-1 inline-block px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-bold border border-rose-500/30">หมดอายุแล้ว</span>}
+                                {expiry === 'soon' && <span className="mt-1 inline-block px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30">ใกล้หมดอายุ</span>}
+                              </>
+                            ) : (
+                              <span className="text-[11px] text-slate-500">ยังไม่มีล็อตรับเข้า</span>
+                            )}
                           </td>
 
                           {/* ราคาทุนเฉลี่ย */}
@@ -1395,7 +1487,7 @@ export const InventoryView: React.FC = () => {
                                 {ing.currentStock.toLocaleString()} {ing.unit}
                               </span>
                               <span className="text-[10px] text-slate-400 font-mono">
-                                (ขั้นต่ำ {ing.minStockAlert} {ing.unit})
+                                (จุดเตือน {ing.minStockAlert} {ing.unit})
                               </span>
                             </div>
                             {ing.packageUnit && ing.packageSize && ing.packageSize > 0 && (
@@ -1614,7 +1706,8 @@ export const InventoryView: React.FC = () => {
                   <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
                   <span>ยอดรับเข้าสะสม (IN)</span>
                 </div>
-                <div className="text-xl font-black text-emerald-400">+{Number(totalIn.toFixed(3))} {totalsUnit}</div>
+                <div className="text-xl font-black text-emerald-400">{totalTile('IN', totalIn, '+')}</div>
+                {!singleIngredient && <div className="text-[10px] text-slate-500">เลือกวัตถุดิบเพื่อดูปริมาณรวม</div>}
               </div>
 
               <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-1">
@@ -1622,7 +1715,8 @@ export const InventoryView: React.FC = () => {
                   <ArrowDownRight className="w-3.5 h-3.5 text-rose-400" />
                   <span>ยอดเบิก / ตัดขายสะสม (OUT)</span>
                 </div>
-                <div className="text-xl font-black text-rose-400">-{Number(totalOut.toFixed(3))} {totalsUnit}</div>
+                <div className="text-xl font-black text-rose-400">{totalTile('OUT', totalOut, '-')}</div>
+                {!singleIngredient && <div className="text-[10px] text-slate-500">เลือกวัตถุดิบเพื่อดูปริมาณรวม</div>}
               </div>
 
               <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-1">
@@ -1630,7 +1724,8 @@ export const InventoryView: React.FC = () => {
                   <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
                   <span>ยอดปรับปรุงบัญชี (ADJUST)</span>
                 </div>
-                <div className="text-xl font-black text-sky-400">{totalAdjust >= 0 ? '+' : ''}{Number(totalAdjust.toFixed(3))} {totalsUnit}</div>
+                <div className="text-xl font-black text-sky-400">{totalTile('ADJUST', totalAdjust, totalAdjust >= 0 ? '+' : '-')}</div>
+                {!singleIngredient && <div className="text-[10px] text-slate-500">เลือกวัตถุดิบเพื่อดูปริมาณรวม</div>}
               </div>
             </div>
 
@@ -1753,17 +1848,17 @@ export const InventoryView: React.FC = () => {
         {activeTab === 'stockcard' && (
           <div className="space-y-4">
             {/* Header Info */}
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <FileSpreadsheet className="w-5 h-5 text-orange-400" />
-                <span className="text-xs sm:text-sm font-bold text-slate-200">
-                  สต็อกการ์ด: {stockCardIngredient?.name || '-'} (คงเหลือตอนนี้ {stockCardIngredient?.currentStock ?? 0} {stockCardIngredient?.unit})
-                </span>
+            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 min-w-0">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-5 h-5 text-orange-400 shrink-0" />
+                  <span className="text-sm font-bold text-slate-200 whitespace-nowrap">สต็อกการ์ด</span>
+                </div>
                 <select
                   aria-label="เลือกวัตถุดิบ"
                   value={stockCardIngredient?.id || ''}
                   onChange={e => setSelectedIngredientFilter(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-xs text-slate-200"
+                  className="w-full sm:w-auto bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200"
                 >
                   {ingredients.map(i => (
                     <option key={i.id} value={i.id}>
@@ -1772,13 +1867,46 @@ export const InventoryView: React.FC = () => {
                   ))}
                 </select>
               </div>
-              <span className="px-3 py-1 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/30 text-xs font-bold whitespace-nowrap">
-                {stockCardRecords.length} บันทึก
-              </span>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-400">
+                  คงเหลือตอนนี้{' '}
+                  <b className="text-slate-100 font-mono">
+                    {stockCardIngredient?.currentStock ?? 0} {stockCardIngredient?.unit}
+                  </b>
+                </span>
+                <span className="px-3 py-1 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/30 font-bold whitespace-nowrap">
+                  {stockCardRecords.length} บันทึก
+                </span>
+              </div>
+            </div>
+
+            {/* Phones: the card's entries as a list */}
+            <div className="md:hidden space-y-2">
+              {stockCardRecords.length === 0 && <div className="p-6 text-center text-xs text-slate-500 bg-slate-900 border border-slate-800 rounded-2xl">ยังไม่มีการรับ-เบิกของวัตถุดิบนี้</div>}
+              {stockCardRecords.map(sc => (
+                <div key={sc.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex items-start justify-between gap-3 text-xs">
+                  <div className="min-w-0 space-y-1">
+                    <div className="font-mono text-slate-400 text-[11px]">{sc.dateTime}</div>
+                    <span
+                      className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${
+                        sc.type === 'IN' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : sc.type === 'OUT' ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' : 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                      }`}
+                    >
+                      {sc.type === 'IN' ? 'รับเข้า' : sc.type === 'OUT' ? 'เบิก/ขาย' : 'ปรับปรุง'}
+                    </span>
+                    {sc.operatorNote && <div className="text-slate-400 break-words">{sc.operatorNote}</div>}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className={`font-mono font-bold ${sc.type === 'IN' ? 'text-emerald-400' : sc.type === 'OUT' ? 'text-rose-400' : 'text-sky-400'}`}>{sc.cardAmount}</div>
+                    <div className="text-[10px] text-slate-500">คงเหลือ</div>
+                    <div className="font-mono font-extrabold text-slate-100">{sc.netBalance}</div>
+                  </div>
+                </div>
+              ))}
             </div>
 
             {/* Stock Card Table with Horizontal Scroll Safety */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-slate-300 min-w-[800px]">
                   <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">

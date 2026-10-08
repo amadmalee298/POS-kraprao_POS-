@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { isLowStock } from '../utils/stockTypes';
 import { ShopAccountStatusButton } from './ShopAccountBanner';
 import {
   X,
@@ -121,7 +122,7 @@ export const SidebarDrawer: React.FC = () => {
 
   if (!isDrawerOpen) return null;
 
-  const lowStockCount = ingredients.filter(i => i.currentStock <= i.minStockAlert).length;
+  const lowStockCount = ingredients.filter(isLowStock).length;
   const pendingKdsCount = orders.filter(
     o => o.branchId === currentBranch.id && (o.status === 'pending' || o.status === 'cooking')
   ).length;

@@ -1,7 +1,7 @@
 import { countsAsRevenue } from '../../utils/orderUtils';
 import { buildProfitAndLoss, EXPENSE_CATEGORY_LABELS, expenseCost, isVatRegistered, pct } from '../../utils/accounting';
 import { cartItemUnitCost } from '../../utils/recipeUtils';
-import { stockTypeOf, stockValueByType } from '../../utils/stockTypes';
+import { stockTypeOf, stockValueByType, isLowStock } from '../../utils/stockTypes';
 import { findProteinOption, effectiveUnitCost } from '../../utils/recipeUtils';
 import React, { useEffect, useState, useMemo } from 'react';
 import {
@@ -920,7 +920,7 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
   // 12. Real Dynamic AI Insights
   // -------------------------------------------------------------
   const lowStockIngredients = useMemo(() => {
-    return ingredients.filter(i => (i.currentStock || 0) <= (i.minStockAlert || 0));
+    return ingredients.filter(isLowStock);
   }, [ingredients]);
 
   const realAiInsights = useMemo(() => {

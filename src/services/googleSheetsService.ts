@@ -16,7 +16,7 @@ import { Order, Ingredient, MenuItem, Branch, StockAdjustmentLog, WasteLog } fro
 import { countsAsRevenue, isUnpaid, orderVatBreakdown } from '../utils/orderUtils';
 import { effectiveUnitCost, recipeCost } from '../utils/recipeUtils';
 import { reasonLabel } from '../utils/stockHistory';
-import { stockTypeLabel, stockTypeOf } from '../utils/stockTypes';
+import { stockTypeLabel, stockTypeOf, isLowStock } from '../utils/stockTypes';
 
 /**
  * Google sign-in for Sheets runs in its own Firebase app instance. Signing in with a Google account
@@ -634,7 +634,7 @@ function inventorySheet(ingredients: Ingredient[], branch: Branch): (string | nu
   const headers = ['รหัส', 'ชื่อ', 'ประเภทบัญชี', 'หมวดหมู่', 'คงเหลือ', 'หน่วย', 'จุดเตือน', 'ต้นทุน/หน่วย', 'มูลค่าคงเหลือ', 'สถานะ', 'บาร์โค้ด', 'สาขา'];
   const rows = ingredients.map(ing => {
     const cost = effectiveUnitCost(ing);
-    const status = ing.currentStock <= 0 ? 'หมด' : ing.currentStock <= ing.minStockAlert ? 'ต่ำกว่าจุดเตือน' : 'ปกติ';
+    const status = ing.currentStock <= 0 ? 'หมด' : isLowStock(ing) ? 'ต่ำกว่าจุดเตือน' : 'ปกติ';
     return [
       ing.id,
       ing.name,
