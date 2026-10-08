@@ -138,6 +138,8 @@ export interface LedgerData {
   usefulLifeYears?: number;
   /** Depreciation is charged up to this day (default today) */
   today?: string;
+  /** The books start here (ISO time): records made before are left out, so the statements start at zero */
+  startAt?: string;
 }
 
 /** The shop's day (UTC+7) of a moment */
@@ -149,6 +151,15 @@ export const thaiDay = (iso: string) => {
 
 /** Stock lots made by receiving an expense's goods (the expense already holds the purchase) */
 const EXPENSE_LOT = /^(EXP|OCR|TG)-/;
+
+/** When a record was made: its own time, the time in its id (exp-1728…), or the start of its day (Thai time) */
+export function recordTime(r: { id?: string; createdAt?: string; timestamp?: string }, date?: string): string {
+  const own = r.createdAt || r.timestamp;
+  if (own && !Number.isNaN(Date.parse(own))) return new Date(own).toISOString();
+  const ms = Number((r.id || '').match(/(\d{13})/)?.[1]);
+  if (ms > 1_500_000_000_000) return new Date(ms).toISOString();
+  return date ? new Date(Date.parse(`${date.slice(0, 10)}T00:00:00+07:00`)).toISOString() : '';
+}
 /** Stock log reasons that are counts or corrections (the others are covered elsewhere) */
 const COUNT_REASONS = new Set(['audit_correction', 'manual_adjustment', 'other']);
 
@@ -164,10 +175,12 @@ export function buildGlLines(d: LedgerData): GlLine[] {
     }
   };
   const ingCost = new Map(d.ingredients.map(i => [i.id, effectiveUnitCost(i)]));
+  /** Made after the books started */
+  const counts = (time: string) => !d.startAt || !time || time >= d.startAt;
 
   // Sales: revenue and output VAT; the money into the drawer (cash) or the bank
   for (const o of d.orders) {
-    if (!own(o.branchId) || !countsAsRevenue(o)) continue;
+    if (!own(o.branchId) || !countsAsRevenue(o) || !counts(o.createdAt)) continue;
     const date = thaiDay(o.createdAt);
     const { base, vat } = orderVatBreakdown(o);
     const into = o.paymentMethod === 'cash' ? '1000' : '1010';
@@ -185,7 +198,7 @@ export function buildGlLines(d: LedgerData): GlLine[] {
 
   // Expenses: stock, equipment or operating expense, input VAT; paid from drawer, cash or bank
   for (const e of d.expenses) {
-    if (!own(e.branchId) || !e.date) continue;
+    if (!own(e.branchId) || !e.date || !counts(recordTime(e, e.date))) continue;
     const net = expenseCost(e, d.vatRegistered);
     const vat = claimableInputVat(e, d.vatRegistered);
     const gross = net + vat;
@@ -201,7 +214,7 @@ export function buildGlLines(d: LedgerData): GlLine[] {
 
   // Other income: sales-type income (catering, platform refunds) is revenue from sales
   for (const i of d.incomes) {
-    if (!own(i.branchId) || !i.date) continue;
+    if (!own(i.branchId) || !i.date || !counts(recordTime(i, i.date))) continue;
     const into = i.paymentMethod === 'cash' ? '1001' : '1010';
     const sales = SALES_INCOME_CATEGORIES.includes(i.category);
     push({ date: i.date.slice(0, 10), source: 'income', sourceId: i.id, reference: i.title }, [
@@ -212,7 +225,7 @@ export function buildGlLines(d: LedgerData): GlLine[] {
 
   // Goods received without an expense (quick receive, lots): paid from the bank
   for (const lot of d.stockLots) {
-    if (EXPENSE_LOT.test(lot.lotNumber || '') || !(lot.quantity > 0) || !(lot.unitCost > 0)) continue;
+    if (EXPENSE_LOT.test(lot.lotNumber || '') || !(lot.quantity > 0) || !(lot.unitCost > 0) || !counts(recordTime(lot, lot.receivedDate))) continue;
     if (d.ingredients.length && !ingCost.has(lot.ingredientId)) continue; // another branch's ingredient
     const value = lot.quantity * lot.unitCost;
     push({ date: (lot.receivedDate || '').slice(0, 10), source: 'purchase', sourceId: lot.id, reference: lot.lotNumber, memo: lot.supplier }, [
@@ -223,6 +236,7 @@ export function buildGlLines(d: LedgerData): GlLine[] {
 
   // Waste at its cost
   for (const w of d.wasteLogs) {
+    if (!counts(recordTime(w, w.loggedDate))) continue;
     const value = w.totalCostLoss || w.quantity * (w.unitCost || 0);
     push({ date: (w.loggedDate || '').slice(0, 10), source: 'waste', sourceId: w.id, reference: w.ingredientName, memo: w.notes }, [
       ['5310', value, 0],
@@ -233,6 +247,7 @@ export function buildGlLines(d: LedgerData): GlLine[] {
   // Stock counts and corrections at the ingredient's cost; stock issued for use is cost of sales
   for (const l of d.stockLogs) {
     const reason = String(l.reason);
+    if (!counts(l.timestamp)) continue;
     if (!COUNT_REASONS.has(reason) && reason !== 'issue') continue;
     const value = Math.abs(l.changeQty || 0) * (ingCost.get(l.ingredientId) || 0);
     if (!value) continue;
@@ -246,15 +261,17 @@ export function buildGlLines(d: LedgerData): GlLine[] {
   // back to the safe and the difference is cash over (4900) or short (5900)
   for (const s of d.cashShifts) {
     if (!own(s.branchId)) continue;
-    push({ date: thaiDay(s.openedAt), source: 'cash', sourceId: s.id, reference: s.shiftNumber, memo: 'เงินทอนตั้งต้น' }, [
+    if (counts(s.openedAt))
+      push({ date: thaiDay(s.openedAt), source: 'cash', sourceId: s.id, reference: s.shiftNumber, memo: 'เงินทอนตั้งต้น' }, [
       ['1000', s.startingFloat || 0, 0],
       ['1001', 0, s.startingFloat || 0]
     ]);
     for (const m of s.cashMovements || []) {
+      if (!counts(m.time)) continue;
       const amt = m.amount || 0;
       push({ date: thaiDay(m.time), source: 'cash', sourceId: m.id, reference: s.shiftNumber, memo: m.reason }, m.type === 'cash_in' ? [['1000', amt, 0], ['1001', 0, amt]] : [['1001', amt, 0], ['1000', 0, amt]]);
     }
-    if (s.status === 'closed' && typeof s.actualCashBalance === 'number' && s.closedAt) {
+    if (s.status === 'closed' && typeof s.actualCashBalance === 'number' && s.closedAt && counts(s.closedAt) && counts(s.openedAt)) {
       const counted = s.actualCashBalance;
       const diff = s.cashDifference || 0;
       push({ date: thaiDay(s.closedAt), source: 'cash_close', sourceId: s.id, reference: s.shiftNumber, memo: s.closingNotes }, [
@@ -270,7 +287,7 @@ export function buildGlLines(d: LedgerData): GlLine[] {
   const years = d.usefulLifeYears && d.usefulLifeYears > 0 ? d.usefulLifeYears : DEFAULT_USEFUL_LIFE_YEARS;
   const today = d.today || thaiDay(new Date().toISOString());
   for (const e of d.expenses) {
-    if (e.category !== 'equipment' || !own(e.branchId) || !/^\d{4}-\d{2}/.test(e.date || '')) continue;
+    if (e.category !== 'equipment' || !own(e.branchId) || !/^\d{4}-\d{2}/.test(e.date || '') || !counts(recordTime(e, e.date))) continue;
     const cost = expenseCost(e, d.vatRegistered);
     if (!(cost > 0)) continue;
     const months = Math.round(years * 12);
@@ -296,7 +313,7 @@ export function buildGlLines(d: LedgerData): GlLine[] {
 
   // The owner's journals; a cash line is classified by the other accounts of its entry
   for (const j of d.journals) {
-    if (!own(j.branchId)) continue;
+    if (!own(j.branchId) || !counts(recordTime(j, j.date))) continue;
     const others = j.lines.filter(l => !ACCOUNT_BY_CODE.get(l.account)?.isCash);
     const rank = Math.max(0, ...others.map(l => ({ FINANCING: 3, INVESTING: 2, OPERATING: 1 })[ACCOUNT_BY_CODE.get(l.account)?.cashFlow || 'OPERATING']));
     const cf: CashFlowItem | undefined = j.isOpening ? 'opening' : rank === 3 ? 'financing' : rank === 2 ? 'investing' : rank === 1 ? 'other_operating' : undefined;

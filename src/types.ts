@@ -494,6 +494,8 @@ export interface SystemSettings {
   merchantSettings?: MerchantConnectionSettings;
   /** Google Sheets through an Apps Script in the shop's spreadsheet: no Google sign-in on the devices */
   sheetsScript?: SheetsScriptSettings;
+  /** The double-entry books start here (ISO time); earlier records stay but are left out of the statements */
+  booksStartAt?: string;
   payroll?: PayrollSettings;
   attendance?: AttendanceSettings;
   /** Years over which equipment bought is depreciated (straight line); default 5 */

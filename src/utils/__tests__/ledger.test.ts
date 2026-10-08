@@ -211,3 +211,21 @@ describe('journals', () => {
     expect(nextJournalNumber([])).toBe('JV-0001');
   });
 });
+
+describe('starting the books afresh', () => {
+  it('leaves out what was recorded before the start, keeping what came after', () => {
+    const d = data({ startAt: '2026-10-05T06:00:00.000Z' });
+    d.orders.push(order({ id: 'o9', orderNumber: 'ORD-9', createdAt: '2026-10-05T07:00:00.000Z' }));
+    const lines = buildGlLines(d);
+    // The sale and the stock count made after the start; nothing from before (opening journal, equipment, the shift…)
+    expect([...new Set(lines.map(l => l.sourceId))]).toEqual(['o9', 'a1']);
+    const b = balanceSheet(lines, '2026-10-31');
+    expect(b.difference).toBe(0);
+    expect(b.assets.find(l => l.code === '1000')?.amount).toBe(107);
+  });
+
+  it('dates records without a time by the time in their id', () => {
+    const lines = buildGlLines(data({ startAt: '2026-10-05T06:00:00.000Z', expenses: [expense({ id: `exp-${Date.parse('2026-10-05T08:00:00Z')}` }), expense({ id: `exp-${Date.parse('2026-10-05T05:00:00Z')}` })] }));
+    expect(lines.filter(l => l.source === 'expense').map(l => l.sourceId)).toEqual([`exp-${Date.parse('2026-10-05T08:00:00Z')}`, `exp-${Date.parse('2026-10-05T08:00:00Z')}`]);
+  });
+});

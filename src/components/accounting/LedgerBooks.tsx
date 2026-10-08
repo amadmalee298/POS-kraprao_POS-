@@ -64,7 +64,7 @@ const Row: React.FC<{ label: string; amount: number; strong?: boolean; indent?: 
 
 export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => void }> = ({ tab, onTab }) => {
   const pos = usePOS();
-  const { settings, currentBranch, currentUser } = pos;
+  const { settings, currentBranch, currentUser, updateSettings } = pos;
   const [journals, setJournals] = useSharedList<JournalEntry>('journals', 'POS_JOURNALS');
   const today = todayStr();
   const [from, setFrom] = useState(`${today.slice(0, 8)}01`);
@@ -90,7 +90,8 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
         ingredients: pos.ingredients,
         vatRegistered: isVatRegistered(settings),
         usefulLifeYears: settings.equipmentUsefulLifeYears,
-        today
+        today,
+        startAt: settings.booksStartAt
       }),
     [branchId, pos.orders, pos.expenses, pos.incomes, pos.stockLots, pos.wasteLogs, pos.stockAdjustmentLogs, pos.cashShifts, branchJournals, pos.ingredients, settings, today]
   );
@@ -312,6 +313,11 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
           <BookOpen className="w-5 h-5 text-indigo-300" /> บัญชีและงบการเงิน
         </h2>
         <p className="text-[11px] text-slate-500">{ASSUMPTIONS}</p>
+        <BooksStart
+          startAt={settings.booksStartAt}
+          owner={isOwner(currentUser?.role)}
+          onChange={iso => updateSettings({ booksStartAt: iso })}
+        />
       </div>
 
       <nav className="flex flex-wrap gap-2" aria-label="บัญชีและงบการเงิน">
@@ -362,6 +368,79 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
         </div>
         <div ref={printRef}>{body}</div>
       </div>
+    </div>
+  );
+};
+
+/**
+ * Starting the books afresh (e.g. after testing): statements count only what is recorded from
+ * then on. Nothing is deleted, and the start can be moved back later.
+ */
+const BooksStart: React.FC<{ startAt?: string; owner: boolean; onChange: (iso: string) => void }> = ({ startAt, owner, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const [day, setDay] = useState(todayStr());
+  const label = startAt
+    ? new Date(startAt).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })
+    : '';
+  return (
+    <div className="pt-2 text-xs space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={startAt ? 'text-emerald-300' : 'text-slate-400'}>
+          {startAt ? `เริ่มบัญชีตั้งแต่ ${label} (รายการก่อนหน้านี้ไม่นับในงบ)` : 'ใช้ทุกรายการตั้งแต่เริ่มใช้แอป'}
+        </span>
+        {owner && (
+          <button type="button" onClick={() => setOpen(o => !o)} className="h-8 px-3 rounded-lg border border-slate-700 text-slate-300">
+            {open ? 'ปิด' : 'เริ่มบัญชีใหม่'}
+          </button>
+        )}
+      </div>
+      {open && owner && (
+        <div className="rounded-xl border border-amber-700/50 bg-amber-950/20 p-3 space-y-2 text-amber-100">
+          <p>
+            งบทุกตัวจะเริ่มที่ 0 นับเฉพาะรายการที่บันทึกหลังเวลาที่เลือก ข้อมูลเดิม (บิลขาย ค่าใช้จ่าย สต็อก) ยังเก็บไว้ครบ ไม่มีอะไรถูกลบ
+            · หลังเริ่มใหม่ ให้บันทึกยอดยกมาในสมุดรายวัน (เงินในบัญชี เงินสด สต็อก อุปกรณ์ ทุน)
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (!window.confirm('เริ่มบัญชีใหม่ตั้งแต่ตอนนี้? งบจะเริ่มที่ 0 (ข้อมูลเดิมไม่ถูกลบ)')) return;
+                onChange(new Date().toISOString());
+                setOpen(false);
+              }}
+              className="h-9 px-3 rounded-lg bg-amber-600 text-white font-bold"
+            >
+              เริ่มตั้งแต่ตอนนี้
+            </button>
+            <span className="text-amber-200/70">หรือตั้งแต่วันที่</span>
+            <input type="date" value={day} onChange={e => setDay(e.target.value)} aria-label="เริ่มบัญชีตั้งแต่วันที่" className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-100" />
+            <button
+              type="button"
+              onClick={() => {
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+                onChange(new Date(`${day}T00:00:00+07:00`).toISOString());
+                setOpen(false);
+              }}
+              className="h-9 px-3 rounded-lg border border-amber-600 text-amber-100"
+            >
+              เริ่มตั้งแต่วันที่เลือก
+            </button>
+            {startAt && (
+              <button
+                type="button"
+                onClick={() => {
+                  // An empty value (not a removed field) so the change reaches every device
+                  onChange('');
+                  setOpen(false);
+                }}
+                className="h-9 px-3 rounded-lg border border-slate-700 text-slate-300"
+              >
+                กลับไปใช้ทุกรายการ
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
