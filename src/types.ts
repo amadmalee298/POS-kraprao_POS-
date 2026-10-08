@@ -326,6 +326,11 @@ export interface Expense {
   driveFiles?: { name: string; url: string; savedAt: string }[];
   /** How it was paid (for the books): bank transfer/QR/card, cash outside the drawer, or the drawer. Missing = bank */
   paidFrom?: 'bank' | 'cash' | 'drawer';
+  /**
+   * A service bought from abroad (online ads, apps): the shop pays the VAT itself with ภ.พ.36 and
+   * claims it back as input VAT in the next month's ภ.พ.30. The amount is the price paid (no Thai VAT).
+   */
+  vat36?: boolean;
 }
 
 export interface PaymentRecord {

@@ -158,6 +158,8 @@ export interface LedgerData {
   payables?: AccountsPayableItem[];
   ingredients: Ingredient[];
   vatRegistered: boolean;
+  /** VAT rate in percent (default 7) */
+  vatRate?: number;
   usefulLifeYears?: number;
   /** Depreciation is charged up to this day (default today) */
   today?: string;
@@ -249,7 +251,14 @@ export function buildGlLines(d: LedgerData): GlLine[] {
       [target, net, 0, undefined, target === '6000' ? label : undefined],
       ['1300', vat, 0],
       [payAccount(e.paidFrom), 0, gross, cf]
-    ]);
+    ]);    // A service from abroad: the VAT the shop pays itself (ภ.พ.36) is input VAT it claims back
+    if (e.vat36 && d.vatRegistered) {
+      const vat36 = round2((e.amount || 0) * ((d.vatRate ?? 7) / 100));
+      push({ date: e.date.slice(0, 10), source: 'expense', sourceId: `${e.id}-pp36`, reference: 'ภ.พ.36', memo: e.title }, [
+        ['1300', vat36, 0],
+        [payAccount(e.paidFrom), 0, vat36, 'expenses']
+      ]);
+    }
   }
 
   // Other income: sales-type income (catering, platform refunds) is revenue from sales

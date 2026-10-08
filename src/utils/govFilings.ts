@@ -1,4 +1,5 @@
 import type { Expense, Order, PayrollAdjustment, PayrollSettings, ShiftEntry, StaffMember } from '../types';
+import { buildVatReport } from './vatReport';
 import { claimableInputVat, round2 } from './accounting';
 import { countsAsRevenue, orderVatBreakdown } from './orderUtils';
 import { monthlyPayroll, payrollTotals } from './payroll';
@@ -178,6 +179,8 @@ export interface Pp30Figures {
   outputVat: number;
   purchaseBase: number;
   inputVat: number;
+  /** ภ.พ.36 paid for last month's services from abroad, claimed as input VAT this month */
+  pp36Credit: number;
   payable: number; // negative = overpaid (carried forward / refund)
   orderCount: number;
   purchaseCount: number;
@@ -203,18 +206,20 @@ export function pp30Figures(orders: Order[], expenses: Expense[], month: string,
   let purchaseCount = 0;
   expenses.forEach(e => {
     if ((branchId !== 'all' && e.branchId && e.branchId !== branchId) || !(e.date || '').startsWith(month)) return;
-    const vat = claimableInputVat(e, true);
+    const vat = e.vat36 ? 0 : claimableInputVat(e, true);
     if (vat <= 0) return;
     inputVat += vat;
     purchaseBase += typeof e.netAmount === 'number' ? e.netAmount : (e.amount || 0) - vat;
     purchaseCount++;
   });
+  const pp36Credit = buildVatReport({ orders: [], expenses }, month, branchId).pp36PrevMonth;
   return {
     salesBase: round2(salesBase),
     outputVat: round2(outputVat),
     purchaseBase: round2(purchaseBase),
     inputVat: round2(inputVat),
-    payable: round2(outputVat - inputVat),
+    pp36Credit,
+    payable: round2(outputVat - inputVat - pp36Credit),
     orderCount,
     purchaseCount
   };

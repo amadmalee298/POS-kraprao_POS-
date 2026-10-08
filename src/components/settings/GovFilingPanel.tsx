@@ -298,6 +298,11 @@ export const GovFilingPanel: React.FC = () => {
                   <span>ภาษีขาย</span><span className="text-right">{baht(data.pp30.outputVat)}</span>
                   <span>ยอดซื้อมีใบกำกับ (ก่อน VAT)</span><span className="text-right">{baht(data.pp30.purchaseBase)}</span>
                   <span>ภาษีซื้อ</span><span className="text-right">{baht(data.pp30.inputVat)}</span>
+                  {data.pp30.pp36Credit > 0 && (
+                    <>
+                      <span>ภ.พ.36 ของเดือนก่อน</span><span className="text-right">{baht(data.pp30.pp36Credit)}</span>
+                    </>
+                  )}
                   <span className="font-bold text-slate-100">{data.pp30.payable >= 0 ? 'ต้องชำระ' : 'ชำระเกิน (ยกไป/ขอคืน)'}</span>
                   <span className="text-right font-bold text-amber-300">{baht(Math.abs(data.pp30.payable))}</span>
                 </div>
