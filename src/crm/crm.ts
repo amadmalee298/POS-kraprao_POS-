@@ -1,4 +1,5 @@
 import { useSharedList } from '../hooks/useSharedList';
+import { useKeyedList } from '../hooks/useKeyedList';
 
 export interface Member {
   id: string;
@@ -37,8 +38,8 @@ const withoutSampleMembers = (list: Member[]) => list.filter(m => SAMPLE_MEMBERS
 
 /** Members, coupons and the points rule, shared by every device of the branch. */
 export function useCrm() {
-  const [members, setMembers] = useSharedList<Member>('crm_members', 'POS_MEMBERS', withoutSampleMembers);
-  const [coupons, setCoupons] = useSharedList<Coupon>('crm_coupons', 'POS_COUPONS');
+  const [members, setMembers] = useKeyedList<Member>('crm_members', 'POS_MEMBERS', undefined, withoutSampleMembers);
+  const [coupons, setCoupons] = useKeyedList<Coupon>('crm_coupons', 'POS_COUPONS', undefined);
   const [configList, setConfigList] = useSharedList<CrmConfig>('crm_config', 'POS_CRM_CONFIG');
   const config: CrmConfig = configList[0] || { id: 'config', bahtPerPoint: 0 };
   const setConfig = (c: Partial<CrmConfig>) => setConfigList([{ ...config, ...c, id: 'config' }]);

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import { isFirebaseAvailable, saveKeyedRecords, subscribeToBranchDoc } from '../services/firebaseService';
-import { hasLegacyItems, keyedChanges, keyedItems, newestFirst } from '../utils/keyedDoc';
+import { hasLegacyItems, keepLocalPictures, keepOrder, keyedChanges, keyedItems, newestFirst } from '../utils/keyedDoc';
 
 // Several screens can use the same list at once: every hook instance on this device hears about
 // a change made by another one right away.
@@ -25,27 +25,39 @@ const writeJson = (key: string, value: unknown) => {
   }
 };
 
+/** A record too big for the shared cloud document (1 MB) leaves its embedded pictures on this device */
+const RECORD_LIMIT = 100_000;
+function forCloud<T>(item: T): T {
+  const json = JSON.stringify(item);
+  if (json.length <= RECORD_LIMIT) return item;
+  return JSON.parse(json, (_k, v) => (typeof v === 'string' && v.startsWith('data:') && v.length > 2000 ? '' : v));
+}
+
 /**
  * Like useSharedList, but every record is saved on its own (branches/{branch}/config/{cloudKey},
  * field byId.<id>), so devices (and the Telegram bot server) adding or changing different records
  * at the same time keep all of them. Records changed on this device while offline are remembered
- * and sent once it is back online. The list is kept newest first by `timeOf`.
+ * and sent once it is back online. With `timeOf` the list is kept newest first by it; without, in
+ * this device's order. `clean` runs on every list loaded (e.g. to drop old built-in samples).
  */
 export function useKeyedList<T extends { id: string }>(
   cloudKey: string,
   localKey: string,
-  timeOf: (item: T) => string | undefined
+  timeOf?: (item: T) => string | undefined,
+  clean: (items: T[]) => T[] = items => items
 ): [T[], (update: T[] | ((prev: T[]) => T[])) => void] {
   const { currentBranch } = usePOS();
   const branchId = currentBranch?.id;
   const [items, setItems] = useState<T[]>(() => {
     const local = readJson<unknown>(localKey, []);
-    return Array.isArray(local) ? (local as T[]) : [];
+    return clean(Array.isArray(local) ? (local as T[]).filter(i => i && typeof i.id === 'string') : []);
   });
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const timeRef = useRef(timeOf);
   timeRef.current = timeOf;
+  const cleanRef = useRef(clean);
+  cleanRef.current = clean;
 
   // Ids changed here that the cloud has not confirmed yet
   const pendingKey = `${localKey}__pending`;
@@ -80,13 +92,14 @@ export function useKeyedList<T extends { id: string }>(
   const flush = async (ids: Set<string>, extraPut: T[] = [], dropLegacy = false) => {
     if (!branchId || !isFirebaseAvailable()) return;
     const byId = new Map(itemsRef.current.map(i => [i.id, i]));
-    const put = [...extraPut.filter(i => !ids.has(i.id)), ...[...ids].map(id => byId.get(id)).filter((i): i is T => !!i)];
+    const raw = [...extraPut.filter(i => !ids.has(i.id)), ...[...ids].map(id => byId.get(id)).filter((i): i is T => !!i)];
+    const put = raw.map(forCloud);
     const removed = [...ids].filter(id => !byId.has(id));
     const ok = await saveKeyedRecords(branchId, cloudKey, put, removed, dropLegacy);
     if (!ok) return;
     const still = readPending();
     // A record changed again while this save was on its way stays pending
-    const sent = new Map(put.map(p => [p.id, JSON.stringify(p)]));
+    const sent = new Map(raw.map(p => [p.id, JSON.stringify(p)]));
     const now = new Map(itemsRef.current.map(i => [i.id, JSON.stringify(i)]));
     for (const id of ids) if (now.get(id) === sent.get(id)) still.delete(id);
     writePending(still);
@@ -104,13 +117,14 @@ export function useKeyedList<T extends { id: string }>(
         if (itemsRef.current.length > 0) flushRef.current(new Set(itemsRef.current.map(i => i.id)));
         return;
       }
-      const merged = new Map(keyedItems<T>(data).map(i => [i.id, i]));
+      const merged = new Map(keyedItems<T>(data).map(i => [i.id, keepLocalPictures(i, local.get(i.id))]));
       for (const id of pending) {
         const mine = local.get(id);
         if (mine) merged.set(id, mine);
         else merged.delete(id);
       }
-      const next = newestFirst([...merged.values()], i => timeRef.current(i));
+      const time = timeRef.current;
+      const next = cleanRef.current(time ? newestFirst([...merged.values()], time) : keepOrder(itemsRef.current, merged));
       apply(next, listenerRef.current);
       if (hasLegacyItems(data)) {
         // Move the old whole-list copy into per-record fields

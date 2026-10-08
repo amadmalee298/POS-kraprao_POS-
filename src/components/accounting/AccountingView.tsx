@@ -6,6 +6,7 @@ import { useLedger } from '../../hooks/useLedger';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { countsAsRevenue, orderVatBreakdown } from '../../utils/orderUtils';
 import { useSharedList } from '../../hooks/useSharedList';
+import { useKeyedList } from '../../hooks/useKeyedList';
 import { cartItemUnitCost, effectiveUnitCost } from '../../utils/recipeUtils';
 import { stockValueByType } from '../../utils/stockTypes';
 import {
@@ -835,7 +836,7 @@ export const AccountingView: React.FC = () => {
   const { lines: ledgerLines } = useLedger();
   const [arListRaw, setArList] = useReceivables();
   const [apListRaw, setApList] = usePayables();
-  const [cashFlowEntries, setCashFlowEntries] = useSharedList<CashFlowEntry>('cash_flow_entries', 'POS_CASH_FLOW_ENTRIES', list =>
+  const [cashFlowEntries, setCashFlowEntries] = useKeyedList<CashFlowEntry>('cash_flow_entries', 'POS_CASH_FLOW_ENTRIES', undefined, list =>
     list.some((p: any) => p.id === 'cf-001' && String(p.title || '').includes('ซื้อตู้แช่ทรงยืน')) ? [] : list
   );
 

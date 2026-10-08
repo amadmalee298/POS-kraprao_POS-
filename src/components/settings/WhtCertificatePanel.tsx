@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { FileText, Plus, Printer, Trash2, X } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { useSharedList } from '../../hooks/useSharedList';
+import { useKeyedList } from '../../hooks/useKeyedList';
 import type { PayrollAdjustment } from '../../types';
 import { payrollSettings, payrollTotals } from '../../utils/payroll';
 import { sellerInfo } from '../../utils/seller';
@@ -27,8 +27,8 @@ export const WhtCertificatePanel: React.FC = () => {
   const today = localDay(new Date().toISOString());
   const [tab, setTab] = useState<Tab>('staff');
   const [year, setYear] = useState(Number(today.slice(0, 4)));
-  const [certs, setCerts] = useSharedList<WhtCertificate>('wht_certificates', 'POS_WHT_CERTIFICATES');
-  const [adjustments] = useSharedList<PayrollAdjustment>('payroll_adjustments', 'POS_PAYROLL_ADJUSTMENTS');
+  const [certs, setCerts] = useKeyedList<WhtCertificate>('wht_certificates', 'POS_WHT_CERTIFICATES', undefined);
+  const [adjustments] = useKeyedList<PayrollAdjustment>('payroll_adjustments', 'POS_PAYROLL_ADJUSTMENTS', undefined);
   const [draft, setDraft] = useState<WhtCertificate | null>(null);
   const [msg, setMsg] = useState('');
   const [search, setSearch] = useState('');

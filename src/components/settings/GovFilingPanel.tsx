@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Archive, Bell, CheckCircle2, Download, ExternalLink, FileText, Image as ImageIcon, Loader2, Paperclip, Printer, RotateCcw, Trash2, X } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { useSharedList } from '../../hooks/useSharedList';
+import { useKeyedList } from '../../hooks/useKeyedList';
 import type { PayrollAdjustment } from '../../types';
 import { downloadCsv, isVatRegistered } from '../../utils/accounting';
 import { filingSheetPage } from '../../utils/govFilingDocs';
@@ -72,9 +72,9 @@ export const GovFilingPanel: React.FC = () => {
   const today = localDay(new Date().toISOString());
   const [month, setMonth] = useState(today.slice(0, 7));
   const [branchId, setBranchId] = useState<string>('all');
-  const [certs] = useSharedList<WhtCertificate>('wht_certificates', 'POS_WHT_CERTIFICATES');
-  const [adjustments] = useSharedList<PayrollAdjustment>('payroll_adjustments', 'POS_PAYROLL_ADJUSTMENTS');
-  const [records, setRecords] = useSharedList<FilingRecord>('gov_filings', 'POS_GOV_FILINGS');
+  const [certs] = useKeyedList<WhtCertificate>('wht_certificates', 'POS_WHT_CERTIFICATES', undefined);
+  const [adjustments] = useKeyedList<PayrollAdjustment>('payroll_adjustments', 'POS_PAYROLL_ADJUSTMENTS', undefined);
+  const [records, setRecords] = useKeyedList<FilingRecord>('gov_filings', 'POS_GOV_FILINGS', undefined);
   const [marking, setMarking] = useState<FilingItem | null>(null);
   const [remindOn, setRemindOn] = useState(readRemindOn);
   const [msg, setMsg] = useState('');
