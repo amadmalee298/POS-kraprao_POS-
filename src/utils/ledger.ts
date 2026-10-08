@@ -1,4 +1,4 @@
-import type { CashShift, Expense, ExpenseCategory, Ingredient, Order, OtherIncome, StockAdjustmentLog, StockLot, WasteLog } from '../types';
+import type { AccountsPayableItem, AccountsReceivableItem, CashShift, Expense, ExpenseCategory, Ingredient, Order, OtherIncome, StockAdjustmentLog, StockLot, WasteLog } from '../types';
 import { claimableInputVat, DEFAULT_USEFUL_LIFE_YEARS, EXPENSE_CATEGORY_LABELS, expenseCost, round2, SALES_INCOME_CATEGORIES } from './accounting';
 import { countsAsRevenue, orderVatBreakdown } from './orderUtils';
 import { cartItemUnitCost, effectiveUnitCost } from './recipeUtils';
@@ -11,11 +11,15 @@ import { cartItemUnitCost, effectiveUnitCost } from './recipeUtils';
  * balance and each account's ledger.
  *
  * Mapping assumptions:
- *  - a sale paid in cash goes into the drawer (1000); QR, transfer and card into the bank (1010)
+ *  - a sale paid in cash goes into the drawer (1000) while a cash shift is open, otherwise into
+ *    cash outside the drawer (1001); QR, transfer and card into the bank (1010)
  *  - an expense says how it was paid: drawer (1000), cash outside the drawer (1001) or bank (1010)
  *  - ingredient purchases go into stock (1200) and leave it as cost of sales when dishes are sold
  *  - equipment is an asset (1500), depreciated straight-line each month (6100 / 1510)
- *  - goods received without an expense (stock lots) are paid from the bank
+ *  - goods received without an expense (stock lots) are paid as recorded on the delivery (bank
+ *    when it does not say)
+ *  - invoices to customers are sales on credit (1100) until paid; bills from suppliers are owed
+ *    (2000) until paid, for goods (1200) or for expenses (6000)
  *  - stock counted up is opening stock (3100); counted down is shrinkage (5300)
  */
 
@@ -37,6 +41,7 @@ export const ACCOUNTS: Account[] = [
   { code: '1000', name: 'เงินสดในลิ้นชัก', type: 'ASSET', isCash: true },
   { code: '1001', name: 'เงินสดนอกลิ้นชัก / เงินสดย่อย', type: 'ASSET', isCash: true },
   { code: '1010', name: 'เงินฝากธนาคาร / พร้อมเพย์', type: 'ASSET', isCash: true },
+  { code: '1100', name: 'ลูกหนี้การค้า', type: 'ASSET' },
   { code: '1190', name: 'เงินรอตัดบัญชี', type: 'ASSET', system: true },
   { code: '1200', name: 'สินค้าคงเหลือ', type: 'ASSET' },
   { code: '1300', name: 'ภาษีซื้อ', type: 'ASSET' },
@@ -78,7 +83,20 @@ const payAccount = (p: PaidFrom | undefined) => (p === 'drawer' ? '1000' : p ===
 
 export type CashFlowItem = 'customers' | 'suppliers' | 'expenses' | 'other_operating' | 'investing' | 'financing' | 'opening';
 
-export type SourceType = 'order' | 'cogs' | 'expense' | 'income' | 'purchase' | 'waste' | 'adjustment' | 'cash' | 'cash_close' | 'depreciation' | 'journal';
+export type SourceType =
+  | 'order'
+  | 'cogs'
+  | 'expense'
+  | 'income'
+  | 'purchase'
+  | 'waste'
+  | 'adjustment'
+  | 'cash'
+  | 'cash_close'
+  | 'depreciation'
+  | 'receivable'
+  | 'payable'
+  | 'journal';
 export const SOURCE_LABELS: Record<SourceType, string> = {
   order: 'ขาย',
   cogs: 'ต้นทุนขาย (ตัดสต็อก)',
@@ -90,6 +108,8 @@ export const SOURCE_LABELS: Record<SourceType, string> = {
   cash: 'ลิ้นชักเงินสด',
   cash_close: 'ปิดลิ้นชัก (นับเงิน)',
   depreciation: 'ค่าเสื่อมราคา',
+  receivable: 'ลูกหนี้ (ขายเชื่อ / รับชำระ)',
+  payable: 'เจ้าหนี้ (ซื้อเชื่อ / จ่ายชำระ)',
   journal: 'สมุดรายวัน'
 };
 
@@ -133,6 +153,9 @@ export interface LedgerData {
   stockLogs: StockAdjustmentLog[];
   cashShifts: CashShift[];
   journals: JournalEntry[];
+  /** Invoices to customers and bills from suppliers (accounts receivable / payable) */
+  receivables?: AccountsReceivableItem[];
+  payables?: AccountsPayableItem[];
   ingredients: Ingredient[];
   vatRegistered: boolean;
   usefulLifeYears?: number;
@@ -160,6 +183,23 @@ export function recordTime(r: { id?: string; createdAt?: string; timestamp?: str
   if (ms > 1_500_000_000_000) return new Date(ms).toISOString();
   return date ? new Date(Date.parse(`${date.slice(0, 10)}T00:00:00+07:00`)).toISOString() : '';
 }
+/** Supplier bill groups that are goods for stock (the others are expenses) */
+const PAYABLE_GOODS = new Set(['วัตถุดิบสด', 'เนื้อสัตว์สด', 'เครื่องดื่ม/สุรา']);
+/** Money received or paid for an invoice or bill: cash outside the drawer, or the bank */
+const paymentAccount = (method: string) => (method === 'cash' ? '1001' : '1010');
+
+/** A cash shift of the branch was open at that moment (the cash went into the drawer) */
+export function drawerOpenAt(shifts: CashShift[], branchId: string | undefined, iso: string): boolean {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return false;
+  return shifts.some(s => {
+    if (branchId && s.branchId && s.branchId !== branchId) return false;
+    const from = Date.parse(s.openedAt);
+    const to = s.closedAt ? Date.parse(s.closedAt) : Infinity;
+    return !Number.isNaN(from) && t >= from && (s.status === 'open' || t <= to);
+  });
+}
+
 /** Stock log reasons that are counts or corrections (the others are covered elsewhere) */
 const COUNT_REASONS = new Set(['audit_correction', 'manual_adjustment', 'other']);
 
@@ -183,7 +223,7 @@ export function buildGlLines(d: LedgerData): GlLine[] {
     if (!own(o.branchId) || !countsAsRevenue(o) || !counts(o.createdAt)) continue;
     const date = thaiDay(o.createdAt);
     const { base, vat } = orderVatBreakdown(o);
-    const into = o.paymentMethod === 'cash' ? '1000' : '1010';
+    const into = o.paymentMethod !== 'cash' ? '1010' : drawerOpenAt(d.cashShifts, o.branchId, o.createdAt) ? '1000' : '1001';
     push({ date, source: 'order', sourceId: o.id, reference: o.orderNumber || o.id }, [
       [into, base + vat, 0, 'customers'],
       ['4000', 0, base],
@@ -223,15 +263,50 @@ export function buildGlLines(d: LedgerData): GlLine[] {
     ]);
   }
 
-  // Goods received without an expense (quick receive, lots): paid from the bank
+  // Goods received without an expense (quick receive, lots): paid as the delivery says
   for (const lot of d.stockLots) {
     if (EXPENSE_LOT.test(lot.lotNumber || '') || !(lot.quantity > 0) || !(lot.unitCost > 0) || !counts(recordTime(lot, lot.receivedDate))) continue;
     if (d.ingredients.length && !ingCost.has(lot.ingredientId)) continue; // another branch's ingredient
     const value = lot.quantity * lot.unitCost;
     push({ date: (lot.receivedDate || '').slice(0, 10), source: 'purchase', sourceId: lot.id, reference: lot.lotNumber, memo: lot.supplier }, [
       ['1200', value, 0],
-      ['1010', 0, value, 'suppliers']
+      [payAccount(lot.paidFrom), 0, value, 'suppliers']
     ]);
+  }
+
+  // Invoices to customers: a sale on credit, then the payments received
+  for (const r of d.receivables || []) {
+    if (!own(r.branchId) || !r.issueDate || !counts(recordTime(r, r.issueDate))) continue;
+    const base = { source: 'receivable' as const, reference: r.invoiceNumber, memo: r.customerName };
+    push({ ...base, date: r.issueDate.slice(0, 10), sourceId: r.id }, [
+      ['1100', r.originalAmount, 0],
+      ['4000', 0, r.originalAmount]
+    ]);
+    for (const p of r.payments || []) {
+      if (!p.date || !counts(recordTime(p, p.date))) continue;
+      push({ ...base, date: p.date.slice(0, 10), sourceId: p.id }, [
+        [paymentAccount(p.paymentMethod), p.amount, 0, 'customers'],
+        ['1100', 0, p.amount]
+      ]);
+    }
+  }
+
+  // Bills from suppliers: owed when received, then the payments made
+  for (const b of d.payables || []) {
+    if (!own(b.branchId) || !b.issueDate || !counts(recordTime(b, b.issueDate))) continue;
+    const goods = !b.category || PAYABLE_GOODS.has(b.category);
+    const base = { source: 'payable' as const, reference: b.billNumber, memo: b.supplierName };
+    push({ ...base, date: b.issueDate.slice(0, 10), sourceId: b.id }, [
+      [goods ? '1200' : '6000', b.originalAmount, 0, undefined, goods ? undefined : b.category],
+      ['2000', 0, b.originalAmount]
+    ]);
+    for (const p of b.payments || []) {
+      if (!p.date || !counts(recordTime(p, p.date))) continue;
+      push({ ...base, date: p.date.slice(0, 10), sourceId: p.id }, [
+        ['2000', p.amount, 0],
+        [paymentAccount(p.paymentMethod), 0, p.amount, goods ? 'suppliers' : 'expenses']
+      ]);
+    }
   }
 
   // Waste at its cost

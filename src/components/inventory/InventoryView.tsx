@@ -41,6 +41,9 @@ import {
 import { usePOS } from '../../context/POSContext';
 import { Ingredient, StockLot, StockType } from '../../types';
 import { AIInventoryForecastPanel } from './AIInventoryForecastPanel';
+import { PAID_FROM_LABELS, type PaidFrom } from '../../utils/ledger';
+
+const QUICK_PAID_FROM_KEY = 'POS_QUICK_RECEIVE_PAID_FROM';
 import { canonicalUnit, convertAmount, convertForIngredient, countBaseOf, countUnitOf, effectiveUnitCost } from '../../utils/recipeUtils';
 
 const MASS_UNITS = ['kg', 'g'];
@@ -188,6 +191,14 @@ export const InventoryView: React.FC = () => {
   const [quickWasteReason, setQuickWasteReason] = useState<'waste' | 'expired' | 'damage'>('waste');
   const [quickSupplierInput, setQuickSupplierInput] = useState<string>('');
   const [quickPaidInput, setQuickPaidInput] = useState<string>('');
+  const [quickPaidFrom, setQuickPaidFrom] = useState<PaidFrom>(() => {
+    try {
+      const v = localStorage.getItem(QUICK_PAID_FROM_KEY);
+      return v === 'cash' || v === 'drawer' ? v : 'bank';
+    } catch {
+      return 'bank';
+    }
+  });
   const [quickUsePackage, setQuickUsePackage] = useState(false);
   const [quickPackageQty, setQuickPackageQty] = useState<number>(1);
   const [quickPackageUnit, setQuickPackageUnit] = useState<string>('ขวด');
@@ -258,8 +269,14 @@ export const InventoryView: React.FC = () => {
         notes: finalNote,
         packageQty: quickUsePackage ? quickPackageQty : undefined,
         packageUnit: quickUsePackage ? quickPackageUnit : undefined,
-        packageSize: quickUsePackage ? quickPackageSize : undefined
+        packageSize: quickUsePackage ? quickPackageSize : undefined,
+        paidFrom: quickPaidFrom
       });
+      try {
+        localStorage.setItem(QUICK_PAID_FROM_KEY, quickPaidFrom);
+      } catch {
+        // private mode
+      }
 
       // Remember the package size (the cost follows the delivery: addStockLot averages it in)
       const rememberPackage = quickUsePackage && (!ingredient.packageUnit || !ingredient.packageSize);
@@ -2541,6 +2558,18 @@ export const InventoryView: React.FC = () => {
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
                   />
                   <p className="text-[11px] text-slate-400">ใส่ราคาจริงแล้วระบบปรับราคาทุนต่อหน่วยและต้นทุนเมนูให้</p>
+                  <label className="block text-slate-300 font-bold pt-1">จ่ายเงินจาก (ลงบัญชี)</label>
+                  <select
+                    value={quickPaidFrom}
+                    onChange={e => setQuickPaidFrom(e.target.value as PaidFrom)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
+                  >
+                    {(Object.keys(PAID_FROM_LABELS) as PaidFrom[]).map(k => (
+                      <option key={k} value={k}>
+                        {PAID_FROM_LABELS[k]}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 
