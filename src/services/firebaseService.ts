@@ -30,7 +30,7 @@ import {
   type Auth
 } from 'firebase/auth';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
-import { isStubOrderDoc } from '../utils/orderUtils';
+import { isStubOrderDoc, leftLimitedWindow } from '../utils/orderUtils';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem, CategoryItem, AddOnOption, SystemSettings } from '../types';
 
@@ -803,8 +803,11 @@ export function subscribeToRecentCentralOrders(
         const orderList: Order[] = [];
         const removedIds: string[] = [];
 
+        const windowTimes = snapshot.docs.map(d => d.data().createdAt);
         snapshot.docChanges().forEach(change => {
           if (change.type === 'removed' && !isStubOrderDoc(change.doc.id, change.doc.data())) {
+            // Pushed out by newer orders (the shop has more than the limit): kept on the devices
+            if (leftLimitedWindow(change.doc.data().createdAt, windowTimes, limitCount)) return;
             removedIds.push(change.doc.id);
             removedIds.push(change.doc.id.replace(/^ord-/, ''));
           }
@@ -1138,7 +1141,7 @@ export function subscribeToCentralExpenses(
     const colRef = collection(dbInstance, 'expenses');
     // Records written or changed in the last months (every write stamps syncedAt). A plain
     // limit would return the oldest documents and never the new ones once there are many.
-    const q = query(colRef, where('syncedAt', '>=', recentCutoff()), limit(limitCount));
+    const q = query(colRef, where('syncedAt', '>=', recentCutoff()), orderBy('syncedAt', 'desc'), limit(limitCount));
 
     const unsubscribe = onSnapshot(
       q,
@@ -1146,8 +1149,10 @@ export function subscribeToCentralExpenses(
         const list: Expense[] = [];
         const removedIds: string[] = [];
 
+        const windowTimes = snapshot.docs.map(d => d.data().syncedAt);
         snapshot.docChanges().forEach(change => {
           if (change.type === 'removed') {
+            if (leftLimitedWindow(change.doc.data().syncedAt, windowTimes, limitCount)) return;
             const rawId = change.doc.id;
             const cleanId = rawId.startsWith('exp-') ? rawId.replace('exp-', '') : rawId;
             removedIds.push(rawId);
@@ -1203,7 +1208,7 @@ export function subscribeToCentralIncomes(
 
   try {
     const colRef = collection(dbInstance, 'incomes');
-    const q = query(colRef, where('syncedAt', '>=', recentCutoff()), limit(limitCount));
+    const q = query(colRef, where('syncedAt', '>=', recentCutoff()), orderBy('syncedAt', 'desc'), limit(limitCount));
 
     const unsubscribe = onSnapshot(
       q,
@@ -1211,8 +1216,10 @@ export function subscribeToCentralIncomes(
         const list: OtherIncome[] = [];
         const removedIds: string[] = [];
 
+        const windowTimes = snapshot.docs.map(d => d.data().syncedAt);
         snapshot.docChanges().forEach(change => {
           if (change.type === 'removed') {
+            if (leftLimitedWindow(change.doc.data().syncedAt, windowTimes, limitCount)) return;
             const rawId = change.doc.id;
             const cleanId = rawId.startsWith('inc-') ? rawId.replace('inc-', '') : rawId;
             removedIds.push(rawId);

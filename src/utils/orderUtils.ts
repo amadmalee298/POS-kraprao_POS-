@@ -241,3 +241,25 @@ export const isUnpaid = (o: Pick<Order, 'paymentStatus'>): boolean => o.paymentS
  */
 export const countsAsRevenue = (o: Pick<Order, 'status' | 'paymentStatus'>): boolean =>
   o.status !== 'cancelled' && o.status !== 'pending-qr' && !isUnpaid(o);
+
+/**
+ * A query with a limit reports a document as "removed" both when it is deleted and when a newer
+ * one pushes it out of the window. Only a deletion should be applied: a document older than (or
+ * as old as) everything still in a full window has only left the window.
+ */
+export function leftLimitedWindow(
+  removedValue: unknown,
+  windowValues: unknown[],
+  limitCount: number,
+  order: 'asc' | 'desc' = 'desc'
+): boolean {
+  if (windowValues.length < limitCount) return false;
+  const v = String(removedValue ?? '');
+  const values = windowValues.map(x => String(x ?? ''));
+  if (order === 'desc') {
+    const oldest = values.reduce((m, x) => (x < m ? x : m), values[0] ?? '');
+    return v <= oldest;
+  }
+  const newest = values.reduce((m, x) => (x > m ? x : m), values[0] ?? '');
+  return v >= newest;
+}
