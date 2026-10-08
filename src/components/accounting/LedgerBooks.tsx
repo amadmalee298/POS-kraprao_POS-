@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { BookOpen, CheckCircle2, ChevronRight, Plus, Printer, RotateCcw, Trash2, TriangleAlert } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { useSharedList } from '../../hooks/useSharedList';
+import { useKeyedList } from '../../hooks/useKeyedList';
 import { isVatRegistered } from '../../utils/accounting';
 import {
   ACCOUNT_BY_CODE,
@@ -62,10 +62,12 @@ const Row: React.FC<{ label: string; amount: number; strong?: boolean; indent?: 
   </tr>
 );
 
+const journalTime = (j: JournalEntry) => j.createdAt;
+
 export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => void }> = ({ tab, onTab }) => {
   const pos = usePOS();
   const { settings, currentBranch, currentUser, updateSettings } = pos;
-  const [journals, setJournals] = useSharedList<JournalEntry>('journals', 'POS_JOURNALS');
+  const [journals, setJournals] = useKeyedList<JournalEntry>('journals', 'POS_JOURNALS', journalTime);
   const today = todayStr();
   const [from, setFrom] = useState(`${today.slice(0, 8)}01`);
   const [to, setTo] = useState(today);

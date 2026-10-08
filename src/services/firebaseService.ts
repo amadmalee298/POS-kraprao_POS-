@@ -19,7 +19,8 @@ import {
   limit,
   serverTimestamp,
   Timestamp,
-  DocumentData
+  DocumentData,
+  FieldPath
 } from 'firebase/firestore';
 import {
   getAuth,
@@ -1954,6 +1955,46 @@ export async function mergeBranchDoc(branchId: string, key: string, data: Record
     return true;
   } catch (err) {
     console.warn(`[Firebase Service] Failed to update shared document ${key}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Save and remove single records of a keyed shared document (byId.<id>, see utils/keyedDoc) without
+ * touching the other records, so devices editing different records never overwrite each other.
+ * `dropLegacy` moves the old whole-list `items` array out (its records must be in `put`).
+ */
+export async function saveKeyedRecords(
+  branchId: string,
+  key: string,
+  put: { id: string }[],
+  removed: string[],
+  dropLegacy = false
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+  if (put.length === 0 && removed.length === 0 && !dropLegacy) return true;
+  await waitForFirebaseAuth();
+  const ref = doc(dbInstance, 'branches', branchId, 'config', key);
+  const savedAt = new Date().toISOString();
+  const pairs: unknown[] = [];
+  for (const item of put) pairs.push(new FieldPath('byId', item.id), cleanForFirestore(item));
+  for (const id of removed) pairs.push(new FieldPath('byId', id), deleteField());
+  if (dropLegacy) pairs.push('items', deleteField());
+  pairs.push('savedAt', savedAt, 'updatedAt', serverTimestamp());
+  try {
+    await (updateDoc as (...args: unknown[]) => Promise<void>)(ref, ...pairs);
+    return true;
+  } catch (err: any) {
+    if (err?.code === 'not-found') {
+      try {
+        await setDoc(ref, { byId: Object.fromEntries(put.map(p => [p.id, cleanForFirestore(p)])), savedAt, updatedAt: serverTimestamp() });
+        return true;
+      } catch (e) {
+        console.warn(`[Firebase Service] Failed to create shared document ${key}:`, e);
+        return false;
+      }
+    }
+    console.warn(`[Firebase Service] Failed to save records of ${key}:`, err);
     return false;
   }
 }
