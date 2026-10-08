@@ -17,6 +17,7 @@ import {
   where,
   orderBy,
   limit,
+  startAfter,
   serverTimestamp,
   Timestamp,
   DocumentData,
@@ -877,6 +878,46 @@ export async function fetchCentralOrdersFromFirestore(limitCount: number = 500):
 
 export const fetchRecentOrdersFromFirestore = fetchCentralOrdersFromFirestore;
 
+/** Every document of a collection whose field is at least the value, read in pages */
+async function fetchAllSince(collectionName: string, field: string, value: string, max = 20_000): Promise<{ id: string; data: DocumentData }[]> {
+  const out: { id: string; data: DocumentData }[] = [];
+  const page = 500;
+  let last: any = null;
+  while (out.length < max) {
+    const parts = [where(field, '>=', value), orderBy(field, 'asc'), ...(last ? [startAfter(last)] : []), limit(page)];
+    const snap = await getDocs(query(collection(dbInstance!, collectionName), ...parts));
+    snap.forEach(d => out.push({ id: d.id, data: d.data() }));
+    if (snap.size < page) break;
+    last = snap.docs[snap.docs.length - 1];
+  }
+  return out;
+}
+
+/**
+ * Sales, expenses and other income from a day on (Thai time), for reports and the books on a
+ * device that only holds the recent weeks. Null when offline or the cloud could not be read.
+ */
+export async function fetchHistorySince(fromDay: string): Promise<{ orders: Order[]; expenses: Expense[]; incomes: OtherIncome[] } | null> {
+  if (!dbInstance || !navigator.onLine) return null;
+  await waitForFirebaseAuth();
+  try {
+    const fromIso = new Date(Date.parse(`${fromDay}T00:00:00+07:00`)).toISOString();
+    const [orders, expenses, incomes] = await Promise.all([
+      fetchAllSince('orders', 'createdAt', fromIso),
+      fetchAllSince('expenses', 'date', fromDay),
+      fetchAllSince('incomes', 'date', fromDay)
+    ]);
+    return {
+      orders: orders.filter(o => !isStubOrderDoc(o.id, o.data)).map(o => docToOrder(o.id, o.data)),
+      expenses: expenses.map(e => expenseFromFirestore(e.id, e.data)),
+      incomes: incomes.map(i => incomeFromFirestore(i.id, i.data))
+    };
+  } catch (err) {
+    console.warn('[Firebase Service] Failed to load history:', err);
+    return null;
+  }
+}
+
 /**
  * Push a single expense entry to central Firebase
  */
@@ -1128,6 +1169,46 @@ export async function deleteIncomeFromFirestore(incomeId: string): Promise<boole
  */
 const recentCutoff = () => new Date(Date.now() - 45 * 86_400_000).toISOString();
 
+export function expenseFromFirestore(docId: string, d: DocumentData): Expense {
+  return {
+    id: d.id || docId,
+    branchId: d.branchId || '',
+    date: d.date || '',
+    category: d.category || 'other',
+    title: d.title || '',
+    amount: Number(d.amount) || 0,
+    includeVat: !!d.includeVat,
+    vatAmount: Number(d.vatAmount) || 0,
+    netAmount: Number(d.netAmount) || Number(d.amount) || 0,
+    refNumber: d.refNumber || '',
+    note: d.note || '',
+    receiptImage: d.receiptImage || undefined,
+    receiptImageName: d.receiptImageName || undefined,
+    substituteReceipt: d.substituteReceipt || undefined,
+    paidFrom: d.paidFrom || undefined,
+    driveFiles: Array.isArray(d.driveFiles) ? d.driveFiles : undefined,
+    purchaseImages: Array.isArray(d.purchaseImages) && d.purchaseImages.length ? d.purchaseImages : undefined
+  };
+}
+
+export function incomeFromFirestore(docId: string, d: DocumentData): OtherIncome {
+  return {
+    id: d.id || docId,
+    branchId: d.branchId || '',
+    date: d.date || '',
+    category: d.category || 'other',
+    title: d.title || '',
+    amount: Number(d.amount) || 0,
+    paymentMethod: d.paymentMethod || 'promptpay',
+    payerName: d.payerName || '',
+    refNumber: d.refNumber || '',
+    note: d.note || '',
+    slipImage: d.slipImage || undefined,
+    slipImageName: d.slipImageName || undefined,
+    createdAt: d.syncedAt || d.createdAt || undefined
+  };
+}
+
 /**
  * Real-time listener for central expenses
  */
@@ -1162,26 +1243,7 @@ export function subscribeToCentralExpenses(
         });
 
         snapshot.forEach(docSnap => {
-          const d = docSnap.data();
-          list.push({
-            id: d.id || docSnap.id,
-            branchId: d.branchId || '',
-            date: d.date || '',
-            category: d.category || 'other',
-            title: d.title || '',
-            amount: Number(d.amount) || 0,
-            includeVat: !!d.includeVat,
-            vatAmount: Number(d.vatAmount) || 0,
-            netAmount: Number(d.netAmount) || Number(d.amount) || 0,
-            refNumber: d.refNumber || '',
-            note: d.note || '',
-            receiptImage: d.receiptImage || undefined,
-            receiptImageName: d.receiptImageName || undefined,
-            substituteReceipt: d.substituteReceipt || undefined,
-            paidFrom: d.paidFrom || undefined,
-            driveFiles: Array.isArray(d.driveFiles) ? d.driveFiles : undefined,
-            purchaseImages: Array.isArray(d.purchaseImages) && d.purchaseImages.length ? d.purchaseImages : undefined
-          });
+          list.push(expenseFromFirestore(docSnap.id, docSnap.data()));
         });
         onUpdate(list, removedIds);
       },
@@ -1229,22 +1291,7 @@ export function subscribeToCentralIncomes(
         });
 
         snapshot.forEach(docSnap => {
-          const d = docSnap.data();
-          list.push({
-            id: d.id || docSnap.id,
-            branchId: d.branchId || '',
-            date: d.date || '',
-            category: d.category || 'other',
-            title: d.title || '',
-            amount: Number(d.amount) || 0,
-            paymentMethod: d.paymentMethod || 'promptpay',
-            payerName: d.payerName || '',
-            refNumber: d.refNumber || '',
-            note: d.note || '',
-            slipImage: d.slipImage || undefined,
-            slipImageName: d.slipImageName || undefined,
-            createdAt: d.syncedAt || d.createdAt || undefined
-          });
+          list.push(incomeFromFirestore(docSnap.id, docSnap.data()));
         });
         onUpdate(list, removedIds);
       },

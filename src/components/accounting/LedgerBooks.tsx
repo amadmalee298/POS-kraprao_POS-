@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, CheckCircle2, ChevronRight, Plus, Printer, RotateCcw, Trash2, TriangleAlert } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { useLedger } from '../../hooks/useLedger';
@@ -69,6 +69,22 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
   const [asOf, setAsOf] = useState(today);
   const [account, setAccount] = useState('');
   const printRef = useRef<HTMLDivElement>(null);
+
+  // Older records than this device keeps: balances need everything since the books started
+  // (or the year before the balance date when no start is set), statements their period
+  const { loadHistory, historyLoading } = pos;
+  const [historyFailed, setHistoryFailed] = useState(false);
+  const needFrom = useMemo(() => {
+    const start = settings.booksStartAt ? thaiDay(settings.booksStartAt) : `${Number(asOf.slice(0, 4)) - 1}-01-01`;
+    return [start, from].sort()[0];
+  }, [settings.booksStartAt, asOf, from]);
+  useEffect(() => {
+    let alive = true;
+    loadHistory(needFrom).then(ok => alive && setHistoryFailed(!ok));
+    return () => {
+      alive = false;
+    };
+  }, [needFrom, loadHistory]);
 
   const company = sellerInfo(settings, currentBranch).name;
   const ranged = tab === 'pnl' || tab === 'cashflow' || tab === 'ledger';
@@ -292,6 +308,11 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
           owner={isOwner(currentUser?.role)}
           onChange={iso => updateSettings({ booksStartAt: iso })}
         />
+        {historyLoading ? (
+          <p className="text-[11px] text-amber-300">กำลังโหลดรายการย้อนหลังตั้งแต่ {thaiDate(historyLoading)} จากคลาวด์… ตัวเลขจะอัปเดตเมื่อโหลดเสร็จ</p>
+        ) : historyFailed ? (
+          <p className="text-[11px] text-slate-500">ยังโหลดรายการย้อนหลังจากคลาวด์ไม่ได้ (ออฟไลน์?) ตัวเลขนี้มาจากข้อมูลในเครื่องนี้</p>
+        ) : null}
       </div>
 
       <nav className="flex flex-wrap gap-2" aria-label="บัญชีและงบการเงิน">

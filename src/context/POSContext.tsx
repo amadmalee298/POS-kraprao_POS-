@@ -64,6 +64,7 @@ import {
   subscribeToCentralIncomes,
   subscribeToRecentCentralOrders,
   fetchCentralOrdersFromFirestore,
+  fetchHistorySince,
   purgeStubOrderDocs,
   syncIngredientToFirestore,
   deleteIngredientFromFirestore,
@@ -405,6 +406,10 @@ interface POSContextType {
     };
   }>;
   pullCloudOrders: () => Promise<{ count: number; success: boolean }>;
+  /** Make sure sales, expenses and income from this day on are on this device (reports, books) */
+  loadHistory: (fromDay: string) => Promise<boolean>;
+  /** The day being loaded by loadHistory, while it loads */
+  historyLoading: string | null;
   pullCloudAllData: () => Promise<{ ordersCount: number; ingredientsCount: number; menuItemsCount: number; success: boolean }>;
 
   // Conflict Resolution
@@ -427,6 +432,8 @@ interface POSContextType {
 const POSContext = createContext<POSContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_KEY = 'kaprao_pos_enterprise_v1';
+/** The earliest day whose sales, expenses and income this device has read from the cloud */
+const HISTORY_FROM_KEY = 'POS_HISTORY_FROM';
 
 /** When this device last changed the shop settings (kept across reloads) */
 const SETTINGS_EDITED_KEY = 'POS_SETTINGS_EDITED_AT';
@@ -1720,6 +1727,71 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { count: 0, success: false };
     }
   }, [effectiveOffline]);
+
+  // A device keeps the recent weeks; older records are read from the cloud when a report needs them
+  const [historyLoading, setHistoryLoading] = useState<string | null>(null);
+  const historyInFlight = useRef<Promise<boolean> | null>(null);
+  const loadHistory = useCallback(
+    async (fromDay: string): Promise<boolean> => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDay) || !isFirebaseAvailable() || effectiveOffline) return false;
+      let covered = '';
+      try {
+        covered = localStorage.getItem(HISTORY_FROM_KEY) || '';
+      } catch {
+        // private mode
+      }
+      if (covered && covered <= fromDay) return true;
+      if (historyInFlight.current) await historyInFlight.current.catch(() => false);
+      const run = (async () => {
+        setHistoryLoading(fromDay);
+        try {
+          const res = await fetchHistorySince(fromDay);
+          if (!res) return false;
+          if (res.orders.length) {
+            setOrders(prev => {
+              const result = mergeCloudOrders(prev, res.orders);
+              if (!result.changed) return prev;
+              try {
+                localStorage.setItem('POS_ORDERS_DATA', JSON.stringify(result.orders));
+              } catch {
+                // storage full: kept in memory
+              }
+              return result.orders;
+            });
+          }
+          const addMissing = <T extends { id: string; date: string }>(prev: T[], more: T[], key: string): T[] => {
+            const have = new Set(prev.map(x => x.id));
+            const add = more.filter(x => !have.has(x.id));
+            if (add.length === 0) return prev;
+            const next = [...prev, ...add].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            try {
+              localStorage.setItem(key, JSON.stringify(next));
+            } catch {
+              // storage full: kept in memory
+            }
+            return next;
+          };
+          setExpenses(prev => addMissing(prev, res.expenses, 'POS_EXPENSES_DATA'));
+          setIncomes(prev => addMissing(prev, res.incomes, 'POS_INCOMES_DATA'));
+          try {
+            localStorage.setItem(HISTORY_FROM_KEY, fromDay);
+          } catch {
+            // private mode
+          }
+          return true;
+        } finally {
+          setHistoryLoading(null);
+        }
+      })();
+      historyInFlight.current = run;
+      try {
+        return await run;
+      } finally {
+        if (historyInFlight.current === run) historyInFlight.current = null;
+      }
+    },
+    [effectiveOffline]
+  );
 
   const pullCloudAllData = useCallback(async (): Promise<{
     ordersCount: number;
@@ -4556,6 +4628,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         pushAllBranchDataToCloud,
         cleanAndSyncCloudNow,
         pullCloudOrders,
+        loadHistory,
+        historyLoading,
         pullCloudAllData,
         conflictReport,
         isConflictResolverOpen,

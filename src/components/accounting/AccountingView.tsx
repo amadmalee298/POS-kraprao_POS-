@@ -336,7 +336,7 @@ const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boo
 };
 
 export const AccountingView: React.FC = () => {
-  const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [], currentUser, users, permissions } = usePOS();
+  const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [], currentUser, users, permissions, loadHistory } = usePOS();
   const expenseDrive = useExpenseDrive();
 
   const {
@@ -993,6 +993,12 @@ export const AccountingView: React.FC = () => {
     }
     return list;
   }, [selectedMonth, timeHorizon]);
+
+  // A device keeps the recent weeks: older months are read from the cloud when chosen
+  const earliestMonth = useMemo(() => [...monthsList].sort()[0], [monthsList]);
+  useEffect(() => {
+    if (earliestMonth) loadHistory(`${earliestMonth}-01`);
+  }, [earliestMonth, loadHistory]);
 
   // 2. Compute Monthly Financials for each month in monthsList
   const monthlyData: MonthlyFinancialData[] = useMemo(() => {

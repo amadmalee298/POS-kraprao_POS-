@@ -3,7 +3,7 @@ import { buildProfitAndLoss, EXPENSE_CATEGORY_LABELS, expenseCost, isVatRegister
 import { cartItemUnitCost } from '../../utils/recipeUtils';
 import { stockTypeOf, stockValueByType } from '../../utils/stockTypes';
 import { findProteinOption, effectiveUnitCost } from '../../utils/recipeUtils';
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -84,7 +84,8 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     updateMenuItem,
     sendDailySummaryNotification,
     pullCloudOrders,
-    pullCloudAllData
+    pullCloudAllData,
+    loadHistory
   } = usePOS();
 
   // Date Presets & Filter States (Using local Thailand timezone)
@@ -96,6 +97,10 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
     return getLocalDateStr(d);
   });
   const [endDate, setEndDate] = useState<string>(todayStr);
+  // A device keeps the recent weeks: an older period is read from the cloud
+  useEffect(() => {
+    if (startDate) loadHistory(startDate);
+  }, [startDate, loadHistory]);
   const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
   // Which part of the dashboard is on screen
   const [showAllSlow, setShowAllSlow] = useState(false);
