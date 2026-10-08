@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { CloudUpload, ExternalLink, FileSignature, Image as ImageIcon, Loader2, PenLine } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { useSharedList } from '../../hooks/useSharedList';
+import { useKeyedList } from '../../hooks/useKeyedList';
 import { SavedSignature, SignaturePad } from '../common/SignaturePad';
 import { driveEnabled, hasExpenseDocs, saveExpenseToDrive } from '../../services/expenseDrive';
 import type { Expense } from '../../types';
@@ -43,7 +43,7 @@ export function useExpenseDrive() {
 
 /** Signatures remembered per person, shared by the shop's devices */
 export function useSavedSignatures() {
-  const [list, setList] = useSharedList<SavedSignature>('signatures', 'POS_SIGNATURES');
+  const [list, setList] = useKeyedList<SavedSignature>('signatures', 'POS_SIGNATURES', undefined);
   const find = useCallback((name?: string) => (name ? list.find(s => s.name.trim() === name.trim()) : undefined), [list]);
   const remember = useCallback(
     (name: string, dataUrl: string) => {

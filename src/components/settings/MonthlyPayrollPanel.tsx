@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { BookOpenCheck, Download, Pencil, Plus, Printer, Trash2, X } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { useSharedList } from '../../hooks/useSharedList';
+import { useKeyedList } from '../../hooks/useKeyedList';
 import type { PayrollAdjustment, StaffMember } from '../../types';
 import { downloadCsv } from '../../utils/accounting';
 import { localDay } from '../../utils/stockHistory';
@@ -23,7 +23,7 @@ export const MonthlyPayrollPanel: React.FC = () => {
   const { staffMembers, shifts, updateStaffMember, settings, updateSettings, expenses, addExpense, currentBranch } = usePOS();
   const today = localDay(new Date().toISOString());
   const [month, setMonth] = useState(today.slice(0, 7));
-  const [adjustments, setAdjustments] = useSharedList<PayrollAdjustment>('payroll_adjustments', 'POS_PAYROLL_ADJUSTMENTS');
+  const [adjustments, setAdjustments] = useKeyedList<PayrollAdjustment>('payroll_adjustments', 'POS_PAYROLL_ADJUSTMENTS', undefined);
   const cfg = payrollSettings(settings.payroll);
   const [editPay, setEditPay] = useState<StaffMember | null>(null);
   const [adjFor, setAdjFor] = useState<MonthlyPay | null>(null);

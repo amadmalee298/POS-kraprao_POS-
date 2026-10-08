@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ChefHat, Edit3, Plus, Trash2, X } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { useSharedList } from '../../hooks/useSharedList';
+import { useKeyedList } from '../../hooks/useKeyedList';
 import type { Ingredient, PrepBatch, PrepRecipe } from '../../types';
 import { planPrep, yieldPercent } from '../../utils/prep';
 import { matchIngredient } from '../../utils/stockIntake';
@@ -99,8 +99,8 @@ const emptyDraft = (): Draft => ({
 
 export const PrepProductionPanel: React.FC = () => {
   const { ingredients, ingredientCategories, ingredientUnits, addIngredient, producePrep, currentUser } = usePOS();
-  const [recipes, setRecipes] = useSharedList<PrepRecipe>('prep_recipes', 'POS_PREP_RECIPES');
-  const [batchLog, setBatchLog] = useSharedList<PrepBatch>('prep_batches', 'POS_PREP_BATCHES');
+  const [recipes, setRecipes] = useKeyedList<PrepRecipe>('prep_recipes', 'POS_PREP_RECIPES', undefined);
+  const [batchLog, setBatchLog] = useKeyedList<PrepBatch>('prep_batches', 'POS_PREP_BATCHES', undefined);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [draftError, setDraftError] = useState('');
   const [running, setRunning] = useState<PrepRecipe | null>(null);

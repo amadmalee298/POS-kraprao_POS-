@@ -44,3 +44,26 @@ export function newestFirst<T extends WithId>(items: T[], timeOf: (item: T) => s
     return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
   });
 }
+
+/** Pictures the cloud copy left out (too big for it) stay as they are on this device */
+export function keepLocalPictures<T>(cloud: T, mine: T | undefined): T {
+  if (!mine || typeof cloud !== 'object' || !cloud) return cloud;
+  let out: Record<string, unknown> | null = null;
+  for (const [k, v] of Object.entries(mine as Record<string, unknown>)) {
+    if (typeof v === 'string' && v.startsWith('data:') && (cloud as Record<string, unknown>)[k] === '') {
+      out = out || { ...(cloud as Record<string, unknown>) };
+      out[k] = v;
+    }
+  }
+  return (out as T) || cloud;
+}
+
+/**
+ * The order of a list without times: this device's order, records new to it first
+ * (lists are kept newest first)
+ */
+export function keepOrder<T extends { id: string }>(current: T[], merged: Map<string, T>): T[] {
+  const seen = new Set(current.map(i => i.id));
+  const added = [...merged.values()].filter(i => !seen.has(i.id));
+  return [...added, ...current.filter(i => merged.has(i.id)).map(i => merged.get(i.id)!)];
+}

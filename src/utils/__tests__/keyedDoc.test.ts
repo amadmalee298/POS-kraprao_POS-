@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasLegacyItems, keyedChanges, keyedItems, newestFirst } from '../keyedDoc';
+import { hasLegacyItems, keepLocalPictures, keepOrder, keyedChanges, keyedItems, newestFirst } from '../keyedDoc';
 
 describe('keyed shared documents', () => {
   it('reads per-record fields and the old whole-list array, the per-record copy winning', () => {
@@ -24,5 +24,15 @@ describe('keyed shared documents', () => {
   it('orders newest first', () => {
     const list = [{ id: 'a', t: '2026-10-01' }, { id: 'b', t: '2026-10-03' }, { id: 'c', t: '2026-10-02' }];
     expect(newestFirst(list, x => x.t).map(x => x.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('keeps this device\'s order with records new to it first', () => {
+    const merged = new Map([['b', { id: 'b', v: 2 }], ['c', { id: 'c', v: 1 }], ['a', { id: 'a', v: 1 }]]);
+    expect(keepOrder([{ id: 'a', v: 1 }, { id: 'b', v: 1 }, { id: 'd', v: 1 }], merged)).toEqual([{ id: 'c', v: 1 }, { id: 'a', v: 1 }, { id: 'b', v: 2 }]);
+  });
+
+  it('keeps pictures the cloud copy left out', () => {
+    expect(keepLocalPictures({ id: 'a', img: '', t: 'x' }, { id: 'a', img: 'data:image/png;base64,AAA', t: 'old' })).toEqual({ id: 'a', img: 'data:image/png;base64,AAA', t: 'x' });
+    expect(keepLocalPictures({ id: 'a', img: 'data:new' }, { id: 'a', img: 'data:old' })).toEqual({ id: 'a', img: 'data:new' });
   });
 });

@@ -94,7 +94,8 @@ import {
   Star
 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
-import { nextDocNumber, useSharedList } from '../hooks/useSharedList';
+import { nextDocNumber } from '../hooks/useSharedList';
+import { useKeyedList } from '../hooks/useKeyedList';
 import { Coupon, Member, nextMemberId, normalizePhone, useCrm } from '../crm/crm';
 import { useFrequentIngredients } from '../utils/useFrequentIngredients';
 import {
@@ -3639,7 +3640,7 @@ export const QuotationView: React.FC = () => {
   
   // Shared with every device of the branch; the two sample quotations older versions created
   // (made-up customers) are dropped
-  const [quotations, setQuotations] = useSharedList<Quotation>('quotations', 'POS_QUOTATIONS', list =>
+  const [quotations, setQuotations] = useKeyedList<Quotation>('quotations', 'POS_QUOTATIONS', undefined, list =>
     list.filter(q => !((q.id === 'qt-001' && q.quotationNo === 'QT-202607-001') || (q.id === 'qt-002' && q.quotationNo === 'QT-202607-002')))
   );
   const shopVatRate = settings.vatRate ?? 7;
@@ -4923,9 +4924,9 @@ export const POManagementView: React.FC = () => {
   const [receiveNotice, setReceiveNotice] = useState<string | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'po' | 'suppliers'>(() => takePageSection<'po' | 'suppliers'>('po') || 'po');
   useEffect(() => onPageSectionRequest<'po' | 'suppliers'>('po', setActiveSubTab), []);
-  // Shared with every device of the branch (see useSharedList)
+  // Shared with every device of the branch, one record at a time (see useKeyedList)
   const { addExpense, currentBranch } = usePOS();
-  const [poList, setPoList] = useSharedList<POItem>('purchase_orders', 'POS_PO_LIST', withoutSamplePOs);
+  const [poList, setPoList] = useKeyedList<POItem>('purchase_orders', 'POS_PO_LIST', undefined, withoutSamplePOs);
 
   // A paid purchase order is money out: it is recorded once as a raw-material expense
   const recordPoExpense = (po: POItem, method: string, slip?: string) => {
@@ -4943,7 +4944,7 @@ export const POManagementView: React.FC = () => {
       receiptImage: slip || undefined
     });
   };
-  const [suppliers, setSuppliers] = useSharedList<Supplier>('suppliers', 'POS_SUPPLIERS', withoutSampleSuppliers);
+  const [suppliers, setSuppliers] = useKeyedList<Supplier>('suppliers', 'POS_SUPPLIERS', undefined, withoutSampleSuppliers);
 
   // Modals state
   const [isAddPoOpen, setIsAddPoOpen] = useState(false);
@@ -6437,7 +6438,7 @@ export const TaxReceiptView: React.FC = () => {
   };
 
   // Real quotations (shared list) and customers already known from tax invoices and quotations
-  const [savedQuotations] = useSharedList<Quotation>('quotations', 'POS_QUOTATIONS');
+  const [savedQuotations] = useKeyedList<Quotation>('quotations', 'POS_QUOTATIONS', undefined);
   const knownCustomers = React.useMemo(() => {
     const byKey = new Map<string, { key: string; company: string; taxId: string; branch: string; address: string; phone: string }>();
     orders.forEach(o => {

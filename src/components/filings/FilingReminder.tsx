@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
-import { useSharedList } from '../../hooks/useSharedList';
+import { useKeyedList } from '../../hooks/useKeyedList';
 import type { PayrollAdjustment } from '../../types';
 import { isVatRegistered } from '../../utils/accounting';
 import { dueStatus, FILINGS, filingDate, FilingRecord, filingsDueIn, prevMonth, readRemindOn } from '../../utils/govFilings';
@@ -18,9 +18,9 @@ const HOUR = 60 * 60 * 1000;
  */
 export function FilingReminder() {
   const { permissions, staffMembers, shifts, settings, isStorageLoaded } = usePOS();
-  const [certs] = useSharedList<WhtCertificate>('wht_certificates', 'POS_WHT_CERTIFICATES');
-  const [adjustments] = useSharedList<PayrollAdjustment>('payroll_adjustments', 'POS_PAYROLL_ADJUSTMENTS');
-  const [records] = useSharedList<FilingRecord>('gov_filings', 'POS_GOV_FILINGS');
+  const [certs] = useKeyedList<WhtCertificate>('wht_certificates', 'POS_WHT_CERTIFICATES', undefined);
+  const [adjustments] = useKeyedList<PayrollAdjustment>('payroll_adjustments', 'POS_PAYROLL_ADJUSTMENTS', undefined);
+  const [records] = useKeyedList<FilingRecord>('gov_filings', 'POS_GOV_FILINGS', undefined);
   const owner = permissions.canAccessSettings;
 
   useEffect(() => {
