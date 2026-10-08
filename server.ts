@@ -573,7 +573,7 @@ ${JSON.stringify(ingredients, null, 2)}
   // API Route: Send Telegram Notification
   app.post('/api/notify/telegram', async (req, res) => {
     try {
-      const { botToken, chatId, message } = req.body || {};
+      const { botToken, chatId, message, parseMode } = req.body || {};
       if (typeof botToken !== 'string' || !botToken || (typeof chatId !== 'string' && typeof chatId !== 'number') || typeof message !== 'string' || !message) {
         return res.status(400).json({ error: 'กรุณาระบุ Bot Token, Group Chat ID และข้อความ' });
       }
@@ -591,7 +591,8 @@ ${JSON.stringify(ingredients, null, 2)}
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: String(chatId).trim(),
-          text: message.slice(0, 4096)
+          text: message.slice(0, 4096),
+          ...(parseMode === 'HTML' ? { parse_mode: 'HTML' } : {})
         })
       });
 

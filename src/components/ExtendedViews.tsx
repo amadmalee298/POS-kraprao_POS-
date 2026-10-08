@@ -112,6 +112,8 @@ import {
   generateVoidOrderMessage,
   generateLowStockMessage,
   generateKdsDelayMessage,
+  formatPlainNotification,
+  htmlToText,
   NotificationTriggerRules,
   NotificationTriggers
 } from '../services/notificationService';
@@ -7498,7 +7500,7 @@ export const TaxReceiptView: React.FC = () => {
 
 // 10. LINE / Telegram Notifications View (แจ้งเตือนไลน์และโทรเลขพร้อมรายละเอียดครบถ้วน)
 export const LineNotifyView: React.FC = () => {
-  const { orders, ingredients, menuItems, settings, currentBranch } = usePOS();
+  const { orders, ingredients, menuItems, settings, currentBranch, expenses, incomes } = usePOS();
 
   // State for Tokens and Settings (Initialized from Persistent Storage)
   const initialCreds = getStoredCredentials();
@@ -7592,11 +7594,11 @@ export const LineNotifyView: React.FC = () => {
   // Generate dynamic notification message texts pulling 100% REAL DATA from store
   const getMessageContent = (type: 'daily' | 'stock' | 'void' | 'new_order' | 'kds') => {
     if (type === 'daily') {
-      return generateDailySummaryMessage(orders, ingredients, currentBranch, settings);
+      return generateDailySummaryMessage(orders, ingredients, currentBranch, settings, { expenses, incomes });
     }
 
     if (type === 'stock') {
-      return generateLowStockMessage(lowStockItems, currentBranch, onlyCriticalStock);
+      return generateLowStockMessage(lowStockItems, currentBranch, onlyCriticalStock, settings);
     }
 
     if (type === 'void') {
@@ -7607,7 +7609,8 @@ export const LineNotifyView: React.FC = () => {
           cancelledOrder.cancelReason || 'ลูกค้ายกเลิกรายการบิล',
           cancelledOrder.cancelNote,
           cancelledOrder.cancelledBy?.userName || 'ผู้จัดการ',
-          currentBranch
+          currentBranch,
+          settings
         );
       }
       // If no cancelled order yet, preview format with recent order or notice
@@ -7615,15 +7618,14 @@ export const LineNotifyView: React.FC = () => {
       if (recentOrder) {
         return generateVoidOrderMessage(
           recentOrder,
-          'ทดสอบระบบแจ้งเตือนการยกเลิกบิล (Simulation)',
+          'ทดสอบการแจ้งเตือน (ไม่ได้ยกเลิกจริง)',
           undefined,
           'ผู้จัดการร้าน',
-          currentBranch
+          currentBranch,
+          settings
         );
       }
-      return `❌ [SECURITY ALERT] แจ้งเตือนการยกเลิกบิล / คืนเงิน
-🏪 สาขา: ${currentBranch?.name || 'ครัวกะเพรา ตลาด กกท'}
-(ยังไม่มีรายการบิลในระบบ)`;
+      return formatPlainNotification('ยกเลิกบิล', 'ยังไม่มีบิลในระบบ เมื่อมีการยกเลิกบิลจะแจ้งเตือนทันที', settings, currentBranch);
     }
 
     if (type === 'new_order') {
@@ -7631,24 +7633,22 @@ export const LineNotifyView: React.FC = () => {
       if (latestOrder) {
         return generateNewOrderMessage(latestOrder, currentBranch, settings);
       }
-      return `🔔 [NEW ORDER] มีออเดอร์ใหม่เข้าจากลูกค้า!
-🏪 สาขา: ${currentBranch?.name || 'ครัวกะเพรา ตลาด กกท'}
-(ยังไม่มีออเดอร์ในระบบ เมื่อมีรายการสั่งซื้อใหม่ระบบจะส่งเตือนทันที)`;
+      return formatPlainNotification('ออเดอร์ใหม่', 'ยังไม่มีออเดอร์ในระบบ เมื่อมีออเดอร์ใหม่จะแจ้งเตือนทันที', settings, currentBranch);
     }
 
     // KDS Kitchen delay
     const cookingOrder = orders.find(o => o.status === 'cooking' || o.status === 'pending');
-    return generateKdsDelayMessage(cookingOrder, currentBranch);
+    return generateKdsDelayMessage(cookingOrder, currentBranch, 15, settings);
   };
 
   // Send real notification via Centralized Notification Service & open mobile preview
   const handleTriggerTest = async (channel: 'line' | 'telegram', type: 'daily' | 'stock' | 'void' | 'new_order' | 'kds') => {
     const titles: Record<string, string> = {
-      daily: 'สรุปยอดขายประจำวัน (Daily Sales Summary)',
-      stock: 'เตือนวัตถุดิบใกล้หมดสต็อก (Low Stock Alert)',
-      void: 'เตือนยกเลิกบิล (Void Order Alert)',
-      new_order: 'ออเดอร์ใหม่เข้า (New QR Order Alert)',
-      kds: 'เตือนออเดอร์ช้าในครัว (KDS Kitchen Delay)'
+      daily: 'สรุปยอดขายประจำวัน',
+      stock: 'วัตถุดิบใกล้หมด',
+      void: 'ยกเลิกบิล',
+      new_order: 'ออเดอร์ใหม่',
+      kds: 'ออเดอร์ช้าในครัว'
     };
 
     const titleText = titles[type] || 'การแจ้งเตือนระบบ';
@@ -7656,7 +7656,7 @@ export const LineNotifyView: React.FC = () => {
 
     setSimulatedChannel(channel);
     setSimulatedTitle(titleText);
-    setSimulatedMessage(msgContent);
+    setSimulatedMessage(htmlToText(msgContent));
     setIsSimulatedMobileOpen(true);
     setIsSendingChannel(channel);
 
@@ -8317,7 +8317,7 @@ export const LineNotifyView: React.FC = () => {
             </div>
 
             <button
-              onClick={() => handleCopyMessage(getMessageContent(activeTab))}
+              onClick={() => handleCopyMessage(htmlToText(getMessageContent(activeTab)))}
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl border border-slate-700 transition flex items-center space-x-1.5 active:scale-95"
             >
               {copiedSuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -8326,7 +8326,7 @@ export const LineNotifyView: React.FC = () => {
           </div>
 
           <pre className="p-4 bg-slate-900 border border-slate-800 rounded-2xl text-xs font-mono text-emerald-300 leading-relaxed overflow-x-auto whitespace-pre-wrap selection:bg-emerald-500 selection:text-slate-950">
-            {getMessageContent(activeTab)}
+            {htmlToText(getMessageContent(activeTab))}
           </pre>
 
           <div className="p-3 bg-slate-900/60 border border-slate-800 rounded-2xl flex items-center justify-between text-xs text-slate-400">

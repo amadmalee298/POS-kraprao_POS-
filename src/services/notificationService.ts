@@ -239,7 +239,8 @@ export interface SendResult {
 export async function sendTelegramMessage(
   token: string,
   chatId: string,
-  message: string
+  message: string,
+  html = true
 ): Promise<SendResult> {
   const cleanToken = token.trim().startsWith('bot') ? token.trim().slice(3) : token.trim();
   const cleanChatId = chatId.trim();
@@ -265,6 +266,7 @@ export async function sendTelegramMessage(
         botToken: cleanToken,
         chatId: cleanChatId,
         message,
+        parseMode: html ? 'HTML' : undefined,
       }),
       signal: controller.signal,
     }).finally(() => clearTimeout(timeoutId));
@@ -285,12 +287,16 @@ export async function sendTelegramMessage(
     // A form body keeps this a "simple" request: Telegram rejects the CORS preflight a JSON body needs
     const response = await fetch(telegramUrl, {
       method: 'POST',
-      body: new URLSearchParams({ chat_id: cleanChatId, text: message }),
+      body: new URLSearchParams({ chat_id: cleanChatId, text: message, ...(html ? { parse_mode: 'HTML' } : {}) }),
     });
 
     const data = await response.json().catch(() => ({}));
     if (response.ok && data.ok) {
       return { success: true, channel: 'telegram', method: 'direct' };
+    }
+    // Text Telegram cannot read as HTML still goes out, as plain text
+    if (html && /parse entities/i.test(String(data.description || ''))) {
+      return sendTelegramMessage(token, chatId, htmlToText(message), false);
     }
 
     return {
@@ -408,7 +414,8 @@ export async function dispatchNotification(
 
   const results: SendResult[] = [];
   const channel = options?.channelOverride || 'both';
-  const fullMessage = message.startsWith('🔔') ? message : `🔔 [ครัวกะเพรา POS - ${eventTitle}]\n\n${message}`;
+  // Messages laid out by the generators keep their own heading; any other text gets one
+  const fullMessage = isFormatted(message) ? message : formatPlainNotification(eventTitle, message);
 
   // Send Telegram
   if ((channel === 'both' || channel === 'telegram') && creds.telegramToken && creds.telegramChatId) {
@@ -425,7 +432,7 @@ export async function dispatchNotification(
 
   // Send LINE
   if ((channel === 'both' || channel === 'line') && creds.lineToken) {
-    const lineRes = await sendLineMessage(creds.lineToken, fullMessage, creds.lineTargetId, creds.lineRelayUrl);
+    const lineRes = await sendLineMessage(creds.lineToken, htmlToText(fullMessage), creds.lineTargetId, creds.lineRelayUrl);
     results.push(lineRes);
 
     addStoredLog({
@@ -449,260 +456,184 @@ export async function dispatchNotification(
 }
 
 // ==========================================
-// Real Data Message Generators (100% Reality)
+// Messages (Telegram HTML, same look as the bot's cards; LINE gets the plain text)
 // ==========================================
 
+const LINE = '━━━━━━━━━━━━━━';
+const money = (n: number) => (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Text for a Telegram HTML message */
+export const escHtml = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+/** The plain text of a message (LINE, copying, the in-app preview) */
+export const htmlToText = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+/** A message already laid out with its own heading (not wrapped again by dispatchNotification) */
+const isFormatted = (message: string) => /^\S+ <b>/.test(message);
+
+/** The shop's name for messages that are not given the settings (set by the app from Settings) */
+let notifyShopName = '';
+export function setNotificationShopName(name: string | undefined) {
+  notifyShopName = (name || '').trim();
+}
+/** Last line of every message: which shop (and branch) it is about */
+function shopLine(shopName?: string, branch?: Branch): string {
+  const shop = (shopName || notifyShopName || '').trim();
+  const br = (branch?.name || '').trim();
+  const parts = [shop, br && br !== shop ? br : ''].filter(Boolean);
+  return parts.length ? `🏪 ${escHtml(parts.join(' · '))}` : '';
+}
+const timeOf = (iso?: string) => {
+  const d = iso ? new Date(iso) : new Date();
+  return (Number.isNaN(d.getTime()) ? new Date() : d).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
+};
+const bangkokDay = (iso: string | Date) => new Date(new Date(iso).getTime() + 7 * 3600_000).toISOString().slice(0, 10);
+
+const PAYMENT_LABELS: Record<string, string> = {
+  cash: 'เงินสด',
+  promptpay: 'พร้อมเพย์',
+  qr: 'สแกน QR',
+  transfer: 'โอนเงิน',
+  bank_transfer: 'โอนเงิน',
+  credit: 'บัตร',
+  credit_card: 'บัตร',
+  card: 'บัตร',
+  truemoney: 'TrueMoney'
+};
+const paymentLabel = (m?: string) => PAYMENT_LABELS[m || ''] || 'อื่น ๆ';
+
+const channelOf = (o: Order) =>
+  o.orderType === 'delivery' ? 'เดลิเวอรี' : o.isQrOrder || (o as any).orderType === 'qr' ? 'สแกนสั่งที่โต๊ะ' : o.orderType === 'takeaway' ? 'กลับบ้าน' : 'หน้าร้าน';
+const placeOf = (o: Order) =>
+  o.orderType === 'dine-in' || o.isQrOrder ? (o.tableNumber ? `โต๊ะ ${o.tableNumber}` : 'หน้าร้าน') : o.orderType === 'takeaway' ? 'กลับบ้าน' : o.orderType === 'delivery' ? 'เดลิเวอรี' : 'หน้าร้าน';
+
+const itemLines = (o: Order, withPrice = true) =>
+  (o.items || []).map(it => {
+    const addOns = it.selectedAddOns?.length ? ` (+${it.selectedAddOns.map(a => a.name).join(', ')})` : '';
+    const price = withPrice ? `  ${money(it.totalPrice || (it.unitPrice || 0) * (it.quantity || 1))}` : '';
+    return `• ${escHtml(it.menuItem?.name || (it as any).name || 'เมนู')} ×${it.quantity || 1}${escHtml(addOns)}${price}`;
+  });
+
+const compose = (lines: (string | null | false | undefined)[]) => lines.filter((l): l is string => typeof l === 'string').join('\n');
+
+export interface DailyMoney {
+  expenses?: { date: string; amount: number; branchId?: string }[];
+  incomes?: { date: string; amount: number; branchId?: string }[];
+}
+
+/** The day's sales (with other income, expenses and what is left), best sellers and low stock */
 export function generateDailySummaryMessage(
   orders: Order[],
   ingredients: Ingredient[],
   branch?: Branch,
-  settings?: SystemSettings
+  settings?: SystemSettings,
+  money_: DailyMoney = {},
+  now = new Date()
 ): string {
-  const shopName = settings?.shopName || 'บริษัท กะเพรา เอ็นเตอร์ไพรส์ จำกัด (สำนักงานใหญ่)';
-  const branchName = branch?.name || 'ครัวกะเพรา ตลาด กกท';
-  const now = new Date();
+  const today = bangkokDay(now);
+  const own = (b?: string) => !branch?.id || !b || b === branch.id;
+  const sold = orders.filter(o => own(o.branchId) && o.createdAt && bangkokDay(o.createdAt) === today && countsAsRevenue(o));
+  const sales = sold.reduce((s, o) => s + (o.grandTotal || 0), 0);
 
-  // Local date helper in client's local timezone (Thailand UTC+7)
-  const getLocalDateStr = (d: Date | string) => {
-    const date = typeof d === 'string' ? new Date(d) : d;
-    if (isNaN(date.getTime())) return '';
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  };
-
-  const todayStr = getLocalDateStr(now);
-  const dateThai = now.toLocaleDateString('th-TH', { year: 'numeric', month: 'numeric', day: 'numeric' });
-  const timeThai = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-
-  // Filter today's real orders in this branch
-  const todayOrders = orders.filter(o => {
-    const oDate = o.createdAt ? getLocalDateStr(o.createdAt) : '';
-    if (branch?.id && o.branchId && o.branchId !== branch.id) return false;
-    return oDate === todayStr && countsAsRevenue(o);
-  });
-
-  const todayRevenue = todayOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-  const billCount = todayOrders.length;
-  const avgBill = billCount > 0 ? todayRevenue / billCount : 0;
-
-  // Real channel breakdown (100% truthful data - zero fallback)
-  const posOrders = todayOrders.filter(o => !o.isQrOrder && (o.orderType === 'dine-in' || o.orderType === 'takeaway' || !o.orderType));
-  const qrOrders = todayOrders.filter(o => o.isQrOrder || (o as any).orderType === 'qr');
-  const deliveryOrders = todayOrders.filter(o => o.orderType === 'delivery');
-
-  const posTotal = posOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-  const qrTotal = qrOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-  const deliveryTotal = deliveryOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-
-  // Real payment breakdown
-  const cashOrders = todayOrders.filter(o => o.paymentMethod === 'cash');
-  const promptPayOrders = todayOrders.filter(o => o.paymentMethod === 'promptpay' || o.paymentMethod === 'transfer');
-  const creditOrders = todayOrders.filter(o => o.paymentMethod === 'credit');
-  const trueMoneyOrders = todayOrders.filter(o => o.paymentMethod === 'truemoney');
-
-  const cashTotal = cashOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-  const promptPayTotal = promptPayOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-  const creditTotal = creditOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-  const trueMoneyTotal = trueMoneyOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-
-  // Real Top 3 Best-Selling Menu Items from today's orders
-  const itemCounts: Record<string, { qty: number; totalSales: number }> = {};
-  todayOrders.forEach(o => {
-    o.items?.forEach(it => {
-      const name = it.menuItem?.name || (it as any).name || 'รายการอาหาร';
-      if (!itemCounts[name]) {
-        itemCounts[name] = { qty: 0, totalSales: 0 };
-      }
-      itemCounts[name].qty += it.quantity || 1;
-      itemCounts[name].totalSales += it.totalPrice || (it.unitPrice ? it.unitPrice * (it.quantity || 1) : 0);
+  const group = (key: (o: Order) => string) => {
+    const m = new Map<string, { total: number; count: number }>();
+    sold.forEach(o => {
+      const k = key(o);
+      const g = m.get(k) || { total: 0, count: 0 };
+      g.total += o.grandTotal || 0;
+      g.count += 1;
+      m.set(k, g);
     });
-  });
+    return [...m.entries()].sort((a, b) => b[1].total - a[1].total);
+  };
+  const channels = group(channelOf);
+  const payments = group(o => paymentLabel(o.paymentMethod));
 
-  const sortedItems = Object.entries(itemCounts)
-    .sort((a, b) => b[1].qty - a[1].qty)
-    .slice(0, 3);
+  const expenses = (money_.expenses || []).filter(e => own(e.branchId) && (e.date || '').slice(0, 10) === today);
+  const incomes = (money_.incomes || []).filter(i => own(i.branchId) && (i.date || '').slice(0, 10) === today);
+  const spent = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const other = incomes.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const left = sales + other - spent;
 
-  const topItemsText = sortedItems.length > 0
-    ? sortedItems.map((item, idx) => `  ${idx + 1}. ${item[0]} (${item[1].qty} รายการ)`).join('\n')
-    : '  (ยังไม่มีรายการขายในวันนี้)';
+  const dishes = new Map<string, number>();
+  sold.forEach(o => o.items?.forEach(it => {
+    const name = it.menuItem?.name || (it as any).name || 'เมนู';
+    dishes.set(name, (dishes.get(name) || 0) + (it.quantity || 1));
+  }));
+  const top = [...dishes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const low = ingredients.filter(i => (i.currentStock || 0) <= (i.minStockAlert || 0) && (i.minStockAlert || 0) > 0).length;
 
-  // Real low stock count
-  const lowStockCount = ingredients.filter(i => (i.currentStock || 0) <= (i.minStockAlert || 5)).length;
-  const stockSummaryLine = lowStockCount > 0
-    ? `⚠️ สถานะสต็อก: พบวัตถุดิบใกล้หมด ${lowStockCount} รายการ`
-    : '✅ สถานะสต็อก: วัตถุดิบทุกรายการอยู่ในเกณฑ์ปกติ';
-
-  // Format channels cleanly (Clear & accurate sum matching total)
-  const channelLines: string[] = [
-    `  • หน้าร้าน (POS): ฿${posTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${posOrders.length} บิล)`,
-    `  • สแกนสั่งโต๊ะ (QR): ฿${qrTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${qrOrders.length} บิล)`,
-    `  • เดลิเวอรี่ (Delivery): ฿${deliveryTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${deliveryOrders.length} บิล)`,
-  ];
-
-  // Format payments cleanly
-  const paymentLines: string[] = [];
-  paymentLines.push(`  • เงินสด (Cash): ฿${cashTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${cashOrders.length} บิล)`);
-  paymentLines.push(`  • สแกนโอน (PromptPay/QR): ฿${promptPayTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${promptPayOrders.length} บิล)`);
-  if (creditOrders.length > 0 || creditTotal > 0) {
-    paymentLines.push(`  • บัตรเครดิต (Credit): ฿${creditTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${creditOrders.length} บิล)`);
-  }
-  if (trueMoneyOrders.length > 0 || trueMoneyTotal > 0) {
-    paymentLines.push(`  • TrueMoney Wallet: ฿${trueMoneyTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${trueMoneyOrders.length} บิล)`);
-  }
-
-  return `📊 [${shopName}] - สรุปยอดขายประจำวัน
-📅 วันที่: ${dateThai} | เวลา: ${timeThai} น.
-🏪 สาขา: ${branchName}
-──────────────────────────────
-💰 ยอดขายรวมสุทธิ: ฿${todayRevenue.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
-🧾 จำนวนออเดอร์ขาย: ${billCount} บิล (เฉลี่ย ฿${avgBill.toFixed(2)}/บิล)
-
-💳 สรุปยอดขายตามช่องทาง:
-${channelLines.join('\n')}
-
-💵 สรุปยอดตามวิธีชำระเงิน:
-${paymentLines.join('\n')}
-
-🏆 เมนูขายดีท็อป 3 ประจำวัน:
-${topItemsText}
-
-${stockSummaryLine}
-──────────────────────────────
-✅ สรุปยอดขายจากข้อมูลระบบ POS จริงเรียบร้อยแล้ว`;
+  const label = new Date(`${today}T12:00:00+07:00`).toLocaleDateString('th-TH', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' });
+  return compose([
+    `📊 <b>สรุปวัน ${escHtml(label)}</b>`,
+    LINE,
+    `🛒 ยอดขาย: <b>${money(sales)} บาท</b> (${sold.length} บิล${sold.length ? ` · เฉลี่ย ${money(sales / sold.length)}` : ''})`,
+    ...channels.map(([k, g]) => `   • ${k} ${money(g.total)} (${g.count} บิล)`),
+    payments.length ? `💳 รับชำระ: ${payments.map(([k, g]) => `${k} ${money(g.total)}`).join(' · ')}` : null,
+    `📈 รายรับอื่น: ${money(other)} บาท (${incomes.length} รายการ)`,
+    `📉 รายจ่าย: ${money(spent)} บาท (${expenses.length} รายการ)`,
+    LINE,
+    `${left >= 0 ? '🟢' : '🔴'} <b>คงเหลือ ${left < 0 ? '-' : ''}${money(Math.abs(left))} บาท</b>`,
+    top.length ? `🏆 ขายดี: ${top.map(([n, q]) => `${escHtml(n)} ${q} จาน`).join(' · ')}` : null,
+    low > 0 ? `⚠️ วัตถุดิบใกล้หมด ${low} รายการ` : '✅ วัตถุดิบยังพอทุกรายการ',
+    shopLine(settings?.shopName, branch)
+  ]);
 }
 
-export function generateNewOrderMessage(
-  order: Order,
-  branch?: Branch,
-  settings?: SystemSettings
-): string {
-  const shopName = settings?.shopName || 'ครัวกะเพรา POS';
-  const branchName = branch?.name || 'ครัวกะเพรา ตลาด กกท';
-  const now = new Date();
-  const timeThai = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-
-  const channelText = order.orderType === 'dine-in'
-    ? `โต๊ะ ${order.tableNumber || 'หน้าร้าน'}`
-    : order.orderType === 'takeaway'
-    ? 'สั่งกลับบ้าน (Takeaway)'
-    : order.orderType === 'delivery'
-    ? 'เดลิเวอรี่ (Delivery)'
-    : 'สแกนสั่งอาหาร (QR Order)';
-
-  const paymentText = order.paymentMethod === 'cash'
-    ? 'เงินสด (Cash)'
-    : order.paymentMethod === 'promptpay'
-    ? 'พร้อมเพย์ / สแกนโอน QR'
-    : order.paymentMethod === 'credit'
-    ? 'บัตรเครดิต'
-    : order.paymentMethod === 'truemoney'
-    ? 'TrueMoney Wallet'
-    : 'ชำระเงินเรียบร้อย';
-
-  const itemsList = order.items && order.items.length > 0
-    ? order.items.map(it => {
-        const addOnsText = it.selectedAddOns && it.selectedAddOns.length > 0
-          ? ` (+${it.selectedAddOns.map(a => a.name).join(', ')})`
-          : '';
-        return `  • ${it.menuItem?.name || 'เมนู'} x${it.quantity}${addOnsText} (฿${(it.totalPrice || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })})`;
-      }).join('\n')
-    : '  • รายการอาหารทั่วไป';
-
-  return `🔔 [NEW ORDER] มีออเดอร์ใหม่เข้าจากลูกค้า!
-🏪 สาขา: ${branchName}
-🪑 โต๊ะ / ช่องทาง: ${channelText}
-🧾 เลขออเดอร์: ${order.orderNumber}
-🕒 เวลาที่สั่ง: ${timeThai} น.
-──────────────────────────────
-🍲 รายการอาหารที่สั่ง (${order.items?.length || 0} รายการ):
-${itemsList}
-
-💰 ยอดเงินรวมทั้งสิ้น: ฿${(order.grandTotal || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${paymentText})
-🍳 สถานะครัว: ส่งเข้าคิวทำอาหารเรียบร้อยแล้ว`;
+export function generateNewOrderMessage(order: Order, branch?: Branch, settings?: SystemSettings): string {
+  return compose([
+    `🛎 <b>ออเดอร์ใหม่ ${escHtml(order.orderNumber)}</b>`,
+    LINE,
+    `🪑 ${escHtml(placeOf(order))} · ${timeOf(order.createdAt)} น.`,
+    ...itemLines(order),
+    `💰 <b>รวม ${money(order.grandTotal || 0)} บาท</b> · ${paymentLabel(order.paymentMethod)}`,
+    shopLine(settings?.shopName, branch)
+  ]);
 }
 
-export function generateVoidOrderMessage(
-  order: Order,
-  reason: string,
-  note?: string,
-  staffName?: string,
-  branch?: Branch
-): string {
-  const branchName = branch?.name || 'ครัวกะเพรา ตลาด กกท';
-  const now = new Date();
-  const timeThai = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-
-  const itemsList = order.items && order.items.length > 0
-    ? order.items.map(it => `  • ${it.menuItem?.name || 'เมนู'} x${it.quantity} (฿${(it.totalPrice || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })})`).join('\n')
-    : '  • รายการอาหารทั่วไป';
-
-  return `❌ [SECURITY ALERT] แจ้งเตือนการยกเลิกบิล / คืนเงิน
-🏪 สาขา: ${branchName}
-🧾 บิลเลขที่: ${order.orderNumber}
-🕒 เวลาทำรายการ: ${timeThai} น.
-──────────────────────────────
-💵 ยอดเงินที่ยกเลิก: ฿${(order.grandTotal || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
-👤 พนักงานขาย: ${staffName || 'เจ้าหน้าที่ประจำเครื่อง'}
-📝 เหตุผลที่ยกเลิก: ${reason}${note ? ` (${note})` : ''}
-
-📋 รายการอาหารในบิลที่ยกเลิก:
-${itemsList}`;
+export function generateVoidOrderMessage(order: Order, reason: string, note?: string, staffName?: string, branch?: Branch, settings?: SystemSettings): string {
+  return compose([
+    `❌ <b>ยกเลิกบิล ${escHtml(order.orderNumber)}</b>`,
+    LINE,
+    `💵 <b>ยอดที่ยกเลิก ${money(order.grandTotal || 0)} บาท</b>`,
+    `👤 ผู้ยกเลิก: ${escHtml(staffName || 'ไม่ระบุ')}`,
+    `📝 เหตุผล: ${escHtml(reason)}${note ? ` (${escHtml(note)})` : ''}`,
+    `🕒 ${timeOf()} น. · ${escHtml(placeOf(order))}`,
+    ...itemLines(order),
+    shopLine(settings?.shopName, branch)
+  ]);
 }
 
-export function generateLowStockMessage(
-  lowStockItems: Ingredient[],
-  branch?: Branch,
-  onlyCritical = false
-): string {
-  const branchName = branch?.name || 'ครัวกะเพรา ตลาด กกท';
-  const now = new Date();
-  const timeThai = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-
+export function generateLowStockMessage(lowStockItems: Ingredient[], branch?: Branch, onlyCritical = false, settings?: SystemSettings): string {
   if (lowStockItems.length === 0) {
-    return `✅ [STOCK HEALTH] ตรวจสอบสต็อกวัตถุดิบ
-🏪 สาขา: ${branchName}
-🕒 เวลาตรวจ: ${timeThai} น.
-──────────────────────────────
-วัตถุดิบทุกรายการอยู่ในเกณฑ์ปกติ ไม่พบสินค้าใกล้หมดสต็อก`;
+    return compose([`✅ <b>วัตถุดิบยังพอทุกรายการ</b>`, LINE, `ตรวจเมื่อ ${timeOf()} น.`, shopLine(settings?.shopName, branch)]);
   }
-
-  const itemsList = lowStockItems.map((ing, idx) => {
-    return `  ${idx + 1}. ${ing.name} (เหลือ: ${ing.currentStock} ${ing.unit} | เกณฑ์เตือน: ${ing.minStockAlert} ${ing.unit})`;
-  }).join('\n');
-
-  return `⚠️ [ALERT] แจ้งเตือนวัตถุดิบใกล้หมดสต็อก!
-🏪 สาขา: ${branchName}
-🕒 เวลาตรวจพบ: ${timeThai} น.
-⚙️ โหมดตรวจเช็ค: ${onlyCritical ? 'สต็อกวิกฤต (<= 20% ของเกณฑ์)' : 'ต่ำกว่าเกณฑ์สั่งซื้อด่วน'}
-──────────────────────────────
-📦 รายการวัตถุดิบที่ต้องสั่งเพิ่ม (${lowStockItems.length} รายการ):
-${itemsList}
-
-💡 คำแนะนำ: โปรดดำเนินการสั่งซื้อวัตถุดิบเพิ่มเติมจาก Supplier เพื่อป้องกันสินค้าขาดหน้าร้าน`;
+  return compose([
+    `⚠️ <b>${onlyCritical ? 'วัตถุดิบเหลือน้อยมาก' : 'วัตถุดิบใกล้หมด'} ${lowStockItems.length} รายการ</b>`,
+    LINE,
+    ...lowStockItems.map(i => `• ${escHtml(i.name)} เหลือ ${i.currentStock} ${escHtml(i.unit)} (เตือนที่ ${i.minStockAlert} ${escHtml(i.unit)})`),
+    '🛒 ควรสั่งซื้อเพิ่ม',
+    shopLine(settings?.shopName, branch)
+  ]);
 }
 
-export function generateKdsDelayMessage(
-  order?: Order,
-  branch?: Branch,
-  delayMinutes = 15
-): string {
-  const branchName = branch?.name || 'ครัวกะเพรา ตลาด กกท';
-  const tableText = order?.tableNumber ? `โต๊ะ ${order.tableNumber}` : 'ออเดอร์หน้าร้าน/กลับบ้าน';
-  const orderNum = order?.orderNumber || '#ORD-KDS-PENDING';
-  const itemsText = order?.items && order.items.length > 0
-    ? order.items.map(it => `  • ${it.menuItem?.name || 'เมนู'} x${it.quantity}`).join('\n')
-    : '  • รายการอาหารในครัว';
+export function generateKdsDelayMessage(order?: Order, branch?: Branch, delayMinutes = 15, settings?: SystemSettings): string {
+  if (!order) {
+    return compose([`✅ <b>ไม่มีออเดอร์ค้างในครัว</b>`, LINE, shopLine(settings?.shopName, branch)]);
+  }
+  return compose([
+    `⏰ <b>ออเดอร์รอเกิน ${delayMinutes} นาที</b>`,
+    LINE,
+    `🧾 ${escHtml(order.orderNumber)} · ${escHtml(placeOf(order))} · สั่งเมื่อ ${timeOf(order.createdAt)} น.`,
+    ...itemLines(order, false),
+    '👩‍🍳 ช่วยเร่งครัวด้วย',
+    shopLine(settings?.shopName, branch)
+  ]);
+}
 
-  return `⏰ [KDS DELAY WARNING] แจ้งเตือนออเดอร์ช้าเกินกำหนดในครัว!
-🏪 สาขา: ${branchName}
-🪑 โต๊ะ / ช่องทาง: ${tableText}
-🧾 เลขออเดอร์: ${orderNum}
-⏱️ รอนานแล้ว: เกินกว่า ${delayMinutes} นาที
-──────────────────────────────
-🍳 เมนูที่กำลังทำค้างอยู่:
-${itemsText}
-
-💡 โปรดประสานงานเชฟในครัวเพื่อเร่งปรุงอาหารให้ลูกค้าทันที`;
+/** A message from another part of the app (plain text) with the same heading and shop line */
+export function formatPlainNotification(title: string, message: string, settings?: SystemSettings, branch?: Branch): string {
+  return compose([`🔔 <b>${escHtml(title)}</b>`, LINE, escHtml(message), shopLine(settings?.shopName, branch)]);
 }

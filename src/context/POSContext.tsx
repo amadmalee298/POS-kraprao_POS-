@@ -98,7 +98,8 @@ import {
   generateDailySummaryMessage,
   generateNewOrderMessage,
   generateVoidOrderMessage,
-  generateLowStockMessage
+  generateLowStockMessage,
+  setNotificationShopName
 } from '../services/notificationService';
 import {
   INITIAL_BRANCHES,
@@ -1433,8 +1434,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           // Only one of the shop's open devices sends it (otherwise every tablet sends a copy)
           claimDailyJob(currentBranch.id, 'daily_summary', todayStr).then(mine => {
             if (!mine) return;
-            const msg = generateDailySummaryMessage(orders, ingredients, currentBranch, settings);
-            dispatchNotification('สรุปยอดขายประจำวันอัตโนมัติ (Daily Summary)', msg, { force: true }).catch(console.error);
+            const msg = generateDailySummaryMessage(orders, ingredients, currentBranch, settings, { expenses, incomes });
+            dispatchNotification('สรุปยอดขายประจำวัน', msg, { force: true }).catch(console.error);
           });
         }
       } catch (err) {
@@ -1446,7 +1447,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     checkDailySummarySchedule();
     const intervalId = setInterval(checkDailySummarySchedule, 30000);
     return () => clearInterval(intervalId);
-  }, [orders, ingredients, currentBranch, settings]);
+  }, [orders, ingredients, currentBranch, settings, expenses, incomes]);
+
+  // Notifications name the shop as in Settings
+  useEffect(() => {
+    setNotificationShopName(settings.shopName || currentBranch?.name);
+  }, [settings.shopName, currentBranch?.name]);
 
   const syncOfflineQueue = async () => {
     const nowIso = new Date().toISOString();
@@ -3210,7 +3216,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const nowMs = Date.now();
             if (lowItems.length > 0 && (nowMs - lastAlertTime > 15 * 60 * 1000)) {
               localStorage.setItem('kaprao_last_low_stock_alert_time', nowMs.toString());
-              const msg = generateLowStockMessage(lowItems, currentBranch, rules.onlyCriticalStock);
+              const msg = generateLowStockMessage(lowItems, currentBranch, rules.onlyCriticalStock, settings);
               dispatchNotification('เตือนวัตถุดิบใกล้หมดสต็อก', msg).catch(console.error);
             }
             return currIngredients;
@@ -3475,7 +3481,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const rules = getStoredRules();
       const targetOrder = current;
       if (triggers.voidOrder && targetOrder && (targetOrder.grandTotal || 0) >= (rules.minVoidAmount || 0)) {
-        const msg = generateVoidOrderMessage(targetOrder, reason, note, operator.userName, currentBranch);
+        const msg = generateVoidOrderMessage(targetOrder, reason, note, operator.userName, currentBranch, settings);
         dispatchNotification(`ยกเลิกบิล (${targetOrder.orderNumber})`, msg).catch(console.error);
       }
     } catch (err) {
@@ -4493,8 +4499,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const sendDailySummaryNotification = async (channel: 'telegram' | 'line' | 'both' = 'both') => {
-    const msg = generateDailySummaryMessage(orders, ingredients, currentBranch, settings);
-    const res = await dispatchNotification('สรุปยอดขายประจำวัน (Daily Sales Summary)', msg, {
+    const msg = generateDailySummaryMessage(orders, ingredients, currentBranch, settings, { expenses, incomes });
+    const res = await dispatchNotification('สรุปยอดขายประจำวัน', msg, {
       force: true,
       channelOverride: channel,
     });
