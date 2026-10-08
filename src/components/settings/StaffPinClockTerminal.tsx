@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { notePinAttempt, pinLockMessage, pinMatches } from '../../utils/pins';
 import {
   Clock,
   KeyRound,
@@ -114,15 +115,21 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
       setPinError('');
 
       if (nextPin.length === 4) {
+        const locked = pinLockMessage();
+        if (locked) {
+          setPinError(locked);
+          setTimeout(() => setPinInput(''), 600);
+          return;
+        }
         // Validate PIN
         let matched: StaffMember | undefined;
         if (selectedStaffId) {
           const target = activeStaffList.find(s => s.id === selectedStaffId);
-          if (target && target.pin === nextPin) {
+          if (target && pinMatches(target.pin, nextPin)) {
             matched = target;
           }
         } else {
-          matched = activeStaffList.find(s => s.pin === nextPin);
+          matched = activeStaffList.find(s => pinMatches(s.pin, nextPin));
         }
 
         if (matched) {
@@ -134,6 +141,7 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
             status: 'SUCCESS',
             details: `ยืนยันรหัส PIN พนักงาน (${matched.name}) หน้าเทอร์มินอลเข้างาน`
           });
+          notePinAttempt(true);
           setAuthenticatedStaff(matched);
           setSelectedStaffId(matched.id);
           setPinError('');
@@ -147,6 +155,7 @@ export const StaffPinClockTerminal: React.FC<StaffPinClockTerminalProps> = ({ on
             status: 'FAILED',
             details: `รหัส PIN ไม่ถูกต้องที่เทอร์มินอลลงเวลาเข้างาน`
           });
+          notePinAttempt(false);
           setPinError('❌ รหัส PIN ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
           setTimeout(() => {
             setPinInput('');

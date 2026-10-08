@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyStockDeductions, computeSaleStockDeductions, generateOrderId, generateOrderNumber } from '../orderUtils';
+import { applyStockDeductions, computeSaleStockDeductions, generateOrderId, generateOrderNumber, leftLimitedWindow } from '../orderUtils';
 import type { CartItem, Ingredient, Order } from '../../types';
 
 const ing = (id: string, unit: string, stock: number): Ingredient =>
@@ -81,5 +81,18 @@ describe('mergeCloudOrders', () => {
     const r = mergeCloudOrders([mk('ord-3', 'pending', '2026-09-26T10:00:00Z')], [], ['ord-3']);
     expect(r.orders).toHaveLength(0);
     expect(r.changed).toBe(true);
+  });
+});
+
+describe('leftLimitedWindow', () => {
+  const full = ['2026-10-05T10:00', '2026-10-04T10:00'];
+  it('treats an order older than a full window as having only left the window', () => {
+    expect(leftLimitedWindow('2026-10-03T10:00', full, 2)).toBe(true);
+  });
+  it('treats an order inside the window range as a real deletion', () => {
+    expect(leftLimitedWindow('2026-10-04T12:00', full, 2)).toBe(false);
+  });
+  it('treats every removal as a deletion while the window is not full', () => {
+    expect(leftLimitedWindow('2026-10-01T10:00', ['2026-10-05T10:00'], 2)).toBe(false);
   });
 });

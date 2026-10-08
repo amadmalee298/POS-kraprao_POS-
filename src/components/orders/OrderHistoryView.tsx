@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   Search,
   Calendar,
@@ -44,7 +44,8 @@ export const OrderHistoryView: React.FC = () => {
     settings,
     currentUser,
     pullCloudOrders,
-    syncOfflineQueue
+    syncOfflineQueue,
+    loadHistory
   } = usePOS();
 
   // Search and Filters
@@ -53,6 +54,10 @@ export const OrderHistoryView: React.FC = () => {
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | '7days' | '30days' | 'all' | 'custom'>('7days');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
+  // A device keeps the recent weeks: an older chosen period is read from the cloud
+  useEffect(() => {
+    if (dateFilter === 'custom' && customStartDate) loadHistory(customStartDate);
+  }, [dateFilter, customStartDate, loadHistory]);
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'in_progress' | 'cancelled'>('all');
   const [paymentFilter, setPaymentFilter] = useState<'all' | PaymentMethod>('all');
   const [onlyWithCustomerInfo, setOnlyWithCustomerInfo] = useState(false);

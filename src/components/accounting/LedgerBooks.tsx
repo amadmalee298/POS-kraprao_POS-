@@ -1,14 +1,12 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, CheckCircle2, ChevronRight, Plus, Printer, RotateCcw, Trash2, TriangleAlert } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { useSharedList } from '../../hooks/useSharedList';
-import { isVatRegistered } from '../../utils/accounting';
+import { useLedger } from '../../hooks/useLedger';
 import {
   ACCOUNT_BY_CODE,
   ACCOUNTS,
   accountLedger,
   balanceSheet,
-  buildGlLines,
   cashFlow,
   checkJournal,
   JournalEntry,
@@ -40,7 +38,7 @@ export const LEDGER_TAB_LABELS: Record<LedgerTab, string> = {
 };
 
 const ASSUMPTIONS =
-  'สมมติฐาน: ขายเงินสด = ลิ้นชัก · รับ/จ่ายผ่าน QR โอน บัตร = บัญชีธนาคาร · จ่ายเงินสดนอกลิ้นชัก = เงินสดย่อย · ซื้อวัตถุดิบ = สินค้าคงเหลือ (ตัดเป็นต้นทุนเมื่อขาย) · อุปกรณ์ = สินทรัพย์ คิดค่าเสื่อมทุกสิ้นเดือน · สต็อกที่นับเพิ่ม = สินค้ายกมา';
+  'สมมติฐาน: ขายเงินสดระหว่างเปิดกะ = ลิ้นชัก (ไม่ได้เปิดกะ = เงินสดนอกลิ้นชัก) · ใบแจ้งหนี้ลูกค้า = ลูกหนี้การค้า · บิลซัพพลายเออร์ = เจ้าหนี้การค้า · รับ/จ่ายผ่าน QR โอน บัตร = บัญชีธนาคาร · จ่ายเงินสดนอกลิ้นชัก = เงินสดย่อย · ซื้อวัตถุดิบ = สินค้าคงเหลือ (ตัดเป็นต้นทุนเมื่อขาย) · อุปกรณ์ = สินทรัพย์ คิดค่าเสื่อมทุกสิ้นเดือน · สต็อกที่นับเพิ่ม = สินค้ายกมา';
 
 const money = (n: number) => (Math.abs(n) < 0.005 ? 0 : n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const thaiDate = (d: string) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
@@ -65,36 +63,28 @@ const Row: React.FC<{ label: string; amount: number; strong?: boolean; indent?: 
 export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => void }> = ({ tab, onTab }) => {
   const pos = usePOS();
   const { settings, currentBranch, currentUser, updateSettings } = pos;
-  const [journals, setJournals] = useSharedList<JournalEntry>('journals', 'POS_JOURNALS');
-  const today = todayStr();
+  const { lines, journals: branchJournals, setJournals, branchId, today } = useLedger();
   const [from, setFrom] = useState(`${today.slice(0, 8)}01`);
   const [to, setTo] = useState(today);
   const [asOf, setAsOf] = useState(today);
   const [account, setAccount] = useState('');
   const printRef = useRef<HTMLDivElement>(null);
 
-  const branchId = currentBranch?.id || 'all';
-  const branchJournals = useMemo(() => journals.filter(j => !j.branchId || j.branchId === branchId), [journals, branchId]);
-  const lines = useMemo(
-    () =>
-      buildGlLines({
-        branchId,
-        orders: pos.orders,
-        expenses: pos.expenses,
-        incomes: pos.incomes || [],
-        stockLots: pos.stockLots || [],
-        wasteLogs: pos.wasteLogs || [],
-        stockLogs: pos.stockAdjustmentLogs || [],
-        cashShifts: pos.cashShifts || [],
-        journals: branchJournals,
-        ingredients: pos.ingredients,
-        vatRegistered: isVatRegistered(settings),
-        usefulLifeYears: settings.equipmentUsefulLifeYears,
-        today,
-        startAt: settings.booksStartAt
-      }),
-    [branchId, pos.orders, pos.expenses, pos.incomes, pos.stockLots, pos.wasteLogs, pos.stockAdjustmentLogs, pos.cashShifts, branchJournals, pos.ingredients, settings, today]
-  );
+  // Older records than this device keeps: balances need everything since the books started
+  // (or the year before the balance date when no start is set), statements their period
+  const { loadHistory, historyLoading } = pos;
+  const [historyFailed, setHistoryFailed] = useState(false);
+  const needFrom = useMemo(() => {
+    const start = settings.booksStartAt ? thaiDay(settings.booksStartAt) : `${Number(asOf.slice(0, 4)) - 1}-01-01`;
+    return [start, from].sort()[0];
+  }, [settings.booksStartAt, asOf, from]);
+  useEffect(() => {
+    let alive = true;
+    loadHistory(needFrom).then(ok => alive && setHistoryFailed(!ok));
+    return () => {
+      alive = false;
+    };
+  }, [needFrom, loadHistory]);
 
   const company = sellerInfo(settings, currentBranch).name;
   const ranged = tab === 'pnl' || tab === 'cashflow' || tab === 'ledger';
@@ -318,6 +308,11 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
           owner={isOwner(currentUser?.role)}
           onChange={iso => updateSettings({ booksStartAt: iso })}
         />
+        {historyLoading ? (
+          <p className="text-[11px] text-amber-300">กำลังโหลดรายการย้อนหลังตั้งแต่ {thaiDate(historyLoading)} จากคลาวด์… ตัวเลขจะอัปเดตเมื่อโหลดเสร็จ</p>
+        ) : historyFailed ? (
+          <p className="text-[11px] text-slate-500">ยังโหลดรายการย้อนหลังจากคลาวด์ไม่ได้ (ออฟไลน์?) ตัวเลขนี้มาจากข้อมูลในเครื่องนี้</p>
+        ) : null}
       </div>
 
       <nav className="flex flex-wrap gap-2" aria-label="บัญชีและงบการเงิน">

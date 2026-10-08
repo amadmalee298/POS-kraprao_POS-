@@ -194,6 +194,45 @@ describe('general ledger', () => {
   });
 });
 
+describe('cash, deliveries, invoices and bills', () => {
+  it('puts a cash sale into the drawer only while a shift is open', () => {
+    const lines = buildGlLines(data({ orders: [order({}), order({ id: 'late', createdAt: '2026-10-05T13:00:00.000Z' })] }));
+    const into = (id: string) => lines.find(l => l.sourceId === id && l.source === 'order' && l.debit > 0)?.account;
+    expect(into('o1')).toBe('1000');
+    expect(into('late')).toBe('1001');
+  });
+
+  it('pays a delivery as it says, from the bank when it does not', () => {
+    const lines = buildGlLines(
+      data({ stockLots: [{ id: 'l1', ingredientId: 'ing', lotNumber: 'LOT-1', quantity: 2, unitCost: 100, receivedDate: '2026-10-04', expiryDate: '', supplier: '', paidFrom: 'drawer' }, { id: 'l3', ingredientId: 'ing', lotNumber: 'LOT-3', quantity: 1, unitCost: 50, receivedDate: '2026-10-04', expiryDate: '', supplier: '' }] })
+    );
+    expect(lines.find(l => l.sourceId === 'l1' && l.credit > 0)?.account).toBe('1000');
+    expect(lines.find(l => l.sourceId === 'l3' && l.credit > 0)?.account).toBe('1010');
+  });
+
+  it('posts invoices to customers and bills from suppliers with their payments', () => {
+    const lines = buildGlLines(
+      data({
+        receivables: [{ id: 'ar-1', branchId: 'b1', customerName: 'บริษัท ก', invoiceNumber: 'INV-1', issueDate: '2026-10-01', dueDate: '2026-10-15', originalAmount: 1000, paidAmount: 400, remainingAmount: 600, status: 'partial', description: '', payments: [{ id: 'p-1', date: '2026-10-03', amount: 400, paymentMethod: 'bank_transfer' }] }],
+        payables: [
+          { id: 'ap-1', branchId: 'b1', supplierName: 'ฟาร์ม', billNumber: 'B-1', issueDate: '2026-10-01', dueDate: '2026-10-08', originalAmount: 800, paidAmount: 800, remainingAmount: 0, status: 'paid', category: 'วัตถุดิบสด', description: '', payments: [{ id: 'p-2', date: '2026-10-04', amount: 800, paymentMethod: 'cash' }] },
+          { id: 'ap-2', branchId: 'b1', supplierName: 'การไฟฟ้า', billNumber: 'B-2', issueDate: '2026-10-02', dueDate: '2026-10-20', originalAmount: 300, paidAmount: 0, remainingAmount: 300, status: 'unpaid', category: 'ค่าสาธารณูปโภค', description: '', payments: [] }
+        ]
+      })
+    );
+    const legs = (id: string) => lines.filter(l => l.sourceId === id).map(l => [l.account, l.debit, l.credit]);
+    expect(legs('ar-1')).toEqual([['1100', 1000, 0], ['4000', 0, 1000]]);
+    expect(legs('p-1')).toEqual([['1010', 400, 0], ['1100', 0, 400]]);
+    expect(legs('ap-1')).toEqual([['1200', 800, 0], ['2000', 0, 800]]);
+    expect(legs('p-2')).toEqual([['2000', 800, 0], ['1001', 0, 800]]);
+    expect(legs('ap-2')).toEqual([['6000', 300, 0], ['2000', 0, 300]]);
+    const bs = balanceSheet(lines, '2026-10-31');
+    expect(bs.difference).toBe(0);
+    expect(bs.assets.find(a => a.code === '1100')?.amount).toBe(600);
+    expect(bs.liabilities.find(a => a.code === '2000')?.amount).toBe(300);
+  });
+});
+
 describe('journals', () => {
   it('only posts balanced entries on real accounts', () => {
     expect(checkJournal([{ account: '1500', debit: 100, credit: 0 }, { account: '3000', debit: 0, credit: 100 }]).ok).toBe(true);

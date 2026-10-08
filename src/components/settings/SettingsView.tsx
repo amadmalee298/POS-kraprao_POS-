@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { bigStore, bigStoreEntries, flushBigStore } from '../../utils/bigStore';
+import { hashPin, isHashedPin, pinMatches } from '../../utils/pins';
 import { compressImageFile } from '../../utils/imageCompressor';
 import { MerchantConnectionModal } from '../common/MerchantConnectionModal';
 import { gatewayEnabled } from '../../services/paymentGateway';
@@ -248,8 +250,9 @@ export const SettingsView: React.FC = () => {
   const [kdsWarnMin, setKdsWarnMin] = useState(settings.kdsWarningMinutes || 10);
   const [kdsSourceFilter, setKdsSourceFilter] = useState<'all' | 'qr_only'>(settings.kdsOrderSourceFilter || 'all');
   // Optional shop-wide PINs; empty = only owner/manager accounts' own PINs are accepted
-  const [adminPin, setAdminPin] = useState(settings.adminPin || '');
-  const [managerPin, setManagerPin] = useState(settings.managerPin || '');
+  // Master PINs are stored hashed: the boxes start empty and a new PIN typed in replaces the old one
+  const [adminPin, setAdminPin] = useState(isHashedPin(settings.adminPin) ? '' : settings.adminPin || '');
+  const [managerPin, setManagerPin] = useState(isHashedPin(settings.managerPin) ? '' : settings.managerPin || '');
 
   // Manager Role Authorization State
   const [isManagerAuthorized, setIsManagerAuthorized] = useState(false);
@@ -355,7 +358,8 @@ export const SettingsView: React.FC = () => {
       name: staff.name,
       role: staff.role,
       phone: staff.phone || '',
-      pin: staff.pin || '',
+      // A saved PIN is hashed: the box starts empty and stays the old PIN when left empty
+      pin: isHashedPin(staff.pin) ? '' : staff.pin || '',
       status: staff.status || 'active',
       permissions: staff.permissions || {
         canAccessPOS: true,
@@ -406,16 +410,19 @@ export const SettingsView: React.FC = () => {
     e.preventDefault();
     if (!editingEmployee.name.trim()) return;
 
-    const pinToSave = editingEmployee.pin.trim();
-    if (!/^\d{4,6}$/.test(pinToSave)) {
+    const existingPin = editingEmployee.id ? staffMembers.find(s => s.id === editingEmployee.id)?.pin : undefined;
+    const typedPin = editingEmployee.pin.trim();
+    const keepPin = !typedPin && !!existingPin;
+    const pinToSave = keepPin ? existingPin! : hashPin(typedPin);
+    if (!keepPin && !/^\d{4,6}$/.test(typedPin)) {
       alert('PIN ต้องเป็นตัวเลข 4-6 หลัก');
       return;
     }
-    if (['1234', '0000', '1111', '5555'].includes(pinToSave)) {
+    if (!keepPin && ['1234', '0000', '1111', '5555'].includes(typedPin)) {
       alert('PIN นี้เดาง่ายเกินไป กรุณาใช้ PIN อื่น');
       return;
     }
-    if (staffMembers.some(st => st.id !== editingEmployee.id && st.pin === pinToSave)) {
+    if (!keepPin && staffMembers.some(st => st.id !== editingEmployee.id && pinMatches(st.pin, typedPin))) {
       alert('PIN นี้มีพนักงานคนอื่นใช้แล้ว');
       return;
     }
@@ -807,8 +814,8 @@ export const SettingsView: React.FC = () => {
       vatType: vatType,
       kdsWarningMinutes: kdsWarnMin,
       kdsOrderSourceFilter: kdsSourceFilter,
-      adminPin: adminPin,
-      managerPin: managerPin,
+      adminPin: adminPin ? hashPin(adminPin) : settings.adminPin,
+      managerPin: managerPin ? hashPin(managerPin) : settings.managerPin,
       qrPaymentMethods: updatedPaymentMethods
     });
 
@@ -819,7 +826,7 @@ export const SettingsView: React.FC = () => {
   const handleExportJSON = () => {
     const backupData = {
       timestamp: new Date().toISOString(),
-      localStorage: { ...localStorage }
+      localStorage: { ...localStorage, ...bigStoreEntries() }
     };
 
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupData, null, 2));
@@ -840,10 +847,12 @@ export const SettingsView: React.FC = () => {
           const parsed = JSON.parse(e.target?.result as string);
           if (parsed && parsed.localStorage) {
             Object.keys(parsed.localStorage).forEach(key => {
-              localStorage.setItem(key, parsed.localStorage[key]);
+              bigStore.setItem(key, parsed.localStorage[key]);
             });
-            alert('นำเข้าข้อมูลสำเร็จ! ระบบจะทำการรีโหลดหน้าจอ');
-            window.location.reload();
+            flushBigStore().then(() => {
+              alert('นำเข้าข้อมูลสำเร็จ! ระบบจะทำการรีโหลดหน้าจอ');
+              window.location.reload();
+            });
           }
         } catch (err) {
           alert('ไฟล์สำรองไม่ถูกต้อง ไม่สามารถนำเข้าได้');
@@ -1115,7 +1124,7 @@ export const SettingsView: React.FC = () => {
                     maxLength={4}
                     value={adminPin}
                     onChange={e => setAdminPin(e.target.value)}
-                    placeholder="ไม่ตั้ง = ใช้ PIN ของบัญชีเจ้าของร้าน"
+                    placeholder={settings.adminPin ? 'ตั้งไว้แล้ว · ใส่ใหม่เพื่อเปลี่ยน' : 'ไม่ตั้ง = ใช้ PIN ของบัญชีเจ้าของร้าน'}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-amber-400 font-mono font-bold text-center tracking-widest text-base focus:border-amber-500"
                   />
                 </div>
@@ -1127,7 +1136,7 @@ export const SettingsView: React.FC = () => {
                     maxLength={4}
                     value={managerPin}
                     onChange={e => setManagerPin(e.target.value)}
-                    placeholder="ไม่ตั้ง = ใช้ PIN ของบัญชีผู้จัดการ"
+                    placeholder={settings.managerPin ? 'ตั้งไว้แล้ว · ใส่ใหม่เพื่อเปลี่ยน' : 'ไม่ตั้ง = ใช้ PIN ของบัญชีผู้จัดการ'}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-amber-400 font-mono font-bold text-center tracking-widest text-base focus:border-amber-500"
                   />
                 </div>
@@ -1358,7 +1367,7 @@ export const SettingsView: React.FC = () => {
                               <span className="text-[10px] text-slate-400 block font-medium">รหัส PIN 4 หลัก</span>
                               <div className="flex items-center space-x-1.5 mt-0.5">
                                 <span className="font-mono font-extrabold text-amber-300 text-base tracking-widest">
-                                  {showPin ? (staff.pin || 'ยังไม่ตั้ง') : '••••'}
+                                  {!staff.pin ? 'ยังไม่ตั้ง' : showPin && !isHashedPin(staff.pin) ? staff.pin : '••••'}
                                 </span>
                                 <button
                                   type="button"
@@ -3298,11 +3307,11 @@ export const SettingsView: React.FC = () => {
                   <div className="flex items-center space-x-2">
                     <input
                       type="text"
-                      required
+                      required={!editingEmployee.id || !staffMembers.find(s => s.id === editingEmployee.id)?.pin}
                       maxLength={4}
                       value={editingEmployee.pin}
                       onChange={e => setEditingEmployee({ ...editingEmployee, pin: e.target.value })}
-                      placeholder="1234"
+                      placeholder={editingEmployee.id && staffMembers.find(s => s.id === editingEmployee.id)?.pin ? 'เว้นว่าง = ใช้ PIN เดิม' : 'PIN 4 หลัก'}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-amber-300 font-mono font-bold text-center tracking-widest text-base focus:border-purple-500"
                     />
                     <button

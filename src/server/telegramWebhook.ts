@@ -7,6 +7,7 @@ import { docLinkUrl } from '../utils/docLink.js';
 import { runReceiptOcr } from '../utils/receiptOcr.js';
 import { createClaudeJsonCaller } from '../utils/claudeClient.js';
 import { Firestore, idTokenFor } from './firestoreRest.js';
+import { hasLegacyItems, keyedItems, newestFirst } from '../utils/keyedDoc.js';
 
 /**
  * The shop's Telegram bot on Vercel: Telegram delivers each message to /api/telegram/webhook, so
@@ -16,6 +17,7 @@ import { Firestore, idTokenFor } from './firestoreRest.js';
  */
 
 const KEEP_ITEMS = 300;
+const receivedAt = (p: PendingReceipt) => p.receivedAt;
 const KEEP_SEEN = 60;
 /** Firestore documents hold at most 1 MB; pictures that would not fit stay in the Telegram chat */
 const DOC_LIMIT = 900_000;
@@ -168,18 +170,24 @@ export function firestoreStore(db: Firestore, branchId: string, state: { waiting
   const sameBranch = (b: unknown) => !b || b === branchId;
   const waitKey = (chatId: string, userId?: string) => `${chatId}:${userId || ''}`;
 
-  let inbox: PendingReceipt[] | null = null;
+  // The inbox keeps one field per bill (byId.<id>, like the app's useKeyedList), so the server and
+  // the shop's devices never overwrite each other's bills. Read fresh before each change.
   const loadInbox = async () => {
-    if (!inbox) {
-      const d: any = await db.get(cfg(INBOX_DOC));
-      inbox = Array.isArray(d?.items) ? d.items : [];
-    }
-    return inbox!;
+    const d: any = await db.get(cfg(INBOX_DOC));
+    return { items: newestFirst(keyedItems<PendingReceipt>(d), receivedAt), legacy: hasLegacyItems(d), inById: new Set(Object.keys(d?.byId || {})) };
   };
-  const saveInbox = async (items: PendingReceipt[]) => {
-    inbox = items.slice(0, KEEP_ITEMS);
-    // Same shape as the app's shared lists (useSharedList): the newest save wins on every device
-    await db.set(cfg(INBOX_DOC), { items: JSON.parse(JSON.stringify(inbox)), savedAt: new Date().toISOString(), updatedAt: new Date() });
+  const saveInboxItem = async (item: PendingReceipt) => {
+    const { items, legacy, inById } = await loadInbox();
+    const all = newestFirst([item, ...items.filter(p => p.id !== item.id)], receivedAt);
+    const entries: { path: string[]; value: unknown }[] = [{ path: ['byId', item.id], value: JSON.parse(JSON.stringify(item)) }];
+    // Move bills still in the old whole-list array into their own fields
+    if (legacy) {
+      for (const p of all) if (p.id !== item.id && !inById.has(p.id)) entries.push({ path: ['byId', p.id], value: JSON.parse(JSON.stringify(p)) });
+      entries.push({ path: ['items'], value: undefined });
+    }
+    for (const old of all.slice(KEEP_ITEMS)) if (old.id !== item.id) entries.push({ path: ['byId', old.id], value: undefined });
+    entries.push({ path: ['savedAt'], value: new Date().toISOString() }, { path: ['updatedAt'], value: new Date() });
+    await db.setFields(cfg(INBOX_DOC), entries);
   };
 
   const patchDoc = async (path: string, patch: Record<string, unknown>) => {
@@ -212,10 +220,13 @@ export function firestoreStore(db: Firestore, branchId: string, state: { waiting
     ordersFrom: async iso => (await db.whereAtLeast('orders', 'createdAt', iso, 10000, ['branchId', 'createdAt', 'status', 'grandTotal', 'paymentStatus']))
       .filter(d => sameBranch(d.branchId))
       .map(d => ({ branchId: str(d.branchId), createdAt: str(d.createdAt), status: d.status as any, grandTotal: num(d.grandTotal), paymentStatus: (d.paymentStatus || undefined) as any })),
-    inboxItem: async id => (await loadInbox()).find(p => p.id === id) || null,
-    inboxByRecord: async recordId => (await loadInbox()).find(p => p.recordId === recordId) || null,
-    putInbox: async item => saveInbox([item, ...(await loadInbox()).filter(p => p.id !== item.id)]),
-    patchInbox: async (id, change) => saveInbox((await loadInbox()).map(p => (p.id === id ? JSON.parse(JSON.stringify({ ...p, ...change })) : p))),
+    inboxItem: async id => (await loadInbox()).items.find(p => p.id === id) || null,
+    inboxByRecord: async recordId => (await loadInbox()).items.find(p => p.recordId === recordId) || null,
+    putInbox: item => saveInboxItem(item),
+    patchInbox: async (id, change) => {
+      const item = (await loadInbox()).items.find(p => p.id === id);
+      if (item) await saveInboxItem({ ...item, ...change });
+    },
     getWaiting: async (chatId, userId) => {
       const w = state.waiting[waitKey(chatId, userId)];
       return w && w.until > Date.now() ? w : null;

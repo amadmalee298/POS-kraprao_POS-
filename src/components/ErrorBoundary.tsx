@@ -1,4 +1,5 @@
 import React, { ErrorInfo, ReactNode } from 'react';
+import { clearBigStore } from '../utils/bigStore';
 import { AlertTriangle, RefreshCw, Trash2 } from 'lucide-react';
 
 interface Props {
@@ -34,11 +35,12 @@ export class ErrorBoundary extends React.Component<Props, State> {
     window.location.reload();
   };
 
-  private handleClearCacheAndReload = () => {
+  private handleClearCacheAndReload = async () => {
     if (window.confirm('คุณต้องการรีเซ็ตแคชข้อมูล LocalStorage หรือไม่? (ข้อมูลการตั้งค่าจะกลับเป็นค่าเริ่มต้น)')) {
       try {
         localStorage.clear();
         sessionStorage.clear();
+        await clearBigStore();
       } catch (e) {
         console.error('Failed to clear storage:', e);
       }

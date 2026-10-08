@@ -224,6 +224,8 @@ export interface StockLot {
   packageQty?: number;
   packageUnit?: string;
   packageSize?: number;
+  /** How the delivery was paid (books: drawer, cash outside the drawer or bank) */
+  paidFrom?: 'bank' | 'cash' | 'drawer';
 }
 
 export type WasteReason = 'expired' | 'spoiled' | 'damaged' | 'overcooked' | 'trimming' | 'other';

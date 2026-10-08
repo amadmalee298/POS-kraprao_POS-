@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { splitBillCost } from '../../utils/stockIntake';
 import { LedgerBooks, LedgerTab } from './LedgerBooks';
-import type { PaidFrom } from '../../utils/ledger';
+import { profitAndLoss, type PaidFrom } from '../../utils/ledger';
+import { useLedger } from '../../hooks/useLedger';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { countsAsRevenue, orderVatBreakdown } from '../../utils/orderUtils';
 import { useSharedList } from '../../hooks/useSharedList';
@@ -97,6 +98,7 @@ import {
 import { AIReceiptScannerModal } from './AIReceiptScannerModal';
 import { TelegramInboxPanel } from '../telegram/TelegramInboxPanel';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
+import { usePayables, useReceivables } from '../../hooks/useArAp';
 import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 
 type TimeHorizon = 'selected' | '6months' | 'year';
@@ -334,7 +336,7 @@ const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boo
 };
 
 export const AccountingView: React.FC = () => {
-  const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [], currentUser, users, permissions } = usePOS();
+  const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [], currentUser, users, permissions, loadHistory } = usePOS();
   const expenseDrive = useExpenseDrive();
 
   const {
@@ -830,12 +832,9 @@ export const AccountingView: React.FC = () => {
 
   // Receivables, payables and investing/financing entries: shared by every device of the branch
   // (older versions stored them per device, and some first installs carried sample records)
-  const [arListRaw, setArList] = useSharedList<AccountsReceivableItem>('accounts_receivable', 'POS_AR_LIST', list =>
-    list.some((p: any) => p.id === 'ar-001' && String(p.customerName || '').includes('กรุงเทพโซลูชันส์')) ? [] : list
-  );
-  const [apListRaw, setApList] = useSharedList<AccountsPayableItem>('accounts_payable', 'POS_AP_LIST', list =>
-    list.some((p: any) => p.id === 'ap-001' && String(p.supplierName || '').includes('ซีพี เอฟเอส')) ? [] : list
-  );
+  const { lines: ledgerLines } = useLedger();
+  const [arListRaw, setArList] = useReceivables();
+  const [apListRaw, setApList] = usePayables();
   const [cashFlowEntries, setCashFlowEntries] = useSharedList<CashFlowEntry>('cash_flow_entries', 'POS_CASH_FLOW_ENTRIES', list =>
     list.some((p: any) => p.id === 'cf-001' && String(p.title || '').includes('ซื้อตู้แช่ทรงยืน')) ? [] : list
   );
@@ -994,6 +993,12 @@ export const AccountingView: React.FC = () => {
     }
     return list;
   }, [selectedMonth, timeHorizon]);
+
+  // A device keeps the recent weeks: older months are read from the cloud when chosen
+  const earliestMonth = useMemo(() => [...monthsList].sort()[0], [monthsList]);
+  useEffect(() => {
+    if (earliestMonth) loadHistory(`${earliestMonth}-01`);
+  }, [earliestMonth, loadHistory]);
 
   // 2. Compute Monthly Financials for each month in monthsList
   const monthlyData: MonthlyFinancialData[] = useMemo(() => {
@@ -1626,17 +1631,21 @@ export const AccountingView: React.FC = () => {
         rows.push([kind, e.refNumber || '-', e.date, e.title, categoryLabels[e.category] || e.category, (-e.amount).toFixed(2), claimableInputVat(e, vatRegistered).toFixed(2), (-expenseCost(e, vatRegistered)).toFixed(2)]);
       });
 
-    const t = rangeTotals;
+    // The summary is the books' profit and loss for the same months (same figures as the statement)
+    const sortedMonths = [...monthsList].sort();
+    const [ly, lm] = sortedMonths[sortedMonths.length - 1].split('-').map(Number);
+    const p = profitAndLoss(ledgerLines, `${sortedMonths[0]}-01`, new Date(Date.UTC(ly, lm, 0)).toISOString().slice(0, 10));
     rows.push([]);
-    rows.push(['สรุปงบกำไรขาดทุน', '', '', '', '', '', '', '']);
+    rows.push(['สรุปงบกำไรขาดทุน (ตามสมุดบัญชี)', '', '', '', '', '', '', '']);
     ([
-      ['รายได้จากการขายและบริการ', t.salesRevenue],
-      ['หัก ต้นทุนขาย', -t.cogs],
-      ['กำไรขั้นต้น', t.grossProfit],
-      ['หัก ค่าใช้จ่ายในการขายและบริหาร', -t.totalOpex],
-      ['กำไรจากการดำเนินงาน', t.operatingProfit],
-      ['บวก รายได้อื่น', t.otherIncome],
-      ['กำไร (ขาดทุน) ก่อนภาษีเงินได้', t.netProfit]
+      ...p.revenueLines.map(l => [`${l.code} ${l.name}`, l.amount] as [string, number]),
+      ['รวมรายได้', p.revenue],
+      ['หัก ต้นทุนขาย', -p.cogs],
+      ['กำไรขั้นต้น', p.grossProfit],
+      ...p.otherCostLines.map(l => [`หัก ${l.name}`, -l.amount] as [string, number]),
+      ...p.expenseCategories.map(c => [`หัก ${c.category}`, -c.amount] as [string, number]),
+      ...p.otherExpenseLines.map(l => [`หัก ${l.name}`, -l.amount] as [string, number]),
+      ['กำไร (ขาดทุน) สุทธิ', p.netProfit]
     ] as [string, number][]).forEach(([label, v]) => rows.push(['', '', '', label, '', '', '', v.toFixed(2)]));
 
     downloadCsv(`งบกำไรขาดทุน_${currentBranch.name}_${monthsList[0]}_${monthsList[monthsList.length - 1]}.csv`, headers, rows);
@@ -1795,7 +1804,7 @@ export const AccountingView: React.FC = () => {
             className="flex items-center justify-center space-x-1.5 py-2.5 px-2 bg-slate-900 border border-slate-800 hover:border-slate-700 text-emerald-400 rounded-xl text-xs font-bold transition active:scale-95 shadow-lg"
           >
             <FileSpreadsheet className="w-4 h-4 shrink-0 text-emerald-400" />
-            <span className="truncate">ส่งออก CSV (งบกำไรขาดทุน)</span>
+            <span className="truncate">ส่งออก CSV (รายการ + งบกำไรขาดทุน)</span>
           </button>
 
           <button
@@ -5109,6 +5118,7 @@ export const AccountingView: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateARSubmit} className="space-y-3 text-xs">
+              <p className="text-[11px] text-slate-400 bg-slate-950/60 border border-slate-800 rounded-xl p-2">ใบแจ้งหนี้นี้ลงสมุดบัญชีเป็นรายได้ขายเชื่อ (ลูกหนี้การค้า) ให้อัตโนมัติ ตอนรับเงินกด “รับชำระ” ที่รายการนี้ ไม่ต้องบันทึกรายได้อื่นซ้ำ</p>
               <div>
                 <label className="block text-slate-300 mb-1">ชื่อลูกค้า / บริษัท *</label>
                 <input
@@ -5226,6 +5236,7 @@ export const AccountingView: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateAPSubmit} className="space-y-3 text-xs">
+              <p className="text-[11px] text-slate-400 bg-slate-950/60 border border-slate-800 rounded-xl p-2">บิลนี้ลงสมุดบัญชีเป็นเจ้าหนี้การค้า (หมวดวัตถุดิบ/เครื่องดื่มเข้าสินค้าคงเหลือ หมวดอื่นเป็นค่าใช้จ่าย) ให้อัตโนมัติ ตอนจ่ายเงินกด “จ่ายชำระ” ที่รายการนี้ ไม่ต้องบันทึกค่าใช้จ่ายซ้ำ</p>
               <div>
                 <label className="block text-slate-300 mb-1">ชื่อซัพพลายเออร์ / ผู้ขาย *</label>
                 <input

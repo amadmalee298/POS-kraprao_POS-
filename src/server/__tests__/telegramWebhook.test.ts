@@ -42,7 +42,29 @@ function fakeCloud() {
       if (method === 'PATCH') {
         const fields = JSON.parse(String(init.body)).fields;
         const mask = new URLSearchParams(query).getAll('updateMask.fieldPaths');
-        docs.set(path, mask.length ? { ...(docs.get(path) || {}), ...fields } : fields);
+        if (!mask.length) docs.set(path, fields);
+        else {
+          // Each masked field path (backticks around names with other characters) is set or removed
+          const doc: Record<string, any> = { ...(docs.get(path) || {}) };
+          for (const m of mask) {
+            const segs = (m.match(/`(?:[^`\\]|\\.)*`|[^.]+/g) || []).map(x => (x.startsWith('`') ? x.slice(1, -1).replace(/\\`/g, '`') : x));
+            let src: any = fields;
+            let at: any = doc;
+            segs.forEach((seg, i) => {
+              const last = i === segs.length - 1;
+              src = src?.[seg];
+              if (last) {
+                if (src === undefined) delete at[seg];
+                else at[seg] = src;
+              } else {
+                at[seg] = { mapValue: { fields: { ...(at[seg]?.mapValue?.fields || {}) } } };
+                at = at[seg].mapValue.fields;
+                src = src?.mapValue?.fields;
+              }
+            });
+          }
+          docs.set(path, doc);
+        }
         return json(200, {});
       }
     }
@@ -137,10 +159,23 @@ describe('Telegram webhook on Vercel', () => {
     const docButton = card.body.reply_markup.inline_keyboard[0][0];
     expect(docButton.url).toMatch(/^https:\/\/shop\.github\.io\/POS\/#doc=/);
     expect(decodeDocLink(docButton.url.split('#doc=')[1])).toMatchObject({ shop: { name: 'ครัวกะเพรา' }, expense: { amount: 135, substituteReceipt: { docNo: '2569/10-001' } } });
-    // The shared inbox list (same shape as the app's shared lists)
+    // The shared inbox keeps one field per bill (same shape as the app's useKeyedList)
     const inbox: any = cloud.read('branches/b1/config/telegram_inbox');
-    expect(inbox.items[0]).toMatchObject({ status: 'approved', recordId: e.id, cardMessageId: 900 });
+    expect(Object.values(inbox.byId)[0]).toMatchObject({ status: 'approved', recordId: e.id, cardMessageId: 900 });
     expect(typeof inbox.savedAt).toBe('string');
+  });
+
+  it('adds a bill without touching bills the shop changed meanwhile, and moves the old list over', async () => {
+    cloud.write('branches/b1/config/telegram_inbox', {
+      items: [{ id: 'old-1', source: 'telegram', chatId: '-100', messageId: 1, fileId: 'x', senderName: '', caption: '', receivedAt: '2026-10-01T00:00:00.000Z', kind: 'expense', status: 'pending' }],
+      byId: { 'dev-1': { id: 'dev-1', source: 'telegram', chatId: '-100', messageId: 2, fileId: 'y', senderName: '', caption: '', receivedAt: '2026-10-02T00:00:00.000Z', kind: 'expense', status: 'rejected' } }
+    });
+    await deliver(photoUpdate(12));
+    const inbox: any = cloud.read('branches/b1/config/telegram_inbox');
+    expect(inbox.items).toBeUndefined();
+    expect(Object.keys(inbox.byId).sort()).toEqual(['dev-1', 'old-1', 'tg--100-12']);
+    expect(inbox.byId['dev-1'].status).toBe('rejected');
+    expect(inbox.byId['tg--100-12'].status).toBe('approved');
   });
 
   it('handles a delivery Telegram sends twice only once', async () => {

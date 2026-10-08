@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { notePinAttempt, pinLockMessage, pinMatches } from '../../utils/pins';
 import { CheckCircle2, Delete, Loader2, LogIn, LogOut, MapPin, QrCode, X } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import type { ClockCheck, StaffMember } from '../../types';
@@ -84,7 +85,13 @@ export const MobileClockPage: React.FC<{ code: string; openedAt: number; onClose
   const submit = async (s: StaffMember, entered: string) => {
     setError('');
     setPin('');
-    if ((s.pin || '') !== entered) return setError('PIN ไม่ถูกต้อง');
+    const locked = pinLockMessage();
+    if (locked) return setError(locked);
+    if (!pinMatches(s.pin, entered)) {
+      notePinAttempt(false);
+      return setError('PIN ไม่ถูกต้อง');
+    }
+    notePinAttempt(true);
     const check: ClockCheck = { method: 'mobile' };
     setBusy(true);
     try {

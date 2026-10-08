@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { notePinAttempt, pinLockMessage, pinMatches } from '../../utils/pins';
 import { Ban, ShieldCheck, Lock, AlertTriangle, X, Check } from 'lucide-react';
 import { Order } from '../../types';
 import { usePOS } from '../../context/POSContext';
@@ -75,7 +76,13 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
         return;
       }
 
-      if (!pinInput || pinInput !== targetApprover.pin) {
+      const locked = pinLockMessage();
+      if (locked) {
+        setPinError(locked);
+        return;
+      }
+      if (!pinInput || !pinMatches(targetApprover.pin, pinInput)) {
+        notePinAttempt(false);
         logSecurityEvent({
           userId: targetApprover.id,
           userName: targetApprover.name,

@@ -22,12 +22,8 @@ import { usePOS } from '../context/POSContext';
 import { isTypingInField } from '../utils/keyboard';
 import { clockChange, loginClockAllowed, openMobileClock, openShift } from '../utils/clock';
 import { localDay } from '../utils/stockHistory';
+import { DEFAULT_PIN_HASH, isWeakPin, notePinAttempt, pinLockRemaining, pinMatches } from '../utils/pins';
 
-const MAX_PIN_ATTEMPTS = 5;
-const LOCKOUT_BASE_MS = 30_000;
-const DEFAULT_PIN = '1234';
-// Factory/demo PINs and repeated digits (0000, 1111, …) are the first things anyone tries
-const isWeakPin = (pin: string | undefined): boolean => !pin || pin === DEFAULT_PIN || /^(\d)\1{3}$/.test(pin);
 
 export const LoginScreen: React.FC = () => {
   const { users, setCurrentUser, setIsLocked, currentUser, shifts, addShift, updateShift, updateUserPin, logSecurityEvent, settings } = usePOS();
@@ -37,14 +33,14 @@ export const LoginScreen: React.FC = () => {
   const sanitizedUsers = useMemo(() => {
     const filtered = users
       .filter(u => !u.name?.includes('สมศักดิ์'))
-      .map(u => (u.id === 'usr-admin' && u.name?.includes('สมศักดิ์')) ? { ...u, name: 'อาห์มัด (เจ้าของร้าน)', pin: '1234' } : u);
+      .map(u => (u.id === 'usr-admin' && u.name?.includes('สมศักดิ์')) ? { ...u, name: 'อาห์มัด (เจ้าของร้าน)', pin: u.pin || DEFAULT_PIN_HASH } : u);
 
     if (!filtered.some(u => u.name?.includes('อาห์มัด'))) {
       filtered.unshift({
         id: 'usr-admin',
         name: 'อาห์มัด (เจ้าของร้าน)',
         role: 'admin' as UserRole,
-        pin: '1234',
+        pin: DEFAULT_PIN_HASH,
         avatarColor: 'from-orange-500 to-amber-600'
       });
     }
@@ -66,9 +62,8 @@ export const LoginScreen: React.FC = () => {
   const [clockInAction, setClockInAction] = useState<boolean>(false);
   const [successNotice, setSuccessNotice] = useState<string>('');
 
-  // Brute-force protection: lock the keypad after repeated wrong PINs
-  const [failedAttempts, setFailedAttempts] = useState(0);
-  const [lockoutUntil, setLockoutUntil] = useState(0);
+  // Brute-force protection: lock the keypad after repeated wrong PINs (kept across reloads)
+  const [lockoutUntil, setLockoutUntil] = useState(() => Date.now() + pinLockRemaining());
   const [nowTick, setNowTick] = useState(Date.now());
   const lockoutRemaining = Math.max(0, Math.ceil((lockoutUntil - nowTick) / 1000));
   const isLockedOut = lockoutRemaining > 0;
@@ -80,17 +75,12 @@ export const LoginScreen: React.FC = () => {
   }, [lockoutUntil]);
 
   const registerFailedAttempt = useCallback(() => {
-    setFailedAttempts(prev => {
-      const next = prev + 1;
-      if (next >= MAX_PIN_ATTEMPTS) {
-        // Lockout grows with every additional round of failures
-        const rounds = Math.floor(next / MAX_PIN_ATTEMPTS);
-        const until = Date.now() + LOCKOUT_BASE_MS * rounds;
-        setLockoutUntil(until);
-        setNowTick(Date.now());
-      }
-      return next;
-    });
+    // Lockout grows with every additional round of failures
+    const locked = notePinAttempt(false);
+    if (locked > 0) {
+      setLockoutUntil(Date.now() + locked);
+      setNowTick(Date.now());
+    }
   }, []);
 
   // Users still on the factory default PIN must set a new one before using the POS
@@ -150,8 +140,8 @@ export const LoginScreen: React.FC = () => {
       setForgotError('ผู้อนุมัติต้องเป็นผู้จัดการหรือเจ้าของร้านเท่านั้น');
       return;
     }
-    if (managerAuthPin && managerAuthPin === manager.pin) {
-      setFailedAttempts(0);
+    if (managerAuthPin && pinMatches(manager.pin, managerAuthPin)) {
+      notePinAttempt(true);
       setIsManagerApproved(true);
       setForgotSuccess(`ผู้จัดการ (${manager.name}) อนุมัติสำเร็จ! กรุณาตั้งค่า PIN ใหม่`);
       logSecurityEvent?.({
@@ -197,7 +187,7 @@ export const LoginScreen: React.FC = () => {
       return;
     }
     // PIN login auto-detects the user by PIN, so PINs must be unique
-    if (sanitizedUsers.some(u => u.id !== selectedUser.id && u.pin === newPin)) {
+    if (sanitizedUsers.some(u => u.id !== selectedUser.id && pinMatches(u.pin, newPin))) {
       setForgotError('PIN นี้ถูกใช้โดยพนักงานคนอื่นแล้ว กรุณาเลือก PIN อื่น');
       return;
     }
@@ -232,11 +222,11 @@ export const LoginScreen: React.FC = () => {
 
     // The PIN is checked only against the person whose name is selected. Matching any
     // user with that PIN logged people in (or asked them to reset) as someone else.
-    const authenticatedUser = selectedUser && selectedUser.pin === pinToTest ? selectedUser : null;
+    const authenticatedUser = selectedUser && pinMatches(selectedUser.pin, pinToTest) ? selectedUser : null;
 
-    if (authenticatedUser && isWeakPin(authenticatedUser.pin)) {
+    if (authenticatedUser && isWeakPin(pinToTest)) {
       // Default or trivially guessable PIN: force the user to choose a new one before unlocking the POS
-      setFailedAttempts(0);
+      notePinAttempt(true);
       setSelectedUserId(authenticatedUser.id);
       setPin('');
       setError('');
@@ -251,7 +241,7 @@ export const LoginScreen: React.FC = () => {
     }
 
     if (authenticatedUser) {
-      setFailedAttempts(0);
+      notePinAttempt(true);
       logSecurityEvent?.({
         userId: authenticatedUser.id,
         userName: authenticatedUser.name,

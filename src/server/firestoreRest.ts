@@ -109,6 +109,25 @@ export class Firestore {
     await this.call(`${this.base}/${path}${mask ? `?${mask}` : ''}`, { method: 'PATCH', body: JSON.stringify({ fields: body }) });
   }
 
+  /**
+   * Writes only the listed (possibly nested) fields, e.g. ['byId', id]; a field whose value is
+   * undefined is removed. The other fields of the document stay as they are.
+   */
+  async setFields(path: string, entries: { path: string[]; value: unknown }[]): Promise<void> {
+    const data: Record<string, unknown> = {};
+    for (const e of entries) {
+      if (e.value === undefined) continue;
+      let at = data;
+      e.path.slice(0, -1).forEach(seg => {
+        if (!at[seg] || typeof at[seg] !== 'object') at[seg] = {};
+        at = at[seg] as Record<string, unknown>;
+      });
+      at[e.path[e.path.length - 1]] = e.value;
+    }
+    const mask = entries.map(e => `updateMask.fieldPaths=${encodeURIComponent(e.path.map(fieldPath).join('.'))}`).join('&');
+    await this.call(`${this.base}/${path}?${mask}`, { method: 'PATCH', body: JSON.stringify({ fields: toFsFields(data) }) });
+  }
+
   async delete(path: string): Promise<void> {
     await this.call(`${this.base}/${path}`, { method: 'DELETE' });
   }
