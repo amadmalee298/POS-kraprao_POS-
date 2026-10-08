@@ -966,6 +966,7 @@ export async function syncExpenseToFirestore(expense: Expense, branch?: Branch):
       receiptImageName: expense.receiptImageName || null,
       substituteReceipt: expense.substituteReceipt || null,
       paidFrom: expense.paidFrom || null,
+      vat36: expense.vat36 || null,
       driveFiles: expense.driveFiles || null,
       purchaseImages: cloudPurchaseImages(expense),
       syncedAt: nowIso,
@@ -999,6 +1000,7 @@ export async function syncExpenseToFirestore(expense: Expense, branch?: Branch):
             receiptImageName: expense.receiptImageName || null,
       substituteReceipt: expense.substituteReceipt || null,
       paidFrom: expense.paidFrom || null,
+      vat36: expense.vat36 || null,
       driveFiles: expense.driveFiles || null,
       purchaseImages: cloudPurchaseImages(expense, 150_000),
             syncedAt: new Date().toISOString(),
@@ -1068,6 +1070,7 @@ export async function syncExpensesBatchToFirestore(expenses: Expense[], branch?:
           receiptImageName: expense.receiptImageName || null,
       substituteReceipt: expense.substituteReceipt || null,
       paidFrom: expense.paidFrom || null,
+      vat36: expense.vat36 || null,
       driveFiles: expense.driveFiles || null,
       purchaseImages: cloudPurchaseImages(expense, 150_000),
           syncedAt: nowIso,
@@ -1194,6 +1197,7 @@ export function expenseFromFirestore(docId: string, d: DocumentData): Expense {
     receiptImageName: d.receiptImageName || undefined,
     substituteReceipt: d.substituteReceipt || undefined,
     paidFrom: d.paidFrom || undefined,
+    vat36: d.vat36 || undefined,
     driveFiles: Array.isArray(d.driveFiles) ? d.driveFiles : undefined,
     purchaseImages: Array.isArray(d.purchaseImages) && d.purchaseImages.length ? d.purchaseImages : undefined
   };

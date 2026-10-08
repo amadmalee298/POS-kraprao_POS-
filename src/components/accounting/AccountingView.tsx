@@ -3,6 +3,7 @@ import { splitBillCost } from '../../utils/stockIntake';
 import { LedgerBooks, LedgerTab } from './LedgerBooks';
 import { profitAndLoss, type PaidFrom } from '../../utils/ledger';
 import { useLedger } from '../../hooks/useLedger';
+import { VatReportPanel } from './VatReportPanel';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { countsAsRevenue, orderVatBreakdown } from '../../utils/orderUtils';
 import { useSharedList } from '../../hooks/useSharedList';
@@ -84,7 +85,8 @@ import {
   Download,
   Star,
   Image as ImageIcon,
-  Send
+  Send,
+  Receipt
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import {
@@ -103,7 +105,7 @@ import { usePayables, useReceivables } from '../../hooks/useArAp';
 import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 
 type TimeHorizon = 'selected' | '6months' | 'year';
-type ViewTab = 'books' | 'ar_ap' | 'expenses' | 'incomes' | 'details' | 'telegram';
+type ViewTab = 'books' | 'vat' | 'ar_ap' | 'expenses' | 'incomes' | 'details' | 'telegram';
 /** Links from elsewhere (sidebar, other pages) to the statements, now in the ledger books */
 const LEGACY_TAB: Record<string, LedgerTab> = { overview: 'pnl', statement: 'pnl', balance_sheet: 'balance', cash_flow: 'cashflow', journal: 'journal', trial: 'trial' };
 
@@ -463,6 +465,8 @@ export const AccountingView: React.FC = () => {
   const [expCategory, setExpCategory] = useState<ExpenseCategory>('raw_material');
   // Input VAT can be claimed only with a full tax invoice; market and street purchases have none
   const [expIncludeVat, setExpIncludeVat] = useState(false);
+  // A service from abroad (online ads, apps): VAT paid by the shop with ภ.พ.36
+  const [expVat36, setExpVat36] = useState(false);
   /** How the expense was paid (which cash account the books take it from) */
   const [expPaidFrom, setExpPaidFrom] = useState<PaidFrom>('bank');
   const [expRefNumber, setExpRefNumber] = useState('');
@@ -1256,8 +1260,9 @@ export const AccountingView: React.FC = () => {
       category: expCategory,
       title: expTitle.trim(),
       amount: expAmount,
-      includeVat: expIncludeVat,
+      includeVat: expIncludeVat && !expVat36,
       paidFrom: expPaidFrom,
+      vat36: vatRegistered && expVat36 ? true : undefined,
       vatAmount,
       netAmount,
       refNumber: expRefNumber.trim(),
@@ -1334,6 +1339,7 @@ export const AccountingView: React.FC = () => {
     }
 
     setIsAddExpenseOpen(false);
+    setExpVat36(false);
     setExpTitle('');
     setExpAmount(0);
     setExpRefNumber('');
@@ -1841,6 +1847,19 @@ export const AccountingView: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveTab('vat')}
+              className={`flex items-center space-x-1.5 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 whitespace-nowrap relative ${
+                activeTab === 'vat'
+                  ? 'bg-emerald-600/30 text-emerald-200 border border-emerald-500/40 shadow'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <Receipt className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span>ภาษี VAT (ภ.พ.30)</span>
+              {activeTab === 'vat' && <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-rose-500 rounded-full" />}
+            </button>
+
+            <button
               onClick={() => setActiveTab('ar_ap')}
               className={`flex items-center space-x-1.5 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 whitespace-nowrap relative ${
                 activeTab === 'ar_ap'
@@ -1939,6 +1958,7 @@ export const AccountingView: React.FC = () => {
         <div ref={reportRef} id="accounting-report-content" className="space-y-4 sm:space-y-6 bg-slate-950 p-2 sm:p-4 rounded-2xl">
         {/* Statements: the double-entry books (profit and loss, balance sheet, cash flow, journal, trial balance, ledger) */}
         {activeTab === 'books' && <LedgerBooks tab={ledgerTab} onTab={setLedgerTab} />}
+        {activeTab === 'vat' && <VatReportPanel />}
 
         {/* ACCOUNTS RECEIVABLE & PAYABLE (ลูกหนี้ / เจ้าหนี้การค้า) */}
         {activeTab === 'ar_ap' && (
@@ -3810,7 +3830,10 @@ export const AccountingView: React.FC = () => {
                   type="checkbox"
                   id="includeVatCheck"
                   checked={expIncludeVat}
-                  onChange={e => setExpIncludeVat(e.target.checked)}
+                  onChange={e => {
+                    setExpIncludeVat(e.target.checked);
+                    if (e.target.checked) setExpVat36(false);
+                  }}
                   className="w-4 h-4 rounded border-slate-800 bg-slate-950 text-rose-600 focus:ring-rose-500"
                 />
                 <label htmlFor="includeVatCheck" className="text-slate-300 font-medium cursor-pointer text-xs">
@@ -3823,6 +3846,29 @@ export const AccountingView: React.FC = () => {
                   )}
                 </label>
               </div>
+
+              {vatRegistered && (
+                <div className="flex items-start space-x-2">
+                  <input
+                    type="checkbox"
+                    id="vat36Check"
+                    checked={expVat36}
+                    onChange={e => {
+                      setExpVat36(e.target.checked);
+                      if (e.target.checked) setExpIncludeVat(false);
+                    }}
+                    className="mt-0.5 w-4 h-4 rounded border-slate-800 bg-slate-950 text-rose-600 focus:ring-rose-500"
+                  />
+                  <label htmlFor="vat36Check" className="text-slate-300 font-medium cursor-pointer text-xs">
+                    ค่าบริการจากต่างประเทศ (ยื่น ภ.พ.36) เช่น ค่าโฆษณา Facebook / Google, แอปรายเดือน
+                    {expVat36 && expAmount > 0 && (
+                      <span className="block text-[11px] text-slate-400 font-normal">
+                        ร้านต้องนำส่ง VAT {vatRate}% เอง ฿{money(expAmount * (vatRate / 100))} ภายในวันที่ 7 เดือนถัดไป แล้วใช้เป็นภาษีซื้อใน ภ.พ.30 เดือนถัดไป
+                      </span>
+                    )}
+                  </label>
+                </div>
+              )}
 
               {/* Multi-item Inventory Auto-Update Option */}
               <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded-xl space-y-2.5 mt-2">

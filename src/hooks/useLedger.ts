@@ -33,6 +33,7 @@ export function useLedger() {
         payables,
         ingredients: pos.ingredients,
         vatRegistered: isVatRegistered(settings),
+        vatRate: Number(settings.vatRate) || 7,
         usefulLifeYears: settings.equipmentUsefulLifeYears,
         today,
         startAt: settings.booksStartAt

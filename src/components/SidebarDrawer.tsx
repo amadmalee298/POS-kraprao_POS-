@@ -72,6 +72,7 @@ const PAGE_SECTIONS: Partial<Record<SectionPage, { id: string; label: string }[]
     { id: 'cash_flow', label: 'งบกระแสเงินสด' },
     { id: 'journal', label: 'สมุดรายวัน' },
     { id: 'trial', label: 'งบทดลอง / ผังบัญชี' },
+    { id: 'vat', label: 'รายงานภาษี VAT (ภ.พ.30)' },
     { id: 'ar_ap', label: 'ลูกหนี้ / เจ้าหนี้' },
     { id: 'incomes', label: 'รายได้อื่น' },
     { id: 'expenses', label: 'ค่าใช้จ่าย / ภาษีซื้อ' },
