@@ -28,6 +28,14 @@ export function stockTypeOf(ing: Pick<Ingredient, 'stockType' | 'category'>): St
   return 'inventory';
 }
 
+/**
+ * Below its alert level: time to buy more. Only stock that is used up counts (ingredients,
+ * packaging, supplies); equipment is counted for checking, not reordered, and an item without an
+ * alert level never warns.
+ */
+export const isLowStock = (ing: Pick<Ingredient, 'stockType' | 'category' | 'currentStock' | 'minStockAlert'>): boolean =>
+  stockTypeOf(ing) !== 'equipment' && (ing.minStockAlert || 0) > 0 && (ing.currentStock || 0) <= (ing.minStockAlert || 0);
+
 export const stockTypeLabel = (t: StockType) => STOCK_TYPES.find(x => x.id === t)?.label || t;
 
 /** Value of what is on hand, by type (quantity × cost per unit) */

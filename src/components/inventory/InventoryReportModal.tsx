@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { isLowStock } from '../../utils/stockTypes';
 import { effectiveUnitCost } from '../../utils/recipeUtils';
 import { Printer, Download, X, Filter, Package } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
@@ -34,7 +35,7 @@ export const InventoryReportModal: React.FC<InventoryReportModalProps> = ({ isOp
   // Calculate totals
   const totalItems = filteredIngredients.length;
   const totalStockValue = filteredIngredients.reduce((sum, ing) => sum + ing.currentStock * effectiveUnitCost(ing), 0);
-  const lowStockCount = ingredients.filter(ing => ing.currentStock <= ing.minStockAlert && ing.currentStock > 0).length;
+  const lowStockCount = ingredients.filter(ing => isLowStock(ing) && ing.currentStock > 0).length;
   const outOfStockCount = ingredients.filter(ing => ing.currentStock <= 0).length;
 
   const currentDateStr = new Date().toLocaleDateString('th-TH', {
@@ -250,7 +251,7 @@ export const InventoryReportModal: React.FC<InventoryReportModalProps> = ({ isOp
                     filteredIngredients.map((ing, idx) => {
                       const itemVal = ing.currentStock * effectiveUnitCost(ing);
                       const isOutOfStock = ing.currentStock <= 0;
-                      const isLowStock = ing.currentStock > 0 && ing.currentStock <= ing.minStockAlert;
+                      const isLow = ing.currentStock > 0 && isLowStock(ing);
 
                       return (
                         <tr key={ing.id} className="hover:bg-slate-50">
@@ -281,7 +282,7 @@ export const InventoryReportModal: React.FC<InventoryReportModalProps> = ({ isOp
                               <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
                                 สินค้าหมด
                               </span>
-                            ) : isLowStock ? (
+                            ) : isLow ? (
                               <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
                                 สต็อกต่ำ
                               </span>

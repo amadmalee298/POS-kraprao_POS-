@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { isLowStock } from '../utils/stockTypes';
 import {
   getFirestore,
   initializeFirestore,
@@ -448,7 +449,7 @@ export async function syncInventoryToFirestore(
 
     ingredients.forEach(ing => {
       const includeStock = withStock || !knownIds!.has(ing.id);
-      if (ing.currentStock <= ing.minStockAlert) {
+      if (isLowStock(ing)) {
         lowStockCount++;
       }
 
@@ -459,7 +460,7 @@ export async function syncInventoryToFirestore(
         {
           ingredientId: ing.id,
           name: ing.name,
-          ...(includeStock ? { currentStock: ing.currentStock, isLowStock: ing.currentStock <= ing.minStockAlert } : {}),
+          ...(includeStock ? { currentStock: ing.currentStock, isLowStock: isLowStock(ing) } : {}),
           minStockAlert: ing.minStockAlert,
           unit: ing.unit,
           unitCost: ing.unitCost,
@@ -481,7 +482,7 @@ export async function syncInventoryToFirestore(
           id: `${branch.id}_${ing.id}`,
           ingredientId: ing.id,
           name: ing.name,
-          ...(includeStock ? { currentStock: ing.currentStock, isLowStock: ing.currentStock <= ing.minStockAlert } : {}),
+          ...(includeStock ? { currentStock: ing.currentStock, isLowStock: isLowStock(ing) } : {}),
           minStockAlert: ing.minStockAlert,
           unit: ing.unit,
           unitCost: ing.unitCost,
@@ -2351,7 +2352,7 @@ export async function syncFullCatalogToFirestore(
 
     // 6. Heartbeat & Branch Metadata
     await syncBranchToFirestore(branch, {
-      lowStockCount: ingredients.filter(i => i.currentStock <= i.minStockAlert).length
+      lowStockCount: ingredients.filter(isLowStock).length
     });
 
     console.log(`[Firebase Service] ✅ Full Cloud Synchronization Complete: ${menuSynced} menus synced, ${menuDeleted} menus purged, ${inventorySynced} inventory synced, ${inventoryDeleted} inventory purged.`);

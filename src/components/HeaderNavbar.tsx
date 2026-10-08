@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { isLowStock } from '../utils/stockTypes';
 import {
   Flame,
   Store,
@@ -78,7 +79,7 @@ export const HeaderNavbar: React.FC = () => {
     o => o.branchId === currentBranch.id && (o.status === 'pending' || o.status === 'cooking')
   ).length;
 
-  const lowStockCount = ingredients.filter(i => i.currentStock <= i.minStockAlert).length;
+  const lowStockCount = ingredients.filter(isLowStock).length;
 
   return (
     <>

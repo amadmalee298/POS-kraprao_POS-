@@ -8,6 +8,7 @@
  */
 
 import { countsAsRevenue } from '../utils/orderUtils';
+import { isLowStock } from '../utils/stockTypes';
 import { apiUrl } from '../utils/apiClient';
 import { Order, Ingredient, Branch, SystemSettings } from '../types';
 
@@ -563,7 +564,7 @@ export function generateDailySummaryMessage(
     dishes.set(name, (dishes.get(name) || 0) + (it.quantity || 1));
   }));
   const top = [...dishes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
-  const low = ingredients.filter(i => (i.currentStock || 0) <= (i.minStockAlert || 0) && (i.minStockAlert || 0) > 0).length;
+  const low = ingredients.filter(isLowStock).length;
 
   const label = new Date(`${today}T12:00:00+07:00`).toLocaleDateString('th-TH', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' });
   return compose([

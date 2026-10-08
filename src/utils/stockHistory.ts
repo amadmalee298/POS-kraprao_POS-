@@ -1,4 +1,5 @@
 import type { AddOnOption, Ingredient, MenuItem, Order, StockAdjustmentLog } from '../types';
+import { isLowStock, stockTypeOf } from './stockTypes';
 import { computeSaleStockDeductions, resolveItemsForStock } from './orderUtils';
 import { effectiveUnitCost } from './recipeUtils';
 
@@ -221,11 +222,17 @@ export function forecastInventory(
 
   return ingredients.map(ing => {
     const dailyUsage = daysOfData ? (totals.get(ing.id) || 0) / daysOfData : 0;
-    const daysLeft = dailyUsage > 0 ? Number((ing.currentStock / dailyUsage).toFixed(1)) : null;
-    const lowByAlert = ing.minStockAlert > 0 && ing.currentStock <= ing.minStockAlert;
+    // Nothing left lasts no days; without sales use there is no rate to divide by
+    const daysLeft = ing.currentStock <= 0 ? 0 : dailyUsage > 0 ? Number((ing.currentStock / dailyUsage).toFixed(1)) : null;
+    const lowByAlert = isLowStock(ing);
     const riskLevel: ForecastRow['riskLevel'] =
-      lowByAlert || (daysLeft !== null && daysLeft <= 2) ? 'CRITICAL' : daysLeft !== null && daysLeft <= 4 ? 'WARNING' : 'OPTIMAL';
-    const need = dailyUsage * coverDays + (ing.minStockAlert || 0) - ing.currentStock;
+      lowByAlert || (daysLeft !== null && daysLeft <= 2 && dailyUsage > 0) ? 'CRITICAL' : daysLeft !== null && daysLeft <= 4 && dailyUsage > 0 ? 'WARNING' : 'OPTIMAL';
+    // Enough for the coming days plus the alert level; with no sales use yet, a low item is
+    // brought back to twice its alert level. Rounded up to whole packages when the size is known.
+    const min = ing.minStockAlert || 0;
+    const target = dailyUsage > 0 ? dailyUsage * coverDays + min : lowByAlert ? min * 2 : 0;
+    let need = stockTypeOf(ing) === 'equipment' ? 0 : target - ing.currentStock;
+    if (need > 0 && (ing.packageSize || 0) > 0) need = Math.ceil(need / ing.packageSize!) * ing.packageSize!;
     const suggestedOrderQty = need > 0 ? Number(need.toFixed(2)) : 0;
     return {
       ingredientId: ing.id,

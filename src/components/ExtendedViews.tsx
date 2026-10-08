@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { isLowStock } from '../utils/stockTypes';
 import { onPageSectionRequest, takePageSection } from '../utils/pageNav';
 import { TelegramInboxSettings } from './telegram/TelegramInboxSettings';
 import { calcRecipeItemCostAndDeduction, canonicalUnit, convertForIngredient, getAvailableRecipeUnits, isShortOfStock, recipeCost } from '../utils/recipeUtils';
@@ -7589,7 +7590,7 @@ export const LineNotifyView: React.FC = () => {
   };
 
   // Low stock ingredients list
-  const lowStockItems = ingredients.filter(i => (i.currentStock || 0) <= (i.minStockAlert || 5));
+  const lowStockItems = ingredients.filter(isLowStock);
 
   // Generate dynamic notification message texts pulling 100% REAL DATA from store
   const getMessageContent = (type: 'daily' | 'stock' | 'void' | 'new_order' | 'kds') => {

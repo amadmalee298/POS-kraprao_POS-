@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from 'react';
+import { isLowStock } from '../utils/stockTypes';
 import { DEFAULT_PIN_HASH, hashPin, isHashedPin } from '../utils/pins';
 import { bigStore } from '../utils/bigStore';
 import { averageCostAfterPrep } from '../utils/prep';
@@ -961,7 +962,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const todayStr = new Date().toDateString();
     const todayOrders = orders.filter(o => o.branchId === currentBranch.id && new Date(o.createdAt).toDateString() === todayStr && countsAsRevenue(o));
     const todaySales = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
-    const lowStock = ingredients.filter(i => i.currentStock <= i.minStockAlert).length;
+    const lowStock = ingredients.filter(isLowStock).length;
 
     syncBranchToFirestore(currentBranch, {
       totalSalesToday: todaySales,
@@ -3208,9 +3209,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setIngredients(currIngredients => {
             const lowItems = currIngredients.filter(i => {
               if (rules.onlyCriticalStock) {
-                return i.currentStock <= (i.minStockAlert * 0.2);
+                return isLowStock(i) && i.currentStock <= i.minStockAlert * 0.2;
               }
-              return i.currentStock <= i.minStockAlert;
+              return isLowStock(i);
             });
             const lastAlertTime = parseInt(localStorage.getItem('kaprao_last_low_stock_alert_time') || '0', 10);
             const nowMs = Date.now();
