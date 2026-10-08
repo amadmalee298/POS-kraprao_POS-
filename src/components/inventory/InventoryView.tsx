@@ -2686,6 +2686,7 @@ export const InventoryView: React.FC = () => {
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
                   />
                   <p className="text-[11px] text-slate-400">ใส่ราคาจริงแล้วระบบปรับราคาทุนต่อหน่วยและต้นทุนเมนูให้</p>
+                  <p className="text-[11px] text-amber-300/90">ถ้าบันทึกของชิ้นนี้ในใบเบิกค่าใช้จ่าย หรือบิลจาก Telegram ไปแล้ว ไม่ต้องรับเข้าที่นี่อีก (ระบบจะลงเงินซ้ำ) ให้รับเข้าสต็อกจากหน้านั้นแทน</p>
                   <label className="block text-slate-300 font-bold pt-1">จ่ายเงินจาก (ลงบัญชี)</label>
                   <select
                     value={quickPaidFrom}

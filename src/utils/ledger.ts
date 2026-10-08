@@ -2,6 +2,7 @@ import type { AccountsPayableItem, AccountsReceivableItem, CashShift, Expense, E
 import { claimableInputVat, DEFAULT_USEFUL_LIFE_YEARS, EXPENSE_CATEGORY_LABELS, expenseCost, round2, SALES_INCOME_CATEGORIES } from './accounting';
 import { countsAsRevenue, orderVatBreakdown } from './orderUtils';
 import { cartItemUnitCost, effectiveUnitCost } from './recipeUtils';
+import { stockTypeOf } from './stockTypes';
 
 /**
  * A double-entry general ledger derived from the shop's records, with the owner's journals for
@@ -17,7 +18,8 @@ import { cartItemUnitCost, effectiveUnitCost } from './recipeUtils';
  *  - ingredient purchases go into stock (1200) and leave it as cost of sales when dishes are sold
  *  - equipment is an asset (1500), depreciated straight-line each month (6100 / 1510)
  *  - goods received without an expense (stock lots) are paid as recorded on the delivery (bank
- *    when it does not say)
+ *    when it does not say): ingredients and packaging go into stock, supplies are an expense and
+ *    equipment an asset (depreciated); counts, waste and issues move the books only for stock
  *  - invoices to customers are sales on credit (1100) until paid; bills from suppliers are owed
  *    (2000) until paid, for goods (1200) or for expenses (6000)
  *  - stock counted up is opening stock (3100); counted down is shrinkage (5300)
@@ -217,6 +219,9 @@ export function buildGlLines(d: LedgerData): GlLine[] {
     }
   };
   const ingCost = new Map(d.ingredients.map(i => [i.id, effectiveUnitCost(i)]));
+  const typeOfIng = new Map(d.ingredients.map(i => [i.id, stockTypeOf(i)]));
+  /** Equipment bought, depreciated below */
+  const assets: { id: string; date: string; cost: number; title: string }[] = [];
   /** Made after the books started */
   const counts = (time: string) => !d.startAt || !time || time >= d.startAt;
 
@@ -272,15 +277,22 @@ export function buildGlLines(d: LedgerData): GlLine[] {
     ]);
   }
 
-  // Goods received without an expense (quick receive, lots): paid as the delivery says
+  // Goods received without an expense (quick receive, lots): paid as the delivery says. Stock
+  // goes into inventory; supplies are expensed when bought; equipment is an asset, depreciated
+  const kindOf = (ingredientId: string) => typeOfIng.get(ingredientId) || 'inventory';
   for (const lot of d.stockLots) {
     if (EXPENSE_LOT.test(lot.lotNumber || '') || !(lot.quantity > 0) || !(lot.unitCost > 0) || !counts(recordTime(lot, lot.receivedDate))) continue;
     if (d.ingredients.length && !ingCost.has(lot.ingredientId)) continue; // another branch's ingredient
     const value = lot.quantity * lot.unitCost;
-    push({ date: (lot.receivedDate || '').slice(0, 10), source: 'purchase', sourceId: lot.id, reference: lot.lotNumber, memo: lot.supplier }, [
-      ['1200', value, 0],
-      [payAccount(lot.paidFrom), 0, value, 'suppliers']
+    const kind = kindOf(lot.ingredientId);
+    const date = (lot.receivedDate || '').slice(0, 10);
+    const [target, cf, detail]: [string, CashFlowItem, string | undefined] =
+      kind === 'equipment' ? ['1500', 'investing', undefined] : kind === 'supplies' ? ['6000', 'expenses', EXPENSE_CATEGORY_LABELS.supplies || 'วัสดุสิ้นเปลือง'] : ['1200', 'suppliers', undefined];
+    push({ date, source: 'purchase', sourceId: lot.id, reference: lot.lotNumber, memo: lot.supplier }, [
+      [target, value, 0, undefined, detail],
+      [payAccount(lot.paidFrom), 0, value, cf]
     ]);
+    if (kind === 'equipment') assets.push({ id: lot.id, date, cost: value, title: d.ingredients.find(i => i.id === lot.ingredientId)?.name || lot.lotNumber });
   }
 
   // Invoices to customers: a sale on credit, then the payments received
@@ -318,9 +330,9 @@ export function buildGlLines(d: LedgerData): GlLine[] {
     }
   }
 
-  // Waste at its cost
+  // Waste at its cost (stock only: supplies were expensed when bought, equipment is an asset)
   for (const w of d.wasteLogs) {
-    if (!counts(recordTime(w, w.loggedDate))) continue;
+    if (!counts(recordTime(w, w.loggedDate)) || kindOf(w.ingredientId) !== 'inventory') continue;
     const value = w.totalCostLoss || w.quantity * (w.unitCost || 0);
     push({ date: (w.loggedDate || '').slice(0, 10), source: 'waste', sourceId: w.id, reference: w.ingredientName, memo: w.notes }, [
       ['5310', value, 0],
@@ -333,6 +345,7 @@ export function buildGlLines(d: LedgerData): GlLine[] {
     const reason = String(l.reason);
     if (!counts(l.timestamp)) continue;
     if (!COUNT_REASONS.has(reason) && reason !== 'issue') continue;
+    if (kindOf(l.ingredientId) !== 'inventory') continue; // counting supplies or equipment moves no money
     const value = Math.abs(l.changeQty || 0) * (ingCost.get(l.ingredientId) || 0);
     if (!value) continue;
     const base = { date: thaiDay(l.timestamp), source: 'adjustment' as const, sourceId: l.id, reference: l.ingredientName, memo: l.notes };
@@ -372,8 +385,11 @@ export function buildGlLines(d: LedgerData): GlLine[] {
   const today = d.today || thaiDay(new Date().toISOString());
   for (const e of d.expenses) {
     if (e.category !== 'equipment' || !own(e.branchId) || !/^\d{4}-\d{2}/.test(e.date || '') || !counts(recordTime(e, e.date))) continue;
-    const cost = expenseCost(e, d.vatRegistered);
-    if (!(cost > 0)) continue;
+    assets.push({ id: e.id, date: e.date, cost: expenseCost(e, d.vatRegistered), title: e.title });
+  }
+  for (const e of assets) {
+    const cost = e.cost;
+    if (!(cost > 0) || !/^\d{4}-\d{2}/.test(e.date)) continue;
     const months = Math.round(years * 12);
     const perMonth = cost / months;
     let [y, m] = e.date.slice(0, 7).split('-').map(Number);
