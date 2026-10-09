@@ -3,6 +3,7 @@ import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType, isLowStock } from '../../utils/stockTypes';
 import { StockIssuePanel } from './StockIssuePanel';
 import {
+  RotateCcw,
   PackageCheck,
   AlertTriangle,
   Plus,
@@ -799,6 +800,27 @@ export const InventoryView: React.FC = () => {
     setIsAddLotOpen(false);
   };
 
+  // Start counting afresh: every item's stock to 0 (logged as a reset; the books are not touched,
+  // so the real count entered afterwards becomes the opening stock)
+  const handleResetAllStock = () => {
+    const withStock = ingredients.filter(i => (i.currentStock || 0) !== 0);
+    if (withStock.length === 0) {
+      alert('ยอดคงเหลือทุกรายการเป็น 0 อยู่แล้ว');
+      return;
+    }
+    if (!window.confirm(`ตั้งยอดคงเหลือ ${withStock.length} รายการเป็น 0 ทั้งหมด?\n\nใช้เมื่อจะเริ่มนับสต็อกใหม่ ประวัติจะบันทึกว่า "รีเซ็ตเป็น 0" และไม่ลงบัญชีเป็นของขาด\nย้อนกลับไม่ได้ ถ้าต้องการเก็บยอดเดิมไว้ ให้กด "ดาวน์โหลด CSV" ก่อน`)) return;
+    moveStock(
+      withStock.map(i => ({
+        ingredientId: i.id,
+        change: -(i.currentStock || 0),
+        reason: 'stock_reset' as const,
+        notes: 'รีเซ็ตยอดคงเหลือเป็น 0 เพื่อเริ่มนับใหม่'
+      }))
+    );
+    setStockInputs({});
+    alert(`รีเซ็ตยอดคงเหลือ ${withStock.length} รายการเป็น 0 แล้ว`);
+  };
+
   const handleDownloadCSV = () => {
     if (ingredients.length === 0) return;
 
@@ -834,7 +856,7 @@ export const InventoryView: React.FC = () => {
         `"${ing.id}"`,
         `"${ing.name.replace(/"/g, '""')}"`,
         `"${catTh}"`,
-        ing.currentStock,
+        Number((ing.currentStock || 0).toFixed(4)),
         `"${ing.unit}"`,
         ing.minStockAlert,
         ing.unitCost.toFixed(2),
@@ -945,6 +967,17 @@ export const InventoryView: React.FC = () => {
             <History className="w-4 h-4 text-amber-400" />
             <span>ประวัติปรับสต็อก ({stockAdjustmentLogs.length})</span>
           </button>
+
+          {currentUser?.role === 'admin' && (
+            <button
+              onClick={handleResetAllStock}
+              className="px-3.5 py-2.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-bold text-xs rounded-xl shadow transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
+              title="ตั้งยอดคงเหลือทุกรายการเป็น 0 เพื่อเริ่มนับสต็อกใหม่"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>รีเซ็ตคงเหลือเป็น 0</span>
+            </button>
+          )}
 
           <button
             onClick={() => setIsAddLotOpen(true)}

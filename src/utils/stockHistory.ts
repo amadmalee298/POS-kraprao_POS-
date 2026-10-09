@@ -174,6 +174,7 @@ export function reasonLabel(reason: string): string {
     damaged: 'เสียหาย',
     audit_correction: 'ตรวจนับ',
     manual_adjustment: 'ปรับยอด',
+    stock_reset: 'รีเซ็ตเป็น 0',
     cooking_prep: 'เบิกไปผลิต/เตรียมครัว',
     prep_output: 'รับเข้าจากการผลิต',
     issue: 'เบิกใช้',
