@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, CheckCircle2, ChevronRight, Plus, Printer, RotateCcw, Trash2, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Plus, Printer, RotateCcw, Trash2, TriangleAlert } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { useLedger } from '../../hooks/useLedger';
 import {
@@ -36,9 +36,6 @@ export const LEDGER_TAB_LABELS: Record<LedgerTab, string> = {
   trial: 'งบทดลอง / ผังบัญชี',
   ledger: 'บัญชีแยกประเภท (ดูที่มา)'
 };
-
-const ASSUMPTIONS =
-  'สมมติฐาน: ขายเงินสดระหว่างเปิดกะ = ลิ้นชัก (ไม่ได้เปิดกะ = เงินสดนอกลิ้นชัก) · ใบแจ้งหนี้ลูกค้า = ลูกหนี้การค้า · บิลซัพพลายเออร์ = เจ้าหนี้การค้า · รับ/จ่ายผ่าน QR โอน บัตร = บัญชีธนาคาร · จ่ายเงินสดนอกลิ้นชัก = เงินสดย่อย · ซื้อวัตถุดิบ = สินค้าคงเหลือ (ตัดเป็นต้นทุนเมื่อขาย) · อุปกรณ์ = สินทรัพย์ คิดค่าเสื่อมทุกสิ้นเดือน · รับเข้าวัสดุสิ้นเปลือง = ค่าใช้จ่าย (นับจำนวนอุปกรณ์/วัสดุสิ้นเปลืองไม่กระทบบัญชี) · สต็อกที่นับเพิ่ม = สินค้ายกมา';
 
 const money = (n: number) => (Math.abs(n) < 0.005 ? 0 : n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const thaiDate = (d: string) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
@@ -285,6 +282,11 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
     );
   } else {
     body = (
+      <>
+      {/* Starting the books afresh sits with the journal (opening balances are journals) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 mb-4">
+        <BooksStart startAt={settings.booksStartAt} owner={isOwner(currentUser?.role)} onChange={iso => updateSettings({ booksStartAt: iso })} />
+      </div>
       <JournalBook
         journals={branchJournals}
         owner={isOwner(currentUser?.role)}
@@ -293,27 +295,17 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
         onReverse={j => setJournals(prev => [reversalOf(j, prev, todayStr(), currentUser?.name), ...prev])}
         by={currentUser?.name}
       />
+      </>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-        <h2 className="font-bold text-slate-100 flex items-center gap-2">
-          <BookOpen className="w-5 h-5 text-indigo-300" /> บัญชีและงบการเงิน
-        </h2>
-        <p className="text-[11px] text-slate-500">{ASSUMPTIONS}</p>
-        <BooksStart
-          startAt={settings.booksStartAt}
-          owner={isOwner(currentUser?.role)}
-          onChange={iso => updateSettings({ booksStartAt: iso })}
-        />
-        {historyLoading ? (
-          <p className="text-[11px] text-amber-300">กำลังโหลดรายการย้อนหลังตั้งแต่ {thaiDate(historyLoading)} จากคลาวด์… ตัวเลขจะอัปเดตเมื่อโหลดเสร็จ</p>
-        ) : historyFailed ? (
-          <p className="text-[11px] text-slate-500">ยังโหลดรายการย้อนหลังจากคลาวด์ไม่ได้ (ออฟไลน์?) ตัวเลขนี้มาจากข้อมูลในเครื่องนี้</p>
-        ) : null}
-      </div>
+      {historyLoading ? (
+        <p className="text-[11px] text-amber-300">กำลังโหลดรายการย้อนหลังตั้งแต่ {thaiDate(historyLoading)} จากคลาวด์… ตัวเลขจะอัปเดตเมื่อโหลดเสร็จ</p>
+      ) : historyFailed ? (
+        <p className="text-[11px] text-slate-500">ยังโหลดรายการย้อนหลังจากคลาวด์ไม่ได้ (ออฟไลน์?) ตัวเลขนี้มาจากข้อมูลในเครื่องนี้</p>
+      ) : null}
 
       <nav className="flex flex-wrap gap-2" aria-label="บัญชีและงบการเงิน">
         {(Object.keys(LEDGER_TAB_LABELS) as LedgerTab[]).map(t => (
