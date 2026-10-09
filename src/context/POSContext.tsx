@@ -806,7 +806,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const ing = byId.get(m.ingredientId);
       if (!ing || !Number.isFinite(m.change) || m.change === 0) return;
       const prev = ing.currentStock || 0;
-      const next = Math.max(0, prev + m.change);
+      // Rounded so repeated additions do not leave 23.650000000000002
+      const next = Math.max(0, Number((prev + m.change).toFixed(4)));
       const applied = Number((next - prev).toFixed(4));
       byId.set(ing.id, { ...ing, currentStock: next });
       if (!applied) return;

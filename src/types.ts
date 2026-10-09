@@ -241,6 +241,8 @@ export type StockAdjustmentReason =
   | 'cooking_prep'
   | 'prep_output'
   | 'issue'
+  /** Every count set to 0 to start counting afresh (moves no money in the books) */
+  | 'stock_reset'
   | 'other';
 
 export interface StockAdjustmentLog {

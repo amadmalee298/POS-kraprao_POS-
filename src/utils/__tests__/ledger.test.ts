@@ -259,6 +259,9 @@ describe('supplies and equipment in the stock list', () => {
     expect(legs('ls-0')).toEqual([['6100', 200, 0], ['1510', 0, 200]]);
     expect(legs('wg')).toEqual([]);
     expect(legs('cs')).toEqual([]);
+    // Setting every count to 0 to count afresh moves no money either
+    const reset = buildGlLines(data({ stockLogs: [{ id: 'rs', ingredientId: 'ing', ingredientName: 'หมู', previousStock: 5, newStock: 0, changeQty: -5, unit: 'kg', reason: 'stock_reset', userName: 'a', timestamp: '2026-10-05T10:00:00.000Z' } as any] }));
+    expect(reset.some(l => l.sourceId === 'rs')).toBe(false);
     expect(balanceSheet(lines, '2026-10-31').difference).toBe(0);
   });
 });
