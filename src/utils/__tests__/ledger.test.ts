@@ -233,6 +233,36 @@ describe('cash, deliveries, invoices and bills', () => {
   });
 });
 
+describe('supplies and equipment in the stock list', () => {
+  it('expenses supplies, makes equipment an asset with depreciation, and keeps their counts and waste out of stock', () => {
+    const ingredients = [
+      { id: 'pork', name: 'หมู', category: 'meat', unit: 'kg', currentStock: 5, minStockAlert: 1, unitCost: 100 },
+      { id: 'glove', name: 'ถุงมือ', category: 'supplies', unit: 'pack', currentStock: 5, minStockAlert: 1, unitCost: 50 },
+      { id: 'stove', name: 'เตาแก๊ส', category: 'kitchen', stockType: 'equipment', unit: 'pcs', currentStock: 1, minStockAlert: 0, unitCost: 2400 }
+    ] as any;
+    const lines = buildGlLines(
+      data({
+        ingredients,
+        stockLots: [
+          { id: 'lg', ingredientId: 'glove', lotNumber: 'LOT-G', quantity: 2, unitCost: 50, receivedDate: '2026-10-01', expiryDate: '', supplier: '', paidFrom: 'cash' },
+          { id: 'ls', ingredientId: 'stove', lotNumber: 'LOT-S', quantity: 1, unitCost: 2400, receivedDate: '2026-08-10', expiryDate: '', supplier: '' }
+        ],
+        wasteLogs: [{ id: 'wg', ingredientId: 'glove', ingredientName: 'ถุงมือ', quantity: 1, unit: 'pack', unitCost: 50, totalCostLoss: 50, reason: 'damaged', loggedDate: '2026-10-05' } as any],
+        stockLogs: [{ id: 'cs', ingredientId: 'stove', ingredientName: 'เตาแก๊ส', previousStock: 0, newStock: 1, changeQty: 1, unit: 'pcs', reason: 'manual_adjustment', userName: 'a', timestamp: '2026-10-05T10:00:00.000Z' } as any],
+        usefulLifeYears: 1,
+        today: '2026-10-08'
+      })
+    );
+    const legs = (id: string) => lines.filter(l => l.sourceId === id).map(l => [l.account, l.debit, l.credit]);
+    expect(legs('lg')).toEqual([['6000', 100, 0], ['1001', 0, 100]]);
+    expect(legs('ls')).toEqual([['1500', 2400, 0], ['1010', 0, 2400]]);
+    expect(legs('ls-0')).toEqual([['6100', 200, 0], ['1510', 0, 200]]);
+    expect(legs('wg')).toEqual([]);
+    expect(legs('cs')).toEqual([]);
+    expect(balanceSheet(lines, '2026-10-31').difference).toBe(0);
+  });
+});
+
 describe('journals', () => {
   it('only posts balanced entries on real accounts', () => {
     expect(checkJournal([{ account: '1500', debit: 100, credit: 0 }, { account: '3000', debit: 0, credit: 100 }]).ok).toBe(true);
