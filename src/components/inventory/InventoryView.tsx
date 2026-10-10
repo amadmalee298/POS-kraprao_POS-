@@ -4,7 +4,6 @@ import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType, isLowStock 
 import { StockIssuePanel } from './StockIssuePanel';
 import { CountStockPanel } from './CountStockPanel';
 import {
-  RotateCcw,
   ClipboardList,
   PackageCheck,
   AlertTriangle,
@@ -807,27 +806,6 @@ export const InventoryView: React.FC = () => {
     setIsAddLotOpen(false);
   };
 
-  // Start counting afresh: every item's stock to 0 (logged as a reset; the books are not touched,
-  // so the real count entered afterwards becomes the opening stock)
-  const handleResetAllStock = () => {
-    const withStock = ingredients.filter(i => (i.currentStock || 0) !== 0);
-    if (withStock.length === 0) {
-      alert('ยอดคงเหลือทุกรายการเป็น 0 อยู่แล้ว');
-      return;
-    }
-    if (!window.confirm(`ตั้งยอดคงเหลือ ${withStock.length} รายการเป็น 0 ทั้งหมด?\n\nใช้เมื่อจะเริ่มนับสต็อกใหม่ ประวัติจะบันทึกว่า "รีเซ็ตเป็น 0" และไม่ลงบัญชีเป็นของขาด\nย้อนกลับไม่ได้ ถ้าต้องการเก็บยอดเดิมไว้ ให้กด "ดาวน์โหลด CSV" ก่อน`)) return;
-    moveStock(
-      withStock.map(i => ({
-        ingredientId: i.id,
-        change: -(i.currentStock || 0),
-        reason: 'stock_reset' as const,
-        notes: 'รีเซ็ตยอดคงเหลือเป็น 0 เพื่อเริ่มนับใหม่'
-      }))
-    );
-    setStockInputs({});
-    alert(`รีเซ็ตยอดคงเหลือ ${withStock.length} รายการเป็น 0 แล้ว`);
-  };
-
   const handleDownloadCSV = () => {
     if (ingredients.length === 0) return;
 
@@ -929,15 +907,14 @@ export const InventoryView: React.FC = () => {
                     icon: ArrowLeftRight,
                     label: `ตรวจสอบข้อมูลไม่ตรงกับ Cloud${conflictReport?.ingredientConflicts?.length ? ` (${conflictReport.ingredientConflicts.length})` : ''}`,
                     onClick: openConflictResolver
-                  },
-                  ...(currentUser?.role === 'admin' ? [{ icon: RotateCcw, label: 'รีเซ็ตคงเหลือเป็น 0', onClick: handleResetAllStock, danger: true }] : [])
+                  }
                 ].map(item => (
                   <button
                     key={item.label}
                     type="button"
                     role="menuitem"
                     onClick={item.onClick}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left hover:bg-slate-800 ${'danger' in item && item.danger ? 'text-rose-300' : 'text-slate-200'}`}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left hover:bg-slate-800 text-slate-200`}
                   >
                     <item.icon className="w-4 h-4 shrink-0 opacity-80" />
                     <span>{item.label}</span>
