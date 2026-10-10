@@ -4516,6 +4516,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return { success: res.success, summary: res.summary };
   };
 
+  // Customers' QR orders still waiting for approval are shown at the shop's prices (the customer
+  // page writes its own); approving or settling one saves those prices (see repriceQrOrder)
+  const ordersForView = useMemo(
+    () => orders.map(o => (o.status === 'pending-qr' ? repriceQrOrder(o, menuItems, addOns, settings) : o)),
+    [orders, menuItems, addOns, settings]
+  );
+
   return (
     <POSContext.Provider
       value={{
@@ -4553,7 +4560,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteAddOn,
         ingredients,
         stockLots,
-        orders,
+        orders: ordersForView,
         expenses,
         incomes,
         settings,
