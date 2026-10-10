@@ -930,7 +930,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const handleOnline = () => {
       setIsOffline(false);
       // Auto sync when re-connected
-      syncOfflineQueue();
+      syncOfflineQueueRef.current();
     };
     const handleOffline = () => {
       setIsOffline(true);
@@ -1456,6 +1456,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setNotificationShopName(settings.shopName || currentBranch?.name);
   }, [settings.shopName, currentBranch?.name]);
 
+  // Timers and listeners call the latest version (their own copy would hold stale data)
+  const syncOfflineQueueRef = useRef<() => Promise<void>>(async () => undefined);
   const syncOfflineQueue = async () => {
     const nowIso = new Date().toISOString();
     const pendingOrders = orders.filter(o => o.isOfflineOrder && !o.isSynced);
@@ -1466,7 +1468,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setFirebaseSyncState(prev => ({ ...prev, status: 'syncing' }));
         await flushPendingStock();
         await flushPendingHistory();
-        await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false });
+        await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false, onlyMissing: true });
         if (!(await syncBranchToFirestore(currentBranch))) {
           setFirebaseSyncState(prev => ({ ...prev, status: 'error', errorMessage: 'บันทึกขึ้นคลาวด์ไม่ได้ ตรวจสอบการเชื่อมบัญชีร้าน' }));
           return;
@@ -1499,7 +1501,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         batchResult.syncedIds.forEach(id => uploaded.add(id));
         await flushPendingStock();
         await flushPendingHistory();
-        await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false });
+        await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false, onlyMissing: true });
         console.log(`[Firebase Service] ☁️ Synced ${batchResult.success} orders and inventory to Firestore.`);
       } catch (err) {
         console.error('[Firebase Service] ❌ Batch sync failed:', err);
@@ -1594,6 +1596,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       totalSyncedOrders: prev.totalSyncedOrders + pendingOrders.length
     }));
   };
+  syncOfflineQueueRef.current = syncOfflineQueue;
 
   const cleanAndSyncCloudNow = useCallback(async (options?: { purgeCloud?: boolean; withStock?: boolean }): Promise<{
     success: boolean;
@@ -2073,7 +2076,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!isAutoSyncEnabled || effectiveOffline) return;
 
     const intervalId = setInterval(() => {
-      syncOfflineQueue();
+      syncOfflineQueueRef.current();
     }, intervalSec * 1000);
 
     return () => clearInterval(intervalId);

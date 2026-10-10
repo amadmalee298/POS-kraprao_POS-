@@ -406,9 +406,12 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
 export async function syncInventoryToFirestore(
   ingredients: Ingredient[],
   branch: Branch,
-  options?: { purgeDeleted?: boolean; withStock?: boolean }
+  options?: { purgeDeleted?: boolean; withStock?: boolean; onlyMissing?: boolean }
 ): Promise<boolean> {
   if (!dbInstance || !navigator.onLine || ingredients.length === 0) return false;
+  // Routine syncs only add what the cloud lacks: this device's copy of an ingredient may be older
+  // than an edit made elsewhere (a new cost, name or alert level) and must not put it back.
+  const onlyMissing = options?.onlyMissing === true;
   // Stock levels are only overwritten on request: after being offline this device's numbers are
   // stale, and its sales are sent as deltas instead (applyStockDeltasToFirestore).
   const withStock = options?.withStock !== false;
@@ -448,6 +451,7 @@ export async function syncInventoryToFirestore(
     }
 
     ingredients.forEach(ing => {
+      if (onlyMissing && knownIds?.has(ing.id)) return;
       const includeStock = withStock || !knownIds!.has(ing.id);
       if (isLowStock(ing)) {
         lowStockCount++;
@@ -533,26 +537,32 @@ export async function applyStockDeltasToFirestore(
   await waitForFirebaseAuth();
 
   try {
-    const batch = writeBatch(dbInstance);
     const nowIso = new Date().toISOString();
     const byId = new Map(ingredients.map(i => [i.id, i]));
+    const ids = [...deltas.keys()].filter(id => deltas.get(id));
+    // Only the quantity changes: the name, cost, unit and alert level are the ingredient's own
+    // edits (syncIngredientToFirestore). Writing them here put back whatever this device last
+    // saw, e.g. undoing a cost changed on another device at its next sale. A document missing in
+    // the cloud is created complete rather than as a bare stock number.
+    const exists = await Promise.all(ids.map(id => getDoc(doc(dbInstance!, 'branches', branch.id, 'inventory', id)).then(d => d.exists()).catch(() => true)));
+    const batch = writeBatch(dbInstance);
 
-    deltas.forEach((amount, ingredientId) => {
-      if (!amount) return;
+    ids.forEach((ingredientId, i) => {
+      const amount = deltas.get(ingredientId)!;
       const ing = byId.get(ingredientId);
-      // Descriptive fields are included so a missing cloud document is created complete, not as a stub
-      const base = ing
-        ? {
-            ingredientId,
-            name: ing.name,
-            minStockAlert: ing.minStockAlert,
-            unit: ing.unit,
-            unitCost: ing.unitCost,
-            category: ing.category,
-            branchId: branch.id,
-            branchName: branch.name
-          }
-        : { ingredientId, branchId: branch.id, branchName: branch.name };
+      const base =
+        ing && !exists[i]
+          ? {
+              ingredientId,
+              name: ing.name,
+              minStockAlert: ing.minStockAlert,
+              unit: ing.unit,
+              unitCost: ing.unitCost,
+              category: ing.category,
+              branchId: branch.id,
+              branchName: branch.name
+            }
+          : { ingredientId, branchId: branch.id, branchName: branch.name };
 
       batch.set(
         doc(dbInstance!, 'branches', branch.id, 'inventory', ingredientId),
