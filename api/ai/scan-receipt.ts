@@ -6,6 +6,7 @@
 // .js: the package is ESM and Vercel runs it as plain Node
 import { runReceiptOcr } from '../../src/utils/receiptOcr.js';
 import { createClaudeJsonCaller, ClaudeCallError } from '../../src/utils/claudeClient.js';
+import { bearerToken, isShopStaff } from '../../src/server/staffAuth.js';
 
 const ALLOWED_ORIGIN = /^https:\/\/([a-z0-9-]+\.github\.io|[a-z0-9-]+\.vercel\.app)$|^http:\/\/localhost(:\d+)?$/i;
 
@@ -15,7 +16,7 @@ export default async function handler(req: any, res: any) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   }
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -23,6 +24,14 @@ export default async function handler(req: any, res: any) {
   const key = (process.env.ANTHROPIC_API_KEY || '').trim();
   if (!key) {
     return res.status(400).json({ error: 'MISSING_API_KEY', message: 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY บน Vercel' });
+  }
+  // Only the shop's own devices may spend the shop's AI credit
+  const staff = await isShopStaff(bearerToken(req.headers?.authorization)).catch(() => false);
+  if (!staff) {
+    return res.status(401).json({
+      error: 'NOT_SHOP_DEVICE',
+      message: 'ใช้ AI อ่านใบเสร็จได้เฉพาะเครื่องที่เข้าสู่ระบบบัญชีร้านแล้ว (ตั้งค่า → บัญชีร้าน)'
+    });
   }
   const body = typeof req.body === 'string' ? safeJson(req.body) : req.body || {};
   let image = String(body.image || '');

@@ -2,6 +2,7 @@ import type { VerifiedReceiptData } from '../utils/receiptOcr';
 import { runReceiptOcr } from '../utils/receiptOcr';
 import { apiUrl, hasBackend } from '../utils/apiClient';
 import { getStoredCredentials } from './notificationService';
+import { shopAccountIdToken } from './firebaseService';
 
 /** The shop's own Claude key, kept on this device only (set in the AI receipt scanner) */
 export const clientClaudeKey = (): string => {
@@ -21,10 +22,11 @@ async function viaServer(url: string, image: string, mimeType: string): Promise<
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 120_000);
   try {
+    const token = await shopAccountIdToken();
     const res = await fetch(url, {
       method: 'POST',
       signal: controller.signal,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ image, mimeType, anthropicApiKey: clientClaudeKey(), todayIso: new Date().toLocaleDateString('en-CA') })
     });
     const data = await res.json().catch(() => ({}));

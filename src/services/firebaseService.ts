@@ -2662,6 +2662,20 @@ export function shopAccountRefreshToken(): string | null {
   return u && !u.isAnonymous && u.email ? u.refreshToken : null;
 }
 
+/**
+ * This device's sign-in token when it uses the shop account, sent to the shop's server functions
+ * that spend the shop's money (they accept only the shop's own devices). Null for customers.
+ */
+export async function shopAccountIdToken(): Promise<string | null> {
+  const u = authInstance?.currentUser;
+  if (!u || u.isAnonymous || !u.email) return null;
+  try {
+    return await u.getIdToken();
+  } catch {
+    return null;
+  }
+}
+
 /** The Firebase project this app uses (public values from firebase-applet-config.json) */
 export function firebaseWebConfig(): { projectId: string; apiKey: string; databaseId: string } {
   const cfg = firebaseConfig as any;
