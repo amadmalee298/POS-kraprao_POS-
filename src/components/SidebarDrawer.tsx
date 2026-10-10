@@ -46,13 +46,10 @@ const DOCS_GROUP: ActiveTab[] = ['quotation', 'tax_receipt', 'order_history', 'c
 const IN_SETTINGS: ActiveTab[] = ['line_notify'];
 const PAGE_SECTIONS: Partial<Record<SectionPage, { id: string; label: string }[]>> = {
   inventory: [
-    { id: 'current', label: 'วัตถุดิบคงเหลือ' },
-    { id: 'smart_audit', label: 'ตรวจนับด้วยการสแกน (Smart Audit)' },
-    { id: 'issue', label: 'ตัดจ่ายตามเมนู / ของเสีย' },
-    { id: 'usage', label: 'ประวัติรับ-เบิกรายวัตถุดิบ' },
-    { id: 'stockcard', label: 'สมุดประวัติรวม (Stock Card)' },
-    { id: 'forecast', label: 'AI พยากรณ์ & เตือนของขาด' },
-    { id: 'waste', label: 'AI วิเคราะห์ของเสีย' }
+    { id: 'stock', label: 'สต็อกคงเหลือ' },
+    { id: 'count', label: 'นับสต็อก' },
+    { id: 'history', label: 'ประวัติรับ-เบิก' },
+    { id: 'report', label: 'รายงาน & พยากรณ์' }
   ],
   recipes: [
     { id: 'menu', label: 'จัดการเมนูอาหาร' },
