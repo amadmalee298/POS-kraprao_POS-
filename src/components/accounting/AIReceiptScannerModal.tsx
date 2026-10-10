@@ -39,6 +39,7 @@ import { splitBillCost } from '../../utils/stockIntake';
 import { compressBase64Image } from '../../utils/imageCompressor';
 import { runReceiptOcr } from '../../utils/receiptOcr';
 import { apiUrl, hasBackend } from '../../utils/apiClient';
+import { shopAccountIdToken } from '../../services/firebaseService';
 import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 
 interface StockEntryItem {
@@ -385,10 +386,11 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
           // Accurate (Pro) models plus an optional re-check pass can take a while
           const timer = setTimeout(() => controller.abort(), 120000);
 
+          const token = await shopAccountIdToken();
           const response = await fetch(apiUrl('/api/ai/scan-receipt'), {
             method: 'POST',
             signal: controller.signal,
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
             body: JSON.stringify({
               image: finalBase64,
               mimeType: finalMime,
