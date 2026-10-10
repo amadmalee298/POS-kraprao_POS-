@@ -2,8 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType, isLowStock } from '../../utils/stockTypes';
 import { StockIssuePanel } from './StockIssuePanel';
+import { CountStockPanel } from './CountStockPanel';
 import {
   RotateCcw,
+  ClipboardList,
   PackageCheck,
   AlertTriangle,
   Plus,
@@ -20,7 +22,6 @@ import {
   Filter,
   Calendar,
   Sparkles,
-  QrCode,
   CheckSquare,
   Square,
   Edit3,
@@ -53,7 +54,6 @@ const MEASURE_UNITS = [...MASS_UNITS, ...VOLUME_UNITS];
 import { buildStockMovements, cancelReturns, localDay, salesUsageByDay, withRunningBalance } from '../../utils/stockHistory';
 import { expiryState, latestLotByIngredient } from '../../utils/stockLots';
 import { AIWasteAnalysisPanel } from './AIWasteAnalysisPanel';
-import { SmartAuditPanel } from './SmartAuditPanel';
 import { AdjustmentLogModal } from './AdjustmentLogModal';
 import { InventoryReportModal } from './InventoryReportModal';
 import { GoogleSheetsModal } from '../common/GoogleSheetsModal';
@@ -143,10 +143,17 @@ export const InventoryView: React.FC = () => {
   const [savedCostIngId, setSavedCostIngId] = useState<string | null>(null);
 
   // Tab State
-  type InvTab = 'smart_audit' | 'forecast' | 'waste' | 'current' | 'issue' | 'usage' | 'stockcard';
-  const [activeTab, setActiveTab] = useState<InvTab>(() => takePageSection<InvTab>('inventory') || 'smart_audit');
+  // Four tabs, by what the shop does: see and move stock, count it, look back, and plan
+  type InvTab = 'stock' | 'count' | 'history' | 'report';
+  // Links and bookmarks to the former sections still land on the right tab
+  const LEGACY_SECTIONS: Record<string, InvTab> = { current: 'stock', issue: 'stock', smart_audit: 'count', usage: 'history', stockcard: 'history', forecast: 'report', waste: 'report' };
+  const toTab = (s?: string | null): InvTab | null => (s ? LEGACY_SECTIONS[s] || (['stock', 'count', 'history', 'report'].includes(s) ? (s as InvTab) : null) : null);
+  const [activeTab, setActiveTab] = useState<InvTab>(() => toTab(takePageSection<string>('inventory')) || 'stock');
   // The side menu can open a section of this page directly
-  useEffect(() => onPageSectionRequest<InvTab>('inventory', setActiveTab), []);
+  useEffect(() => onPageSectionRequest<string>('inventory', s => setActiveTab(toTab(s) || 'stock')), []);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [showIssuePanel, setShowIssuePanel] = useState(false);
+  const [reportView, setReportView] = useState<'forecast' | 'waste'>('forecast');
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -879,113 +886,66 @@ export const InventoryView: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-950 text-slate-100 pb-12">
-      {/* Top Header */}
-      <div className="p-4 sm:p-5 bg-slate-900 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center space-x-3">
-          <div className="p-3 bg-gradient-to-tr from-orange-500 to-amber-600 rounded-2xl shadow-lg text-white">
-            <PackageCheck className="w-6 h-6" />
+      {/* Top Header: one main action, the rest in a menu */}
+      <div className="p-4 sm:p-5 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-3">
+        <div className="flex items-center space-x-3 min-w-0">
+          <div className="p-2.5 bg-gradient-to-tr from-orange-500 to-amber-600 rounded-2xl shadow-lg text-white shrink-0">
+            <PackageCheck className="w-5 h-5" />
           </div>
-          <div>
-            <h1 className="font-bold text-lg sm:text-xl text-slate-100 flex items-center gap-2">
-              <span>คลังวัตถุดิบ (Inventory & Stocks)</span>
-            </h1>
-            <p className="text-xs text-slate-400 mt-0.5">
-              ระบบเบิกรับ ปรับยอด สัญญาณวัตถุดิบขาดแคลน และบันทึกประวัติ Stock Card หมุนเวียน
-            </p>
-          </div>
+          <h1 className="font-bold text-lg text-slate-100 truncate">สต็อกวัตถุดิบ</h1>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={handleCloudSync}
-            disabled={isSyncingCloud}
-            className="px-3.5 py-2.5 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/50 text-indigo-300 font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap disabled:opacity-50"
-            title="ดึงข้อมูลวัตถุดิบและสต็อกจาก Cloud เพื่อกู้คืนข้อมูลหรืออัปเดตให้ตรงกับระบบคลาวด์"
-          >
-            <RefreshCw className={`w-4 h-4 text-indigo-400 ${isSyncingCloud ? 'animate-spin' : ''}`} />
-            <span>{isSyncingCloud ? 'กำลังซิงค์...' : 'ดึงข้อมูลจาก Cloud'}</span>
-          </button>
-
-          <button
-            onClick={openConflictResolver}
-            className="px-3.5 py-2.5 bg-amber-950/80 hover:bg-amber-900 border border-amber-500/50 text-amber-300 font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
-            title="เปิดเครื่องมือตรวจสอบและเลือกแหล่งข้อมูลที่ถูกต้องเมื่อข้อมูลในเครื่องกับบน Cloud ไม่ตรงกัน"
-          >
-            <ArrowLeftRight className="w-4 h-4 text-amber-400" />
-            <span>ตรวจสอบความขัดแย้ง</span>
-            {conflictReport?.ingredientConflicts && conflictReport.ingredientConflicts.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black">
-                {conflictReport.ingredientConflicts.length}
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => setIsSheetsModalOpen(true)}
-            className="px-3.5 py-2.5 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
-            title="ส่งออกสต็อกและประวัติการเคลื่อนไหวไปยัง Google Sheets"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-            <span>Google Sheets</span>
-          </button>
-
-          <button
-            onClick={() => setIsReportModalOpen(true)}
-            className="px-3.5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
-            title="พิมพ์รายงานสรุปสต็อกคงเหลือปัจจุบัน (PDF / Print Report)"
-          >
-            <Printer className="w-4 h-4 text-sky-100" />
-            <span>พิมพ์รายงานสต็อก</span>
-          </button>
-
-          <button
-            onClick={handleDownloadCSV}
-            className="px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
-            title="ดาวน์โหลดไฟล์ CSV ข้อมูลวัตถุดิบคงเหลือสำหรับการตรวจสอบบัญชีและสำรองข้อมูล"
-          >
-            <Download className="w-4 h-4 text-emerald-200" />
-            <span>ดาวน์โหลด CSV</span>
-          </button>
-
+        <div className="flex items-center gap-2 shrink-0 relative">
           <button
             onClick={() => setIsAddIngOpen(true)}
-            className="px-4 py-2.5 bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-orange-950/60 transition flex items-center space-x-2 active:scale-95 whitespace-nowrap"
+            className="px-3.5 py-2.5 bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
           >
             <Plus className="w-4 h-4" />
-            <span>เพิ่มรหัสวัตถุดิบใหม่</span>
+            <span>วัตถุดิบ</span>
           </button>
-
           <button
-            onClick={() => {
-              setSelectedIngForLog(undefined);
-              setIsAdjustmentLogOpen(true);
-            }}
-            className="px-3.5 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs rounded-xl shadow transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
-            title="ดูและบันทึกประวัติการปรับยอดสต็อกวัตถุดิบ"
+            onClick={() => setIsMoreOpen(o => !o)}
+            aria-label="เมนูเพิ่มเติม"
+            aria-expanded={isMoreOpen}
+            className="p-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-xl relative"
           >
-            <History className="w-4 h-4 text-amber-400" />
-            <span>ประวัติปรับสต็อก ({stockAdjustmentLogs.length})</span>
+            <MoreVertical className="w-4 h-4" />
+            {conflictReport?.ingredientConflicts && conflictReport.ingredientConflicts.length > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-500" />}
           </button>
-
-          {currentUser?.role === 'admin' && (
-            <button
-              onClick={handleResetAllStock}
-              className="px-3.5 py-2.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-bold text-xs rounded-xl shadow transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
-              title="ตั้งยอดคงเหลือทุกรายการเป็น 0 เพื่อเริ่มนับสต็อกใหม่"
-            >
-              <RotateCcw className="w-4 h-4" />
-              <span>รีเซ็ตคงเหลือเป็น 0</span>
-            </button>
+          {isMoreOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setIsMoreOpen(false)} />
+              <div className="absolute right-0 top-12 z-40 w-64 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-1.5 text-sm" role="menu" onClick={() => setIsMoreOpen(false)}>
+                {[
+                  { icon: Truck, label: 'รับเข้า Lot ใหม่ (ระบุวันหมดอายุ)', onClick: () => setIsAddLotOpen(true) },
+                  { icon: Download, label: 'ดาวน์โหลด CSV', onClick: handleDownloadCSV },
+                  { icon: Printer, label: 'พิมพ์รายงานสต็อก', onClick: () => setIsReportModalOpen(true) },
+                  { icon: FileSpreadsheet, label: 'ส่งออก Google Sheets', onClick: () => setIsSheetsModalOpen(true) },
+                  { icon: Tag, label: `จัดการหมวดหมู่ (${ingredientCategories.length})`, onClick: () => setIsManageIngCatsOpen(true) },
+                  { icon: Scale, label: `จัดการหน่วยนับ (${ingredientUnits.length})`, onClick: () => setIsManageUnitsOpen(true) },
+                  { icon: History, label: `ประวัติปรับสต็อก (${stockAdjustmentLogs.length})`, onClick: () => { setSelectedIngForLog(undefined); setIsAdjustmentLogOpen(true); } },
+                  { icon: RefreshCw, label: isSyncingCloud ? 'กำลังซิงค์...' : 'ดึงข้อมูลจาก Cloud', onClick: handleCloudSync },
+                  {
+                    icon: ArrowLeftRight,
+                    label: `ตรวจสอบข้อมูลไม่ตรงกับ Cloud${conflictReport?.ingredientConflicts?.length ? ` (${conflictReport.ingredientConflicts.length})` : ''}`,
+                    onClick: openConflictResolver
+                  },
+                  ...(currentUser?.role === 'admin' ? [{ icon: RotateCcw, label: 'รีเซ็ตคงเหลือเป็น 0', onClick: handleResetAllStock, danger: true }] : [])
+                ].map(item => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    role="menuitem"
+                    onClick={item.onClick}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left hover:bg-slate-800 ${'danger' in item && item.danger ? 'text-rose-300' : 'text-slate-200'}`}
+                  >
+                    <item.icon className="w-4 h-4 shrink-0 opacity-80" />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </>
           )}
-
-          <button
-            onClick={() => setIsAddLotOpen(true)}
-            className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl shadow transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
-          >
-            <Truck className="w-4 h-4 text-emerald-400" />
-            <span>รับเข้า Lot ใหม่</span>
-          </button>
         </div>
       </div>
 
@@ -1004,117 +964,51 @@ export const InventoryView: React.FC = () => {
         )}
 
         {/* Navigation Tabs */}
-        <div className="flex items-center overflow-x-auto no-scrollbar gap-2 p-1.5 bg-slate-900 border border-slate-800/80 rounded-2xl">
-          <button
-            onClick={() => setActiveTab('smart_audit')}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
-              activeTab === 'smart_audit'
-                ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-950/60 ring-1 ring-indigo-400/50'
-                : 'text-indigo-400 hover:text-indigo-200 hover:bg-indigo-500/10 border border-indigo-500/30'
-            }`}
-          >
-            <QrCode className="w-4 h-4 text-amber-300" />
-            <span>🔍 Smart Audit (สแกนตรวจนับคลัง)</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('forecast')}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
-              activeTab === 'forecast'
-                ? 'bg-gradient-to-r from-rose-600 to-orange-600 text-white shadow-lg shadow-rose-950/50 ring-1 ring-rose-400/50'
-                : 'text-rose-400 hover:text-rose-200 hover:bg-rose-500/10 border border-rose-500/30'
-            }`}
-          >
-            <Sparkles className="w-4 h-4 text-rose-300 animate-pulse" />
-            <span>✨ AI พยากรณ์ความต้องการ & เตือนวัตถุดิบขาด</span>
-            {lowStockCount > 0 && (
-              <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40 font-black animate-pulse">
-                {lowStockCount} เตือนด่วน
+        <div className="grid grid-cols-4 gap-1 p-1 bg-slate-900 border border-slate-800/80 rounded-2xl" role="tablist" aria-label="สต็อกวัตถุดิบ">
+          {([
+            ['stock', 'สต็อก', Layers, lowStockCount],
+            ['count', 'นับสต็อก', ClipboardList, 0],
+            ['history', 'ประวัติ', History, 0],
+            ['report', 'รายงาน', Sparkles, 0]
+          ] as [InvTab, string, React.ElementType, number][]).map(([id, label, Icon, badge]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === id}
+              onClick={() => setActiveTab(id)}
+              className={`py-2.5 rounded-xl font-bold text-xs transition flex flex-col sm:flex-row items-center justify-center gap-1 ${
+                activeTab === id ? 'bg-orange-600 text-white shadow-lg shadow-orange-950/50' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <span className="relative">
+                <Icon className="w-4 h-4" />
+                {badge > 0 && <span className="absolute -top-2 -right-3 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] flex items-center justify-center">{badge}</span>}
               </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => setActiveTab('waste')}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
-              activeTab === 'waste'
-                ? 'bg-gradient-to-r from-rose-600 to-amber-600 text-white shadow-lg shadow-rose-950/50 ring-1 ring-rose-400/50'
-                : 'text-amber-400 hover:text-amber-200 hover:bg-amber-500/10 border border-amber-500/30'
-            }`}
-          >
-            <Trash2 className="w-4 h-4 text-rose-400" />
-            <span>🗑️ AI วิเคราะห์ขยะ & ลดการสูญเสีย</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('current')}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
-              activeTab === 'current'
-                ? 'bg-orange-600 text-white shadow-lg shadow-orange-950/50'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>วัตถุดิบคงเหลือปัจจุบัน</span>
-            <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] bg-slate-950/60 text-slate-300 border border-slate-700">
-              {ingredients.length}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('issue')}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
-              activeTab === 'issue'
-                ? 'bg-orange-600 text-white shadow-lg shadow-orange-950/50'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <PackageMinus className="w-4 h-4" />
-            <span>ตัดจ่ายตามเมนู / ของเสีย</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('usage')}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
-              activeTab === 'usage'
-                ? 'bg-orange-600 text-white shadow-lg shadow-orange-950/50'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <History className="w-4 h-4" />
-            <span>ประวัติรับ-เบิกรายวัตถุดิบ (Item Usage Log)</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('stockcard')}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center space-x-2 whitespace-nowrap ${
-              activeTab === 'stockcard'
-                ? 'bg-orange-600 text-white shadow-lg shadow-orange-950/50'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span>สมุดประวัติรวมทั้งหมด (Stock Card)</span>
-          </button>
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
 
-        {/* TAB -1: SMART AUDIT CAMERA BARCODE SCANNER */}
-        {activeTab === 'smart_audit' && (
-          <SmartAuditPanel />
+        {/* นับสต็อก: type the real counts (or scan barcodes) */}
+        {activeTab === 'count' && <CountStockPanel />}
+
+        {/* รายงาน: what to reorder, and what is being wasted */}
+        {activeTab === 'report' && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-1 p-1 bg-slate-900 border border-slate-800 rounded-2xl">
+              {([['forecast', 'พยากรณ์ & สั่งซื้อ'], ['waste', 'วิเคราะห์ของเสีย']] as const).map(([id, label]) => (
+                <button key={id} type="button" onClick={() => setReportView(id)} className={`py-2 rounded-xl text-xs font-bold ${reportView === id ? 'bg-slate-100 text-slate-900' : 'text-slate-400'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {reportView === 'forecast' ? <AIInventoryForecastPanel /> : <AIWasteAnalysisPanel />}
+          </div>
         )}
 
-        {/* TAB 0: AI DEMAND FORECAST & LOW-STOCK EARLY WARNING */}
-        {activeTab === 'forecast' && (
-          <AIInventoryForecastPanel />
-        )}
-
-        {/* TAB 0.5: AI WASTE ANALYSIS & SPOILAGE REDUCTION */}
-        {activeTab === 'waste' && (
-          <AIWasteAnalysisPanel />
-        )}
-
-        {/* TAB 1: วัตถุดิบคงเหลือปัจจุบัน */}
-        {activeTab === 'current' && (
+        {/* สต็อก: what is left, receiving and taking out */}
+        {activeTab === 'stock' && (
           <div className="space-y-4">
             {/* Kinds of stock */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2" role="tablist" aria-label="ประเภทสต็อก">
@@ -1142,98 +1036,51 @@ export const InventoryView: React.FC = () => {
             {stockTypeFilter !== 'all' && (
               <p className="text-[11px] text-slate-400 -mt-2">{STOCK_TYPES.find(t => t.id === stockTypeFilter)?.hint}</p>
             )}
-            {/* Filter Bar */}
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300 font-bold">
-                <div className="flex items-center space-x-1.5 text-orange-400 mr-1">
-                  <Filter className="w-4 h-4" />
-                  <span>คัดกรองวัตถุดิบ: {filteredIngredients.length} รายการ</span>
-                </div>
-
+            {/* Filter Bar: search first, then the two filters */}
+            <div className="bg-slate-900 border border-slate-800 p-3 rounded-2xl space-y-2">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder={`ค้นหาวัตถุดิบ (${filteredIngredients.length} รายการ)`}
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div className="flex items-center gap-2">
                 <select
                   value={categoryFilter}
                   onChange={e => setCategoryFilter(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 text-slate-200 text-xs font-semibold rounded-xl px-3 py-2 focus:outline-none focus:border-orange-500"
+                  aria-label="หมวดหมู่"
+                  className="flex-1 min-w-0 bg-slate-950 border border-slate-800 text-slate-200 text-xs font-semibold rounded-xl px-3 py-2 focus:outline-none focus:border-orange-500"
                 >
-                  <option value="all">📦 ทุกหมวดหมู่</option>
+                  <option value="all">ทุกหมวดหมู่</option>
                   {ingredientCategories.map(cat => (
                     <option key={cat.id} value={cat.id}>
                       {cat.icon || '🏷️'} {cat.name}
                     </option>
                   ))}
                 </select>
-
                 <button
-                  type="button"
-                  onClick={() => setIsManageIngCatsOpen(true)}
-                  className="px-3 py-2 bg-orange-950/40 border border-orange-500/30 hover:border-orange-500 text-orange-400 font-bold text-xs rounded-xl transition flex items-center space-x-1.5 active:scale-95 cursor-pointer"
-                  title="เพิ่มหรือลดหมวดหมู่วัตถุดิบ"
+                  onClick={() => setOnlyLowStock(!onlyLowStock)}
+                  aria-pressed={onlyLowStock}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border whitespace-nowrap ${
+                    onlyLowStock ? 'bg-rose-500/20 text-rose-300 border-rose-500/50' : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
+                  }`}
                 >
-                  <Tag className="w-3.5 h-3.5 text-orange-400" />
-                  <span>จัดการหมวดหมู่ ({ingredientCategories.length})</span>
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>ใกล้หมด ({lowStockCount})</span>
                 </button>
-
-                <button
-                  type="button"
-                  onClick={() => setIsManageUnitsOpen(true)}
-                  className="px-3 py-2 bg-sky-950/40 border border-sky-500/30 hover:border-sky-500 text-sky-400 font-bold text-xs rounded-xl transition flex items-center space-x-1.5 active:scale-95 cursor-pointer"
-                  title="เพิ่ม แก้ไข หรือลบหน่วยนับวัตถุดิบ (Units)"
-                >
-                  <Scale className="w-3.5 h-3.5 text-sky-400" />
-                  <span>จัดการหน่วยนับ ({ingredientUnits.length})</span>
-                </button>
-
                 <button
                   type="button"
                   onClick={handleToggleSelectAll}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 hover:border-amber-500/50 text-slate-300 hover:text-amber-300 font-bold text-xs rounded-xl transition flex items-center space-x-1.5"
+                  title={isAllSelected ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมด (แก้ไข/ลบหลายรายการ)'}
+                  aria-label={isAllSelected ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมด'}
+                  className="p-2 bg-slate-950 border border-slate-800 hover:border-amber-500/50 rounded-xl"
                 >
-                  {isAllSelected ? (
-                    <>
-                      <CheckSquare className="w-4 h-4 text-amber-400" />
-                      <span>ยกเลิกเลือกทั้งหมด</span>
-                    </>
-                  ) : (
-                    <>
-                      <Square className="w-4 h-4 text-slate-500" />
-                      <span>เลือกทั้งหมด ({filteredIngredients.length})</span>
-                    </>
-                  )}
+                  {isAllSelected ? <CheckSquare className="w-4 h-4 text-amber-400" /> : <Square className="w-4 h-4 text-slate-500" />}
                 </button>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={handleDownloadCSV}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 hover:border-emerald-500/50 text-emerald-400 hover:text-emerald-300 font-bold text-xs rounded-xl transition flex items-center space-x-1.5 active:scale-95 whitespace-nowrap"
-                  title="ส่งออกรายการวัตถุดิบเป็น CSV"
-                >
-                  <Download className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>ส่งออก CSV ({filteredIngredients.length})</span>
-                </button>
-
-                <button
-                  onClick={() => setOnlyLowStock(!onlyLowStock)}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-2 border whitespace-nowrap ${
-                    onlyLowStock
-                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 shadow-lg shadow-rose-950/30'
-                      : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
-                  }`}
-                >
-                  <AlertTriangle className={`w-3.5 h-3.5 ${onlyLowStock ? 'text-rose-400 animate-bounce' : ''}`} />
-                  <span>แสดงเฉพาะวัตถุดิบใกล้หมดสต๊อก ({lowStockCount})</span>
-                </button>
-
-                <div className="relative flex-1 sm:w-64">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    placeholder="ค้นหาวัตถุดิบ..."
-                    value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-orange-500"
-                  />
-                </div>
               </div>
             </div>
 
@@ -1330,10 +1177,10 @@ export const InventoryView: React.FC = () => {
                     )}
                     <div className="grid grid-cols-4 gap-1.5">
                       <button type="button" onClick={() => handleOpenQuickAddStock(ing)} className="col-span-2 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-center gap-1">
-                        <PackagePlus className="w-3.5 h-3.5" /> เติมสต็อก
+                        <PackagePlus className="w-3.5 h-3.5" /> รับเข้า
                       </button>
                       <button type="button" onClick={() => handleOpenQuickLogWaste(ing)} className="py-2 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold">
-                        ของเสีย
+                        ตัดออก
                       </button>
                       <button type="button" onClick={() => handleOpenEditIngredient(ing)} className="py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold">
                         แก้ไข
@@ -1553,7 +1400,7 @@ export const InventoryView: React.FC = () => {
                                   title="เติมสต็อกด่วน (Add Stock)"
                                 >
                                   <PackagePlus className="w-3.5 h-3.5" />
-                                  <span>+ เติมสต็อก</span>
+                                  <span>+ รับเข้า</span>
                                 </button>
 
                                 <button
@@ -1563,7 +1410,7 @@ export const InventoryView: React.FC = () => {
                                   title="บันทึกของเสีย/ตัดสต็อก (Log Waste)"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
-                                  <span>ตัดของเสีย</span>
+                                  <span>− ตัดออก</span>
                                 </button>
                               </div>
 
@@ -1685,29 +1532,31 @@ export const InventoryView: React.FC = () => {
                 </table>
               </div>
             </div>
+            {/* Several items at once (by dish sold, or waste) */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl">
+              <button type="button" onClick={() => setShowIssuePanel(o => !o)} className="w-full flex items-center justify-between px-4 py-3 text-sm font-bold text-slate-200">
+                <span className="flex items-center gap-2">
+                  <PackageMinus className="w-4 h-4 text-rose-300" /> ตัดออกหลายรายการพร้อมกัน (ตามเมนู / ของเสีย)
+                </span>
+                <span className="text-slate-500 text-xs">{showIssuePanel ? 'ซ่อน' : 'เปิด'}</span>
+              </button>
+              {showIssuePanel && (
+                <div className="p-3 pt-0">
+                  <StockIssuePanel />
+                </div>
+              )}
+            </div>
           </div>
         )}
 
-        {/* TAB 2: ประวัติรับ-เบิกรายวัตถุดิบ (Item Usage Log) */}
-
-        {activeTab === 'issue' && <StockIssuePanel />}
-
-        {activeTab === 'usage' && (
+        {/* ประวัติ: every movement; one ingredient also shows its stock card with running balance */}
+        {activeTab === 'history' && (
           <div className="space-y-5">
             {/* Header Banner */}
-            <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="flex items-center space-x-3">
-                <div className="p-3 bg-slate-800 rounded-xl text-orange-400 border border-slate-700">
-                  <History className="w-6 h-6" />
-                </div>
-                <div>
-                  <h2 className="font-bold text-base text-slate-100">
-                    ประวัติการใช้งานและรับ-เบิกวัตถุดิบ (Item Movement Log)
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    ติดตามประวัติการตัดสต๊อกอัตโนมัติจากหน้า POS, การรับสินค้าเข้าคลัง และการปรับยอดคงเหล้อย้อนหลัง
-                  </p>
-                </div>
+            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+              <div>
+                <h2 className="font-bold text-base text-slate-100">ประวัติรับ-เบิก</h2>
+                <p className="text-[11px] text-slate-400">เลือกวัตถุดิบเพื่อดูสต็อกการ์ดและยอดคงเหลือทีละรายการ</p>
               </div>
 
               {/* Ingredient Dropdown */}
@@ -1877,8 +1726,8 @@ export const InventoryView: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: สมุดประวัติรวมทั้งหมด (Stock Card) */}
-        {activeTab === 'stockcard' && (
+        {/* Stock card of the chosen ingredient */}
+        {activeTab === 'history' && selectedIngredientFilter !== 'all' && (
           <div className="space-y-4">
             {/* Header Info */}
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
