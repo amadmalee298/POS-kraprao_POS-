@@ -36,6 +36,7 @@ import { SheetsScriptAutoSync } from './components/sheets/SheetsScriptAutoSync';
 import { FilingReminder } from './components/filings/FilingReminder';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
 import { canOpenTab, firstAllowedTab } from './utils/access';
+import { PrepCostSync } from './components/inventory/PrepCostSync';
 import { MobileClockPage, readClockHash } from './components/attendance/MobileClockPage';
 
 const MainLayout: React.FC = () => {
@@ -205,6 +206,7 @@ const MainLayout: React.FC = () => {
         onRefreshScan={scanForSyncConflicts}
         isScanning={isScanningConflicts}
       />
+      <PrepCostSync />
     </div>
   );
 };

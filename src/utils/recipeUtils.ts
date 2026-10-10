@@ -27,7 +27,7 @@ export function convertAmount(amount: number, from: string | undefined, to: stri
   return factor === undefined ? null : amount * factor;
 }
 
-type CountSource = Pick<Ingredient, 'unit' | 'countUnit' | 'countPerBase' | 'countBase'>;
+type CountSource = Pick<Ingredient, 'unit' | 'countUnit' | 'countPerBase' | 'countBase'> & { name?: string };
 
 const MASS = ['kg', 'g'];
 const VOLUME = ['l', 'ml'];
@@ -66,25 +66,68 @@ export function convertForIngredient(amount: number, from: string | undefined, t
       return inBase === null ? null : inBase * per;
     }
   }
-  return convertAmount(amount, from, to);
+  const direct = convertAmount(amount, from, to);
+  if (direct !== null) return direct;
+  // A bottle or bag whose size is in its name: 1 ขวด "1.5 ล." = 1,500 ml
+  const measure = measureOfCountUnit(ing);
+  if (measure && ing) {
+    const stock = canonicalUnit(ing.unit);
+    if (canonicalUnit(to) === stock) {
+      const inMeasure = convertAmount(amount, from, measure.unit);
+      return inMeasure === null ? null : inMeasure / measure.size;
+    }
+    if (canonicalUnit(from) === stock) return convertAmount(amount * measure.size, measure.unit, to);
+  }
+  return null;
 }
 
 /**
- * Cost of one stock unit. Older data has bottle/litre prices typed into ingredients counted in ml
- * (e.g. fish sauce "150 ฿ per ml"); nobody pays ฿10 or more per millilitre, so such a price is read
- * as the price of one package (packageSize ml) or, without a package size, of one litre.
+ * What one counted stock unit (ขวด, ถุง, แพ็ค…) holds, read from the ingredient's name:
+ * "ทิพรส น้ำปลาแท้ ขวดเพ็ท 1.5 ล." counted in ขวด → 1,500 ml. null when not known.
+ */
+export function measureOfCountUnit(ing: Partial<CountSource> | undefined | null): { unit: 'ml' | 'g'; size: number } | null {
+  const u = canonicalUnit(ing?.unit);
+  if (!ing || !u || MASS.includes(u) || VOLUME.includes(u)) return null;
+  const ml = packageSizeFromName(ing.name, 'ml');
+  if (ml > 0) return { unit: 'ml', size: ml };
+  const g = packageSizeFromName(ing.name, 'g');
+  return g > 0 ? { unit: 'g', size: g } : null;
+}
+
+/**
+ * Package size written in an ingredient's name, in its stock unit: "ข้าวหอม 5 กก." in g → 5000,
+ * "น้ำปลา ขวดเพ็ท 1.5 ล." in ml → 1500. 0 when there is none or it cannot be converted.
+ */
+export function packageSizeFromName(name: string | undefined, unit: string | undefined): number {
+  const m = /(\d+(?:[.,]\d+)?)\s*(กิโลกรัม|กิโล|กก|kg|กรัม|g|ลิตร|ล|l|มิลลิลิตร|มล|ml)(?![a-zก-๙])/i.exec(name || '');
+  if (!m) return 0;
+  const from = canonicalUnit(m[2]);
+  if (!MASS.includes(canonicalUnit(unit)) && !VOLUME.includes(canonicalUnit(unit))) return 0;
+  // Only between kg/g or l/ml (convertAmount takes unlike units as-is)
+  if ((MASS.includes(from) ? MASS : VOLUME).indexOf(canonicalUnit(unit)) < 0) return 0;
+  const size = convertAmount(Number(m[1].replace(',', '.')), from, unit);
+  return size && size > 0 ? size : 0;
+}
+
+/**
+ * Cost of one stock unit. Older data has bottle/bag prices typed into ingredients counted in ml or
+ * g (e.g. fish sauce "150 ฿ per ml", rice "137 ฿ per g"); nobody pays ฿10 or more per millilitre
+ * or gram, so such a price is read as the price of one package: its package size, the size in its
+ * name ("5 กก."), or else one litre / kilogram.
  */
 export function effectiveUnitCost(ing: Partial<Ingredient>): number {
   const unitCost = ing.unitCost || 0;
-  if (canonicalUnit(ing.unit) === 'ml' && unitCost >= 10) {
-    return ing.packageSize && ing.packageSize > 0 ? unitCost / ing.packageSize : unitCost / 1000;
+  if (hasSuspiciousUnitCost(ing)) {
+    const size = ing.packageSize && ing.packageSize > 0 ? ing.packageSize : packageSizeFromName(ing.name, ing.unit) || 1000;
+    return unitCost / size;
   }
   return unitCost;
 }
 
-/** True when an ingredient's price looks like a package price typed in as a per-ml price. */
+/** True when an ingredient's price looks like a package price typed in as a per-ml / per-g price. */
 export function hasSuspiciousUnitCost(ing: Partial<Ingredient>): boolean {
-  return canonicalUnit(ing.unit) === 'ml' && (ing.unitCost || 0) >= 10;
+  const u = canonicalUnit(ing.unit);
+  return (u === 'ml' || u === 'g') && (ing.unitCost || 0) >= 10;
 }
 
 export function calcRecipeItemCostAndDeduction(
@@ -254,6 +297,14 @@ export function isShortOfStock(menuItem: MenuItem, ingredients: Ingredient[], pr
  */
 export function getAvailableRecipeUnits(ingUnit: string, ing?: Partial<CountSource> | null): { val: string; label: string }[] {
   const units = baseRecipeUnits(ingUnit);
+  const measure = measureOfCountUnit(ing ? { ...ing, unit: ingUnit } : null);
+  if (measure) {
+    const more =
+      measure.unit === 'ml'
+        ? [{ val: 'ml', label: 'มิลลิลิตร (ml)' }, { val: 'l', label: 'ลิตร (L)' }]
+        : [{ val: 'g', label: 'กรัม (g)' }, { val: 'kg', label: 'กิโลกรัม (kg)' }];
+    units.push(...more.filter(e => !units.some(x => x.val === e.val)));
+  }
   const piece = countUnitOf(ing);
   if (!piece || !ing) return units;
   const extra =

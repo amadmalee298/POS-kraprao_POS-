@@ -5,7 +5,7 @@ import { useKeyedList } from '../../hooks/useKeyedList';
 import type { Ingredient, PrepBatch, PrepRecipe } from '../../types';
 import { planPrep, yieldPercent } from '../../utils/prep';
 import { matchIngredient } from '../../utils/stockIntake';
-import { convertForIngredient, effectiveUnitCost } from '../../utils/recipeUtils';
+import { canonicalUnit, convertForIngredient, effectiveUnitCost, getAvailableRecipeUnits } from '../../utils/recipeUtils';
 
 /**
  * Kitchen prep: draw raw ingredients from stock, cook them, and receive the prepped item (e.g.
@@ -83,7 +83,7 @@ interface Draft {
   newUnit: string;
   newCategory: string;
   outputQty: string;
-  inputs: { ingredientId: string; quantity: string }[];
+  inputs: { ingredientId: string; quantity: string; unit?: string }[];
   note: string;
 }
 
@@ -119,7 +119,7 @@ export const PrepProductionPanel: React.FC = () => {
         const ing = line.names.map(n => matchIngredient(n, raw)).find(Boolean) as Ingredient | undefined;
         const qty = ing ? convertForIngredient(line.quantity, line.unit, ing.unit, ing) : null;
         // A unit that cannot be converted (e.g. ขวด) keeps the number for the shop to check
-        return { ingredientId: ing?.id || '', quantity: String(Math.round((qty ?? line.quantity) * 1000) / 1000) };
+        return { ingredientId: ing?.id || '', quantity: String(Math.round((qty ?? line.quantity) * 1000) / 1000), unit: ing?.unit };
       })
       .filter(l => l.ingredientId);
     setDraftError('');
@@ -143,7 +143,7 @@ export const PrepProductionPanel: React.FC = () => {
       newUnit: 'kg',
       newCategory: 'sauce',
       outputQty: String(r.outputQty),
-      inputs: r.inputs.map(i => ({ ingredientId: i.ingredientId, quantity: String(i.quantity) })),
+      inputs: r.inputs.map(i => ({ ingredientId: i.ingredientId, quantity: String(i.quantity), unit: i.unit })),
       note: r.note || ''
     });
   };
@@ -152,7 +152,12 @@ export const PrepProductionPanel: React.FC = () => {
     if (!draft) return;
     const outputQty = Number(draft.outputQty);
     const inputs = draft.inputs
-      .map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity) }))
+      .map(i => {
+        // Kept only when it differs from the ingredient's own unit (older recipes have none)
+        const own = byId.get(i.ingredientId)?.unit;
+        const unit = i.unit && canonicalUnit(i.unit) !== canonicalUnit(own) ? i.unit : undefined;
+        return { ingredientId: i.ingredientId, quantity: Number(i.quantity), ...(unit ? { unit } : {}) };
+      })
       .filter(i => i.ingredientId && i.quantity > 0);
     if (!draft.outputIngredientId && !draft.newName.trim()) return setDraftError('ใส่ชื่อสินค้าที่ผลิตได้');
     if (!(outputQty > 0)) return setDraftError('ใส่จำนวนที่ได้ต่อ 1 รอบ');
@@ -251,9 +256,15 @@ export const PrepProductionPanel: React.FC = () => {
                   {plan.lines.map(l => (
                     <li key={l.ingredientId} className="flex justify-between gap-2">
                       <span>{l.name}</span>
-                      <span className={l.short > 0 ? 'text-amber-300' : 'text-slate-400'}>{fmt(l.quantity)} {l.unit}</span>
+                      <span className={l.short > 0 ? 'text-amber-300' : 'text-slate-400'}>{fmt(l.recipeQty)} {l.recipeUnit}</span>
                     </li>
                   ))}
+                  {plan.lines.some(l => l.unitDoubt) && (
+                    <li className="text-amber-300 flex items-start gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      ตรวจหน่วย: {plan.lines.filter(l => l.unitDoubt).map(l => `${l.name} ${fmt(l.recipeQty)} ${l.recipeUnit}`).join(', ')} (ตั้งใจใส่เป็น ml/g หรือไม่?) กดแก้ไขสูตร
+                    </li>
+                  )}
                   {plan.missingIngredients.length > 0 && <li className="text-rose-300">มีวัตถุดิบ {plan.missingIngredients.length} รายการที่ถูกลบไปแล้ว</li>}
                 </ul>
                 <div className="text-[11px] text-slate-400">คงเหลือตอนนี้: {fmt(out?.currentStock || 0)} {out?.unit}</div>
@@ -345,19 +356,63 @@ export const PrepProductionPanel: React.FC = () => {
                 <div className="space-y-2">
                   {draft.inputs.map((l, idx) => (
                     <div key={idx} className="flex gap-2">
-                      <select aria-label={`วัตถุดิบที่ ${idx + 1}`} value={l.ingredientId} onChange={e => setInput(idx, { ingredientId: e.target.value })} className="flex-1 min-w-0 h-11 px-2 rounded-xl bg-slate-900 border border-slate-700">
+                      <select aria-label={`วัตถุดิบที่ ${idx + 1}`} value={l.ingredientId} onChange={e => setInput(idx, { ingredientId: e.target.value, unit: undefined })} className="flex-1 min-w-0 h-11 px-2 rounded-xl bg-slate-900 border border-slate-700">
                         <option value="">เลือกวัตถุดิบ</option>
                         {sortedIngredients.filter(i => i.id !== draft.outputIngredientId).map(i => (
                           <option key={i.id} value={i.id}>{i.name}</option>
                         ))}
                       </select>
                       <input aria-label={`จำนวนวัตถุดิบที่ ${idx + 1}`} type="number" inputMode="decimal" min="0" step="any" value={l.quantity} onChange={e => setInput(idx, { quantity: e.target.value })} placeholder="จำนวน" className="w-24 h-11 px-2 rounded-xl bg-slate-900 border border-slate-700" />
-                      <span className="w-10 self-center text-xs text-slate-400">{byId.get(l.ingredientId)?.unit || ''}</span>
+                      {(() => {
+                        const ing = byId.get(l.ingredientId);
+                        if (!ing) return <span className="w-16" />;
+                        const units = getAvailableRecipeUnits(ing.unit, ing);
+                        const value = units.find(u => canonicalUnit(u.val) === canonicalUnit(l.unit || ing.unit))?.val || units[0].val;
+                        return (
+                          <select aria-label={`หน่วยวัตถุดิบที่ ${idx + 1}`} value={value} onChange={e => setInput(idx, { unit: e.target.value })} className="w-20 h-11 px-1 rounded-xl bg-slate-900 border border-slate-700 text-xs">
+                            {units.map(u => (
+                              <option key={u.val} value={u.val}>{u.val}</option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                       <button type="button" aria-label="ลบบรรทัด" onClick={() => setDraft({ ...draft, inputs: draft.inputs.filter((_, i) => i !== idx) })} className="w-11 h-11 rounded-xl border border-slate-700 flex items-center justify-center text-rose-300"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   ))}
                 </div>
                 <button type="button" onClick={() => setDraft({ ...draft, inputs: [...draft.inputs, { ingredientId: '', quantity: '' }] })} className="mt-2 h-10 px-3 rounded-xl border border-slate-700 text-xs flex items-center gap-1"><Plus className="w-4 h-4" /> เพิ่มวัตถุดิบ</button>
+                {(() => {
+                  // What one batch costs as written, so a wrong unit (1,500 ขวด instead of ml) shows at once
+                  const outQty = Number(draft.outputQty);
+                  const preview = planPrep(
+                    {
+                      id: 'preview',
+                      outputIngredientId: draft.outputIngredientId,
+                      outputQty: outQty > 0 ? outQty : 0,
+                      inputs: draft.inputs
+                        .filter(i => i.ingredientId && Number(i.quantity) > 0)
+                        .map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), unit: i.unit }))
+                    },
+                    1,
+                    ingredients
+                  );
+                  if (!preview.lines.length) return null;
+                  const outUnit = draft.outputIngredientId ? byId.get(draft.outputIngredientId)?.unit : draft.newUnit;
+                  return (
+                    <div className="mt-2 p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-0.5">
+                      {preview.lines.map(l => (
+                        <div key={l.ingredientId} className="flex justify-between gap-2 text-slate-400">
+                          <span className="truncate">{l.name}</span>
+                          <span className={l.unitDoubt ? 'text-amber-300' : ''}>{baht(l.cost)}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between gap-2 font-bold text-slate-200 pt-1 border-t border-slate-800">
+                        <span>ต้นทุนต่อ 1 รอบ</span>
+                        <span>{baht(preview.cost)}{preview.unitCost > 0 ? ` · ${baht(preview.unitCost)}/${outUnit}` : ''}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               <input aria-label="หมายเหตุ" value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} placeholder="หมายเหตุ (ไม่บังคับ)" className="w-full h-11 px-3 rounded-xl bg-slate-900 border border-slate-700" />
               {draftError && <div role="alert" className="text-xs text-rose-300">{draftError}</div>}
