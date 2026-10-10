@@ -21,7 +21,20 @@ export default async function handler(req: any, res: any) {
   }
   if (req.method === 'OPTIONS') return res.status(204).end();
   res.setHeader('Cache-Control', 'no-store');
-  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
-  const result = await handleOpnPromptPay(req.method, req.query || {}, body, process.env.OMISE_SECRET_KEY);
-  return res.status(result.status).json(result.body);
+  const body = typeof req.body === 'string' ? safeJson(req.body) : req.body;
+  try {
+    const result = await handleOpnPromptPay(req.method, req.query || {}, body, process.env.OMISE_SECRET_KEY);
+    return res.status(result.status).json(result.body);
+  } catch (e: any) {
+    return res.status(502).json({ error: e?.message || 'ติดต่อ Opn ไม่ได้' });
+  }
+}
+
+// A malformed body is answered as a bad request, not a crash
+function safeJson(text: string) {
+  try {
+    return JSON.parse(text || '{}');
+  } catch {
+    return {};
+  }
 }

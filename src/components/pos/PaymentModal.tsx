@@ -144,7 +144,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
   const handleProcessCheckout = (paidByGateway = false) => {
     if (paymentMethod === 'cash' && tenderedAmount < grandTotal) {
-      alert(`จำนวนเงินสดรับมาไม่เพียงพอ! ขาดอีก ${grandTotal - tenderedAmount} บาท`);
+      alert(`จำนวนเงินสดรับมาไม่เพียงพอ! ขาดอีก ${(grandTotal - tenderedAmount).toFixed(2)} บาท`);
       return;
     }
     if (

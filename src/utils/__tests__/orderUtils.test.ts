@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyStockDeductions, computeSaleStockDeductions, generateOrderId, generateOrderNumber, leftLimitedWindow } from '../orderUtils';
+import { applyStockDeductions, computeSaleStockDeductions, generateOrderId, generateOrderNumber, leftLimitedWindow, shiftSalesTotals } from '../orderUtils';
 import type { CartItem, Ingredient, Order } from '../../types';
 
 const ing = (id: string, unit: string, stock: number): Ingredient =>
@@ -94,5 +94,26 @@ describe('leftLimitedWindow', () => {
   });
   it('treats every removal as a deletion while the window is not full', () => {
     expect(leftLimitedWindow('2026-10-01T10:00', ['2026-10-05T10:00'], 2)).toBe(false);
+  });
+});
+
+describe('shiftSalesTotals', () => {
+  const t = (h: number) => new Date(`2026-10-10T${String(h).padStart(2, '0')}:00:00Z`).toISOString();
+  const o = (p: Partial<Order>) => ({ branchId: 'b1', status: 'served', grandTotal: 100, paymentMethod: 'cash', ...p }) as Order;
+  const from = new Date(t(10)).getTime();
+  const to = new Date(t(18)).getTime();
+
+  it('counts a QR order in the shift it was paid in, not the one it was made in', () => {
+    const orders = [
+      o({ createdAt: t(9), paidAt: t(11), paymentStatus: 'paid' }), // made before, paid in this shift
+      o({ createdAt: t(17), paidAt: t(19), paymentStatus: 'paid' }), // paid in the next shift
+      o({ createdAt: t(12), paymentStatus: 'unpaid' })
+    ];
+    expect(shiftSalesTotals(orders, 'b1', from, to)).toMatchObject({ orderCount: 1, cashSales: 100, totalSales: 100 });
+  });
+
+  it('puts bank transfers with the non-cash sales', () => {
+    const orders = [o({ createdAt: t(11), paymentMethod: 'transfer' }), o({ createdAt: t(12), paymentMethod: 'credit', grandTotal: 50 })];
+    expect(shiftSalesTotals(orders, 'b1', from, to)).toMatchObject({ cashSales: 0, promptPaySales: 100, creditSales: 50, totalSales: 150 });
   });
 });

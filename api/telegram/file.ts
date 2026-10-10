@@ -17,7 +17,7 @@ export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+  const body = typeof req.body === 'string' ? safeJson(req.body) : req.body || {};
   const token = String(body.token || '').trim().replace(/^bot/, '');
   const fileId = String(body.fileId || '');
   if (!/^\d+:[\w-]+$/.test(token) || !fileId) return res.status(400).json({ error: 'token/fileId ไม่ถูกต้อง' });
@@ -33,5 +33,14 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({ dataUrl: `data:${type};base64,${buf.toString('base64')}` });
   } catch (e: any) {
     return res.status(502).json({ error: e?.message || 'ดาวน์โหลดรูปไม่สำเร็จ' });
+  }
+}
+
+// A malformed body is answered as a bad request, not a crash
+function safeJson(text: string) {
+  try {
+    return JSON.parse(text || '{}');
+  } catch {
+    return {};
   }
 }
