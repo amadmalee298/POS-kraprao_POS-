@@ -24,7 +24,7 @@ export default async function handler(req: any, res: any) {
   if (!key) {
     return res.status(400).json({ error: 'MISSING_API_KEY', message: 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY บน Vercel' });
   }
-  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+  const body = typeof req.body === 'string' ? safeJson(req.body) : req.body || {};
   let image = String(body.image || '');
   let mimeType = typeof body.mimeType === 'string' ? body.mimeType : 'image/jpeg';
   if (!image) return res.status(400).json({ error: 'กรุณาแนบรูปใบเสร็จ' });
@@ -44,5 +44,14 @@ export default async function handler(req: any, res: any) {
   } catch (err: any) {
     const status = err instanceof ClaudeCallError && !err.retryable ? 400 : 502;
     return res.status(status).json({ error: err?.message || 'AI อ่านใบเสร็จไม่สำเร็จ' });
+  }
+}
+
+// A malformed body is answered as a bad request, not a crash
+function safeJson(text: string) {
+  try {
+    return JSON.parse(text || '{}');
+  } catch {
+    return {};
   }
 }

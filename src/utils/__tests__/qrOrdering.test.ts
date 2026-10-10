@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readTableFromUrl, DEFAULT_BRANCH_ID } from '../../components/customer/tableLink';
-import { generateQrOrderNumber, resolveItemsForStock } from '../orderUtils';
-import type { AddOnOption, CartItem, MenuItem } from '../../types';
+import { generateQrOrderNumber, repriceQrOrder, resolveItemsForStock } from '../orderUtils';
+import type { AddOnOption, CartItem, MenuItem, Order } from '../../types';
 
 describe('readTableFromUrl', () => {
   it('reads table and branch from a table QR link', () => {
@@ -52,5 +52,42 @@ describe('resolveItemsForStock keeps the recipe of the time of sale', () => {
     const [resolved] = resolveItemsForStock([sold], shopMenu, shopAddOns);
     expect(resolved.menuItem.recipe?.[0].amountNeeded).toBe(150);
     expect(resolved.selectedAddOns[0].ingredientId).toBe('egg-old');
+  });
+});
+
+describe('repriceQrOrder', () => {
+  const menu = [{ id: 'm1', name: 'กะเพรา', price: 60, availableProteins: [{ name: 'หมูกรอบ', extraPrice: 15 }] }] as unknown as MenuItem[];
+  const shopAddOns = [{ id: 'egg', name: 'ไข่ดาว', price: 10 }] as AddOnOption[];
+  const order = (unitPrice: number) =>
+    ({
+      id: 'o1',
+      isQrOrder: true,
+      items: [
+        {
+          cartItemId: 'c1',
+          menuItem: { id: 'm1', name: 'กะเพรา', price: 1 },
+          quantity: 2,
+          proteinChoice: { name: 'หมูกรอบ', extraPrice: 0 },
+          selectedAddOns: [{ id: 'egg', name: 'ไข่ดาว', price: 0 }],
+          unitPrice,
+          totalPrice: unitPrice * 2
+        }
+      ],
+      subtotal: unitPrice * 2,
+      discountAmount: 0,
+      vatAmount: 0,
+      grandTotal: unitPrice * 2
+    }) as unknown as Order;
+
+  it("charges the shop's prices, not what the customer's page sent", () => {
+    const fixed = repriceQrOrder(order(1), menu, shopAddOns, { enableVat: false });
+    expect(fixed.items[0].unitPrice).toBe(85);
+    expect(fixed.subtotal).toBe(170);
+    expect(fixed.grandTotal).toBe(170);
+  });
+
+  it('leaves a correctly priced order as it is', () => {
+    const ok = order(85);
+    expect(repriceQrOrder(ok, menu, shopAddOns, { enableVat: false })).toBe(ok);
   });
 });

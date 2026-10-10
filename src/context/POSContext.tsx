@@ -134,7 +134,10 @@ import {
   mergeCloudOrders,
   resolveItemsForStock,
   normalizeOrderId,
-  countsAsRevenue
+  countsAsRevenue,
+  roundMoney,
+  repriceQrOrder,
+  shiftSalesTotals
 } from '../utils/orderUtils';
 import { crc16, resolvePromptPayId } from '../utils/promptpay';
 import { buildPublicMenu } from '../utils/publicMenu';
@@ -3154,7 +3157,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       vatAmount,
       grandTotal
     } = computeCartTotals(cart, discount, settings);
-    const changeAmount = paymentMethod === 'cash' ? Math.max(0, tenderedAmount - grandTotal) : 0;
+    // A scan / transfer / card pays the exact total (a cash amount typed before switching method is not kept)
+    const tendered = paymentMethod === 'cash' ? tenderedAmount : grandTotal;
+    const changeAmount = paymentMethod === 'cash' ? roundMoney(Math.max(0, tendered - grandTotal)) : 0;
 
     const orderNumber = generateOrderNumber(orders, currentBranch.id);
     const nowIso = new Date().toISOString();
@@ -3176,7 +3181,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       vatAmount,
       grandTotal,
       paymentMethod,
-      tenderedAmount,
+      tenderedAmount: tendered,
       changeAmount,
       status: 'pending',
       createdAt: nowIso,
@@ -3340,8 +3345,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       deductStockForSale(resolveItemsForStock(current.items, menuItems, addOns));
     }
 
+    // The bill of an approved QR order uses the shop's prices (the customer's page sets its own)
+    const base = isQrApproval ? repriceQrOrder(current, menuItems, addOns, settings) : current;
+    const repriced = base !== current;
     const updated: Order = {
-      ...current,
+      ...base,
       status,
       updatedAt: now,
       // Called back from "served": the order is open again
@@ -3361,7 +3369,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     commitOrderChange(current.id, updated);
 
-    if (!effectiveOffline && isFirebaseAvailable()) {
+    if (repriced) {
+      pushNewOrderToCloud(updated);
+    } else if (!effectiveOffline && isFirebaseAvailable()) {
       updateOrderStatusInFirestore(current.id, status, {
         completedAt: updated.completedAt,
         acceptedAt: isQrApproval ? updated.acceptedAt : undefined,
@@ -3376,8 +3386,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const settleOrderPayment = (orderId: string, method: PaymentMethod, tenderedAmount: number): Order | null => {
     const normalizedId = orderId.replace(/^ord-/, '');
-    const target = orders.find(o => o.id.replace(/^ord-/, '') === normalizedId);
-    if (!target) return null;
+    const found = orders.find(o => o.id.replace(/^ord-/, '') === normalizedId);
+    if (!found) return null;
+    const target = found.status === 'pending-qr' ? repriceQrOrder(found, menuItems, addOns, settings) : found;
     const now = new Date().toISOString();
     const tendered = method === 'cash' ? tenderedAmount : target.grandTotal;
     const settled: Order = {
@@ -4399,20 +4410,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     const openTime = new Date(openShift.openedAt).getTime();
     const closeTime = Date.now();
-    const shiftOrders = orders.filter(o => {
-      const oTime = new Date(o.createdAt).getTime();
-      return o.branchId === currentBranch.id && countsAsRevenue(o) && oTime >= openTime && oTime <= closeTime;
-    });
-    const totalCashSales = shiftOrders
-      .filter(o => o.paymentMethod === 'cash')
-      .reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-    const totalPromptPaySales = shiftOrders
-      .filter(o => o.paymentMethod === 'promptpay' || o.paymentMethod === 'truemoney')
-      .reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-    const totalCreditSales = shiftOrders
-      .filter(o => o.paymentMethod === 'credit')
-      .reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-    const totalSales = shiftOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+    const {
+      orderCount,
+      cashSales: totalCashSales,
+      promptPaySales: totalPromptPaySales,
+      creditSales: totalCreditSales,
+      totalSales
+    } = shiftSalesTotals(orders, currentBranch.id, openTime, closeTime);
     
     const cashIn = (openShift.cashMovements || [])
       .filter(m => m.type === 'cash_in')
@@ -4436,7 +4440,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       totalPromptPaySales,
       totalCreditSales,
       totalSales,
-      orderCount: shiftOrders.length,
+      orderCount,
       closingNotes: closingNotes || ''
     };
 

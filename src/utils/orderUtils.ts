@@ -263,3 +263,56 @@ export function leftLimitedWindow(
   const newest = values.reduce((m, x) => (x > m ? x : m), values[0] ?? '');
   return v >= newest;
 }
+
+/** When an order's money came in: QR orders are paid later at the counter, after they were created. */
+export const orderPaidTime = (o: Pick<Order, 'paidAt' | 'createdAt'>): number => new Date(o.paidAt || o.createdAt).getTime();
+
+/**
+ * Sales taken in a cash-drawer shift, by when the money came in (not when the order was made):
+ * cash, transfers / PromptPay / TrueMoney, and card.
+ */
+export function shiftSalesTotals(orders: Order[], branchId: string, from: number, to: number) {
+  const shiftOrders = orders.filter(o => {
+    const t = orderPaidTime(o);
+    return o.branchId === branchId && countsAsRevenue(o) && t >= from && t <= to;
+  });
+  const sum = (methods: Order['paymentMethod'][]) =>
+    roundMoney(shiftOrders.filter(o => methods.includes(o.paymentMethod)).reduce((s, o) => s + (o.grandTotal || 0), 0));
+  return {
+    orderCount: shiftOrders.length,
+    cashSales: sum(['cash']),
+    promptPaySales: sum(['promptpay', 'truemoney', 'transfer']),
+    creditSales: sum(['credit']),
+    totalSales: roundMoney(shiftOrders.reduce((s, o) => s + (o.grandTotal || 0), 0))
+  };
+}
+
+/**
+ * A customer's QR order priced from the shop's own menu. The customer page writes its prices and
+ * total straight into the cloud, so they could be changed before sending; the bill uses the
+ * shop's prices instead. Dishes no longer on the menu keep the price they were ordered at.
+ */
+export function repriceQrOrder(order: Order, menuItems: MenuItem[], addOns: AddOnOption[], settings: Partial<SystemSettings>): Order {
+  if (!order.isQrOrder) return order;
+  const menuById = new Map(menuItems.map(m => [m.id, m]));
+  const addOnById = new Map(addOns.map(a => [a.id, a]));
+  const addOnByName = new Map(addOns.map(a => [a.name, a]));
+  const items = order.items.map(item => {
+    const menu = menuById.get(item.menuItem?.id);
+    if (!menu) return item;
+    const protein = item.proteinChoice
+      ? { ...item.proteinChoice, extraPrice: menu.availableProteins?.find(p => p.name === item.proteinChoice!.name)?.extraPrice ?? 0 }
+      : undefined;
+    const selectedAddOns = (item.selectedAddOns || []).map(a => {
+      const shop = addOnById.get(a.id) || addOnByName.get(a.name);
+      return shop ? { ...a, price: shop.price } : a;
+    });
+    const unitPrice = roundMoney(menu.price + (protein?.extraPrice || 0) + selectedAddOns.reduce((s, a) => s + (a.price || 0), 0));
+    const quantity = Math.max(1, Math.floor(item.quantity || 1));
+    return { ...item, quantity, proteinChoice: protein, selectedAddOns, unitPrice, totalPrice: roundMoney(unitPrice * quantity) };
+  });
+  const subtotal = roundMoney(items.reduce((s, i) => s + i.totalPrice, 0));
+  const { vatAmount, grandTotal } = calculateOrderTotals(subtotal, 0, settings);
+  if (subtotal === order.subtotal && grandTotal === order.grandTotal && items.every((i, k) => i.totalPrice === order.items[k].totalPrice)) return order;
+  return { ...order, items, subtotal, discountAmount: 0, vatAmount, grandTotal };
+}

@@ -1,4 +1,4 @@
-import { countsAsRevenue } from '../../utils/orderUtils';
+import { shiftSalesTotals } from '../../utils/orderUtils';
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Wallet,
@@ -90,21 +90,7 @@ export const CashShiftManagementPanel: React.FC = () => {
     if (!currentOpenShift) return null;
     const openTime = new Date(currentOpenShift.openedAt).getTime();
     const nowTime = Date.now();
-    const shiftOrders = orders.filter(o => {
-      const oTime = new Date(o.createdAt).getTime();
-      return o.branchId === currentBranch.id && countsAsRevenue(o) && oTime >= openTime && oTime <= nowTime;
-    });
-
-    const cashSales = shiftOrders
-      .filter(o => o.paymentMethod === 'cash')
-      .reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-    const promptPaySales = shiftOrders
-      .filter(o => o.paymentMethod === 'promptpay' || o.paymentMethod === 'truemoney')
-      .reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-    const creditSales = shiftOrders
-      .filter(o => o.paymentMethod === 'credit')
-      .reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-    const totalSales = shiftOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+    const { orderCount, cashSales, promptPaySales, creditSales, totalSales } = shiftSalesTotals(orders, currentBranch.id, openTime, nowTime);
 
     const cashIn = (currentOpenShift.cashMovements || [])
       .filter(m => m.type === 'cash_in')
@@ -116,7 +102,7 @@ export const CashShiftManagementPanel: React.FC = () => {
     const expectedCash = currentOpenShift.startingFloat + cashSales + cashIn - cashOut;
 
     return {
-      orderCount: shiftOrders.length,
+      orderCount,
       cashSales,
       promptPaySales,
       creditSales,
