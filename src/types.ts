@@ -830,8 +830,8 @@ export interface PrepRecipe {
   outputIngredientId: string;
   /** Quantity one batch makes, in the output ingredient's unit */
   outputQty: number;
-  /** Quantities one batch uses, in each ingredient's unit */
-  inputs: { ingredientId: string; quantity: number }[];
+  /** Quantities one batch uses, in `unit` (the ingredient's own unit when not given) */
+  inputs: { ingredientId: string; quantity: number; unit?: string }[];
   note?: string;
 }
 

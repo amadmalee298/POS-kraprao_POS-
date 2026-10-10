@@ -1,5 +1,5 @@
 import type { Ingredient, PrepRecipe } from '../types';
-import { effectiveUnitCost } from './recipeUtils';
+import { canonicalUnit, convertForIngredient, effectiveUnitCost } from './recipeUtils';
 
 /**
  * Kitchen prep (production): raw ingredients are drawn from stock and cooked into a stocked item.
@@ -11,7 +11,12 @@ export interface PrepPlanLine {
   ingredientId: string;
   name: string;
   unit: string;
-  quantity: number; // needed for this run
+  quantity: number; // needed for this run, in the ingredient's stock unit
+  /** As written in the recipe (e.g. 1,500 ml of a bottled sauce) */
+  recipeQty: number;
+  recipeUnit: string;
+  /** A counted unit (bottle, bag…) with a large number: probably meant ml or g */
+  unitDoubt: boolean;
   inStock: number;
   short: number; // how much is missing (0 = enough)
   cost: number;
@@ -28,6 +33,7 @@ export interface PrepPlan {
 }
 
 const round = (n: number, d = 4) => Math.round(n * 10 ** d) / 10 ** d;
+const MEASURED = ['kg', 'g', 'l', 'ml'];
 
 export function planPrep(recipe: PrepRecipe, batches: number, ingredients: Ingredient[]): PrepPlan {
   const byId = new Map(ingredients.map(i => [i.id, i]));
@@ -40,13 +46,18 @@ export function planPrep(recipe: PrepRecipe, batches: number, ingredients: Ingre
       missingIngredients.push(inp.ingredientId);
       return;
     }
-    const quantity = round(inp.quantity * n);
+    const recipeUnit = inp.unit || ing.unit;
+    const recipeQty = round(inp.quantity * n);
+    const quantity = round(convertForIngredient(recipeQty, recipeUnit, ing.unit, ing) ?? recipeQty);
     const inStock = ing.currentStock || 0;
     lines.push({
       ingredientId: ing.id,
       name: ing.name,
       unit: ing.unit,
       quantity,
+      recipeQty,
+      recipeUnit,
+      unitDoubt: !MEASURED.includes(canonicalUnit(ing.unit)) && canonicalUnit(recipeUnit) === canonicalUnit(ing.unit) && inp.quantity >= 50,
       inStock,
       short: round(Math.max(0, quantity - inStock)),
       cost: round(quantity * effectiveUnitCost(ing), 2)
@@ -78,3 +89,23 @@ export function averageCostAfterPrep(output: Pick<Ingredient, 'currentStock' | '
 
 /** Yield of a run compared with the recipe (100 = as expected) */
 export const yieldPercent = (actual: number, expected: number) => (expected > 0 ? Math.round((actual / expected) * 1000) / 10 : 0);
+
+/**
+ * Cost per unit to use for items made in the kitchen that are not in stock: what one batch of
+ * their recipe costs now. Dishes using them (e.g. ข้าวหอม, ไก่บดปรุงสุก) then show a real cost
+ * before the first run; once made, the run's actual cost takes over (averageCostAfterPrep).
+ * Only outputs with nothing in stock and a complete recipe are returned.
+ */
+export function prepEstimatedCosts(recipes: PrepRecipe[], ingredients: Ingredient[]): Map<string, number> {
+  const byId = new Map(ingredients.map(i => [i.id, i]));
+  const out = new Map<string, number>();
+  recipes.forEach(r => {
+    const item = byId.get(r.outputIngredientId);
+    if (!item || (item.currentStock || 0) > 0) return;
+    const plan = planPrep(r, 1, ingredients);
+    // A recipe that looks mistyped (1,500 ขวด) would give dishes a wild cost: left until fixed
+    if (plan.missingIngredients.length || plan.lines.some(l => l.unitDoubt) || !(plan.unitCost > 0)) return;
+    out.set(item.id, plan.unitCost);
+  });
+  return out;
+}

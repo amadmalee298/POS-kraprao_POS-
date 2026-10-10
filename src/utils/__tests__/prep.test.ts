@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Ingredient, PrepRecipe } from '../../types';
-import { averageCostAfterPrep, planPrep, yieldPercent } from '../prep';
+import { averageCostAfterPrep, planPrep, prepEstimatedCosts, yieldPercent } from '../prep';
+import { convertForIngredient, effectiveUnitCost, getAvailableRecipeUnits, packageSizeFromName } from '../recipeUtils';
 
 const ing = (id: string, name: string, unit: string, currentStock: number, unitCost: number): Ingredient =>
   ({ id, name, unit, currentStock, unitCost, minStockAlert: 0, category: 'meat' }) as Ingredient;
@@ -52,5 +53,53 @@ describe('kitchen prep', () => {
 
   it('reports the yield against the recipe', () => {
     expect(yieldPercent(760, 800)).toBe(95);
+  });
+});
+
+describe('prep units and costs', () => {
+  const sauce = { ...ing('fish', 'ทิพรส น้ำปลาแท้ ขวดเพ็ท 1.5 ล.', 'ขวด', 4, 59), countUnit: 'ml' } as Ingredient;
+
+  it('converts an input written in another unit into the stock unit', () => {
+    const r: PrepRecipe = { id: 'r', outputIngredientId: 'cooked', outputQty: 1000, inputs: [{ ingredientId: 'beef', quantity: 1, unit: 'kg' }] };
+    const [line] = planPrep(r, 1, shop).lines;
+    expect(line).toMatchObject({ quantity: 1000, recipeQty: 1, recipeUnit: 'kg', cost: 300 });
+  });
+
+  it('flags a large count of bottles or bags as a probable unit mistake', () => {
+    const r: PrepRecipe = { id: 'r', outputIngredientId: 'cooked', outputQty: 1, inputs: [{ ingredientId: 'fish', quantity: 1500 }] };
+    expect(planPrep(r, 1, [sauce, ...shop]).lines[0].unitDoubt).toBe(true);
+    expect(planPrep({ ...r, inputs: [{ ingredientId: 'fish', quantity: 1 }] }, 1, [sauce, ...shop]).lines[0].unitDoubt).toBe(false);
+  });
+
+  it('prices made items not in stock from their recipe, and leaves stocked ones alone', () => {
+    expect(prepEstimatedCosts([recipe], shop).get('cooked')).toBe(0.3775);
+    const stocked = shop.map(i => (i.id === 'cooked' ? { ...i, currentStock: 500 } : i));
+    expect(prepEstimatedCosts([recipe], stocked).has('cooked')).toBe(false);
+  });
+
+  it('reads a bag price typed as a per-gram price as the price of the bag in the name', () => {
+    expect(packageSizeFromName('ตราฉัตร ข้าวหอมผสม 70%:30% 5 กก.', 'g')).toBe(5000);
+    expect(packageSizeFromName('น้ำปลา ขวดเพ็ท 1.5 ล.', 'ml')).toBe(1500);
+    expect(packageSizeFromName('ข้าวหอม', 'g')).toBe(0);
+    expect(effectiveUnitCost(ing('rice', 'ตราฉัตร ข้าวหอมผสม 5 กก.', 'g', 0, 137))).toBeCloseTo(0.0274);
+    expect(effectiveUnitCost(ing('rice', 'ข้าวสาร', 'g', 0, 137))).toBeCloseTo(0.137);
+    expect(effectiveUnitCost(ing('rice', 'ข้าวสาร', 'g', 0, 0.03))).toBe(0.03);
+  });
+});
+
+describe('bottles and bags sized in their name', () => {
+  const fish = ing('fish', 'ทิพรส น้ำปลาแท้ ขวดเพ็ท 1.5 ล.', 'ขวด', 4, 59);
+
+  it('lets a recipe use ml of a sauce counted in bottles', () => {
+    expect(getAvailableRecipeUnits(fish.unit, fish).map(u => u.val)).toEqual(['ขวด', 'ml', 'l']);
+    expect(convertForIngredient(750, 'ml', 'ขวด', fish)).toBe(0.5);
+    expect(convertForIngredient(2, 'ขวด', 'l', fish)).toBe(3);
+    expect(convertForIngredient(1, 'g', 'ขวด', fish)).toBeNull();
+  });
+
+  it('prices 1,500 ml of it as one bottle', () => {
+    const r: PrepRecipe = { id: 'r', outputIngredientId: 'cooked', outputQty: 1, inputs: [{ ingredientId: 'fish', quantity: 1500, unit: 'ml' }] };
+    const [line] = planPrep(r, 1, [fish, ...shop]).lines;
+    expect(line).toMatchObject({ quantity: 1, cost: 59, unitDoubt: false });
   });
 });
