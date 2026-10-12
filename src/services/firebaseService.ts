@@ -2104,7 +2104,9 @@ export async function claimDailyJob(branchId: string, job: string, day: string):
     const ref = doc(dbInstance, 'branches', branchId, 'status', `job_${job}`);
     return await runTransaction(dbInstance, async tx => {
       const snap = await tx.get(ref);
-      if (snap.exists() && snap.data().day === day) return false;
+      // Days only move forward: a day at or before the last one claimed is done (e.g. a catch-up
+      // for yesterday after today's summary went out)
+      if (snap.exists() && String(snap.data().day || '') >= day) return false;
       tx.set(ref, { day, claimedAt: new Date().toISOString() });
       return true;
     });

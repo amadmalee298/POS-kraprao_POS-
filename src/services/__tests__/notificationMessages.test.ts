@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  dailySummaryDue,
   formatPlainNotification,
   generateDailySummaryMessage,
   generateLowStockMessage,
@@ -71,5 +72,19 @@ describe('notification messages', () => {
     expect(plain.split('\n')[0]).toBe('🔔 <b>เตือนยื่นเอกสาร</b>');
     expect(plain).toContain('ภ.พ.30 &lt; 15 ต.ค.');
     setNotificationShopName('');
+  });
+});
+
+describe('dailySummaryDue', () => {
+  const at = (d: string) => new Date(d); // device local time
+
+  it("sends today's summary from the summary time, once", () => {
+    expect(dailySummaryDue(at('2026-10-12T22:05:00'), '22:00', '2026-10-11')).toMatchObject({ day: '2026-10-12', catchUp: false });
+    expect(dailySummaryDue(at('2026-10-12T23:30:00'), '22:00', '2026-10-12')).toBeNull();
+  });
+
+  it("catches up on yesterday's when no device was open at summary time", () => {
+    expect(dailySummaryDue(at('2026-10-12T09:00:00'), '22:00', '2026-10-10')).toMatchObject({ day: '2026-10-11', catchUp: true });
+    expect(dailySummaryDue(at('2026-10-12T09:00:00'), '22:00', '2026-10-11')).toBeNull();
   });
 });

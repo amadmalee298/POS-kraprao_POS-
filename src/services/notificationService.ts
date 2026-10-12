@@ -638,3 +638,16 @@ export function generateKdsDelayMessage(order?: Order, branch?: Branch, delayMin
 export function formatPlainNotification(title: string, message: string, settings?: SystemSettings, branch?: Branch): string {
   return compose([`🔔 <b>${escHtml(title)}</b>`, LINE, escHtml(message), shopLine(settings?.shopName, branch)]);
 }
+
+/**
+ * Which day's summary is due at `now` (device local time), or null when it went out already:
+ * today's from the summary time on; before it, yesterday's in case no device was open to send it.
+ */
+export function dailySummaryDue(now: Date, summaryTime: string, lastSentDay: string): { day: string; at: Date; catchUp: boolean } | null {
+  const dayOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const catchUp = time < summaryTime;
+  const at = catchUp ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12) : now;
+  const day = dayOf(at);
+  return (lastSentDay || '') >= day ? null : { day, at, catchUp };
+}

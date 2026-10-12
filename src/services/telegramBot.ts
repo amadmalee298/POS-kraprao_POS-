@@ -76,13 +76,31 @@ const INCOME_WORD = /^\s*(?:รับ(?:เงิน)?|รายรับ|\+)\s*
 /** A message that starts like an entry (so other chat in the group is left alone) */
 export const looksLikeEntry = (text: string) => EXPENSE_WORD.test(text) || INCOME_WORD.test(text);
 
-/**
- * Reads a typed entry. The words can come in any order:
- * "จ่าย ค่าแก๊ส 350", "จ่าย วันที่ 5/10/26 ค่า ผักบุ้ง 135 บาท ร้านค้า ป้าแดง", "รับ 1,500 ค่าจัดเลี้ยง".
- * Returns a reason (in Thai) when the amount is missing.
- */
-export function parseEntryText(raw: string, today: string): TypedEntry | { error: string } {
-  let text = raw.replace(/\s+/g, ' ').trim();
+// Words after a number that make it a quantity, not money ("3ขีด", "2 แผง", "1 กก.")
+const QTY_WORDS = 'ขีด|กก\\.?|กิโล(?:กรัม)?|กรัม|ก\\.|g\\b|kg\\b|ลิตร|ล\\.|มล\\.?|ml\\b|ถุง|ขวด|ห่อ|แพ็ค|แพค|แพ็ก|ลูก|กำ|ชิ้น|ฟอง|แผง|กล่อง|ลัง|ตัว|หัว|ช่อ|มัด|โหล|ใบ|อัน|ซอง|กระป๋อง|กิ่ง|ต้น';
+const QTY_UNIT = new RegExp(`^\\s*(?:${QTY_WORDS})`, 'i');
+const QTY_OR_MONEY = new RegExp(`\\d[\\d,]*(?:\\.\\d+)?\\s*(?:บาท|฿|thb|${QTY_WORDS})?`, 'gi');
+
+/** The money in a piece of text: a number with บาท/฿, else the last number that is not a quantity */
+function findAmount(text: string): { amount: number; index: number; length: number } | null {
+  const withBaht = [...text.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(?:บาท|฿|thb)/gi)];
+  const plain = [...text.matchAll(/(\d[\d,]*(?:\.\d+)?)/g)].filter(m => !QTY_UNIT.test(text.slice(m.index! + m[0].length)));
+  const hit = withBaht.length ? withBaht[withBaht.length - 1] : plain[plain.length - 1];
+  if (!hit) return null;
+  const amount = Number(hit[1].replace(/,/g, ''));
+  return amount > 0 ? { amount, index: hit.index!, length: hit[0].length } : null;
+}
+
+const cleanTitle = (text: string) =>
+  text
+    .replace(/บาท|฿|\.{2,}|…/g, ' ')
+    .replace(/(^|\s)ค่า\s+/g, '$1ค่า')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** Kind, date and vendor of an entry's first line; `rest` is what is left for the title and amount */
+function entryHead(line: string, today: string): { kind: TypedEntry['kind']; date: string; vendor: string; rest: string } | { error: string } {
+  let text = line.replace(/\s+/g, ' ').trim();
   let kind: TypedEntry['kind'];
   if (INCOME_WORD.test(text) && !/^\s*รับประทาน/.test(text)) {
     kind = 'income';
@@ -113,22 +131,42 @@ export function parseEntryText(raw: string, today: string): TypedEntry | { error
     vendor = vm[1].replace(/\.{2,}|…/g, '').trim();
     text = text.slice(0, vm.index);
   }
+  return { kind, date, vendor, rest: text };
+}
 
-  // The amount: a number with บาท/฿ after it, else the last number
-  const withBaht = [...text.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(?:บาท|฿|thb)/gi)];
-  const plain = [...text.matchAll(/(\d[\d,]*(?:\.\d+)?)/g)];
-  const hit = withBaht.length ? withBaht[withBaht.length - 1] : plain[plain.length - 1];
-  const amount = hit ? Number(hit[1].replace(/,/g, '')) : 0;
-  if (!(amount > 0)) return { error: 'ไม่พบยอดเงิน เช่น “จ่าย ค่าผัก 135 บาท”' };
-  text = `${text.slice(0, hit!.index)} ${text.slice(hit!.index! + hit![0].length)}`;
+/**
+ * Reads a typed entry. The words can come in any order:
+ * "จ่าย ค่าแก๊ส 350", "จ่าย วันที่ 5/10/26 ค่า ผักบุ้ง 135 บาท ร้านค้า ป้าแดง", "รับ 1,500 ค่าจัดเลี้ยง".
+ * A shopping list also works, one item a line, added up:
+ * "ซื้อวัตถุดิบ ร้านพริกแกง / พริกซอย 30บาท 3ขีด / หอมแดงซอย 10บาท 1ขีด / ผงชูรส 35" → 75 บาท.
+ */
+export function parseEntryText(raw: string, today: string): TypedEntry | { error: string } {
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const head = entryHead(lines[0] || '', today);
+  if ('error' in head) return head;
 
-  const title = text
-    .replace(/บาท|฿|\.{2,}|…/g, ' ')
-    .replace(/(^|\s)ค่า\s+/g, '$1ค่า')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 80);
-  return { kind, date, title: title || (kind === 'expense' ? 'รายจ่าย' : 'รายรับ'), amount: Math.round(amount * 100) / 100, vendor: vendor.slice(0, 60) };
+  const items = lines.slice(1).map(l => {
+    const a = findAmount(l);
+    const name = cleanTitle(l.replace(QTY_OR_MONEY, ' '));
+    return { amount: a?.amount || 0, name };
+  });
+  const headAmount = findAmount(head.rest);
+
+  // A list: every line after the first has its own price
+  if (items.length && items.every(i => i.amount > 0)) {
+    const amount = items.reduce((s, i) => s + i.amount, 0) + (headAmount?.amount || 0);
+    const headTitle = cleanTitle(headAmount ? `${head.rest.slice(0, headAmount.index)} ${head.rest.slice(headAmount.index + headAmount.length)}` : head.rest);
+    const list = items.map(i => i.name).filter(Boolean).join(', ');
+    const title = (headTitle && list ? `${headTitle}: ${list}` : headTitle || list).slice(0, 80) || (head.kind === 'expense' ? 'รายจ่าย' : 'รายรับ');
+    return { kind: head.kind, date: head.date, title, amount: Math.round(amount * 100) / 100, vendor: head.vendor.slice(0, 60) };
+  }
+
+  // One entry (on one or more lines)
+  const text = [head.rest, ...lines.slice(1)].join(' ');
+  const hit = findAmount(text);
+  if (!hit) return { error: 'ไม่พบยอดเงิน เช่น “จ่าย ค่าผัก 135 บาท”' };
+  const title = cleanTitle(`${text.slice(0, hit.index)} ${text.slice(hit.index + hit.length)}`).slice(0, 80);
+  return { kind: head.kind, date: head.date, title: title || (head.kind === 'expense' ? 'รายจ่าย' : 'รายรับ'), amount: Math.round(hit.amount * 100) / 100, vendor: head.vendor.slice(0, 60) };
 }
 
 const CATEGORY_WORDS: [ExpenseCategory, RegExp][] = [
