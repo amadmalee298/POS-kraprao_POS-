@@ -100,14 +100,37 @@ export interface WebhookInfo {
   pending: number;
   lastError?: string;
   lastErrorAt?: string;
+  /** false: in a group the bot only gets commands and replies to it (Group Privacy is on) */
+  readsGroupMessages?: boolean;
+  /** The bot's @username, for the fix instructions */
+  username?: string;
 }
 
 export async function serverWebhookInfo(token: string): Promise<WebhookInfo> {
-  const info = await telegramCall<any>(token, 'getWebhookInfo', {});
+  const [info, me] = await Promise.all([
+    telegramCall<any>(token, 'getWebhookInfo', {}),
+    telegramCall<any>(token, 'getMe', {}).catch(() => null)
+  ]);
   return {
     url: info.url || '',
     pending: info.pending_update_count || 0,
     lastError: info.last_error_message || undefined,
-    lastErrorAt: info.last_error_date ? new Date(info.last_error_date * 1000).toISOString() : undefined
+    lastErrorAt: info.last_error_date ? new Date(info.last_error_date * 1000).toISOString() : undefined,
+    readsGroupMessages: me ? me.can_read_all_group_messages === true : undefined,
+    username: me?.username || undefined
   };
+}
+
+/** Is this chat a group (or channel)? Their ids are negative */
+export const isGroupChat = (chatId: string) => String(chatId || '').trim().startsWith('-');
+
+/** Can the bot be an admin of this group (admins see every message, whatever Group Privacy says)? */
+export async function botIsGroupAdmin(token: string, chatId: string): Promise<boolean | undefined> {
+  try {
+    const me = await telegramCall<any>(token, 'getMe', {});
+    const member = await telegramCall<any>(token, 'getChatMember', { chat_id: chatId, user_id: me.id });
+    return member?.status === 'administrator' || member?.status === 'creator';
+  } catch {
+    return undefined;
+  }
 }

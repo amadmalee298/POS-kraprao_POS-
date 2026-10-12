@@ -5,7 +5,7 @@ import { getStoredCredentials } from '../../services/notificationService';
 import { isFirebaseAvailable, onFirebaseUserChange, subscribeToBranchDoc } from '../../services/firebaseService';
 import { vercelBase } from '../../services/receiptScan';
 import { BOT_CONFIG_DOC, BOT_STATE_DOC, readBotMode } from '../../services/telegramBot';
-import { activateServerBot, checkBotServer, deactivateServerBot, ServerCheck, serverWebhookInfo, updateServerBotConfig, WebhookInfo } from '../../services/telegramServer';
+import { activateServerBot, botIsGroupAdmin, checkBotServer, deactivateServerBot, isGroupChat, ServerCheck, serverWebhookInfo, updateServerBotConfig, WebhookInfo } from '../../services/telegramServer';
 import { vatRateOf } from '../../utils/accounting';
 import { sellerInfo } from '../../utils/seller';
 
@@ -36,6 +36,7 @@ export const TelegramServerSettings: React.FC<{ bot: ReturnType<typeof useServer
   const base = vercelBase(settings.merchantSettings?.serverUrl);
   const [check, setCheck] = useState<ServerCheck | null>(null);
   const [info, setInfo] = useState<WebhookInfo | null>(null);
+  const [groupAdmin, setGroupAdmin] = useState<boolean | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [signedIn, setSignedIn] = useState(false);
@@ -45,7 +46,11 @@ export const TelegramServerSettings: React.FC<{ bot: ReturnType<typeof useServer
 
   const refresh = useCallback(async () => {
     setCheck(await checkBotServer(base));
-    if (token && bot.onServer) setInfo(await serverWebhookInfo(token).catch(() => null));
+    if (token && bot.onServer) {
+      setInfo(await serverWebhookInfo(token).catch(() => null));
+      const chatId = getStoredCredentials().telegramChatId;
+      setGroupAdmin(isGroupChat(chatId) ? await botIsGroupAdmin(token, chatId) : undefined);
+    }
   }, [base, token, bot.onServer]);
   useEffect(() => {
     void refresh();
@@ -119,6 +124,24 @@ export const TelegramServerSettings: React.FC<{ bot: ReturnType<typeof useServer
             {info ? ` · ข้อความรอคิว ${info.pending}` : ''}
             {bot.state?.lastUpdateAt ? ` · ข้อความล่าสุด ${new Date(bot.state.lastUpdateAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}` : ''}
           </div>
+          {info && !info.url && (
+            <div role="alert" className="p-3 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-200">
+              Telegram ไม่ได้ส่งข้อความมาที่เซิร์ฟเวอร์แล้ว (การเชื่อมต่อหลุด) กด “เชื่อมต่อใหม่ / อัปเดต” ด้านล่าง
+            </div>
+          )}
+          {info?.url && info.readsGroupMessages === false && groupAdmin === false && (
+            <div role="alert" className="p-3 rounded-xl bg-amber-950/40 border border-amber-700/60 text-amber-100 space-y-1">
+              <div className="font-bold">บอทอ่านข้อความทั่วไปในกลุ่มไม่ได้</div>
+              <div>
+                Telegram ส่งให้บอทเฉพาะคำสั่ง (/menu) และข้อความที่ตอบกลับบอท พิมพ์รายการหรือส่งรูปบิลในกลุ่มเฉยๆ บอทจะไม่เห็น แก้ได้ 1 ใน 2 วิธี:
+              </div>
+              <ol className="list-decimal pl-5 space-y-0.5">
+                <li>ตั้งบอทเป็นแอดมินกลุ่ม: เปิดกลุ่ม → แตะชื่อกลุ่ม → แก้ไข → ผู้ดูแลระบบ → เพิ่มผู้ดูแล → เลือก {info.username ? `@${info.username}` : 'บอท'} (ง่ายที่สุด)</li>
+                <li>หรือที่ @BotFather: /mybots → เลือกบอท → Bot Settings → Group Privacy → Turn off แล้วเอาบอทออกจากกลุ่มและเพิ่มเข้าใหม่</li>
+              </ol>
+              <div>ทำเสร็จแล้วกดปุ่ม ↻ ด้านบนเพื่อตรวจอีกครั้ง</div>
+            </div>
+          )}
           {(serverError || botError) && (
             <div role="alert" className="p-3 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-200">
               ล่าสุดมีปัญหา: {serverError || botError.replace(/^\S+ /, '')}

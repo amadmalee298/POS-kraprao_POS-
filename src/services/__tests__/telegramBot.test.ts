@@ -37,6 +37,19 @@ describe('typed entries', () => {
     expect(parseEntryText('จ่าย วันที่ 4/10/69 ค่าน้ำแข็ง 60', today)).toMatchObject({ date: '2026-10-04', amount: 60 });
   });
 
+  it('adds up a shopping list, one item a line, with quantities that are not money', () => {
+    const list = 'ซื้อวัตถุดิบ ร้านพริกแกง\nพริกซอย 30บาท 3ขีด\nหอมแดงซอย 10บาท 1ขีด\nผงชูรส 35';
+    expect(parseEntryText(list, today)).toEqual({
+      kind: 'expense',
+      date: today,
+      title: 'วัตถุดิบ: พริกซอย, หอมแดงซอย, ผงชูรส',
+      amount: 75,
+      vendor: 'พริกแกง'
+    });
+    expect(parseEntryText('จ่าย พริกซอย 30 3ขีด', today)).toMatchObject({ amount: 30 });
+    expect(parseEntryText('จ่าย ค่าผัก\n135 บาท', today)).toMatchObject({ title: 'ค่าผัก', amount: 135 });
+  });
+
   it('explains a missing amount (an unfilled template)', () => {
     expect(parseEntryText('จ่าย วันที่ 5/10/69 ค่า... ... บาท ร้านค้า ...', today)).toHaveProperty('error');
     expect(parseEntryText('สวัสดี 100', today)).toHaveProperty('error');
