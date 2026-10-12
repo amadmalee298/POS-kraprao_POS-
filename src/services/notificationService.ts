@@ -295,6 +295,12 @@ export async function sendTelegramMessage(
     if (response.ok && data.ok) {
       return { success: true, channel: 'telegram', method: 'direct' };
     }
+    // The group became a supergroup and has a new chat ID: use it from now on
+    const movedTo = data.parameters?.migrate_to_chat_id;
+    if (movedTo && String(movedTo) !== cleanChatId) {
+      if (getStoredCredentials().telegramChatId.trim() === cleanChatId) saveStoredCredentials({ telegramChatId: String(movedTo) });
+      return sendTelegramMessage(token, String(movedTo), message, html);
+    }
     // Text Telegram cannot read as HTML still goes out, as plain text
     if (html && /parse entities/i.test(String(data.description || ''))) {
       return sendTelegramMessage(token, chatId, htmlToText(message), false);

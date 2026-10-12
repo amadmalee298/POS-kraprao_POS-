@@ -260,10 +260,17 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
   if (!refreshToken) return { status: 401, body: { error: 'secret' } };
 
   const db = new Firestore(req.projectId, () => idTokenFor(req.apiKey, refreshToken, req.referer), req.databaseId);
-  const config = (await db.get(`branches/${req.branchId}/config/${BOT_CONFIG_DOC}`)) as unknown as BotConfig | null;
-  if (!config?.webhook || !config.token || !config.chatId) return { status: 200, body: { ignored: 'not set up' } };
-
+  const configPath = `branches/${req.branchId}/config/${BOT_CONFIG_DOC}`;
+  const config = (await db.get(configPath)) as unknown as BotConfig | null;
   const statePath = `branches/${req.branchId}/config/${BOT_STATE_DOC}`;
+  // Every delivery is noted (also ones not acted on), so the app can show where messages stop
+  const noteDelivery = (result: string, chat = '') =>
+    db.set(statePath, { lastDeliveryAt: new Date().toISOString(), lastDeliveryResult: result, lastDeliveryChat: chat }, ['lastDeliveryAt', 'lastDeliveryResult', 'lastDeliveryChat']).catch(() => {});
+  if (!config?.webhook || !config.token || !config.chatId) {
+    await noteDelivery('not set up');
+    return { status: 200, body: { ignored: 'not set up' } };
+  }
+
   const stateDoc: any = (await db.get(statePath)) || {};
   const seen: number[] = Array.isArray(stateDoc.seen) ? stateDoc.seen : [];
   const updateId = Number(req.update?.update_id);
@@ -272,8 +279,28 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
   await db.set(statePath, { seen: [...seen, updateId].slice(-KEEP_SEEN), lastUpdateAt: new Date().toISOString() }, ['seen', 'lastUpdateAt']);
 
   const update = req.update;
-  const chatId = String(update?.callback_query?.message?.chat?.id ?? (update?.message || update?.channel_post)?.chat?.id ?? '');
+  let chatId = String(update?.callback_query?.message?.chat?.id ?? (update?.message || update?.channel_post)?.chat?.id ?? '');
   if (!chatId) return { status: 200, body: { ignored: 'no chat' } };
+  // The shop's group became a supergroup (Telegram does this e.g. when an admin is added): it has a
+  // new chat ID, announced in the new chat with the old one. The bot follows it.
+  const migrateFrom = update?.message?.migrate_from_chat_id;
+  const migrateTo = update?.message?.migrate_to_chat_id;
+  const shopChat = String(config.chatId).trim();
+  if (migrateFrom !== undefined && String(migrateFrom) === shopChat && chatId !== shopChat) {
+    await db.set(configPath, { chatId, chatMovedFrom: shopChat }, ['chatId', 'chatMovedFrom']);
+    config.chatId = chatId;
+    await noteDelivery('chat moved', chatId);
+    await tgCall(config.token, 'sendMessage', { chat_id: chatId, text: '✅ กลุ่มนี้ถูกอัปเกรดเป็น supergroup บอทย้ายมาใช้ Chat ID ใหม่แล้ว' }).catch(() => {});
+    return { status: 200, body: { ok: true, movedTo: chatId } };
+  }
+  if (migrateTo !== undefined && chatId === shopChat) {
+    chatId = String(migrateTo);
+    await db.set(configPath, { chatId, chatMovedFrom: shopChat }, ['chatId', 'chatMovedFrom']);
+    config.chatId = chatId;
+    await noteDelivery('chat moved', chatId);
+    return { status: 200, body: { ok: true, movedTo: chatId } };
+  }
+  await noteDelivery(chatId === shopChat ? 'ok' : 'other chat', chatId);
   if (chatId !== String(config.chatId).trim()) {
     // Only the shop's chat; the other one is shown in the app so the owner can find its ID
     const from = (update.message || update.channel_post)?.from || {};
