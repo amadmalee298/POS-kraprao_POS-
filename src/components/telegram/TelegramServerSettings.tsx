@@ -101,6 +101,22 @@ export const TelegramServerSettings: React.FC<{ bot: ReturnType<typeof useServer
     }
   };
 
+  // The shop's group answered from a new chat ID (e.g. it became a supergroup): switch to it
+  const adoptChat = async (chatId: string) => {
+    if (!window.confirm(`ใช้ Chat ID ${chatId} เป็นแชทของร้าน?\nบอทจะรับรายการและส่งการแจ้งเตือนเข้าแชทนี้แทน`)) return;
+    setBusy(true);
+    try {
+      saveStoredCredentials({ telegramChatId: chatId });
+      await updateServerBotConfig(currentBranch.id, { chatId });
+      setMessage({ ok: true, text: `เปลี่ยนเป็นแชท ${chatId} แล้ว ลองพิมพ์รายการในกลุ่มอีกครั้ง` });
+      await refresh();
+    } catch (e: any) {
+      setMessage({ ok: false, text: e?.message || 'เปลี่ยนแชทไม่สำเร็จ' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const [testResult, setTestResult] = useState('');
   const sendTest = async () => {
     setTestResult('กำลังส่ง...');
@@ -207,9 +223,15 @@ export const TelegramServerSettings: React.FC<{ bot: ReturnType<typeof useServer
             </div>
           )}
           {bot.state?.ignoredChatId && bot.state.ignoredChatId !== getStoredCredentials().telegramChatId && (
-            <p className="text-amber-300">
-              มีข้อความจากแชทอื่น (Chat ID {bot.state.ignoredChatId}{bot.state.ignoredChatName ? ` · ${bot.state.ignoredChatName}` : ''}) ระบบไม่รับเพื่อความปลอดภัย
-            </p>
+            <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-700/60 text-amber-100 space-y-2">
+              <p>
+                มีข้อความจากแชทอื่น (Chat ID {bot.state.ignoredChatId}{bot.state.ignoredChatName ? ` · ${bot.state.ignoredChatName}` : ''}) ระบบไม่รับเพื่อความปลอดภัย
+                ถ้าเป็นกลุ่มของร้าน (เช่น กลุ่มถูกอัปเกรดแล้ว Chat ID เปลี่ยน) กดปุ่มด้านล่าง
+              </p>
+              <button type="button" onClick={() => void adoptChat(String(bot.state!.ignoredChatId))} disabled={busy} className="h-9 px-3 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold disabled:opacity-50">
+                ใช้แชทนี้เป็นแชทของร้าน
+              </button>
+            </div>
           )}
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={activate} disabled={busy || !ready} className="h-10 px-4 rounded-xl border border-sky-700 text-sky-200 font-bold disabled:opacity-50 inline-flex items-center gap-1.5">
