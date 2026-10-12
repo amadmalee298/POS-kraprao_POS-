@@ -97,6 +97,7 @@ import {
   getStoredRules,
   dispatchNotification,
   generateDailySummaryMessage,
+  dailySummaryDue,
   generateNewOrderMessage,
   generateVoidOrderMessage,
   generateLowStockMessage,
@@ -784,6 +785,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // History written while offline, sent on reconnect
   const pendingStockLogsRef = useRef<StockAdjustmentLog[]>([]);
+  // When this device first received the cloud's orders (0 = not yet)
+  const cloudOrdersReadyAtRef = useRef(0);
   const pendingWasteLogsRef = useRef<WasteLog[]>([]);
 
   const addStockAdjustmentLog = (entry: Omit<StockAdjustmentLog, 'id' | 'timestamp'>) => {
@@ -1015,6 +1018,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     purgeStubOrderDocs().catch(() => undefined);
 
     const unsubOrders = subscribeToRecentCentralOrders(1000, (centralOrderList, removedIds) => {
+      cloudOrdersReadyAtRef.current = cloudOrdersReadyAtRef.current || Date.now();
       let pushBack: Order[] = [];
       setOrders(prev => {
         const result = mergeCloudOrders(prev, centralOrderList || [], removedIds || []);
@@ -1421,28 +1425,26 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try {
         const triggers = getStoredTriggers();
         if (!triggers.dailySummary) return;
+        // A device just opened still shows what it saved days ago: the summary waits until this
+        // device has the day's bills, expenses and income from the cloud (or works offline)
+        if (!isStorageLoaded) return;
+        const online = !effectiveOffline && isFirebaseAvailable();
+        const readyAt = cloudOrdersReadyAtRef.current;
+        if (online && (!readyAt || Date.now() - readyAt < 20_000)) return;
 
         const rules = getStoredRules();
         const summaryTime = rules.dailySummaryTime || '22:00';
 
-        const now = new Date();
-        const currentHours = String(now.getHours()).padStart(2, '0');
-        const currentMinutes = String(now.getMinutes()).padStart(2, '0');
-        const currentTimeStr = `${currentHours}:${currentMinutes}`;
-        // Local day (the ISO date is UTC)
-        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-        const lastSentDate = localStorage.getItem('kaprao_last_daily_summary_date');
-        // If current time reached summary time and hasn't been sent yet today
-        if (currentTimeStr >= summaryTime && lastSentDate !== todayStr) {
-          localStorage.setItem('kaprao_last_daily_summary_date', todayStr);
-          // Only one of the shop's open devices sends it (otherwise every tablet sends a copy)
-          claimDailyJob(currentBranch.id, 'daily_summary', todayStr).then(mine => {
-            if (!mine) return;
-            const msg = generateDailySummaryMessage(orders, ingredients, currentBranch, settings, { expenses, incomes });
-            dispatchNotification('สรุปยอดขายประจำวัน', msg, { force: true }).catch(console.error);
-          });
-        }
+        const due = dailySummaryDue(new Date(), summaryTime, localStorage.getItem('kaprao_last_daily_summary_date') || '');
+        if (!due) return;
+        const dueDay = due.day;
+        localStorage.setItem('kaprao_last_daily_summary_date', dueDay);
+        // Only one of the shop's open devices sends it (otherwise every tablet sends a copy)
+        claimDailyJob(currentBranch.id, 'daily_summary', dueDay).then(mine => {
+          if (!mine) return;
+          const msg = generateDailySummaryMessage(orders, ingredients, currentBranch, settings, { expenses, incomes }, due.at);
+          dispatchNotification(due.catchUp ? 'สรุปยอดขายเมื่อวาน' : 'สรุปยอดขายประจำวัน', msg, { force: true }).catch(console.error);
+        });
       } catch (err) {
         console.warn('[Notification Schedule] Check error:', err);
       }
@@ -1452,7 +1454,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     checkDailySummarySchedule();
     const intervalId = setInterval(checkDailySummarySchedule, 30000);
     return () => clearInterval(intervalId);
-  }, [orders, ingredients, currentBranch, settings, expenses, incomes]);
+  }, [orders, ingredients, currentBranch, settings, expenses, incomes, isStorageLoaded, effectiveOffline]);
 
   // Notifications name the shop as in Settings
   useEffect(() => {
