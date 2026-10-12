@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, CircleAlert, Cloud, Loader2, RefreshCw } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { getStoredCredentials } from '../../services/notificationService';
+import { getStoredCredentials, saveStoredCredentials, sendTelegramMessage } from '../../services/notificationService';
 import { isFirebaseAvailable, onFirebaseUserChange, subscribeToBranchDoc } from '../../services/firebaseService';
 import { vercelBase } from '../../services/receiptScan';
 import { BOT_CONFIG_DOC, BOT_STATE_DOC, readBotMode } from '../../services/telegramBot';
@@ -24,6 +24,12 @@ export function useServerBot() {
       b();
     };
   }, [branchId]);
+  // The server moved to a new chat ID (the group became a supergroup): this device follows
+  useEffect(() => {
+    const moved = String(config?.chatId || '').trim();
+    const from = String(config?.chatMovedFrom || '').trim();
+    if (config?.webhook && moved && from && getStoredCredentials().telegramChatId.trim() === from) saveStoredCredentials({ telegramChatId: moved });
+  }, [config?.webhook, config?.chatId, config?.chatMovedFrom]);
   return { onServer: !!config?.webhook, config, state };
 }
 
@@ -95,6 +101,26 @@ export const TelegramServerSettings: React.FC<{ bot: ReturnType<typeof useServer
     }
   };
 
+  const [testResult, setTestResult] = useState('');
+  const sendTest = async () => {
+    setTestResult('กำลังส่ง...');
+    const before = getStoredCredentials().telegramChatId.trim();
+    const res = await sendTelegramMessage(token, before, '🔔 ทดสอบจากระบบ POS: บอทส่งข้อความเข้ากลุ่มนี้ได้ ลองพิมพ์ /menu เพื่อทดสอบการรับข้อความ');
+    const after = getStoredCredentials().telegramChatId.trim();
+    // The group got a new chat ID (supergroup): the server bot follows it too
+    if (after !== before) await updateServerBotConfig(currentBranch.id, { chatId: after }).catch(() => {});
+    setTestResult(res.success ? `✅ ส่งได้${after !== before ? ` (กลุ่มเปลี่ยน Chat ID เป็น ${after} ระบบอัปเดตให้แล้ว)` : ''}` : `❌ ส่งไม่ได้: ${res.error || ''}`);
+    void refresh();
+  };
+
+  const fmtTime = (iso?: string) => (iso ? new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }) : '-');
+  const deliveryLabel: Record<string, string> = {
+    ok: 'รับแล้ว',
+    'other chat': 'มาจากแชทอื่น (ไม่ตรง Chat ID ที่ตั้งไว้)',
+    'not set up': 'เซิร์ฟเวอร์ยังไม่มีการตั้งค่าบอท',
+    'chat moved': 'กลุ่มเปลี่ยน Chat ID ระบบย้ายให้แล้ว'
+  };
+
   const Step: React.FC<{ ok: boolean; children: React.ReactNode }> = ({ ok, children }) => (
     <li className={`flex items-start gap-2 ${ok ? 'text-emerald-200' : 'text-amber-200'}`}>
       {ok ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> : <CircleAlert className="w-4 h-4 shrink-0 mt-0.5" />}
@@ -142,6 +168,38 @@ export const TelegramServerSettings: React.FC<{ bot: ReturnType<typeof useServer
               <div>ทำเสร็จแล้วกดปุ่ม ↻ ด้านบนเพื่อตรวจอีกครั้ง</div>
             </div>
           )}
+          <details className="rounded-xl border border-slate-700 bg-slate-950/40">
+            <summary className="px-3 py-2 cursor-pointer text-slate-300 font-bold">รายละเอียดการเชื่อมต่อ (ส่งภาพหน้าจอนี้เมื่อบอทไม่ตอบ)</summary>
+            <dl className="px-3 pb-3 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-[11px] text-slate-300">
+              <dt className="text-slate-500">Webhook</dt>
+              <dd className="break-all">{info ? (info.url ? info.url.replace(/^https?:\/\//, '').split(/[/?]/)[0] : 'ไม่มี (หลุด)') : '-'}</dd>
+              <dt className="text-slate-500">ข้อความรอคิว</dt>
+              <dd>{info ? info.pending : '-'}</dd>
+              <dt className="text-slate-500">Telegram แจ้งผิดพลาด</dt>
+              <dd className="break-words">{info?.lastError ? `${info.lastError} (${fmtTime(info.lastErrorAt)})` : 'ไม่มี'}</dd>
+              <dt className="text-slate-500">เซิร์ฟเวอร์ได้รับล่าสุด</dt>
+              <dd>
+                {fmtTime(bot.state?.lastDeliveryAt || bot.state?.lastUpdateAt)}
+                {bot.state?.lastDeliveryResult ? ` · ${deliveryLabel[bot.state.lastDeliveryResult] || bot.state.lastDeliveryResult}` : ''}
+                {bot.state?.lastDeliveryChat ? ` · แชท ${bot.state.lastDeliveryChat}` : ''}
+              </dd>
+              <dt className="text-slate-500">Chat ID ร้าน</dt>
+              <dd>
+                {String(bot.config?.chatId || '-')}
+                {bot.config?.chatId && String(bot.config.chatId).trim() !== getStoredCredentials().telegramChatId.trim() ? ` (เครื่องนี้ตั้ง ${getStoredCredentials().telegramChatId || '-'})` : ''}
+              </dd>
+              <dt className="text-slate-500">อ่านข้อความในกลุ่ม</dt>
+              <dd>{info?.readsGroupMessages === undefined ? '-' : info.readsGroupMessages ? 'ได้ (ปิด Group Privacy แล้ว)' : 'ไม่ได้ (Group Privacy เปิดอยู่)'}</dd>
+              <dt className="text-slate-500">เป็นแอดมินกลุ่ม</dt>
+              <dd>{groupAdmin === undefined ? '-' : groupAdmin ? 'ใช่' : 'ไม่ใช่'}</dd>
+            </dl>
+            <div className="px-3 pb-3 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => void sendTest()} disabled={!token} className="h-9 px-3 rounded-lg border border-slate-600 text-slate-200 text-xs font-bold disabled:opacity-50">
+                ส่งข้อความทดสอบเข้ากลุ่ม
+              </button>
+              {testResult && <span className="text-[11px] text-slate-300">{testResult}</span>}
+            </div>
+          </details>
           {(serverError || botError) && (
             <div role="alert" className="p-3 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-200">
               ล่าสุดมีปัญหา: {serverError || botError.replace(/^\S+ /, '')}

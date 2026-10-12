@@ -138,6 +138,18 @@ describe('Telegram webhook on Vercel', () => {
     expect(await openWithSecret(sealed, 'wrong')).toBeNull();
   });
 
+  it('follows the shop group when it becomes a supergroup, and notes every delivery', async () => {
+    await deliver({ update_id: 50, message: { message_id: 1, date: 1790000000, chat: { id: -100777 }, migrate_from_chat_id: -100 } });
+    expect(cloud.read('branches/b1/config/telegram_bot')).toMatchObject({ chatId: '-100777', chatMovedFrom: '-100' });
+    expect(cloud.read('branches/b1/config/telegram_bot_state')).toMatchObject({ lastDeliveryResult: 'chat moved', lastDeliveryChat: '-100777' });
+    // Messages from the new chat are now the shop's
+    await deliver({ update_id: 51, message: { message_id: 2, date: 1790000000, chat: { id: -100777 }, from: { id: 5, first_name: 'แม่ครัว' }, text: 'จ่าย ค่าแก๊ส 350' } });
+    expect([...cloud.docs.keys()].some(k => k.startsWith('expenses/'))).toBe(true);
+    expect(cloud.read('branches/b1/config/telegram_bot_state')).toMatchObject({ lastDeliveryResult: 'ok' });
+    await deliver({ update_id: 52, message: { message_id: 3, date: 1790000000, chat: { id: 999 }, from: { id: 6 }, text: 'hi' } });
+    expect(cloud.read('branches/b1/config/telegram_bot_state')).toMatchObject({ lastDeliveryResult: 'other chat', lastDeliveryChat: '999' });
+  });
+
   it('refuses deliveries without the right secret', async () => {
     expect((await deliver(photoUpdate(1), { secret: 'nope' })).status).toBe(401);
     expect(cloud.telegram).toHaveLength(0);
