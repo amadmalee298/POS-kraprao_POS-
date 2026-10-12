@@ -71,10 +71,12 @@ export function parseThaiDate(d: number, m: number, y: number | undefined, today
 }
 
 const EXPENSE_WORD = /^\s*(?:จ่าย(?:เงิน)?|รายจ่าย|ซื้อ|-)\s*/;
-const INCOME_WORD = /^\s*(?:รับ(?:เงิน)?|รายรับ|\+)\s*/;
+const INCOME_WORD = /^\s*(?:รับ(?:เงิน)?|รายรับ|รายได้|ได้รับ(?:เงิน)?|เงินเข้า|\+)\s*/;
+// "ขายน้ำมันเก่า 200": money in, and the word stays in the title
+const SALE_WORD = /^\s*ขาย/;
 
 /** A message that starts like an entry (so other chat in the group is left alone) */
-export const looksLikeEntry = (text: string) => EXPENSE_WORD.test(text) || INCOME_WORD.test(text);
+export const looksLikeEntry = (text: string) => EXPENSE_WORD.test(text) || INCOME_WORD.test(text) || SALE_WORD.test(text);
 
 // Words after a number that make it a quantity, not money ("3ขีด", "2 แผง", "1 กก.")
 const QTY_WORDS = 'ขีด|กก\\.?|กิโล(?:กรัม)?|กรัม|ก\\.|g\\b|kg\\b|ลิตร|ล\\.|มล\\.?|ml\\b|ถุง|ขวด|ห่อ|แพ็ค|แพค|แพ็ก|ลูก|กำ|ชิ้น|ฟอง|แผง|กล่อง|ลัง|ตัว|หัว|ช่อ|มัด|โหล|ใบ|อัน|ซอง|กระป๋อง|กิ่ง|ต้น';
@@ -105,11 +107,13 @@ function entryHead(line: string, today: string): { kind: TypedEntry['kind']; dat
   if (INCOME_WORD.test(text) && !/^\s*รับประทาน/.test(text)) {
     kind = 'income';
     text = text.replace(INCOME_WORD, '');
+  } else if (SALE_WORD.test(text)) {
+    kind = 'income';
   } else if (EXPENSE_WORD.test(text)) {
     kind = 'expense';
     text = text.replace(EXPENSE_WORD, '');
   } else {
-    return { error: 'ขึ้นต้นด้วย “จ่าย” หรือ “รับ”' };
+    return { error: 'ขึ้นต้นด้วย “จ่าย” หรือ “รับ” (หรือ “รายได้” / “ขาย”)' };
   }
 
   let date = today;
@@ -354,6 +358,8 @@ export function editValue(field: EditField, text: string, today: string): { amou
 export const MENU_BUTTONS = {
   send: '📸 ส่งบิล',
   type: '✍️ พิมพ์จด',
+  expense: '💸 จดรายจ่าย',
+  income: '💰 จดรายรับ',
   today: '📊 สรุปวันนี้',
   month: '📅 สรุปเดือนนี้',
   latest: '🧾 รายการล่าสุด',
@@ -364,6 +370,7 @@ export const MENU_BUTTONS = {
 /** The keyboard under the chat's text box (like a LINE rich menu) */
 export const mainMenuKeyboard = () => ({
   keyboard: [
+    [{ text: MENU_BUTTONS.income }, { text: MENU_BUTTONS.expense }],
     [{ text: MENU_BUTTONS.send }, { text: MENU_BUTTONS.type }],
     [{ text: MENU_BUTTONS.today }, { text: MENU_BUTTONS.month }],
     [{ text: MENU_BUTTONS.latest }, { text: MENU_BUTTONS.drive }],
@@ -376,6 +383,8 @@ export const mainMenuKeyboard = () => ({
 
 export const BOT_COMMANDS = [
   { command: 'menu', description: 'เปิดเมนู' },
+  { command: 'income', description: 'จดรายรับ / รายได้' },
+  { command: 'expense', description: 'จดรายจ่าย' },
   { command: 'jot', description: 'พิมพ์จดรายรับ-รายจ่าย' },
   { command: 'today', description: 'สรุปวันนี้' },
   { command: 'month', description: 'สรุปเดือนนี้' },
@@ -384,19 +393,21 @@ export const BOT_COMMANDS = [
   { command: 'help', description: 'วิธีใช้' }
 ];
 
-export type MenuAction = 'menu' | 'send' | 'type' | 'today' | 'month' | 'latest' | 'drive' | 'help';
+export type MenuAction = 'menu' | 'send' | 'type' | 'expense' | 'income' | 'today' | 'month' | 'latest' | 'drive' | 'help';
 
 /** A menu button, /command or the words people type for them */
 export function menuAction(text: string): MenuAction | null {
   const t = text.trim().replace(/@\w+$/, '');
   const cmd = t.match(/^\/(\w+)/)?.[1]?.toLowerCase();
   if (cmd) {
-    const map: Record<string, MenuAction> = { start: 'menu', menu: 'menu', jot: 'type', today: 'today', month: 'month', latest: 'latest', drive: 'drive', help: 'help', summary: 'today' };
+    const map: Record<string, MenuAction> = { start: 'menu', menu: 'menu', jot: 'type', income: 'income', expense: 'expense', today: 'today', month: 'month', latest: 'latest', drive: 'drive', help: 'help', summary: 'today' };
     return map[cmd] || null;
   }
   const entry = (Object.entries(MENU_BUTTONS) as [MenuAction, string][]).find(([, label]) => label === t);
   if (entry) return entry[0];
   if (/^(เมนู|menu)$/i.test(t)) return 'menu';
+  if (/^(จด|บันทึก)?\s*(รายรับ|รายได้)$/.test(t)) return 'income';
+  if (/^(จด|บันทึก)?\s*รายจ่าย$/.test(t)) return 'expense';
   if (/ขอ\s*(link|ลิงก์|ลิ้ง)?\s*(google\s*)?drive/i.test(t)) return 'drive';
   if (/^(ดู)?สรุป(วันนี้)?$/.test(t)) return 'today';
   if (/^(ดู)?สรุปเดือน(นี้)?$/.test(t)) return 'month';
@@ -419,7 +430,8 @@ export function helpText(mode: BotMode): string {
     '🤖 <b>วิธีใช้บอทบันทึกบัญชีของร้าน</b>',
     '',
     `📸 ส่งรูปสลิป/บิล → ${mode === 'auto' ? 'บันทึกทันที' : 'ส่งให้ผู้จัดการอนุมัติในระบบ POS'}`,
-    '✍️ พิมพ์ “จ่าย ค่าผัก 135 บาท” หรือ “รับ 500 ค่าจัดเลี้ยง” → บันทึกโดยไม่ต้องมีรูป',
+    '✍️ พิมพ์ “จ่าย ค่าผัก 135 บาท” หรือ “รับ 500 ค่าจัดเลี้ยง” / “รายได้ ขายข้าวกล่อง 1,200” → บันทึกโดยไม่ต้องมีรูป',
+    '💰 กด “จดรายรับ” หรือ “จดรายจ่าย” แล้วพิมพ์แค่ยอดกับชื่อรายการ เช่น “1200 ขายข้าวกล่อง” หรือส่งรูปสลิป',
     '✏️ ใต้รายการที่บันทึก กดปุ่มเพื่อ ดูใบแทนใบเสร็จ (PDF), เพิ่มรูปสินค้า, แก้ไขหมวดหมู่/ยอด/วันที่ หรือลบ',
     '📊 “สรุปวันนี้” / “สรุปเดือนนี้” → ยอดขาย รายรับ รายจ่าย',
     '📁 “ขอ link google drive” → โฟลเดอร์เอกสารของร้าน',
@@ -486,7 +498,8 @@ export interface BotWaiting {
   chatId: string;
   /** The person who pressed the button (others in the group are not taken as the answer) */
   userId?: string;
-  action: 'photo' | 'edit' | 'amount';
+  /** jot: the next text (or photo) of this person is an entry of kind `recordId` ('income' / 'expense') */
+  action: 'photo' | 'edit' | 'amount' | 'jot';
   recordId: string;
   field?: EditField;
   /** The card to refresh after the change */
@@ -541,4 +554,11 @@ export function messageParts(update: any): { chatId: string; messageId: number; 
     senderName: [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || msg.chat?.title || '',
     senderId: String(from.id ?? '')
   };
+}
+
+/** What the bot asks after "จดรายรับ" / "จดรายจ่าย" */
+export function jotPrompt(kind: 'income' | 'expense'): string {
+  return kind === 'income'
+    ? '💰 <b>จดรายรับ</b>\nพิมพ์ยอดและรายการ เช่น <code>1200 ขายข้าวกล่องจัดเลี้ยง</code> หรือ <code>350 ขายน้ำมันเก่า</code>\nหรือส่งรูปสลิปเงินเข้ามาได้เลย'
+    : '💸 <b>จดรายจ่าย</b>\nพิมพ์ยอดและรายการ เช่น <code>135 ค่าผัก ร้านป้าแดง</code>\nหรือส่งรูปบิล/สลิปเข้ามาได้เลย';
 }
