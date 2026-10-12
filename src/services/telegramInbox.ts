@@ -97,7 +97,7 @@ export function photoFromUpdate(update: any): IncomingPhoto | null {
 }
 
 /** Caption words that mark the photo as money received rather than spent */
-export const isIncomeCaption = (caption: string) => /#?(รายรับ|รับเงิน|income)/i.test(caption);
+export const isIncomeCaption = (caption: string) => /#?(รายรับ|รับเงิน|รายได้|เงินเข้า|income)|^\s*ขาย/i.test(caption);
 
 export const pendingId = (p: Pick<IncomingPhoto, 'chatId' | 'messageId'>) => `tg-${p.chatId}-${p.messageId}`;
 

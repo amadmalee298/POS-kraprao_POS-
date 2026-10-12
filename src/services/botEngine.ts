@@ -22,6 +22,7 @@ import {
   isIncomeCategory,
   latestText,
   looksLikeEntry,
+  jotPrompt,
   mainMenuKeyboard,
   menuAction,
   messageParts,
@@ -382,6 +383,9 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
   if (photo) {
     const waiting = await store.getWaiting(chatId, userId);
     if (waiting?.action === 'photo' && (await addPurchasePhoto(waiting, photo))) return;
+    // After "จดรายรับ": a slip of money received
+    const jotIncome = waiting?.action === 'jot' && waiting.recordId === 'income';
+    if (waiting?.action === 'jot') await store.setWaiting(chatId, userId, null);
 
     const id = pendingId(photo);
     if (await store.inboxItem(id)) return; // already handled (Telegram sent it again)
@@ -395,7 +399,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       senderName: photo.senderName,
       caption: photo.caption,
       receivedAt: photo.date,
-      kind: isIncomeCaption(photo.caption) ? 'income' : 'expense',
+      kind: jotIncome || isIncomeCaption(photo.caption) ? 'income' : 'expense',
       status: 'reading'
     };
     await store.putInbox(item);
@@ -453,6 +457,10 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     if (action === 'menu') await send({ text: `สวัสดีครับ 👋 บอทบัญชีของร้าน ${ctx.shop.name || ''}\nเลือกเมนูด้านล่าง หรือส่งรูปสลิป/บิลเข้ามาได้เลย`.replace(/[&<>]/g, ''), reply_markup: mainMenuKeyboard() });
     else if (action === 'send') await send({ text: SEND_HELP });
     else if (action === 'type') await send({ text: entryTemplates(today) });
+    else if (action === 'income' || action === 'expense') {
+      await store.setWaiting(chatId, userId, { chatId, userId, action: 'jot', recordId: action } as BotWaiting);
+      await send({ text: jotPrompt(action), reply_markup: { force_reply: true, input_field_placeholder: action === 'income' ? 'เช่น 1200 ขายข้าวกล่อง' : 'เช่น 135 ค่าผัก' } });
+    }
     else if (action === 'help') await send({ text: helpText(ctx.mode), reply_markup: mainMenuKeyboard() });
     else if (action === 'today' || action === 'month') {
       const from = action === 'today' ? today : `${today.slice(0, 7)}-01`;
@@ -557,9 +565,16 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     await store.setWaiting(chatId, userId, null);
   }
 
+  // The answer to "จดรายรับ / จดรายจ่าย": the amount and what it is, without the keyword
+  let entryText = text;
+  if (waiting?.action === 'jot') {
+    await store.setWaiting(chatId, userId, null);
+    if (!looksLikeEntry(text)) entryText = `${waiting.recordId === 'income' ? 'รับ' : 'จ่าย'} ${text}`;
+  }
+
   // "จ่าย ค่าผัก 135 บาท" / "รับ 500 ค่าจัดเลี้ยง"
-  if (!looksLikeEntry(text)) return;
-  const parsed = parseEntryText(text, today);
+  if (!looksLikeEntry(entryText)) return;
+  const parsed = parseEntryText(entryText, today);
   if ('error' in parsed) {
     // Words like "จ่ายแล้ว" in a conversation: only answer when it looked like an entry with a number
     if (/\d/.test(text) || /\.\.\./.test(text)) await send({ text: `⚠️ ${parsed.error}\n\n${entryTemplates(today)}`, reply_to_message_id: msg.messageId });

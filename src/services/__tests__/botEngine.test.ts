@@ -100,6 +100,20 @@ describe('bot engine', () => {
     expect(mem.inbox()[0]).toMatchObject({ status: 'approved', recordId: 'exp-1', cardMessageId: 500, storeFileId: 'F1-small' });
   });
 
+  it('records income from the "จดรายรับ" button, typed words or a slip sent after it', async () => {
+    const { mem, calls, msg, photo, run } = setup();
+    await run(msg({ text: '💰 จดรายรับ' }));
+    expect(calls.at(-1)!.params.reply_markup.force_reply).toBe(true);
+    await run(msg({ text: '1200 ขายข้าวกล่องจัดเลี้ยง' }));
+    expect([...mem.incomes.values()][0]).toMatchObject({ amount: 1200, title: 'ขายข้าวกล่องจัดเลี้ยง' });
+    await run(msg({ text: 'รายได้ ขายน้ำมันเก่า 350' }));
+    expect([...mem.incomes.values()].map(i => i.amount)).toEqual([1200, 350]);
+    await run(msg({ text: '/income' }));
+    await run(photo('S1'));
+    expect(mem.incomes.size).toBe(3);
+    expect(mem.expenses.size).toBe(0);
+  });
+
   it('handles each photo once, and numbers documents in order', async () => {
     const { mem, photo, run } = setup();
     const u = photo('F1');
