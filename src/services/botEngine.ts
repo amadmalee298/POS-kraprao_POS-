@@ -22,7 +22,9 @@ import {
   isIncomeCategory,
   latestText,
   looksLikeEntry,
+  attachKeyboard,
   jotPrompt,
+  MAX_ATTACHMENTS,
   mainMenuKeyboard,
   menuAction,
   messageParts,
@@ -288,12 +290,49 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     return true;
   };
 
+  const attachmentCount = (p: PendingReceipt) => (p.fileId ? 1 : 0) + (p.extraFileIds?.length || 0);
+
+  /** A picture attached to an entry waiting for approval (the first becomes its main picture) */
+  const attachToPending = async (item: PendingReceipt, photo: IncomingPhoto): Promise<void> => {
+    const count = attachmentCount(item);
+    if (count >= MAX_ATTACHMENTS) {
+      await store.setWaiting(chatId, userId, null);
+      await sendQuiet({ text: `แนบครบ ${MAX_ATTACHMENTS} รูปแล้ว`, reply_to_message_id: photo.messageId });
+      return;
+    }
+    await store.patchInbox(
+      item.id,
+      item.fileId ? { extraFileIds: [...(item.extraFileIds || []), photo.storeFileId || photo.fileId] } : { fileId: photo.fileId, storeFileId: photo.storeFileId }
+    );
+    const total = count + 1;
+    const finishing = FINISH_WORDS.test(photo.caption.trim()) || total >= MAX_ATTACHMENTS;
+    await sendQuiet({
+      text: `📎 แนบกับ “${(item.data?.title || item.caption).replace(/[&<>]/g, '').slice(0, 40)}” แล้ว (${total}/${MAX_ATTACHMENTS})${finishing ? '' : ' ส่งเพิ่มได้ หรือพิมพ์ “เสร็จ”'}`,
+      reply_to_message_id: photo.messageId
+    });
+    if (finishing) await store.setWaiting(chatId, userId, null);
+  };
+
   // ---------- Buttons under a card ----------
   if (update.callback_query) {
     const q = update.callback_query;
     const answer = (text?: string) => ctx.tg('answerCallbackQuery', { callback_query_id: q.id, text }).catch(() => {});
     const cardMessage = q.message?.message_id as number | undefined;
     const { action, id, value } = parseCallback(q.data || '');
+    if (action === 'attach') {
+      const item = await store.inboxItem(id);
+      if (!item || item.status !== 'pending') return void (await answer('รายการนี้ไม่ได้รออนุมัติแล้ว'));
+      const count = attachmentCount(item);
+      if (count >= MAX_ATTACHMENTS) return void (await answer(`แนบครบ ${MAX_ATTACHMENTS} รูปแล้ว`));
+      await store.setWaiting(chatId, userId, { action: 'attach', recordId: id, cardMessageId: cardMessage });
+      await answer();
+      await sendQuiet({
+        text: `📎 ส่งรูปสลิปโอน ใบเสร็จ หรือหลักฐานการซื้อมาได้เลย (อีก ${MAX_ATTACHMENTS - count} รูป ส่งพร้อมกันหลายรูปได้)\nพิมพ์ “เสร็จ” เมื่อส่งครบ`,
+        reply_to_message_id: cardMessage,
+        allow_sending_without_reply: true
+      });
+      return;
+    }
     const isExpense = id.startsWith('exp-');
     const kind = isExpense ? 'expense' : 'income';
     const rec = isExpense ? await store.getExpense(id) : await store.getIncome(id);
@@ -400,6 +439,18 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
   if (photo) {
     const waiting = await store.getWaiting(chatId, userId);
     if (waiting?.action === 'photo' && (await addPurchasePhoto(waiting, photo))) return;
+    // After "📎 แนบ…", or a photo sent as a reply to an entry waiting for approval: it belongs to that entry
+    const attachTarget =
+      waiting?.action === 'attach'
+        ? await store.inboxItem(waiting.recordId)
+        : photo.replyTo && store.inboxItems
+          ? (await store.inboxItems()).find(p => p.status === 'pending' && (p.messageId === photo.replyTo || p.cardMessageId === photo.replyTo)) || null
+          : null;
+    if (attachTarget && attachTarget.status === 'pending') {
+      await attachToPending(attachTarget, photo);
+      return;
+    }
+    if (waiting?.action === 'attach') await store.setWaiting(chatId, userId, null);
     // After "จดรายรับ": a slip of money received
     const jotIncome = waiting?.action === 'jot' && waiting.recordId === 'income';
     if (waiting?.action === 'jot') await store.setWaiting(chatId, userId, null);
@@ -433,8 +484,10 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       if (ctx.mode === 'approve') {
         await store.patchInbox(id, { status: 'pending', data, error: undefined });
         const text = `📥 <b>รับบิลแล้ว รออนุมัติในระบบ POS</b>\n${(data.vendorName || data.title).replace(/[&<>]/g, '')}\nยอด ${baht(data.amount)} · วันที่ ${data.date}${twinNote ? `\n⚠️ ${twinNote.replace(/[&<>]/g, '')} โปรดตรวจก่อนอนุมัติ` : data.warnings.length ? '\n⚠️ ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจก่อนอนุมัติ' : ''}`;
-        if (progressId) await editCard(progressId, text);
-        else await sendQuiet({ text, reply_to_message_id: photo.messageId });
+        if (progressId) {
+          await editCard(progressId, text, attachKeyboard(id));
+          await store.patchInbox(id, { cardMessageId: progressId });
+        } else await sendQuiet({ text, reply_to_message_id: photo.messageId });
         return;
       }
       if (!(data.amount > 0)) throw new Error('ไม่พบยอดเงินในรูป');
@@ -465,7 +518,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
   const text = msg.text.trim();
   const waiting = await store.getWaiting(chatId, userId);
 
-  if (waiting?.action === 'photo' && FINISH_WORDS.test(text)) {
+  if ((waiting?.action === 'photo' || waiting?.action === 'attach') && FINISH_WORDS.test(text)) {
     await store.setWaiting(chatId, userId, null);
     await send({ text: '👍 เรียบร้อย', reply_markup: mainMenuKeyboard() });
     return;
@@ -633,7 +686,12 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
         confidenceScore: 1
       }
     });
-    await send({ text: `📥 รับรายการแล้ว รออนุมัติในระบบ POS\n${parsed.title.replace(/[&<>]/g, '')} ${baht(parsed.amount)} · ${parsed.date}`, reply_to_message_id: msg.messageId });
+    const sent = await send({
+      text: `📥 รับรายการแล้ว รออนุมัติในระบบ POS\n${parsed.title.replace(/[&<>]/g, '')} ${baht(parsed.amount)} · ${parsed.date}\n📎 แนบสลิป/ใบเสร็จได้ด้วยปุ่มด้านล่าง หรือตอบกลับข้อความนี้ด้วยรูป`,
+      reply_to_message_id: msg.messageId,
+      reply_markup: attachKeyboard(id)
+    });
+    if (sent?.message_id) await store.patchInbox(id, { cardMessageId: sent.message_id });
     return;
   }
   await store.putInbox(base);

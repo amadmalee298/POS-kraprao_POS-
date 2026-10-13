@@ -820,6 +820,8 @@ export interface PendingReceipt {
   storeFileId?: string;
   /** The bot's card about this entry in the chat (updated when the entry changes) */
   cardMessageId?: number;
+  /** More pictures attached to it (slip, receipt, proof of purchase), after the first in fileId */
+  extraFileIds?: string[];
   /** Recorded by the bot as a purchase of goods: waits for a manager to receive it into stock */
   stockPending?: boolean;
 }

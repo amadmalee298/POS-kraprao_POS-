@@ -139,6 +139,16 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
     setError(null);
     try {
       const image = await loadImage(p).catch(() => undefined);
+      // More pictures attached in the chat (slip, receipt, proof of purchase) stay with the expense
+      const extras = (
+        await Promise.all(
+          (p.extraFileIds || []).map(fid =>
+            downloadTelegramFile(token, fid, vercelBase(settings.merchantSettings?.serverUrl))
+              .then(d => compressBase64Image(d, 900, 0.75))
+              .catch(() => '')
+          )
+        )
+      ).filter(Boolean);
       const vatAmount = f.kind === 'expense' && f.includeVat ? vatInside(f.amount, vatRate) : 0;
       const recordId = `${p.id}-rec`;
       if (f.kind === 'expense') {
@@ -154,7 +164,8 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           refNumber: f.refNumber.trim(),
           note: [f.note.trim(), `จาก Telegram: ${p.senderName}`].filter(Boolean).join(' · '),
           receiptImage: image,
-          receiptImageName: image ? `telegram-${p.messageId}.jpg` : undefined
+          receiptImageName: image ? `telegram-${p.messageId}.jpg` : undefined,
+          ...(extras.length ? { purchaseImages: extras.map((dataUrl, i) => ({ name: `telegram-${p.messageId}-${i + 2}.jpg`, dataUrl })) } : {})
         });
         // The bill photo into Google Drive too, when the shop turned that on
         if (drive.enabled && hasExpenseDocs(saved)) void drive.save(saved, true);
@@ -336,6 +347,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                   <ImageIcon className="w-5 h-5" /> ดูรูปบิล
                 </button>
               )}
+              {!!p.extraFileIds?.length && <div className="text-sky-300">📎 แนบเพิ่ม {p.extraFileIds.length} รูป (เก็บไว้กับรายจ่ายเมื่ออนุมัติ)</div>}
               <div className="text-slate-400">
                 จาก {p.senderName || 'Telegram'} · {new Date(p.receivedAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}
               </div>
