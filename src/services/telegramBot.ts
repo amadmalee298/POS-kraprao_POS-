@@ -585,9 +585,12 @@ export function jotPrompt(kind: 'income' | 'expense'): string {
 /** Pictures that can be attached to one entry waiting for approval */
 export const MAX_ATTACHMENTS = 5;
 
-/** The button under an entry waiting for approval */
+/** The buttons under an entry waiting for approval */
 export const attachKeyboard = (inboxId: string): InlineKeyboard => ({
-  inline_keyboard: [[{ text: '📎 แนบสลิป / ใบเสร็จ / หลักฐาน', callback_data: `attach:${inboxId}` }]]
+  inline_keyboard: [
+    [{ text: '📎 แนบสลิป / ใบเสร็จ / หลักฐาน', callback_data: `attach:${inboxId}` }],
+    [{ text: '🗑 ยกเลิกรายการนี้', callback_data: `cancel:${inboxId}` }]
+  ]
 });
 
 /** A warning for an entry dated after today (e.g. "12-11-69" typed for 12-10-69) */

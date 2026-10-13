@@ -320,6 +320,33 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     const answer = (text?: string) => ctx.tg('answerCallbackQuery', { callback_query_id: q.id, text }).catch(() => {});
     const cardMessage = q.message?.message_id as number | undefined;
     const { action, id, value } = parseCallback(q.data || '');
+    // Withdrawn before anyone approved it (asks once more, then marks it cancelled in the POS list too)
+    if (action === 'cancel' || action === 'cancelok') {
+      const item = await store.inboxItem(id);
+      if (!item || item.status !== 'pending') return void (await answer(item?.status === 'approved' ? 'รายการนี้อนุมัติไปแล้ว ลบได้ในระบบ POS' : 'รายการนี้ไม่ได้รออนุมัติแล้ว'));
+      const label = `${(item.data?.title || item.caption).replace(/[&<>]/g, '').slice(0, 60)} ${item.data ? baht(item.data.amount) : ''}`.trim();
+      if (action === 'cancel') {
+        await answer();
+        if (cardMessage)
+          await editCard(cardMessage, `❓ <b>ยกเลิกรายการนี้?</b>\n${label}`, {
+            inline_keyboard: [[{ text: '✅ ยืนยันยกเลิก', callback_data: `cancelok:${id}` }, { text: '↩️ ไม่ยกเลิก', callback_data: `keep:${id}` }]]
+          });
+        return;
+      }
+      const who = [q.from?.first_name, q.from?.last_name].filter(Boolean).join(' ') || q.from?.username || '';
+      await store.patchInbox(id, { status: 'rejected', decidedAt: new Date().toISOString(), decidedBy: `ยกเลิกจาก Telegram${who ? ` (${who})` : ''}` });
+      if ((await store.getWaiting(chatId, userId))?.recordId === id) await store.setWaiting(chatId, userId, null);
+      await answer('ยกเลิกแล้ว');
+      if (cardMessage) await editCard(cardMessage, `🗑 <b>ยกเลิกรายการแล้ว</b>${who ? ` (${who.replace(/[&<>]/g, '')})` : ''}\n<s>${label}</s>`);
+      return;
+    }
+    if (action === 'keep') {
+      const item = await store.inboxItem(id);
+      await answer();
+      if (item && item.status === 'pending' && cardMessage)
+        await editCard(cardMessage, `📥 <b>รับรายการแล้ว รออนุมัติในระบบ POS</b>\n${(item.data?.title || item.caption).replace(/[&<>]/g, '')} ${item.data ? baht(item.data.amount) : ''} · ${item.data?.date || ''}`, attachKeyboard(id));
+      return;
+    }
     if (action === 'attach') {
       const item = await store.inboxItem(id);
       if (!item || item.status !== 'pending') return void (await answer('รายการนี้ไม่ได้รออนุมัติแล้ว'));

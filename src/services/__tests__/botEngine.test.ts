@@ -131,6 +131,21 @@ describe('bot engine', () => {
     expect(mem.inbox()).toHaveLength(1); // no new bills were created
   });
 
+  it('cancels an entry waiting for approval from the chat, after asking once', async () => {
+    const { mem, calls, msg, cb, run } = setup({ mode: 'approve' });
+    await run(msg({ text: 'จ่าย ค่าแก๊ส 380' }));
+    const entry = mem.inbox()[0];
+    const card = calls.at(-1)!;
+    expect(card.params.reply_markup.inline_keyboard[1][0].callback_data).toBe(`cancel:${entry.id}`);
+    await run(cb(`cancel:${entry.id}`, 500));
+    expect(mem.inbox()[0].status).toBe('pending');
+    expect(calls.at(-1)!.params.text).toContain('ยกเลิกรายการนี้?');
+    await run(cb(`cancelok:${entry.id}`, 500));
+    expect(mem.inbox()[0]).toMatchObject({ status: 'rejected' });
+    expect(mem.inbox()[0].decidedBy).toContain('ยกเลิกจาก Telegram');
+    expect(calls.filter(c => c.method === 'editMessageText').at(-1)!.params.text).toContain('ยกเลิกรายการแล้ว');
+  });
+
   it('warns when the same bill is sent twice', async () => {
     const { mem, calls, photo, run } = setup({ mode: 'approve' });
     await run(photo('F1'));
