@@ -24,6 +24,7 @@ function memoryStore() {
     ordersFrom: async () => [],
     inboxItem: async id => inbox.find(p => p.id === id) || null,
     inboxByRecord: async r => inbox.find(p => p.recordId === r) || null,
+    inboxItems: async () => inbox,
     putInbox: async item => void (inbox = [item, ...inbox.filter(p => p.id !== item.id)]),
     patchInbox: async (id, c) => void (inbox = inbox.map(p => (p.id === id ? { ...p, ...c } : p))),
     getWaiting: async (c, u) => waiting.get(key(c, u)) || null,
@@ -112,6 +113,16 @@ describe('bot engine', () => {
     await run(photo('S1'));
     expect(mem.incomes.size).toBe(3);
     expect(mem.expenses.size).toBe(0);
+  });
+
+  it('warns when the same bill is sent twice', async () => {
+    const { mem, calls, photo, run } = setup({ mode: 'approve' });
+    await run(photo('F1'));
+    await run(photo('F2'));
+    const texts = calls.filter(c => c.method === 'editMessageText').map(c => c.params.text);
+    expect(texts[0]).not.toContain('อาจซ้ำ');
+    expect(texts[1]).toContain('อาจซ้ำกับบิลที่ส่งมาแล้ว');
+    expect(mem.inbox()[0].data!.warnings.some(w => w.includes('อาจซ้ำ'))).toBe(true);
   });
 
   it('handles each photo once, and numbers documents in order', async () => {

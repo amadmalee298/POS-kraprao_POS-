@@ -75,8 +75,25 @@ const INCOME_WORD = /^\s*(?:รับ(?:เงิน)?|รายรับ|รา
 // "ขายน้ำมันเก่า 200": money in, and the word stays in the title
 const SALE_WORD = /^\s*ขาย/;
 
+const KEYWORD = (text: string) => EXPENSE_WORD.test(text) || INCOME_WORD.test(text) || SALE_WORD.test(text);
+const DATE_LINE = /^\s*(?:วันที่\s*)?\d{1,2}[/.-]\d{1,2}(?:[/.-]\d{2,4})?\s*$/;
+
+/**
+ * A note that starts with its date on a line of its own ("11-10-69 / เติมถังแก๊ส / 380 บาท"): the
+ * date moves to the end of the first line, and without "จ่าย"/"รับ" it is an expense.
+ */
+function withDateFirst(raw: string): string {
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2 || !DATE_LINE.test(lines[0])) return raw;
+  const [date, first, ...rest] = lines;
+  return [`${KEYWORD(first) ? first : `จ่าย ${first}`} ${date.trim()}`, ...rest].join('\n');
+}
+
 /** A message that starts like an entry (so other chat in the group is left alone) */
-export const looksLikeEntry = (text: string) => EXPENSE_WORD.test(text) || INCOME_WORD.test(text) || SALE_WORD.test(text);
+export const looksLikeEntry = (text: string) => {
+  const t = withDateFirst(text);
+  return KEYWORD(t);
+};
 
 // Words after a number that make it a quantity, not money ("3ขีด", "2 แผง", "1 กก.")
 const QTY_WORDS = 'ขีด|กก\\.?|กิโล(?:กรัม)?|กรัม|ก\\.|g\\b|kg\\b|ลิตร|ล\\.|มล\\.?|ml\\b|ถุง|ขวด|ห่อ|แพ็ค|แพค|แพ็ก|ลูก|กำ|ชิ้น|ฟอง|แผง|กล่อง|ลัง|ตัว|หัว|ช่อ|มัด|โหล|ใบ|อัน|ซอง|กระป๋อง|กิ่ง|ต้น';
@@ -145,7 +162,7 @@ function entryHead(line: string, today: string): { kind: TypedEntry['kind']; dat
  * "ซื้อวัตถุดิบ ร้านพริกแกง / พริกซอย 30บาท 3ขีด / หอมแดงซอย 10บาท 1ขีด / ผงชูรส 35" → 75 บาท.
  */
 export function parseEntryText(raw: string, today: string): TypedEntry | { error: string } {
-  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const lines = withDateFirst(raw).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const head = entryHead(lines[0] || '', today);
   if ('error' in head) return head;
 

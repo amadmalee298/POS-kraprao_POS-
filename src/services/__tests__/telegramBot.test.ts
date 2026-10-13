@@ -9,6 +9,7 @@ import {
   latestText,
   menuAction,
   parseCallback,
+  looksLikeEntry,
   parseEntryText,
   parseThaiDate,
   readWaiting,
@@ -47,6 +48,11 @@ describe('typed entries', () => {
       vendor: 'พริกแกง'
     });
     expect(parseEntryText('จ่าย พริกซอย 30 3ขีด', today)).toMatchObject({ amount: 30 });
+    // The date on its own first line, with or without "จ่าย"
+    expect(parseEntryText('11-10-69\nเติมถังแก๊ส\n380 บาท', today)).toMatchObject({ kind: 'expense', date: '2026-10-11', title: 'เติมถังแก๊ส', amount: 380 });
+    expect(parseEntryText('11-10-69\nจ่ายเงินเติมถังแก๊ส\n380 บาท', today)).toMatchObject({ kind: 'expense', date: '2026-10-11', title: 'เติมถังแก๊ส', amount: 380 });
+    expect(looksLikeEntry('11-10-69\nเติมถังแก๊ส\n380 บาท')).toBe(true);
+    expect(looksLikeEntry('11-10-69')).toBe(false);
     expect(parseEntryText('จ่าย ค่าผัก\n135 บาท', today)).toMatchObject({ title: 'ค่าผัก', amount: 135 });
   });
 

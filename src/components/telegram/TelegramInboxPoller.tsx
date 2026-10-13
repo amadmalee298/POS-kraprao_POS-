@@ -174,6 +174,7 @@ export const TelegramInboxPoller = () => {
       ordersFrom: async iso => posRef.current.orders.filter(o => sameBranch(o.branchId) && o.createdAt >= iso),
       inboxItem: async id => itemsRef.current.find(p => p.id === id) || null,
       inboxByRecord: async recordId => itemsRef.current.find(p => p.recordId === recordId) || null,
+      inboxItems: async () => itemsRef.current,
       putInbox: async item => {
         itemsRef.current = [item, ...itemsRef.current.filter(p => p.id !== item.id)];
         setItems(prev => [item, ...prev.filter(p => p.id !== item.id)].slice(0, KEEP_ITEMS));
