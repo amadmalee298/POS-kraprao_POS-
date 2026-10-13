@@ -60,6 +60,8 @@ export interface IncomingPhoto {
   senderName: string;
   caption: string;
   date: string; // ISO
+  /** The message this photo answers (Telegram "reply") */
+  replyTo?: number;
 }
 
 /** The photo (largest size) or image file in a Telegram update, if any */
@@ -92,7 +94,8 @@ export function photoFromUpdate(update: any): IncomingPhoto | null {
     senderId: from.id === undefined ? undefined : String(from.id),
     senderName: [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || msg.chat?.title || '',
     caption: msg.caption || '',
-    date: new Date((msg.date || Date.now() / 1000) * 1000).toISOString()
+    date: new Date((msg.date || Date.now() / 1000) * 1000).toISOString(),
+    replyTo: msg.reply_to_message?.message_id
   };
 }
 

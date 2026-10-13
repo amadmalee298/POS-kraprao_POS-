@@ -115,6 +115,22 @@ describe('bot engine', () => {
     expect(mem.expenses.size).toBe(0);
   });
 
+  it('attaches slips and receipts to a typed entry waiting for approval', async () => {
+    const { mem, calls, msg, photo, cb, run } = setup({ mode: 'approve' });
+    await run(msg({ text: '11-10-69\nเติมถังแก๊ส\n380 บาท' }));
+    const entry = mem.inbox()[0];
+    const card = calls.at(-1)!;
+    expect(card.params.reply_markup.inline_keyboard[0][0].callback_data).toBe(`attach:${entry.id}`);
+    await run(cb(`attach:${entry.id}`, card.params.message_id ?? 500));
+    await run(photo('SLIP'));
+    // A photo sent as a reply to the bot's message is attached too
+    await run(photo('RCPT', { reply_to_message: { message_id: mem.inbox()[0].cardMessageId } }));
+    const after = mem.inbox().find(p => p.id === entry.id)!;
+    expect(after.fileId).toBe('SLIP');
+    expect(after.extraFileIds).toEqual(['RCPT-small']);
+    expect(mem.inbox()).toHaveLength(1); // no new bills were created
+  });
+
   it('warns when the same bill is sent twice', async () => {
     const { mem, calls, photo, run } = setup({ mode: 'approve' });
     await run(photo('F1'));

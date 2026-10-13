@@ -516,7 +516,7 @@ export interface BotWaiting {
   /** The person who pressed the button (others in the group are not taken as the answer) */
   userId?: string;
   /** jot: the next text (or photo) of this person is an entry of kind `recordId` ('income' / 'expense') */
-  action: 'photo' | 'edit' | 'amount' | 'jot';
+  action: 'photo' | 'edit' | 'amount' | 'jot' | 'attach';
   recordId: string;
   field?: EditField;
   /** The card to refresh after the change */
@@ -579,3 +579,11 @@ export function jotPrompt(kind: 'income' | 'expense'): string {
     ? '💰 <b>จดรายรับ</b>\nพิมพ์ยอดและรายการ เช่น <code>1200 ขายข้าวกล่องจัดเลี้ยง</code> หรือ <code>350 ขายน้ำมันเก่า</code>\nหรือส่งรูปสลิปเงินเข้ามาได้เลย'
     : '💸 <b>จดรายจ่าย</b>\nพิมพ์ยอดและรายการ เช่น <code>135 ค่าผัก ร้านป้าแดง</code>\nหรือส่งรูปบิล/สลิปเข้ามาได้เลย';
 }
+
+/** Pictures that can be attached to one entry waiting for approval */
+export const MAX_ATTACHMENTS = 5;
+
+/** The button under an entry waiting for approval */
+export const attachKeyboard = (inboxId: string): InlineKeyboard => ({
+  inline_keyboard: [[{ text: '📎 แนบสลิป / ใบเสร็จ / หลักฐาน', callback_data: `attach:${inboxId}` }]]
+});
