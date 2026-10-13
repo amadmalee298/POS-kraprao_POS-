@@ -54,6 +54,9 @@ describe('typed entries', () => {
     expect(parseEntryText('11-10-69\nจ่ายเงินเติมถังแก๊ส\n380 บาท', today)).toMatchObject({ kind: 'expense', date: '2026-10-11', title: 'เติมถังแก๊ส', amount: 380 });
     expect(looksLikeEntry('11-10-69\nเติมถังแก๊ส\n380 บาท')).toBe(true);
     expect(looksLikeEntry('11-10-69')).toBe(false);
+    expect(menuAction('💰 จดรายได้')).toBe('income');
+    expect(menuAction('💰 จดรายรับ')).toBe('income'); // the button's earlier label
+    expect(menuAction('เพิ่มรายได้')).toBe('income');
     expect(parseEntryText('12-11-69\nรายได้  -ค่าแรงครัวกะเพรา 500บาท', today)).toMatchObject({ kind: 'income', title: 'ค่าแรงครัวกะเพรา', amount: 500, date: '2026-11-12' });
     expect(futureDateWarning('2026-11-12', '2026-10-13')).toContain('ยังไม่ถึง');
     expect(futureDateWarning('2026-10-12', '2026-10-13')).toBe('');

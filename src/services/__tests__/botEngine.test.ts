@@ -103,8 +103,9 @@ describe('bot engine', () => {
 
   it('records income from the "จดรายรับ" button, typed words or a slip sent after it', async () => {
     const { mem, calls, msg, photo, run } = setup();
-    await run(msg({ text: '💰 จดรายรับ' }));
+    await run(msg({ text: '💰 จดรายได้' }));
     expect(calls.at(-1)!.params.reply_markup.force_reply).toBe(true);
+    expect(calls.at(-1)!.params.text).toContain('จดรายได้');
     await run(msg({ text: '1200 ขายข้าวกล่องจัดเลี้ยง' }));
     expect([...mem.incomes.values()][0]).toMatchObject({ amount: 1200, title: 'ขายข้าวกล่องจัดเลี้ยง' });
     await run(msg({ text: 'รายได้ ขายน้ำมันเก่า 350' }));
