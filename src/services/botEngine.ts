@@ -60,6 +60,8 @@ export interface BotStore {
   /** The bot's list of what came in (shared with the approval screen) */
   inboxItem(id: string): Promise<PendingReceipt | null>;
   inboxByRecord(recordId: string): Promise<PendingReceipt | null>;
+  /** Everything in the bot's list (for spotting a bill sent twice) */
+  inboxItems?(): Promise<PendingReceipt[]>;
   putInbox(item: PendingReceipt): Promise<void>;
   patchInbox(id: string, change: Partial<PendingReceipt>): Promise<void>;
   getWaiting(chatId: string, userId?: string): Promise<BotWaiting | null>;
@@ -378,6 +380,21 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     return;
   }
 
+  /** A bill already received with the same amount and date (and reference, when both have one) */
+  const findTwin = async (selfId: string, kind: 'expense' | 'income', amount: number, date: string, ref?: string): Promise<string> => {
+    if (!(amount > 0) || !date) return '';
+    const same = (a: number) => Math.abs(a - amount) < 0.01;
+    const refOk = (other?: string) => !ref || !other || other === ref;
+    const inbox = store.inboxItems ? await store.inboxItems() : [];
+    const hit = inbox.find(
+      p => p.id !== selfId && p.kind === kind && p.status !== 'rejected' && p.status !== 'failed' && p.data && same(p.data.amount) && p.data.date === date && refOk(p.data.refNumber)
+    );
+    if (hit) return `${hit.data!.vendorName || hit.data!.title} ${baht(hit.data!.amount)}`;
+    const records = kind === 'expense' ? await store.expensesFrom(date) : await store.incomesFrom(date);
+    const rec = records.find(r => r.date.slice(0, 10) === date && same(r.amount) && refOk((r as Expense).refNumber));
+    return rec ? `${rec.title} ${baht(rec.amount)}` : '';
+  };
+
   // ---------- Photos ----------
   const photo = photoFromUpdate(update);
   if (photo) {
@@ -410,9 +427,12 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       const data = toPendingData(await ctx.scan(images.scan, today), item.receivedAt.slice(0, 10));
       const fromCaption = captionTitle(photo.caption || '');
       if (fromCaption) data.title = fromCaption;
+      const twin = await findTwin(id, item.kind, data.amount, data.date, data.refNumber);
+      const twinNote = twin ? `อาจซ้ำกับบิลที่ส่งมาแล้ว (${twin}) ยอดและวันที่เดียวกัน` : '';
+      if (twinNote) data.warnings = [...data.warnings, twinNote];
       if (ctx.mode === 'approve') {
         await store.patchInbox(id, { status: 'pending', data, error: undefined });
-        const text = `📥 <b>รับบิลแล้ว รออนุมัติในระบบ POS</b>\n${(data.vendorName || data.title).replace(/[&<>]/g, '')}\nยอด ${baht(data.amount)} · วันที่ ${data.date}${data.warnings.length ? '\n⚠️ ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจก่อนอนุมัติ' : ''}`;
+        const text = `📥 <b>รับบิลแล้ว รออนุมัติในระบบ POS</b>\n${(data.vendorName || data.title).replace(/[&<>]/g, '')}\nยอด ${baht(data.amount)} · วันที่ ${data.date}${twinNote ? `\n⚠️ ${twinNote.replace(/[&<>]/g, '')} โปรดตรวจก่อนอนุมัติ` : data.warnings.length ? '\n⚠️ ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจก่อนอนุมัติ' : ''}`;
         if (progressId) await editCard(progressId, text);
         else await sendQuiet({ text, reply_to_message_id: photo.messageId });
         return;
@@ -427,7 +447,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
         `telegram-${photo.messageId}.jpg`
       );
       await store.patchInbox(id, { status: 'approved', data, recordId: saved.rec.id, decidedBy: AUTO_BY, decidedAt: new Date().toISOString(), error: undefined });
-      await showCard(saved, id, photo.messageId, progressId, data.warnings.length ? 'ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจยอด (กด ✏️ แก้ไขได้)' : undefined);
+      await showCard(saved, id, photo.messageId, progressId, twinNote ? `${twinNote} ถ้าซ้ำกด 🗑 ลบ` : data.warnings.length ? 'ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจยอด (กด ✏️ แก้ไขได้)' : undefined);
     } catch (e: any) {
       await store.patchInbox(id, { status: 'failed', error: e?.message || 'อ่านบิลไม่สำเร็จ' });
       // The amount can be typed as the answer, and the photo is kept with the entry

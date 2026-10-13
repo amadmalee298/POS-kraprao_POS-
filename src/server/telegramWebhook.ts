@@ -224,6 +224,7 @@ export function firestoreStore(db: Firestore, branchId: string, state: { waiting
       .map(d => ({ branchId: str(d.branchId), createdAt: str(d.createdAt), status: d.status as any, grandTotal: num(d.grandTotal), paymentStatus: (d.paymentStatus || undefined) as any })),
     inboxItem: async id => (await loadInbox()).items.find(p => p.id === id) || null,
     inboxByRecord: async recordId => (await loadInbox()).items.find(p => p.recordId === recordId) || null,
+    inboxItems: async () => (await loadInbox()).items,
     putInbox: item => saveInboxItem(item),
     patchInbox: async (id, change) => {
       const item = (await loadInbox()).items.find(p => p.id === id);
