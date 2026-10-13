@@ -25,6 +25,7 @@ import { GatewayPromptPayPanel } from '../common/GatewayPromptPayPanel';
 import { gatewayEnabled } from '../../services/paymentGateway';
 import { computeCartTotals } from '../../utils/orderUtils';
 import { TouchNumpadModal } from './TouchNumpad';
+import { useCustomerDisplay } from '../../hooks/useCustomerDisplay';
 
 const DEFAULT_POS_PAYMENT_METHODS: QrPaymentOption[] = [
   {
@@ -130,6 +131,16 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     return () => clearInterval(interval);
   }, [isOpen, paymentMethod]);
 
+  // The same QR on the customer display at the counter (when this device drives one)
+  const [gatewayQr, setGatewayQr] = useState<{ qr?: string; pending: boolean; paid: boolean } | null>(null);
+  const customerDisplay = useCustomerDisplay({
+    active: isOpen && paymentMethod === 'promptpay',
+    amount: grandTotal,
+    promptPayId: resolvePromptPayId(settings, currentBranch),
+    label: orderType === 'dine-in' && tableNumber ? `โต๊ะ ${tableNumber}` : 'กลับบ้าน',
+    gateway: gatewayEnabled(settings) ? gatewayQr : null
+  });
+
   if (!isOpen) return null;
 
   const changeAmount = paymentMethod === 'cash' ? Math.max(0, tenderedAmount - grandTotal) : 0;
@@ -172,6 +183,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       };
     }
 
+    if (paymentMethod === 'promptpay') customerDisplay.markPaid(grandTotal);
     const completedOrder = createOrder(
       paymentMethod,
       tenderedAmount,
@@ -475,6 +487,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                     if (settings.merchantSettings?.autoConfirmPayment === true) handleProcessCheckout(true);
                   }}
                   fallback={staticPromptPay}
+                  onQrChange={setGatewayQr}
                 />
               </div>
             )}
