@@ -115,7 +115,9 @@ const cleanTitle = (text: string) =>
     .replace(/บาท|฿|\.{2,}|…/g, ' ')
     .replace(/(^|\s)ค่า\s+/g, '$1ค่า')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    // "รายได้ -ค่าแรง 500": dashes and colons around the words are not part of the title
+    .replace(/^[-–—:：,.\s]+|[-–—:：,\s]+$/g, '');
 
 /** Kind, date and vendor of an entry's first line; `rest` is what is left for the title and amount */
 function entryHead(line: string, today: string): { kind: TypedEntry['kind']; date: string; vendor: string; rest: string } | { error: string } {
@@ -587,3 +589,7 @@ export const MAX_ATTACHMENTS = 5;
 export const attachKeyboard = (inboxId: string): InlineKeyboard => ({
   inline_keyboard: [[{ text: '📎 แนบสลิป / ใบเสร็จ / หลักฐาน', callback_data: `attach:${inboxId}` }]]
 });
+
+/** A warning for an entry dated after today (e.g. "12-11-69" typed for 12-10-69) */
+export const futureDateWarning = (date: string, today: string): string =>
+  date > today ? `วันที่ ${date} ยังไม่ถึง (วันนี้ ${today}) ตรวจว่าพิมพ์เดือนถูกหรือไม่` : '';
