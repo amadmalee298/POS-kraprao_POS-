@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import { isFirebaseAvailable, saveKeyedRecords, subscribeToBranchDoc } from '../services/firebaseService';
+import { bigStore } from '../utils/bigStore';
 import { hasLegacyItems, keepLocalPictures, keepOrder, keyedChanges, keyedItems, newestFirst } from '../utils/keyedDoc';
 
 // Several screens can use the same list at once: every hook instance on this device hears about
@@ -9,9 +10,12 @@ const localListeners = new Map<string, Set<(items: unknown[]) => void>>();
 const announce = (key: string, items: unknown[], except?: (items: unknown[]) => void) =>
   localListeners.get(key)?.forEach(fn => fn !== except && fn(items));
 
+// The lists live in the browser's database (bigStore), not in localStorage, which is small and
+// shared with Firestore's own bookkeeping
 const readJson = <T,>(key: string, fallback: T): T => {
   try {
-    const raw = localStorage.getItem(key);
+    bigStore.adopt(key);
+    const raw = bigStore.getItem(key);
     return raw ? (JSON.parse(raw) as T) : fallback;
   } catch {
     return fallback;
@@ -19,7 +23,8 @@ const readJson = <T,>(key: string, fallback: T): T => {
 };
 const writeJson = (key: string, value: unknown) => {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    bigStore.adopt(key);
+    bigStore.setItem(key, JSON.stringify(value));
   } catch {
     // storage full: the in-memory list and the cloud copy still hold it
   }
