@@ -23,6 +23,7 @@ import {
   latestText,
   looksLikeEntry,
   attachKeyboard,
+  futureDateWarning,
   jotPrompt,
   MAX_ATTACHMENTS,
   mainMenuKeyboard,
@@ -319,6 +320,33 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     const answer = (text?: string) => ctx.tg('answerCallbackQuery', { callback_query_id: q.id, text }).catch(() => {});
     const cardMessage = q.message?.message_id as number | undefined;
     const { action, id, value } = parseCallback(q.data || '');
+    // Withdrawn before anyone approved it (asks once more, then marks it cancelled in the POS list too)
+    if (action === 'cancel' || action === 'cancelok') {
+      const item = await store.inboxItem(id);
+      if (!item || item.status !== 'pending') return void (await answer(item?.status === 'approved' ? 'รายการนี้อนุมัติไปแล้ว ลบได้ในระบบ POS' : 'รายการนี้ไม่ได้รออนุมัติแล้ว'));
+      const label = `${(item.data?.title || item.caption).replace(/[&<>]/g, '').slice(0, 60)} ${item.data ? baht(item.data.amount) : ''}`.trim();
+      if (action === 'cancel') {
+        await answer();
+        if (cardMessage)
+          await editCard(cardMessage, `❓ <b>ยกเลิกรายการนี้?</b>\n${label}`, {
+            inline_keyboard: [[{ text: '✅ ยืนยันยกเลิก', callback_data: `cancelok:${id}` }, { text: '↩️ ไม่ยกเลิก', callback_data: `keep:${id}` }]]
+          });
+        return;
+      }
+      const who = [q.from?.first_name, q.from?.last_name].filter(Boolean).join(' ') || q.from?.username || '';
+      await store.patchInbox(id, { status: 'rejected', decidedAt: new Date().toISOString(), decidedBy: `ยกเลิกจาก Telegram${who ? ` (${who})` : ''}` });
+      if ((await store.getWaiting(chatId, userId))?.recordId === id) await store.setWaiting(chatId, userId, null);
+      await answer('ยกเลิกแล้ว');
+      if (cardMessage) await editCard(cardMessage, `🗑 <b>ยกเลิกรายการแล้ว</b>${who ? ` (${who.replace(/[&<>]/g, '')})` : ''}\n<s>${label}</s>`);
+      return;
+    }
+    if (action === 'keep') {
+      const item = await store.inboxItem(id);
+      await answer();
+      if (item && item.status === 'pending' && cardMessage)
+        await editCard(cardMessage, `📥 <b>รับรายการแล้ว รออนุมัติในระบบ POS</b>\n${(item.data?.title || item.caption).replace(/[&<>]/g, '')} ${item.data ? baht(item.data.amount) : ''} · ${item.data?.date || ''}`, attachKeyboard(id));
+      return;
+    }
     if (action === 'attach') {
       const item = await store.inboxItem(id);
       if (!item || item.status !== 'pending') return void (await answer('รายการนี้ไม่ได้รออนุมัติแล้ว'));
@@ -481,9 +509,11 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       const twin = await findTwin(id, item.kind, data.amount, data.date, data.refNumber);
       const twinNote = twin ? `อาจซ้ำกับบิลที่ส่งมาแล้ว (${twin}) ยอดและวันที่เดียวกัน` : '';
       if (twinNote) data.warnings = [...data.warnings, twinNote];
+      const photoDateNote = futureDateWarning(data.date, today);
+      if (photoDateNote) data.warnings = [...data.warnings, photoDateNote];
       if (ctx.mode === 'approve') {
         await store.patchInbox(id, { status: 'pending', data, error: undefined });
-        const text = `📥 <b>รับบิลแล้ว รออนุมัติในระบบ POS</b>\n${(data.vendorName || data.title).replace(/[&<>]/g, '')}\nยอด ${baht(data.amount)} · วันที่ ${data.date}${twinNote ? `\n⚠️ ${twinNote.replace(/[&<>]/g, '')} โปรดตรวจก่อนอนุมัติ` : data.warnings.length ? '\n⚠️ ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจก่อนอนุมัติ' : ''}`;
+        const text = `📥 <b>รับบิลแล้ว รออนุมัติในระบบ POS</b>\n${(data.vendorName || data.title).replace(/[&<>]/g, '')}\nยอด ${baht(data.amount)} · วันที่ ${data.date}${photoDateNote ? `\n⚠️ ${photoDateNote}` : ''}${twinNote ? `\n⚠️ ${twinNote.replace(/[&<>]/g, '')} โปรดตรวจก่อนอนุมัติ` : data.warnings.length ? '\n⚠️ ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจก่อนอนุมัติ' : ''}`;
         if (progressId) {
           await editCard(progressId, text, attachKeyboard(id));
           await store.patchInbox(id, { cardMessageId: progressId });
@@ -648,6 +678,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
   // "จ่าย ค่าผัก 135 บาท" / "รับ 500 ค่าจัดเลี้ยง"
   if (!looksLikeEntry(entryText)) return;
   const parsed = parseEntryText(entryText, today);
+  const dateWarning = 'error' in parsed ? '' : futureDateWarning(parsed.date, today);
   if ('error' in parsed) {
     // Words like "จ่ายแล้ว" in a conversation: only answer when it looked like an entry with a number
     if (/\d/.test(text) || /\.\.\./.test(text)) await send({ text: `⚠️ ${parsed.error}\n\n${entryTemplates(today)}`, reply_to_message_id: msg.messageId });
@@ -681,13 +712,13 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
         netAmount: parsed.amount,
         refNumber: '',
         note: '',
-        warnings: [],
+        warnings: dateWarning ? [dateWarning] : [],
         verified: true,
         confidenceScore: 1
       }
     });
     const sent = await send({
-      text: `📥 รับรายการแล้ว รออนุมัติในระบบ POS\n${parsed.title.replace(/[&<>]/g, '')} ${baht(parsed.amount)} · ${parsed.date}\n📎 แนบสลิป/ใบเสร็จได้ด้วยปุ่มด้านล่าง หรือตอบกลับข้อความนี้ด้วยรูป`,
+      text: `📥 รับรายการแล้ว รออนุมัติในระบบ POS\n${parsed.title.replace(/[&<>]/g, '')} ${baht(parsed.amount)} · ${parsed.date}${dateWarning ? `\n⚠️ ${dateWarning}` : ''}\n📎 แนบสลิป/ใบเสร็จได้ด้วยปุ่มด้านล่าง หรือตอบกลับข้อความนี้ด้วยรูป`,
       reply_to_message_id: msg.messageId,
       reply_markup: attachKeyboard(id)
     });
@@ -697,5 +728,5 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
   await store.putInbox(base);
   const saved = await record(parsed, msg.senderName);
   await store.patchInbox(id, { status: 'approved', recordId: saved.rec.id, decidedBy: AUTO_BY, decidedAt: new Date().toISOString() });
-  await showCard(saved, id, msg.messageId);
+  await showCard(saved, id, msg.messageId, undefined, dateWarning ? `${dateWarning} (กด ✏️ แก้ไข → วันที่)` : undefined);
 }

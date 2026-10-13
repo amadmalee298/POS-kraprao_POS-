@@ -103,8 +103,9 @@ describe('bot engine', () => {
 
   it('records income from the "จดรายรับ" button, typed words or a slip sent after it', async () => {
     const { mem, calls, msg, photo, run } = setup();
-    await run(msg({ text: '💰 จดรายรับ' }));
+    await run(msg({ text: '💰 จดรายได้' }));
     expect(calls.at(-1)!.params.reply_markup.force_reply).toBe(true);
+    expect(calls.at(-1)!.params.text).toContain('จดรายได้');
     await run(msg({ text: '1200 ขายข้าวกล่องจัดเลี้ยง' }));
     expect([...mem.incomes.values()][0]).toMatchObject({ amount: 1200, title: 'ขายข้าวกล่องจัดเลี้ยง' });
     await run(msg({ text: 'รายได้ ขายน้ำมันเก่า 350' }));
@@ -129,6 +130,21 @@ describe('bot engine', () => {
     expect(after.fileId).toBe('SLIP');
     expect(after.extraFileIds).toEqual(['RCPT-small']);
     expect(mem.inbox()).toHaveLength(1); // no new bills were created
+  });
+
+  it('cancels an entry waiting for approval from the chat, after asking once', async () => {
+    const { mem, calls, msg, cb, run } = setup({ mode: 'approve' });
+    await run(msg({ text: 'จ่าย ค่าแก๊ส 380' }));
+    const entry = mem.inbox()[0];
+    const card = calls.at(-1)!;
+    expect(card.params.reply_markup.inline_keyboard[1][0].callback_data).toBe(`cancel:${entry.id}`);
+    await run(cb(`cancel:${entry.id}`, 500));
+    expect(mem.inbox()[0].status).toBe('pending');
+    expect(calls.at(-1)!.params.text).toContain('ยกเลิกรายการนี้?');
+    await run(cb(`cancelok:${entry.id}`, 500));
+    expect(mem.inbox()[0]).toMatchObject({ status: 'rejected' });
+    expect(mem.inbox()[0].decidedBy).toContain('ยกเลิกจาก Telegram');
+    expect(calls.filter(c => c.method === 'editMessageText').at(-1)!.params.text).toContain('ยกเลิกรายการแล้ว');
   });
 
   it('warns when the same bill is sent twice', async () => {

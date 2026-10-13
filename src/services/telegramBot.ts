@@ -115,7 +115,9 @@ const cleanTitle = (text: string) =>
     .replace(/บาท|฿|\.{2,}|…/g, ' ')
     .replace(/(^|\s)ค่า\s+/g, '$1ค่า')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    // "รายได้ -ค่าแรง 500": dashes and colons around the words are not part of the title
+    .replace(/^[-–—:：,.\s]+|[-–—:：,\s]+$/g, '');
 
 /** Kind, date and vendor of an entry's first line; `rest` is what is left for the title and amount */
 function entryHead(line: string, today: string): { kind: TypedEntry['kind']; date: string; vendor: string; rest: string } | { error: string } {
@@ -376,7 +378,7 @@ export const MENU_BUTTONS = {
   send: '📸 ส่งบิล',
   type: '✍️ พิมพ์จด',
   expense: '💸 จดรายจ่าย',
-  income: '💰 จดรายรับ',
+  income: '💰 จดรายได้',
   today: '📊 สรุปวันนี้',
   month: '📅 สรุปเดือนนี้',
   latest: '🧾 รายการล่าสุด',
@@ -400,7 +402,7 @@ export const mainMenuKeyboard = () => ({
 
 export const BOT_COMMANDS = [
   { command: 'menu', description: 'เปิดเมนู' },
-  { command: 'income', description: 'จดรายรับ / รายได้' },
+  { command: 'income', description: 'จดรายได้ / รายรับ' },
   { command: 'expense', description: 'จดรายจ่าย' },
   { command: 'jot', description: 'พิมพ์จดรายรับ-รายจ่าย' },
   { command: 'today', description: 'สรุปวันนี้' },
@@ -423,8 +425,9 @@ export function menuAction(text: string): MenuAction | null {
   const entry = (Object.entries(MENU_BUTTONS) as [MenuAction, string][]).find(([, label]) => label === t);
   if (entry) return entry[0];
   if (/^(เมนู|menu)$/i.test(t)) return 'menu';
-  if (/^(จด|บันทึก)?\s*(รายรับ|รายได้)$/.test(t)) return 'income';
-  if (/^(จด|บันทึก)?\s*รายจ่าย$/.test(t)) return 'expense';
+  // The earlier label of the button is still on some keyboards
+  if (/^(💰\s*)?(จด|บันทึก|เพิ่ม)?\s*(รายรับ|รายได้)$/.test(t)) return 'income';
+  if (/^(💸\s*)?(จด|บันทึก|เพิ่ม)?\s*รายจ่าย$/.test(t)) return 'expense';
   if (/ขอ\s*(link|ลิงก์|ลิ้ง)?\s*(google\s*)?drive/i.test(t)) return 'drive';
   if (/^(ดู)?สรุป(วันนี้)?$/.test(t)) return 'today';
   if (/^(ดู)?สรุปเดือน(นี้)?$/.test(t)) return 'month';
@@ -448,7 +451,7 @@ export function helpText(mode: BotMode): string {
     '',
     `📸 ส่งรูปสลิป/บิล → ${mode === 'auto' ? 'บันทึกทันที' : 'ส่งให้ผู้จัดการอนุมัติในระบบ POS'}`,
     '✍️ พิมพ์ “จ่าย ค่าผัก 135 บาท” หรือ “รับ 500 ค่าจัดเลี้ยง” / “รายได้ ขายข้าวกล่อง 1,200” → บันทึกโดยไม่ต้องมีรูป',
-    '💰 กด “จดรายรับ” หรือ “จดรายจ่าย” แล้วพิมพ์แค่ยอดกับชื่อรายการ เช่น “1200 ขายข้าวกล่อง” หรือส่งรูปสลิป',
+    '💰 กด “จดรายได้” หรือ “จดรายจ่าย” แล้วพิมพ์แค่ยอดกับชื่อรายการ เช่น “1200 ขายข้าวกล่อง” หรือส่งรูปสลิป',
     '✏️ ใต้รายการที่บันทึก กดปุ่มเพื่อ ดูใบแทนใบเสร็จ (PDF), เพิ่มรูปสินค้า, แก้ไขหมวดหมู่/ยอด/วันที่ หรือลบ',
     '📊 “สรุปวันนี้” / “สรุปเดือนนี้” → ยอดขาย รายรับ รายจ่าย',
     '📁 “ขอ link google drive” → โฟลเดอร์เอกสารของร้าน',
@@ -576,14 +579,21 @@ export function messageParts(update: any): { chatId: string; messageId: number; 
 /** What the bot asks after "จดรายรับ" / "จดรายจ่าย" */
 export function jotPrompt(kind: 'income' | 'expense'): string {
   return kind === 'income'
-    ? '💰 <b>จดรายรับ</b>\nพิมพ์ยอดและรายการ เช่น <code>1200 ขายข้าวกล่องจัดเลี้ยง</code> หรือ <code>350 ขายน้ำมันเก่า</code>\nหรือส่งรูปสลิปเงินเข้ามาได้เลย'
+    ? '💰 <b>จดรายได้</b>\nพิมพ์ยอดและรายการ เช่น <code>1200 ขายข้าวกล่องจัดเลี้ยง</code> หรือ <code>350 ขายน้ำมันเก่า</code>\nหรือส่งรูปสลิปเงินเข้ามาได้เลย'
     : '💸 <b>จดรายจ่าย</b>\nพิมพ์ยอดและรายการ เช่น <code>135 ค่าผัก ร้านป้าแดง</code>\nหรือส่งรูปบิล/สลิปเข้ามาได้เลย';
 }
 
 /** Pictures that can be attached to one entry waiting for approval */
 export const MAX_ATTACHMENTS = 5;
 
-/** The button under an entry waiting for approval */
+/** The buttons under an entry waiting for approval */
 export const attachKeyboard = (inboxId: string): InlineKeyboard => ({
-  inline_keyboard: [[{ text: '📎 แนบสลิป / ใบเสร็จ / หลักฐาน', callback_data: `attach:${inboxId}` }]]
+  inline_keyboard: [
+    [{ text: '📎 แนบสลิป / ใบเสร็จ / หลักฐาน', callback_data: `attach:${inboxId}` }],
+    [{ text: '🗑 ยกเลิกรายการนี้', callback_data: `cancel:${inboxId}` }]
+  ]
 });
+
+/** A warning for an entry dated after today (e.g. "12-11-69" typed for 12-10-69) */
+export const futureDateWarning = (date: string, today: string): string =>
+  date > today ? `วันที่ ${date} ยังไม่ถึง (วันนี้ ${today}) ตรวจว่าพิมพ์เดือนถูกหรือไม่` : '';
