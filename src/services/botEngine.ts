@@ -27,6 +27,8 @@ import {
   jotPrompt,
   MAX_ATTACHMENTS,
   mainMenuKeyboard,
+  billNoFor,
+  pendingCard,
   menuAction,
   messageParts,
   parseCallback,
@@ -292,6 +294,14 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
   };
 
   const attachmentCount = (p: PendingReceipt) => (p.fileId ? 1 : 0) + (p.extraFileIds?.length || 0);
+  const nextBillNo = async (date: string) => billNoFor(date, store.inboxItems ? (await store.inboxItems()).map(p => p.billNo) : []);
+  /** What the card of an entry waiting for approval warns about */
+  const pendingWarnings = (p: PendingReceipt) => {
+    const w = p.data?.warnings || [];
+    const special = w.filter(x => /ซ้ำ|อนาคต|ล่วงหน้า|วันที่/.test(x));
+    return special.length ? special.map(x => (/ซ้ำ/.test(x) ? `${x} โปรดตรวจก่อนอนุมัติ` : x)) : w.length ? ['ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจก่อนอนุมัติ'] : [];
+  };
+  const pendingText = (p: PendingReceipt) => pendingCard(p, { shopName: ctx.shop.name, warnings: pendingWarnings(p) });
 
   /** A picture attached to an entry waiting for approval (the first becomes its main picture) */
   const attachToPending = async (item: PendingReceipt, photo: IncomingPhoto): Promise<void> => {
@@ -306,6 +316,8 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       item.fileId ? { extraFileIds: [...(item.extraFileIds || []), photo.storeFileId || photo.fileId] } : { fileId: photo.fileId, storeFileId: photo.storeFileId }
     );
     const total = count + 1;
+    const updated = await store.inboxItem(item.id);
+    if (updated?.cardMessageId) await editCard(updated.cardMessageId, pendingText(updated), attachKeyboard(item.id));
     const finishing = FINISH_WORDS.test(photo.caption.trim()) || total >= MAX_ATTACHMENTS;
     await sendQuiet({
       text: `📎 แนบกับ “${(item.data?.title || item.caption).replace(/[&<>]/g, '').slice(0, 40)}” แล้ว (${total}/${MAX_ATTACHMENTS})${finishing ? '' : ' ส่งเพิ่มได้ หรือพิมพ์ “เสร็จ”'}`,
@@ -344,7 +356,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       const item = await store.inboxItem(id);
       await answer();
       if (item && item.status === 'pending' && cardMessage)
-        await editCard(cardMessage, `📥 <b>รับรายการแล้ว รออนุมัติในระบบ POS</b>\n${(item.data?.title || item.caption).replace(/[&<>]/g, '')} ${item.data ? baht(item.data.amount) : ''} · ${item.data?.date || ''}`, attachKeyboard(id));
+        await editCard(cardMessage, pendingText(item), attachKeyboard(id));
       return;
     }
     if (action === 'attach') {
@@ -512,8 +524,15 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       const photoDateNote = futureDateWarning(data.date, today);
       if (photoDateNote) data.warnings = [...data.warnings, photoDateNote];
       if (ctx.mode === 'approve') {
-        await store.patchInbox(id, { status: 'pending', data, error: undefined });
-        const text = `📥 <b>รับบิลแล้ว รออนุมัติในระบบ POS</b>\n${(data.vendorName || data.title).replace(/[&<>]/g, '')}\nยอด ${baht(data.amount)} · วันที่ ${data.date}${photoDateNote ? `\n⚠️ ${photoDateNote}` : ''}${twinNote ? `\n⚠️ ${twinNote.replace(/[&<>]/g, '')} โปรดตรวจก่อนอนุมัติ` : data.warnings.length ? '\n⚠️ ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจก่อนอนุมัติ' : ''}`;
+        const billNo = await nextBillNo(data.date);
+        await store.patchInbox(id, { status: 'pending', data, error: undefined, billNo });
+        const text = pendingCard(
+          { ...item, status: 'pending', data, billNo },
+          {
+            shopName: ctx.shop.name,
+            warnings: [photoDateNote, twinNote ? `${twinNote} โปรดตรวจก่อนอนุมัติ` : !photoDateNote && data.warnings.length ? 'ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจก่อนอนุมัติ' : '']
+          }
+        );
         if (progressId) {
           await editCard(progressId, text, attachKeyboard(id));
           await store.patchInbox(id, { cardMessageId: progressId });
@@ -699,8 +718,10 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     status: 'pending'
   };
   if (ctx.mode === 'approve') {
-    await store.putInbox({
+    const pending: PendingReceipt = {
       ...base,
+      typed: true,
+      billNo: await nextBillNo(parsed.date),
       data: {
         title: parsed.title,
         vendorName: parsed.vendor,
@@ -716,9 +737,10 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
         verified: true,
         confidenceScore: 1
       }
-    });
+    };
+    await store.putInbox(pending);
     const sent = await send({
-      text: `📥 รับรายการแล้ว รออนุมัติในระบบ POS\n${parsed.title.replace(/[&<>]/g, '')} ${baht(parsed.amount)} · ${parsed.date}${dateWarning ? `\n⚠️ ${dateWarning}` : ''}\n📎 แนบสลิป/ใบเสร็จได้ด้วยปุ่มด้านล่าง หรือตอบกลับข้อความนี้ด้วยรูป`,
+      text: pendingCard(pending, { shopName: ctx.shop.name, warnings: [dateWarning] }),
       reply_to_message_id: msg.messageId,
       reply_markup: attachKeyboard(id)
     });

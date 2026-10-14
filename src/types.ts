@@ -816,6 +816,10 @@ export interface PendingReceipt {
   decidedBy?: string;
   decidedAt?: string;
   recordId?: string; // expense or income created on approval
+  /** Reference shown on the bot's card, e.g. BL261007-0002 (entry date + running number) */
+  billNo?: string;
+  /** Typed in the chat (its first attached picture is the transfer slip) rather than a photo of a bill */
+  typed?: boolean;
   /** A smaller copy of the photo, kept with the entry (Telegram keeps several sizes) */
   storeFileId?: string;
   /** The bot's card about this entry in the chat (updated when the entry changes) */
