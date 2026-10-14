@@ -440,6 +440,12 @@ interface POSContextType {
 const POSContext = createContext<POSContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_KEY = 'kaprao_pos_enterprise_v1';
+// The large lists live under their own keys (POS_ORDERS_DATA…), not in the main state
+const withoutLists = <T extends Record<string, unknown>>(state: T): T => {
+  const { orders, expenses, incomes, ingredients, menuItems, ...rest } = state;
+  void orders; void expenses; void incomes; void ingredients; void menuItems;
+  return rest as T;
+};
 /** The earliest day whose sales, expenses and income this device has read from the cloud */
 const HISTORY_FROM_KEY = 'POS_HISTORY_FROM';
 
@@ -1240,7 +1246,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (saved) {
             const parsed = JSON.parse(saved);
             parsed.menuItems = merged;
-            bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+            bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(withoutLists(parsed)));
           }
         } catch (e) {}
         return merged;
@@ -1270,7 +1276,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               if (saved) {
                 const parsed = JSON.parse(saved);
                 parsed.ingredients = currentList;
-                bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+                bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(withoutLists(parsed)));
               }
             } catch (e) {}
             return currentList;
@@ -1321,7 +1327,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (saved) {
             const parsed = JSON.parse(saved);
             parsed.ingredients = merged;
-            bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+            bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(withoutLists(parsed)));
           }
         } catch (e) {}
         return merged;
@@ -1853,7 +1859,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             if (saved) {
               const parsed = JSON.parse(saved);
               parsed.ingredients = merged;
-              bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+              bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(withoutLists(parsed)));
             }
           } catch (e) {}
           ingCount = merged.length;
@@ -1889,7 +1895,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             if (saved) {
               const parsed = JSON.parse(saved);
               parsed.menuItems = merged;
-              bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+              bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(withoutLists(parsed)));
             }
           } catch (e) {}
           menuCount = merged.length;
@@ -2191,10 +2197,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const healedCategories = syncAndHealCategories(loadedCats, loadedItems);
           setCategories(healedCategories);
 
+          // Ingredients are under their own key (older saves also had them in the main state)
+          const ingredientsForCategories: Ingredient[] = (() => {
+            if (Array.isArray(parsed.ingredients) && parsed.ingredients.length) return parsed.ingredients;
+            try {
+              const sep = JSON.parse(bigStore.getItem('POS_INGREDIENTS_DATA') || '[]');
+              return Array.isArray(sep) ? sep : [];
+            } catch {
+              return [];
+            }
+          })();
           if (parsed.ingredientCategories && Array.isArray(parsed.ingredientCategories)) {
-            setIngredientCategories(syncAndHealIngredientCategories(parsed.ingredientCategories, parsed.ingredients || []));
-          } else if (parsed.ingredients && Array.isArray(parsed.ingredients)) {
-            setIngredientCategories(prev => syncAndHealIngredientCategories(prev, parsed.ingredients));
+            setIngredientCategories(syncAndHealIngredientCategories(parsed.ingredientCategories, ingredientsForCategories));
+          } else if (ingredientsForCategories.length) {
+            setIngredientCategories(prev => syncAndHealIngredientCategories(prev, ingredientsForCategories));
           }
           if (parsed.ingredientUnits && Array.isArray(parsed.ingredientUnits) && parsed.ingredientUnits.length > 0) {
             setIngredientUnits(parsed.ingredientUnits);
@@ -2532,18 +2548,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // app goes to the background or the page closes.
   const saveStateRef = useRef<() => void>(() => undefined);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedListsRef = useRef(new Map<string, unknown>());
   saveStateRef.current = () => {
     try {
+      // The large lists are kept under their own keys, each written only when it changed: a tap on
+      // the cart no longer rewrites every order and every bill picture
       const stateToSave = {
         cart,
         discount,
         categories,
         ingredientCategories,
         ingredientUnits,
-        menuItems,
         deletedMenuItemIds,
         addOns,
-        ingredients,
         stockLots,
         wasteLogs,
         stockAdjustmentLogs,
@@ -2551,9 +2568,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         shifts,
         shiftSwapRequests,
         cashShifts,
-        orders,
-        expenses,
-        incomes,
         settings,
         securityLogs,
         autoApproveQR,
@@ -2564,42 +2578,23 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         branchId: currentBranch?.id,
         savedAt: new Date().toISOString()
       };
-      try {
-        bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
-      } catch (storageErr) {
-        console.warn('[POS Storage Sync] ⚠️ LocalStorage quota exceeded or save error. Performing self-healing storage compaction...', storageErr);
-        // Prune heavy image payloads while keeping all core business, stock, financial and accounting data 100% intact
-        const compactedExpenses = expenses.map(e => {
-          if ((e.receiptImage && e.receiptImage.length > 50000) || e.purchaseImages?.length) {
-            return { ...e, receiptImage: e.receiptImage && e.receiptImage.length > 50000 ? undefined : e.receiptImage, purchaseImages: undefined };
-          }
-          return e;
-        });
-        const compactedIncomes = incomes.map(i => {
-          if (i.slipImage && i.slipImage.length > 50000) {
-            return { ...i, slipImage: undefined };
-          }
-          return i;
-        });
-        const compactedState = {
-          ...stateToSave,
-          expenses: compactedExpenses,
-          incomes: compactedIncomes
-        };
-        bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compactedState));
-        console.log('[POS Storage Sync] ✅ Successfully recovered and saved state after image compaction.');
-      }
-      try {
-        bigStore.setItem('POS_ORDERS_DATA', JSON.stringify(orders));
-      } catch (backupErr) {
-        console.warn('[POS Storage Sync] ⚠️ Failed to save POS_ORDERS_DATA backup:', backupErr);
-      }
-      try {
-        bigStore.setItem('POS_INGREDIENTS_DATA', JSON.stringify(ingredients));
-      } catch (backupErr) {}
-      try {
-        bigStore.setItem('POS_MENU_ITEMS_DATA', JSON.stringify(menuItems));
-      } catch (backupErr) {}
+      bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
+      const lists: [string, unknown[]][] = [
+        ['POS_ORDERS_DATA', orders],
+        ['POS_EXPENSES_DATA', expenses],
+        ['POS_INCOMES_DATA', incomes],
+        ['POS_INGREDIENTS_DATA', ingredients],
+        ['POS_MENU_ITEMS_DATA', menuItems]
+      ];
+      lists.forEach(([key, list]) => {
+        if (savedListsRef.current.get(key) === list) return;
+        try {
+          bigStore.setItem(key, JSON.stringify(list));
+          savedListsRef.current.set(key, list);
+        } catch (listErr) {
+          console.warn(`[POS Storage Sync] Failed to save ${key}:`, listErr);
+        }
+      });
       try {
         localStorage.setItem('POS_DELETED_MENU_IDS', JSON.stringify(deletedMenuItemIds));
       } catch (backupErr) {}
@@ -2824,7 +2819,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           parsed.deletedMenuItemIds = (parsed.deletedMenuItemIds || []).filter(
             (id: string) => !ids.has(id.toLowerCase()) && !names.has(id.toLowerCase())
           );
-          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(withoutLists(parsed)));
         }
       } catch (e) {}
       return next;
@@ -2878,7 +2873,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const parsed = JSON.parse(saved);
           parsed.menuItems = next;
           parsed.deletedMenuItemIds = Array.from(new Set([...(parsed.deletedMenuItemIds || []), ...idsToDelete]));
-          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(withoutLists(parsed)));
         }
       } catch (e) {}
       return next;
@@ -2931,7 +2926,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (saved) {
           const parsed = JSON.parse(saved);
           parsed.menuItems = next;
-          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(withoutLists(parsed)));
         }
       } catch (e) {}
 
@@ -3397,7 +3392,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const parsed = JSON.parse(saved);
           parsed.orders = next;
           parsed.savedAt = updated.updatedAt;
-          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(withoutLists(parsed)));
         }
       } catch (e) {
         console.warn('[POS Order Sync] Error writing order status to LocalStorage:', e);
@@ -3619,7 +3614,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const removeSet = new Set(delIdsToRemove.map(s => s.toLowerCase()));
           parsed.deletedIngredientIds = (parsed.deletedIngredientIds || []).filter((id: string) => !removeSet.has(id.toLowerCase()));
         }
-        bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+        bigStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(withoutLists(parsed)));
       }
     } catch (e) {
       console.warn('[POSContext] Failed to persist ingredients locally:', e);
