@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ImageIcon, Loader2, Package, RefreshCw, Send, XCircle } from 'lucide-react';
 import type { ExpenseCategory, IncomeCategory, Ingredient, PendingReceipt } from '../../types';
 import { usePOS } from '../../context/POSContext';
@@ -68,7 +68,24 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const { settings, currentBranch, currentUser, addExpense, addIncome, ingredients, addStockLot, receiveNewIngredient, ingredientCategories = [] } = usePOS();
   const drive = useExpenseDrive();
   const [items, setItems] = useTelegramInbox();
-  const [forms, setForms] = useState<Record<string, Form>>({});
+  // What was typed into the bills survives a reload of the page (same tab)
+  const FORMS_KEY = 'POS_TG_INBOX_FORMS';
+  const [forms, setForms] = useState<Record<string, Form>>(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem(FORMS_KEY) || '{}') || {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      // Pictures are not kept here (sessionStorage is small); the rest of the form is
+      const light = Object.fromEntries(Object.entries(forms).map(([id, f]) => [id, JSON.parse(JSON.stringify(f, (_k, v) => (typeof v === 'string' && v.startsWith('data:') ? undefined : v)))]));
+      sessionStorage.setItem(FORMS_KEY, JSON.stringify(light));
+    } catch {
+      // storage full or unavailable
+    }
+  }, [forms]);
   const [images, setImages] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
