@@ -1,4 +1,4 @@
-import type { Expense, ExpenseCategory, IncomeCategory, Order, OtherIncome } from '../types';
+import type { Expense, ExpenseCategory, IncomeCategory, Order, OtherIncome, PendingReceipt } from '../types';
 // .js: this file also runs in the Vercel bot (plain Node ESM); only import-free modules here
 import { EXPENSE_CATEGORY_LABELS, INCOME_CATEGORY_LABELS } from '../utils/categoryLabels.js';
 import { cleanBotToken } from './telegramInbox.js';
@@ -270,6 +270,57 @@ export function expenseCard(e: Expense, opts: { heading?: string; recordedBy?: s
   ]
     .filter(line => line !== null)
     .join('\n');
+}
+
+/** Reference of an entry in the bot's list: BL + entry date (YYMMDD) + running number of that day */
+export function billNoFor(date: string, taken: (string | undefined)[]): string {
+  const prefix = `BL${date.slice(2, 4)}${date.slice(5, 7)}${date.slice(8, 10)}-`;
+  const last = taken.reduce((m, no) => (no?.startsWith(prefix) ? Math.max(m, Number(no.slice(prefix.length)) || 0) : m), 0);
+  return `${prefix}${String(last + 1).padStart(4, '0')}`;
+}
+
+/** The pictures attached to an entry waiting for approval, by kind */
+function pendingProofs(p: PendingReceipt): string {
+  const extra = p.extraFileIds?.length || 0;
+  if (p.kind === 'income') return p.fileId || extra ? `สลิป ${(p.fileId ? 1 : 0) + extra}` : '—';
+  const first = p.fileId ? (p.typed ? 'สลิปโอน 1' : 'บิล/ใบเสร็จ 1') : '';
+  return [first, extra ? `หลักฐานการซื้อ ${extra}` : ''].filter(Boolean).join(' · ') || '—';
+}
+
+/** The card of an entry waiting for a manager's approval in the POS */
+export function pendingCard(p: PendingReceipt, opts: { shopName?: string; warnings?: string[] } = {}): string {
+  const d = p.data;
+  const amount = d?.amount || 0;
+  const title = d?.title || p.caption || (p.kind === 'income' ? 'รายรับ' : 'รายจ่าย');
+  const vendor = d?.vendorName && d.vendorName !== d.title ? d.vendorName : '';
+  const warnings = (opts.warnings || []).filter(Boolean);
+  const head = ['📥 <b>รับรายการแล้ว · รออนุมัติ</b>', p.billNo ? `🔖 ${esc(p.billNo)}` : null, '━━━━━━━━━━━━━━'];
+  const tail = [opts.shopName ? `🏢 ธุรกิจ: ${esc(opts.shopName)}` : null, ...warnings.map(w => `⚠️ ${esc(w)}`)];
+  const lines =
+    p.kind === 'income'
+      ? [
+          `📈 <b>รายรับ  +${money(amount)} บาท</b>`,
+          `📝 ${esc(title)}`,
+          '',
+          d?.date ? `📅 วันที่: ${esc(thaiDate(d.date))}` : null,
+          '💳 สถานะ: ⏳ รอผู้จัดการอนุมัติ',
+          vendor ? `👤 ผู้จ่าย: ${esc(vendor)}` : null,
+          `📎 หลักฐาน: ${esc(pendingProofs(p))}`
+        ]
+      : [
+          `📉 <b>รายจ่าย  -${money(amount)} บาท</b>`,
+          `📝 ${esc(title)}`,
+          '',
+          d?.date ? `📅 วันที่: ${esc(thaiDate(d.date))}` : null,
+          '💳 สถานะการจ่าย: ⏳ รอผู้จัดการอนุมัติ',
+          vendor ? `🏪 ผู้ขาย/ร้านค้า: ${esc(vendor)}` : null,
+          `📄 เอกสาร: ${d?.includeVat ? 'ใบกำกับภาษี' : 'ใบรับรองแทนใบเสร็จ (ออกเลขหลังอนุมัติ)'}`,
+          d?.includeVat ? `🧾 VAT: ${money(d.vatAmount)} บาท` : null,
+          p.senderName ? `👤 ผู้เบิกจ่าย: ${esc(p.senderName)}` : null,
+          d?.includeVat ? null : '✍️ ลายเซ็น: ผู้เบิก ⏳ · ผู้อนุมัติ ⏳',
+          `📎 หลักฐาน: ${esc(pendingProofs(p))}`
+        ];
+  return [...head, ...lines, ...tail].filter(line => line !== null).join('\n');
 }
 
 export function incomeCard(i: OtherIncome, opts: { heading?: string; shopName?: string } = {}): string {

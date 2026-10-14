@@ -13,6 +13,7 @@ import { EXPENSE_CATEGORY_LABELS, isVatRegistered, round2, vatInside, vatRateOf 
 import { stockTypeForExpenseCategory, stockTypeLabel } from '../../utils/stockTypes';
 import { allocateCosts, BillItem, buildIntakeRows, hasTarget, IntakeRow, matchIngredient, parseItemsFromText } from '../../utils/stockIntake';
 import { compressBase64Image } from '../../utils/imageCompressor';
+import { nextSubstituteNo } from '../../utils/expenseDocNo';
 import { readTelegramReceipt } from './TelegramInboxPoller';
 
 type Form = {
@@ -98,6 +99,14 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const waiting = useMemo(() => items.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading' || stockOnly(p)), [items]);
   const history = useMemo(() => items.filter(p => (p.status === 'approved' || p.status === 'rejected') && !stockOnly(p)).slice(0, 50), [items]);
 
+  /** The ใบรับรองแทนใบเสร็จ of an approved entry: next number of the month, the sender paid */
+  const substituteFor = (p: PendingReceipt, date: string, payee?: string) => ({
+    docNo: nextSubstituteNo(expenses, date),
+    spender: p.senderName || '',
+    approver: currentUser?.name || undefined,
+    payee: payee && payee !== p.data?.title ? payee : undefined
+  });
+
   /**
    * Approved entries whose expense / income is not in this device's books (e.g. lost when a phone
    * closed the page before saving). Matched by id, or by date, amount and title for older entries.
@@ -152,7 +161,8 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           refNumber: d.refNumber || '',
           note: [d.note, `จาก Telegram: ${p.senderName}`].filter(Boolean).join(' · '),
           receiptImage: image,
-          receiptImageName: image ? `telegram-${p.messageId}.jpg` : undefined
+          receiptImageName: image ? `telegram-${p.messageId}.jpg` : undefined,
+          ...(d.includeVat ? {} : { substituteReceipt: substituteFor(p, d.date, d.vendorName) })
         });
       }
       if (!p.recordId) patch(p.id, { recordId: id });
@@ -246,6 +256,8 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           note: [f.note.trim(), `จาก Telegram: ${p.senderName}`].filter(Boolean).join(' · '),
           receiptImage: image,
           receiptImageName: image ? `telegram-${p.messageId}.jpg` : undefined,
+          // No tax invoice: the shop's own ใบรับรองแทนใบเสร็จ, numbered now (signed later in the POS)
+          ...(f.includeVat ? {} : { substituteReceipt: substituteFor(p, f.date, p.data?.vendorName) }),
           ...(extras.length ? { purchaseImages: extras.map((dataUrl, i) => ({ name: `telegram-${p.messageId}-${i + 2}.jpg`, dataUrl })) } : {})
         });
         // The bill photo into Google Drive too, when the shop turned that on
@@ -266,6 +278,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           slipImageName: image ? `telegram-${p.messageId}.jpg` : undefined
         });
       }
+      const docLine = f.kind === 'expense' && !f.includeVat ? `\n📄 ใบรับรองแทนใบเสร็จ ${nextSubstituteNo(expenses, f.date)}` : '';
       const { stockAdded, stockText } = receivesStock(f) ? receiveStock(p, f) : { stockAdded: undefined, stockText: '' };
       const base = p.data || { vendorName: '', warnings: [], verified: false, confidenceScore: 0, vatAmount: 0, netAmount: 0 };
       patch(p.id, {
@@ -278,7 +291,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         // What was actually recorded, for the history list
         data: { ...base, title: f.title.trim(), date: f.date, category: f.category, amount: round2(f.amount), includeVat: f.includeVat, vatAmount, netAmount: round2(f.amount - vatAmount), refNumber: f.refNumber.trim(), note: f.note }
       });
-      reply(p, `✅ อนุมัติแล้วโดย ${currentUser?.name || 'ผู้จัดการ'}\nบันทึกเป็น${f.kind === 'expense' ? 'ค่าใช้จ่าย' : 'รายรับ'} ${f.title.trim()} ${baht(f.amount)}${stockText}`);
+      reply(p, `✅ อนุมัติแล้วโดย ${currentUser?.name || 'ผู้จัดการ'}${p.billNo ? ` · 🔖 ${p.billNo}` : ''}\nบันทึกเป็น${f.kind === 'expense' ? 'ค่าใช้จ่าย' : 'รายรับ'} ${f.title.trim()} ${baht(f.amount)}${docLine}${stockText}`);
     } finally {
       setBusy(null);
     }

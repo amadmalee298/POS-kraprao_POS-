@@ -132,6 +132,30 @@ describe('bot engine', () => {
     expect(mem.inbox()).toHaveLength(1); // no new bills were created
   });
 
+  it('shows an entry waiting for approval as a full card with its reference', async () => {
+    const { mem, calls, msg, photo, cb, run } = setup({ mode: 'approve' });
+    await run(msg({ text: '7-10-69\nทดสอบ\n10 บาท' }));
+    await run(msg({ text: '7-10-69\nทดสอบสอง\n20 บาท' }));
+    const [second, first] = mem.inbox();
+    expect(first.billNo).toBe('BL261007-0001');
+    expect(second.billNo).toBe('BL261007-0002');
+    const card = calls.filter(c => c.method === 'sendMessage').at(-1)!.params.text as string;
+    expect(card).toContain('📥 <b>รับรายการแล้ว · รออนุมัติ</b>');
+    expect(card).toContain('🔖 BL261007-0002');
+    expect(card).toContain('📉 <b>รายจ่าย  -20.00 บาท</b>');
+    expect(card).toContain('💳 สถานะการจ่าย: ⏳ รอผู้จัดการอนุมัติ');
+    expect(card).toContain('📄 เอกสาร: ใบรับรองแทนใบเสร็จ (ออกเลขหลังอนุมัติ)');
+    expect(card).toContain('✍️ ลายเซ็น: ผู้เบิก ⏳ · ผู้อนุมัติ ⏳');
+    expect(card).toContain('📎 หลักฐาน: —');
+    expect(card).toContain('🏢 ธุรกิจ: ครัวกะเพรา');
+    // Pictures attached later show on the same card
+    await run(cb(`attach:${second.id}`, second.cardMessageId!));
+    await run(photo('SLIP'));
+    await run(photo('RCPT'));
+    const edited = calls.filter(c => c.method === 'editMessageText' && c.params.message_id === second.cardMessageId).at(-1)!.params.text as string;
+    expect(edited).toContain('📎 หลักฐาน: สลิปโอน 1 · หลักฐานการซื้อ 1');
+  });
+
   it('cancels an entry waiting for approval from the chat, after asking once', async () => {
     const { mem, calls, msg, cb, run } = setup({ mode: 'approve' });
     await run(msg({ text: 'จ่าย ค่าแก๊ส 380' }));
