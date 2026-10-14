@@ -28,6 +28,7 @@ const LIST_KEYS = [
   'POS_CASH_FLOW_ENTRIES', 'POS_QUOTATIONS', 'POS_PO_LIST', 'POS_SUPPLIERS', 'POS_PREP_RECIPES', 'POS_PREP_BATCHES',
   'POS_MEMBERS', 'POS_COUPONS', 'POS_CRM_CONFIG', 'POS_TELEGRAM_INBOX', 'POS_AR_LIST', 'POS_AP_LIST', 'POS_JOURNALS'
 ];
+const isBigKey = (key: string) => (BIG_KEYS as readonly string[]).includes(key) || LIST_KEYS.includes(key);
 const isBig = (key: string) => (BIG_KEYS as readonly string[]).includes(key) || adopted.has(key);
 
 const cache = new Map<string, string>();
@@ -100,11 +101,28 @@ const schedule = () => {
   if (!flushTimer) flushTimer = setTimeout(() => void flush(), 50);
 };
 
+/**
+ * The database exists but did not answer in time this visit. The app then runs on what it holds in
+ * memory (and the cloud) and does NOT write the large data to localStorage: a value there wins at the
+ * next start, and this visit began without the saved lists, so it would replace them with a short one.
+ */
+let unreachable = false;
+const RETRY_KEY = 'POS_BIGSTORE_RETRY';
+
 /** Read the large data into memory and move it out of localStorage (call once before the app starts) */
-export async function hydrateBigStore(timeoutMs = 4000): Promise<void> {
+export async function hydrateBigStore(timeoutMs = 15000): Promise<void> {
   if (db || typeof indexedDB === 'undefined') return;
+  let timedOut = false;
   try {
-    const opened = await Promise.race([openDb(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))]);
+    const opened = await Promise.race([
+      openDb(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => {
+          timedOut = true;
+          reject(new Error('timeout'));
+        }, timeoutMs)
+      )
+    ]);
     const tx = opened.transaction(STORE, 'readonly');
     const store = tx.objectStore(STORE);
     // Everything in the database: the large keys and the lists adopted in earlier sessions
@@ -161,13 +179,38 @@ export async function hydrateBigStore(timeoutMs = 4000): Promise<void> {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') void flush();
     });
+    try {
+      sessionStorage.removeItem(RETRY_KEY);
+    } catch {
+      // ignore
+    }
   } catch (err) {
-    console.warn('[bigStore] IndexedDB unavailable, keeping data in localStorage:', err);
     db = null;
     cache.clear();
     pending.clear();
+    if (timedOut) {
+      // Phones sometimes leave the database hanging until the page is opened again: try once more
+      let retried = false;
+      try {
+        retried = sessionStorage.getItem(RETRY_KEY) === '1';
+        if (!retried) sessionStorage.setItem(RETRY_KEY, '1');
+      } catch {
+        retried = true;
+      }
+      if (!retried) {
+        window.location.reload();
+        await new Promise(() => undefined); // the page is reloading
+      }
+      unreachable = true;
+      console.warn('[bigStore] The local database did not answer: this visit does not save the large data on this device');
+    } else {
+      console.warn('[bigStore] IndexedDB unavailable, keeping data in localStorage:', err);
+    }
   }
 }
+
+/** The saved data could not be read this visit (see hydrateBigStore) */
+export const bigStoreUnreachable = () => unreachable;
 
 export const bigStore = {
   /**
@@ -216,6 +259,7 @@ export const bigStore = {
     return cache.has(key) ? cache.get(key)! : null;
   },
   setItem(key: string, value: string): void {
+    if (unreachable && isBigKey(key)) return;
     if (!db || !isBig(key)) {
       localStorage.setItem(key, value);
       return;
@@ -225,6 +269,7 @@ export const bigStore = {
     schedule();
   },
   removeItem(key: string): void {
+    if (unreachable && isBigKey(key)) return;
     if (!db || !isBig(key)) {
       localStorage.removeItem(key);
       return;
