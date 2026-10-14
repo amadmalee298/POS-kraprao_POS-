@@ -205,3 +205,17 @@ describe('cost of sales without POS sales', () => {
     expect(pl.profitBeforeTax).toBe(8620 - 1760 - 500);
   });
 });
+
+describe('sales recorded by hand', () => {
+  it('counts store_sales income as sales, not other income', async () => {
+    const { buildProfitAndLoss } = await import('../accounting');
+    const pl = buildProfitAndLoss(
+      { orders: [], expenses: [], incomes: [{ id: 'i', branchId: 'b', date: '2026-10-13', category: 'store_sales', title: 'ยอดขาย', amount: 8620 }] as any },
+      { branchId: 'b' },
+      false
+    );
+    expect(pl.storeSales).toBe(8620);
+    expect(pl.salesRevenue).toBe(8620);
+    expect(pl.otherIncome).toBe(0);
+  });
+});

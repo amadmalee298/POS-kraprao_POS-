@@ -7,7 +7,7 @@ import { hasExpenseDocs } from '../../services/expenseDrive';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
 import { baht, captionTitle, downloadTelegramFile, telegramCall } from '../../services/telegramInbox';
-import { readBotMode } from '../../services/telegramBot';
+import { guessIncomeCategory, readBotMode } from '../../services/telegramBot';
 import { vercelBase } from '../../services/receiptScan';
 import { EXPENSE_CATEGORY_LABELS, isVatRegistered, round2, vatInside, vatRateOf } from '../../utils/accounting';
 import { stockTypeForExpenseCategory, stockTypeLabel } from '../../utils/stockTypes';
@@ -54,7 +54,7 @@ const formFor = (p: PendingReceipt, ingredients: Ingredient[]): Form => ({
       : parseItemsFromText(p.caption || '').some(it => matchIngredient(it.name, ingredients))
         ? 'raw_material'
         : p.data?.category || 'other',
-  incomeCategory: 'other',
+  incomeCategory: guessIncomeCategory(`${p.data?.title || ''} ${p.caption || ''}`),
   amount: p.data?.amount || 0,
   includeVat: !!p.data?.includeVat,
   refNumber: p.data?.refNumber || '',
@@ -137,7 +137,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           id,
           branchId: currentBranch.id,
           date: d.date,
-          category: 'other',
+          category: guessIncomeCategory(d.title),
           title: d.title,
           amount: round2(d.amount),
           paymentMethod: 'other',

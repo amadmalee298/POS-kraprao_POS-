@@ -26,7 +26,8 @@ import {
   vatRateOf,
   withLiveStatus,
   downloadCsv,
-  INCOME_CATEGORY_LABELS
+  INCOME_CATEGORY_LABELS,
+  SALES_INCOME_CATEGORIES
 } from '../../utils/accounting';
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import { ExpenseDocActions, ExpenseDriveBulk, useExpenseDrive } from './ExpenseDocActions';
@@ -169,6 +170,7 @@ export const incomePaymentMethodLabels: Record<string, string> = {
 };
 
 export const INCOME_CATEGORY_COLORS: Record<IncomeCategory, string> = {
+  store_sales: '#22c55e', // Green
   catering: '#8b5cf6', // Violet
   ad_sponsor: '#f59e0b', // Amber
   recycling: '#10b981', // Emerald
@@ -181,6 +183,7 @@ export const INCOME_CATEGORY_COLORS: Record<IncomeCategory, string> = {
 };
 
 export const INCOME_TITLE_PRESETS: Record<IncomeCategory, string[]> = {
+  store_sales: ['ยอดขายหน้าร้านประจำวัน', 'ยอดขายเงินสด', 'ยอดขายโอน / QR', 'ยอดขายเดลิเวอรี (บันทึกเอง)'],
   catering: [
     'ค่ามัดจำบริการจัดเลี้ยงอาหารกล่อง (Catering)',
     'ยอดชำระส่วนที่เหลือ งานเหมาเลี้ยงบริษัท',
@@ -1637,7 +1640,7 @@ export const AccountingView: React.FC = () => {
     (incomes || [])
       .filter(inc => own(inc.branchId) && inMonths(inc.date))
       .forEach(inc => {
-        const isSales = inc.category === 'catering' || inc.category === 'delivery_subsidy';
+        const isSales = SALES_INCOME_CATEGORIES.includes(inc.category);
         rows.push([isSales ? 'รายได้จากการขาย' : 'รายได้อื่น', inc.refNumber || '-', inc.date, inc.title, incomeCategoryLabels[inc.category] || inc.category, inc.amount.toFixed(2), '0.00', inc.amount.toFixed(2)]);
       });
     expenses

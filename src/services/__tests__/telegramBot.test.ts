@@ -181,3 +181,14 @@ describe('waiting for an answer', () => {
     expect(readWaiting('c1', 'u1', 2000)).toBeNull();
   });
 });
+
+describe('income categories', () => {
+  it('guesses the day sales typed in by hand', async () => {
+    const { guessIncomeCategory } = await import('../telegramBot');
+    expect(guessIncomeCategory('ยอดขาย 13/10')).toBe('store_sales');
+    expect(guessIncomeCategory('ขายข้าวกล่อง')).toBe('store_sales');
+    expect(guessIncomeCategory('ขายน้ำมันเก่า')).toBe('recycling');
+    expect(guessIncomeCategory('ค่าจัดเลี้ยง')).toBe('catering');
+    expect(guessIncomeCategory('เงินคืน')).toBe('other');
+  });
+});

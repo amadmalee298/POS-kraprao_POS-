@@ -38,7 +38,7 @@ export const claimableInputVat = (e: Pick<Expense, 'includeVat' | 'vatAmount'>, 
   vatRegistered && e.includeVat ? e.vatAmount || 0 : 0;
 
 /** Recorded incomes that are part of selling food (revenue from sales) rather than other income */
-export const SALES_INCOME_CATEGORIES: IncomeCategory[] = ['catering', 'delivery_subsidy'];
+export const SALES_INCOME_CATEGORIES: IncomeCategory[] = ['store_sales', 'catering', 'delivery_subsidy'];
 
 /**
  * Selling and administrative expense lines, in statement order. Not here: ingredient purchases
@@ -203,7 +203,9 @@ export function buildProfitAndLoss(
   for (const inc of data.incomes) {
     if (!ownBranch(inc.branchId) || !inPeriod(inc.date)) continue;
     const amount = inc.amount || 0;
-    if (inc.category === 'catering') cateringSales += amount;
+    // Sales recorded by hand (sold outside the POS): the shop's own sales
+    if (inc.category === 'store_sales') storeSales += amount;
+    else if (inc.category === 'catering') cateringSales += amount;
     else if (inc.category === 'delivery_subsidy') deliverySales += amount;
     else otherIncome += amount;
   }

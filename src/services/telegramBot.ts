@@ -203,6 +203,17 @@ const CATEGORY_WORDS: [ExpenseCategory, RegExp][] = [
 ];
 
 /** A category from the words of the entry (other when nothing fits) */
+/** Category of money received, from its title: the day's sales typed in by hand count as sales */
+export function guessIncomeCategory(text: string): IncomeCategory {
+  const t = text.toLowerCase();
+  if (/น้ำมัน.*(เก่า|ใช้แล้ว)|รีไซเคิล|ขวด|กระป๋อง|ลังกระดาษ|เศษ/.test(t)) return 'recycling';
+  if (/จัดเลี้ยง|เหมา|ออกบูธ|catering/.test(t)) return 'catering';
+  if (/ดอกเบี้ย|ปันผล/.test(t)) return 'interest';
+  if (/ค่าเช่า/.test(t)) return 'rental';
+  if (/ยอดขาย|ขายหน้าร้าน|ขายประจำวัน|ขายอาหาร|ขายข้าว|ขายกะเพรา|ขายเมนู|รายได้ร้าน|รายได้หน้าร้าน|ขายได้/.test(t)) return 'store_sales';
+  return 'other';
+}
+
 export function guessCategory(text: string): ExpenseCategory {
   return CATEGORY_WORDS.find(([, re]) => re.test(text))?.[0] || 'other';
 }
