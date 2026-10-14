@@ -4,7 +4,7 @@ import {
   getFirestore,
   initializeFirestore,
   persistentLocalCache,
-  persistentMultipleTabManager,
+  persistentSingleTabManager,
   collection,
   doc,
   setDoc,
@@ -104,10 +104,14 @@ try {
   }
 
   // The cloud data this device has seen is kept in the browser's database (IndexedDB), so the
-  // app opens with it offline and does not read everything again after a reload; shared by tabs.
+  // app opens with it offline and does not read everything again after a reload.
+  // One tab owns it: the multi-tab mode also keeps every pending write in localStorage, and when
+  // localStorage is full (about 5 MB) Firestore stops with "INTERNAL ASSERTION FAILED … quota has
+  // been exceeded". A second tab of the app works with a memory cache instead.
   // A named firestoreDatabaseId in the config is used, otherwise the default database.
+  clearMultiTabLeftovers();
   try {
-    const settings = { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) };
+    const settings = { localCache: persistentLocalCache({ tabManager: persistentSingleTabManager({}) }) };
     dbInstance = cfg.firestoreDatabaseId ? initializeFirestore(app, settings, cfg.firestoreDatabaseId) : initializeFirestore(app, settings);
   } catch (cacheErr) {
     console.warn('[Firebase Service] Offline cache unavailable, using memory:', cacheErr);
@@ -2625,6 +2629,21 @@ export async function submitCustomerQrOrder(order: Order, branch: Pick<Branch, '
 // Staff devices sign in once with the shop account; the security rules give full access only
 // to e-mails listed in the `access/staff` document.
 // ---------------------------------------------------------------------------
+
+/** The multi-tab mode's records in localStorage (no longer used): they only take up room */
+function clearMultiTabLeftovers() {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('firestore_')) keys.push(k);
+    }
+    keys.forEach(k => localStorage.removeItem(k));
+    if (keys.length) console.log(`[Firebase Service] Freed ${keys.length} old multi-tab records from localStorage`);
+  } catch {
+    // storage unavailable
+  }
+}
 
 /** Current Firebase user and future changes. Returns an unsubscribe function. */
 export function onFirebaseUserChange(cb: (user: FirebaseUserInfo | null) => void): () => void {
