@@ -518,6 +518,8 @@ export const AccountingView: React.FC = () => {
     type?: 'expense' | 'income';
     paymentMethod?: string;
     payerName?: string;
+    /** The documents in Google Drive (opened from there when the picture left the cloud) */
+    driveUrl?: string;
   } | null>(null);
   // The picture itself is read only when it is opened (records hold references to their pictures)
   const previewImage = useImage(selectedReceiptPreview?.url);
@@ -2961,6 +2963,7 @@ export const AccountingView: React.FC = () => {
                           <div
                             onClick={() => setSelectedReceiptPreview({
                               url: exp.receiptImage!,
+                              driveUrl: exp.driveFiles?.[0]?.url,
                               title: exp.title,
                               date: exp.date,
                               amount: exp.amount,
@@ -2980,6 +2983,7 @@ export const AccountingView: React.FC = () => {
                             type="button"
                             onClick={() => setSelectedReceiptPreview({
                               url: exp.receiptImage!,
+                              driveUrl: exp.driveFiles?.[0]?.url,
                               title: exp.title,
                               date: exp.date,
                               amount: exp.amount,
@@ -3057,6 +3061,7 @@ export const AccountingView: React.FC = () => {
                               <button
                                 onClick={() => setSelectedReceiptPreview({
                                   url: exp.receiptImage!,
+                              driveUrl: exp.driveFiles?.[0]?.url,
                                   title: exp.title,
                                   date: exp.date,
                                   amount: exp.amount,
@@ -3554,6 +3559,7 @@ export const AccountingView: React.FC = () => {
                             <button
                               onClick={() => setSelectedReceiptPreview({
                                 url: e.receiptImage,
+                              driveUrl: e.driveFiles?.[0]?.url,
                                 title: e.title,
                                 date: e.date,
                                 amount: e.amount,
@@ -5122,6 +5128,15 @@ export const AccountingView: React.FC = () => {
               <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-950/90 min-h-[220px]">
                 {previewImage ? (
                   <img src={previewImage} alt="Receipt / Slip" className="max-h-[55vh] max-w-full object-contain rounded-xl border border-slate-800 shadow-2xl" />
+                ) : previewImage === null ? (
+                  <div className="text-center text-xs text-slate-300 space-y-2">
+                    <div>รูปนี้เก็บไว้ใน Google Drive แล้ว</div>
+                    {selectedReceiptPreview.driveUrl && (
+                      <a href={selectedReceiptPreview.driveUrl} target="_blank" rel="noopener noreferrer" className="inline-block py-2 px-3 rounded-xl bg-emerald-700/40 border border-emerald-500/50 text-emerald-200 font-bold">
+                        เปิดใน Google Drive
+                      </a>
+                    )}
+                  </div>
                 ) : (
                   <span className="text-xs text-slate-400 animate-pulse">กำลังโหลดรูป…</span>
                 )}

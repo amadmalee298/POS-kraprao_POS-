@@ -4,7 +4,7 @@ import { usePOS } from '../../context/POSContext';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
 import { scanReceiptImage, vercelBase } from '../../services/receiptScan';
-import { driveEnabled, hasExpenseDocs, saveExpenseToDrive } from '../../services/expenseDrive';
+import { driveEnabled, hasExpenseDocs, releaseCloudPictures, saveExpenseToDrive } from '../../services/expenseDrive';
 import { isFirebaseAvailable, mergeBranchDoc, subscribeToBranchDoc } from '../../services/firebaseService';
 import { BotContext, BotStore, handleBotUpdate } from '../../services/botEngine';
 import {
@@ -223,7 +223,10 @@ export const TelegramInboxPoller = () => {
         saveToDrive: async e => {
           const current = posRef.current.settings;
           if (!driveEnabled(current) || !hasExpenseDocs(e)) return undefined;
-          return saveExpenseToDrive(e, shop, current);
+          const files = await saveExpenseToDrive(e, shop, current);
+          // Drive keeps the pictures now: they leave the shop's cloud database
+          if (files.length) void releaseCloudPictures(e).catch(() => undefined);
+          return files;
         }
       };
     };

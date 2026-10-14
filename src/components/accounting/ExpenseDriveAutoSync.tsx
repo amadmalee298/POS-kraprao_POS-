@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
-import { driveEnabled, hasExpenseDocs, saveExpenseToDrive } from '../../services/expenseDrive';
-import { mergeBranchDoc } from '../../services/firebaseService';
+import { driveEnabled, hasExpenseDocs, releaseCloudPictures, saveExpenseToDrive } from '../../services/expenseDrive';
+import { claimDailyJob, mergeBranchDoc } from '../../services/firebaseService';
 import { getStoredCredentials } from '../../services/notificationService';
 import { BOT_STATE_DOC, DRIVE_FOLDER_KEY, entryKeyboard, expenseCard } from '../../services/telegramBot';
 import { telegramCall } from '../../services/telegramInbox';
@@ -11,10 +11,10 @@ import { docLinkUrl } from '../../utils/docLink';
 import { sellerInfo } from '../../utils/seller';
 
 /**
- * Entries the Telegram bot recorded on the server go into Google Drive from the app: the server
- * cannot draw the PDF, so any open device of the shop (with Drive switched on) saves them, then
- * puts the Drive link on the bot's card in the chat. One at a time, a little after they arrive
- * (another device may already be on it). Mounted once in the app.
+ * Every expense with documents goes into Google Drive (ใบรับรองแทนใบเสร็จ PDF, transfer slip and
+ * proof-of-purchase pictures), then its pictures leave the shop's cloud database: Drive keeps them.
+ * Entries of the Telegram bot get the Drive link on their card in the chat. One at a time, a little
+ * apart; a device claims each expense first so two devices do not save it twice. Mounted once.
  */
 export const ExpenseDriveAutoSync = () => {
   const { expenses, settings, currentBranch, updateExpense } = usePOS();
@@ -26,7 +26,7 @@ export const ExpenseDriveAutoSync = () => {
 
   const on = driveEnabled(settings);
   const pending = on
-    ? expenses.find(e => !tried.current.has(e.id) && !e.driveFiles?.length && hasExpenseDocs(e) && inbox.some(p => p.recordId === e.id && p.status === 'approved'))
+    ? expenses.find(e => !tried.current.has(e.id) && !e.driveFiles?.length && hasExpenseDocs(e) && (!e.branchId || e.branchId === currentBranch?.id))
     : undefined;
 
   useEffect(() => {
@@ -39,10 +39,14 @@ export const ExpenseDriveAutoSync = () => {
         tried.current.add(pending.id);
         try {
           if (!e || e.driveFiles?.length || !driveEnabled(s)) return;
+          // Another device has it today (a failed save is tried again the next day)
+          const today = new Date().toLocaleDateString('sv-SE');
+          if (branch?.id && !(await claimDailyJob(branch.id, `drive_${e.id}`, today))) return;
           const shop = sellerInfo(s, branch);
           const files = await saveExpenseToDrive(e, shop, s);
           if (!files.length) return;
           updateExpense(e.id, { driveFiles: files });
+          await releaseCloudPictures(e);
           let folder = '';
           try {
             folder = localStorage.getItem(DRIVE_FOLDER_KEY) || '';
@@ -71,7 +75,7 @@ export const ExpenseDriveAutoSync = () => {
           busy.current = false;
         }
       },
-      4000 + Math.random() * 8000
+      3000 + Math.random() * 5000
     );
     return () => {
       clearTimeout(timer);

@@ -195,9 +195,9 @@ export async function resolveRecordImages<T extends Pictured>(rec: T): Promise<T
   return mapRecordImagesAsync(rec, async src => (isImageRef(src) ? (await resolveImage(src)) || '' : src));
 }
 
-/** React: the picture to show for a picture or reference (undefined while it loads) */
-export function useImage(src: string | undefined | null): string | undefined {
-  const [data, setData] = useState<string | undefined>(() => (src && !isImageRef(src) ? src : undefined));
+/** React: the picture to show for a picture or reference (undefined while it loads, null when not found) */
+export function useImage(src: string | undefined | null): string | undefined | null {
+  const [data, setData] = useState<string | undefined | null>(() => (src && !isImageRef(src) ? src : undefined));
   useEffect(() => {
     let alive = true;
     if (!src) {
@@ -209,7 +209,8 @@ export function useImage(src: string | undefined | null): string | undefined {
       return;
     }
     setData(undefined);
-    void resolveImage(src).then(d => alive && setData(d));
+    // null: not on this device nor in the cloud (e.g. moved to Google Drive)
+    void resolveImage(src).then(d => alive && setData(d ?? null));
     return () => {
       alive = false;
     };
@@ -234,4 +235,17 @@ export function recordImageRefs(rec: Pictured): string[] {
   const refs: string[] = [];
   mapRecordImages(rec, src => (isImageRef(src) && refs.push(src), src));
   return refs;
+}
+
+/** Remove a picture's cloud copy (it is kept in Google Drive); this device keeps its own copy */
+export async function deleteCloudImage(ref: string): Promise<boolean> {
+  const p = parseImageRef(ref);
+  if (!p) return false;
+  // Kept here first, so this device can still show it
+  if (!(await localGet(p.id))) {
+    const doc = await (await cloud()).loadBranchDoc(p.branchId, imageDocKey(p.id));
+    if (typeof doc?.data === 'string') await localPut(p.id, doc.data);
+  }
+  writeQueue(readQueue().filter(q => q.id !== p.id));
+  return (await cloud()).deleteBranchDoc(p.branchId, imageDocKey(p.id));
 }

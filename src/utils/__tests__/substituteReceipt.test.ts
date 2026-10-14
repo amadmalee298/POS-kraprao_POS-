@@ -97,9 +97,15 @@ describe('saving an expense to Drive', () => {
       return new Response(JSON.stringify({ ok: true, version: 2, fileUrl: 'https://drive.google.com/file/d/x', fileId: 'x' }));
     }));
     const { saveExpenseToDrive } = await import('../../services/expenseDrive');
-    const files = await saveExpenseToDrive(exp({ receiptImage: 'data:image/jpeg;base64,AAA' }), shop, settings);
-    expect(calls).toHaveLength(1);
+    const files = await saveExpenseToDrive(exp({ receiptImage: 'data:image/jpeg;base64,AAA', purchaseImages: [{ name: 'p', dataUrl: 'data:image/png;base64,BBB' }] }), shop, settings);
+    // The PDF, then the transfer slip and the proof of purchase as pictures
+    expect(calls).toHaveLength(3);
     expect(calls[0].file).toMatchObject({ folder: 'รายจ่าย/2569-10', mimeType: 'application/pdf', base64: 'JVBERg==' });
+    expect(calls[1].file).toMatchObject({ mimeType: 'image/jpeg', base64: 'AAA' });
+    expect(calls[1].file.name).toMatch(/_สลิปโอน\.jpg$/);
+    expect(calls[2].file).toMatchObject({ mimeType: 'image/png', base64: 'BBB' });
+    expect(calls[2].file.name).toMatch(/_หลักฐานการซื้อ1\.png$/);
+    expect(files).toHaveLength(3);
     expect(files[0].url).toBe('https://drive.google.com/file/d/x');
   });
 
