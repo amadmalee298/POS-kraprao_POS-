@@ -118,6 +118,8 @@ interface MonthlyFinancialData {
   deliverySales: number;
   cateringSales: number;
   otherIncome: number;
+  /** The cost of sales is the ingredients bought (no POS sale carried a cost) */
+  cogsFromPurchases?: boolean;
   /** Sales + other income */
   totalRevenue: number;
   /** Revenue from sales and services (before VAT) */
@@ -1030,6 +1032,7 @@ export const AccountingView: React.FC = () => {
         totalRevenue: pl.totalIncome,
         salesRevenue: pl.salesRevenue,
         cogs: pl.cogs,
+        cogsFromPurchases: pl.cogsFromPurchases,
         estimatedCogs: pl.estimatedCogs,
         grossProfit: pl.grossProfit,
         operatingProfit: pl.operatingProfit,
@@ -3300,7 +3303,11 @@ export const AccountingView: React.FC = () => {
                   <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
                     <div>
                       <div className="font-bold text-slate-200">ต้นทุนวัตถุดิบ (COGS)</div>
-                      <div className="text-[10px] text-slate-400">เนื้อสัตว์, ผัก, เครื่องปรุง, บรรจุภัณฑ์</div>
+                      <div className="text-[10px] text-slate-400">
+                        {monthlyData.some(d => d.cogsFromPurchases)
+                          ? 'คิดจากยอดซื้อวัตถุดิบในงวด (ไม่มีการขายผ่าน POS ที่มีต้นทุนสูตร)'
+                          : 'เนื้อสัตว์, ผัก, เครื่องปรุง, บรรจุภัณฑ์'}
+                      </div>
                     </div>
                     <div className="text-right font-mono">
                       <div className="font-bold text-orange-400">฿{money(rangeTotals.cogs)}</div>

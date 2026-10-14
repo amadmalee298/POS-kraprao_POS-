@@ -119,6 +119,11 @@ export interface ProfitAndLoss {
   cogs: number;
   /** Part of COGS estimated from the menu price because the dish has no cost price yet */
   estimatedCogs: number;
+  /**
+   * No POS sale carried a cost in the period (sales recorded outside the POS, or menus without
+   * recipes), so the ingredients bought in the period are the cost of sales (purchases method)
+   */
+  cogsFromPurchases: boolean;
   grossProfit: number;
   // Selling and administrative expenses, before VAT when it can be claimed
   expenses: Record<ExpenseCategory, number>;
@@ -213,6 +218,10 @@ export function buildProfitAndLoss(
   }
 
   const salesRevenue = storeSales + deliverySales + cateringSales;
+  // Ingredients bought are stock, counted as cost when the dishes are sold through the POS. When no
+  // sale in the period carries a cost, they would never show in the profit: they are the cost then.
+  const cogsFromPurchases = cogs === 0 && expenses.raw_material > 0;
+  if (cogsFromPurchases) cogs = expenses.raw_material;
   const grossProfit = salesRevenue - cogs;
   const depreciation = depreciationFor(
     equipmentItems(data.expenses, ownBranch, vatRegistered, depreciationOptions),
@@ -231,6 +240,7 @@ export function buildProfitAndLoss(
     salesRevenue: round2(salesRevenue),
     cogs: round2(cogs),
     estimatedCogs: round2(estimatedCogs),
+    cogsFromPurchases,
     grossProfit: round2(grossProfit),
     expenses,
     depreciation: round2(depreciation),
