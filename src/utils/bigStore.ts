@@ -20,7 +20,15 @@ export const BIG_KEYS = [
 
 const DB_NAME = 'kaprao-pos-local';
 const STORE = 'kv';
-const isBig = (key: string) => (BIG_KEYS as readonly string[]).includes(key);
+// Other keys moved to the database by the code that uses them (bigStore.adopt), e.g. the shared lists
+const adopted = new Set<string>();
+// The shared lists (useKeyedList / useSharedList): moved at start-up, before Firestore needs localStorage
+const LIST_KEYS = [
+  'POS_WHT_CERTIFICATES', 'POS_PAYROLL_ADJUSTMENTS', 'POS_GOV_FILINGS', 'POS_SIGNATURES', 'POS_BALANCE_SHEET_SETUP',
+  'POS_CASH_FLOW_ENTRIES', 'POS_QUOTATIONS', 'POS_PO_LIST', 'POS_SUPPLIERS', 'POS_PREP_RECIPES', 'POS_PREP_BATCHES',
+  'POS_MEMBERS', 'POS_COUPONS', 'POS_CRM_CONFIG', 'POS_TELEGRAM_INBOX', 'POS_AR_LIST', 'POS_AP_LIST', 'POS_JOURNALS'
+];
+const isBig = (key: string) => (BIG_KEYS as readonly string[]).includes(key) || adopted.has(key);
 
 const cache = new Map<string, string>();
 let db: IDBDatabase | null = null;
@@ -75,7 +83,7 @@ export const flushBigStore = () => flush();
 /** Every large value held (for a backup file) */
 export function bigStoreEntries(): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const k of BIG_KEYS) {
+  for (const k of [...BIG_KEYS, ...adopted]) {
     const v = bigStore.getItem(k);
     if (v !== null) out[k] = v;
   }
@@ -93,9 +101,23 @@ export async function hydrateBigStore(timeoutMs = 4000): Promise<void> {
     const opened = await Promise.race([openDb(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))]);
     const tx = opened.transaction(STORE, 'readonly');
     const store = tx.objectStore(STORE);
-    const values = await Promise.all(BIG_KEYS.map(k => req(store.get(k) as IDBRequest<string | undefined>)));
+    // Everything in the database: the large keys and the lists adopted in earlier sessions
+    const [allKeys, allValues] = await Promise.all([req(store.getAllKeys()), req(store.getAll() as IDBRequest<unknown[]>)]);
+    const stored = new Map<string, unknown>(allKeys.map((k, i) => [String(k), allValues[i]]));
+    stored.forEach((_, k) => {
+      if (!(BIG_KEYS as readonly string[]).includes(k)) adopted.add(k);
+    });
+    LIST_KEYS.forEach(k => {
+      try {
+        if (localStorage.getItem(k) !== null) adopted.add(k);
+      } catch {
+        // private mode
+      }
+    });
+    const keys = [...BIG_KEYS, ...adopted];
+    const values = keys.map(k => stored.get(k));
     const moved: string[] = [];
-    BIG_KEYS.forEach((k, i) => {
+    keys.forEach((k, i) => {
       let local: string | null = null;
       try {
         local = localStorage.getItem(k);
@@ -142,6 +164,31 @@ export async function hydrateBigStore(timeoutMs = 4000): Promise<void> {
 }
 
 export const bigStore = {
+  /**
+   * Keep this key in the database from now on (moving what localStorage holds for it), so a
+   * growing list does not fill localStorage: Firestore also writes there and fails when it is full.
+   */
+  adopt(key: string): void {
+    if (adopted.has(key) || (BIG_KEYS as readonly string[]).includes(key)) return;
+    adopted.add(key);
+    if (!db) return;
+    let local: string | null = null;
+    try {
+      local = localStorage.getItem(key);
+    } catch {
+      // private mode
+    }
+    if (local === null) return;
+    cache.set(key, local);
+    pending.set(key, local);
+    // Removed from localStorage once the write is scheduled: the copy in memory is what is read
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
+    schedule();
+  },
   getItem(key: string): string | null {
     if (!db || !isBig(key)) return localStorage.getItem(key);
     return cache.has(key) ? cache.get(key)! : null;

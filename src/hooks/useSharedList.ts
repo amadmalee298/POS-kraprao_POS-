@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import { isFirebaseAvailable, saveBranchDoc, subscribeToBranchDoc } from '../services/firebaseService';
+import { bigStore } from '../utils/bigStore';
 
 /** Keep a cloud copy small: Firestore documents are limited to 1 MB, so embedded images stay local. */
 const CLOUD_LIMIT = 900_000;
@@ -18,7 +19,8 @@ const announce = (key: string, items: unknown[], except?: (items: unknown[]) => 
 
 const readLocal = <T,>(key: string): T[] | null => {
   try {
-    const raw = localStorage.getItem(key);
+    bigStore.adopt(key);
+    const raw = bigStore.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as T[]) : null;
@@ -65,7 +67,8 @@ export function useSharedList<T>(
 
   const persistLocal = (next: T[]) => {
     try {
-      localStorage.setItem(localKey, JSON.stringify(next));
+      bigStore.adopt(localKey);
+      bigStore.setItem(localKey, JSON.stringify(next));
     } catch {
       // storage full: the in-memory list and the cloud copy still hold it
     }
