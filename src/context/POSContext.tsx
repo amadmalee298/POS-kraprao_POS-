@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from 'react';
 import { isLowStock } from '../utils/stockTypes';
 import { DEFAULT_PIN_HASH, hashPin, isHashedPin } from '../utils/pins';
-import { bigStore } from '../utils/bigStore';
+import { bigStore, flushBigStore } from '../utils/bigStore';
 import { averageCostAfterPrep } from '../utils/prep';
 import { localDay } from '../utils/stockHistory';
 import { effectivePermissions } from '../utils/access';
@@ -2526,13 +2526,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   }, [menuItems, isStorageLoaded]);
 
-  // Save state to localStorage whenever state updates (strictly ONLY after initial load completes)
-  useEffect(() => {
-    if (!isStorageLoaded) {
-      console.log('[POS Storage Sync] ⏳ Storage load in progress... Skipping initial save to preserve existing LocalStorage.');
-      return;
-    }
-
+  // Save the state to this device. Not on every change: each save turns all the shop's data (with
+  // bill pictures) into one big text, and doing that on every tap made phones run out of memory,
+  // so Safari reloaded the page. Changes are saved together a moment later, and at once when the
+  // app goes to the background or the page closes.
+  const saveStateRef = useRef<() => void>(() => undefined);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  saveStateRef.current = () => {
     try {
       const stateToSave = {
         cart,
@@ -2611,6 +2611,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch (err) {
       console.error('[POS Storage Sync] ❌ Failed to save state to LocalStorage:', err);
     }
+  };
+  useEffect(() => {
+    if (!isStorageLoaded) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      saveStateRef.current();
+    }, 1500);
   }, [
     isStorageLoaded,
     cart,
@@ -2639,6 +2647,24 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     branches,
     currentBranch
   ]);
+  useEffect(() => {
+    const saveNow = () => {
+      if (!saveTimerRef.current) return;
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+      saveStateRef.current();
+      void flushBigStore();
+    };
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') saveNow();
+    };
+    window.addEventListener('pagehide', saveNow);
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      window.removeEventListener('pagehide', saveNow);
+      document.removeEventListener('visibilitychange', onHide);
+    };
+  }, []);
 
   const updateBranch = (updatedBranch: Branch) => {
     setBranches(prev => prev.map(b => b.id === updatedBranch.id ? updatedBranch : b));
