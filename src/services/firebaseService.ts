@@ -111,7 +111,12 @@ try {
   // A named firestoreDatabaseId in the config is used, otherwise the default database.
   clearMultiTabLeftovers();
   try {
-    const settings = { localCache: persistentLocalCache({ tabManager: persistentSingleTabManager({}) }) };
+    const settings = {
+      localCache: persistentLocalCache({ tabManager: persistentSingleTabManager({}) }),
+      // Chosen on a device whose cloud never answered (see setLongPolling): plain requests get
+      // through mobile networks and proxies that hold the streaming connection open forever
+      ...(usesLongPolling() ? { experimentalForceLongPolling: true } : {})
+    };
     dbInstance = cfg.firestoreDatabaseId ? initializeFirestore(app, settings, cfg.firestoreDatabaseId) : initializeFirestore(app, settings);
   } catch (cacheErr) {
     console.warn('[Firebase Service] Offline cache unavailable, using memory:', cacheErr);
@@ -2631,6 +2636,24 @@ export async function submitCustomerQrOrder(order: Order, branch: Pick<Branch, '
 // ---------------------------------------------------------------------------
 
 /** The multi-tab mode's records in localStorage (no longer used): they only take up room */
+const LONG_POLLING_KEY = 'POS_FS_LONG_POLLING';
+export function usesLongPolling(): boolean {
+  try {
+    return localStorage.getItem(LONG_POLLING_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+/** Connect to the cloud with plain requests from the next start on (or back to the default) */
+export function setLongPolling(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(LONG_POLLING_KEY, '1');
+    else localStorage.removeItem(LONG_POLLING_KEY);
+  } catch {
+    // storage unavailable
+  }
+}
+
 function clearMultiTabLeftovers() {
   try {
     const keys: string[] = [];
