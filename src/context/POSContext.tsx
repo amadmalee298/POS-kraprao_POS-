@@ -2414,6 +2414,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => events.forEach(e => window.removeEventListener(e, touch));
   }, [isLocked]);
 
+  // Once loaded, the large lists are only written: their saved text is dropped from memory
+  useEffect(() => {
+    if (!isStorageLoaded) return;
+    const t = setTimeout(() => bigStore.release(['POS_ORDERS_DATA', 'POS_EXPENSES_DATA', 'POS_INCOMES_DATA', 'POS_INGREDIENTS_DATA', 'POS_MENU_ITEMS_DATA']), 0);
+    return () => clearTimeout(t);
+  }, [isStorageLoaded]);
+
   // Auto-pull incoming central orders on app startup (DO NOT auto-pull menus/inventory to protect local edits!)
   useEffect(() => {
     if (!isStorageLoaded) return;

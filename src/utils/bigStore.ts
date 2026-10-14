@@ -31,6 +31,8 @@ const LIST_KEYS = [
 const isBig = (key: string) => (BIG_KEYS as readonly string[]).includes(key) || adopted.has(key);
 
 const cache = new Map<string, string>();
+// Keys read once at start-up and then only written: their (large) text is not kept in memory
+const writeOnly = new Set<string>();
 let db: IDBDatabase | null = null;
 const pending = new Map<string, string | null>(); // key → value to write (null: delete)
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -80,12 +82,16 @@ function flush(): Promise<void> {
 /** Wait until every change is in the database (e.g. before reloading the page) */
 export const flushBigStore = () => flush();
 
-/** Every large value held (for a backup file) */
-export function bigStoreEntries(): Record<string, string> {
+/** Every large value held (for a backup file), read from the database where not kept in memory */
+export async function bigStoreEntries(): Promise<Record<string, string>> {
+  await flush();
   const out: Record<string, string> = {};
   for (const k of [...BIG_KEYS, ...adopted]) {
-    const v = bigStore.getItem(k);
-    if (v !== null) out[k] = v;
+    let v: string | null | undefined = writeOnly.has(k) ? null : bigStore.getItem(k);
+    if (v === null && db && writeOnly.has(k)) {
+      v = await req(db.transaction(STORE, 'readonly').objectStore(STORE).get(k) as IDBRequest<string | undefined>).catch(() => undefined);
+    }
+    if (typeof v === 'string') out[k] = v;
   }
   return out;
 }
@@ -189,7 +195,23 @@ export const bigStore = {
     }
     schedule();
   },
+  /**
+   * After the app has loaded these keys, stop keeping their text in memory: they are only written
+   * from then on (orders, bills with pictures… can be tens of MB, and phones close a page that
+   * holds too much).
+   */
+  release(keys: readonly string[]): void {
+    if (!db) return;
+    keys.forEach(k => {
+      writeOnly.add(k);
+      cache.delete(k);
+    });
+  },
   getItem(key: string): string | null {
+    if (db && writeOnly.has(key)) {
+      console.warn(`[bigStore] ${key} is no longer kept in memory; read it before release()`);
+      return null;
+    }
     if (!db || !isBig(key)) return localStorage.getItem(key);
     return cache.has(key) ? cache.get(key)! : null;
   },
@@ -198,7 +220,7 @@ export const bigStore = {
       localStorage.setItem(key, value);
       return;
     }
-    cache.set(key, value);
+    if (!writeOnly.has(key)) cache.set(key, value);
     pending.set(key, value);
     schedule();
   },

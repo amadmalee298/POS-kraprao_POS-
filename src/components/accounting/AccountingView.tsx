@@ -1086,11 +1086,13 @@ export const AccountingView: React.FC = () => {
   }, [monthlyData]);
 
   // Tax Calculations for selected month
-  const selectedBranchOrders = orders.filter(
-    o => o.branchId === currentBranch.id && countsAsRevenue(o) && isSameMonth(o.createdAt, selectedMonth)
+  const selectedBranchOrders = useMemo(
+    () => orders.filter(o => o.branchId === currentBranch.id && countsAsRevenue(o) && isSameMonth(o.createdAt, selectedMonth)),
+    [orders, currentBranch.id, selectedMonth]
   );
-  const selectedBranchExpenses = expenses.filter(
-    e => (!e.branchId || e.branchId === currentBranch.id) && isSameMonth(e.date, selectedMonth)
+  const selectedBranchExpenses = useMemo(
+    () => expenses.filter(e => (!e.branchId || e.branchId === currentBranch.id) && isSameMonth(e.date, selectedMonth)),
+    [expenses, currentBranch.id, selectedMonth]
   );
 
   const totalSalesVat = round2(selectedBranchOrders.reduce((sum, o) => sum + orderVatBreakdown(o).vat, 0));
