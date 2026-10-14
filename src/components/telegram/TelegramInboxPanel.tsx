@@ -65,7 +65,7 @@ const formFor = (p: PendingReceipt, ingredients: Ingredient[]): Form => ({
  * approve it into the books (expense or other income), or reject it.
  */
 export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory, string> }> = ({ incomeLabels }) => {
-  const { settings, currentBranch, currentUser, addExpense, addIncome, ingredients, addStockLot, receiveNewIngredient, ingredientCategories = [] } = usePOS();
+  const { settings, currentBranch, currentUser, addExpense, addIncome, ingredients, addStockLot, receiveNewIngredient, ingredientCategories = [], expenses, incomes, firebaseSyncState } = usePOS();
   const drive = useExpenseDrive();
   const [items, setItems] = useTelegramInbox();
   // What was typed into the bills survives a reload of the page (same tab)
@@ -97,6 +97,69 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
 
   const waiting = useMemo(() => items.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading' || stockOnly(p)), [items]);
   const history = useMemo(() => items.filter(p => (p.status === 'approved' || p.status === 'rejected') && !stockOnly(p)).slice(0, 50), [items]);
+
+  /**
+   * Approved entries whose expense / income is not in this device's books (e.g. lost when a phone
+   * closed the page before saving). Matched by id, or by date, amount and title for older entries.
+   */
+  const missingRecord = useMemo(() => {
+    const has = (list: { id: string; date: string; amount: number; title: string }[], p: PendingReceipt) =>
+      list.some(r => r.id === p.recordId || (r.date === p.data!.date && Math.abs((Number(r.amount) || 0) - p.data!.amount) < 0.01 && r.title.trim() === p.data!.title.trim()));
+    const out = new Set<string>();
+    history.forEach(p => {
+      if (p.status !== 'approved' || !p.data || !p.data.title || !(p.data.amount > 0)) return;
+      if (!has(p.kind === 'income' ? incomes : expenses, p)) out.add(p.id);
+    });
+    return out;
+  }, [history, expenses, incomes]);
+  const cloudReady = firebaseSyncState.status === 'connected';
+
+  /** Record an approved entry again (its stock was already received at approval: not added again) */
+  const restore = async (p: PendingReceipt) => {
+    const d = p.data;
+    if (!d) return;
+    if (!window.confirm(`บันทึก "${d.title}" ${baht(d.amount)} วันที่ ${d.date} กลับเข้าบัญชี?\n(ไม่เพิ่มสต็อกซ้ำ)`)) return;
+    setBusy(p.id);
+    try {
+      const image = await loadImage(p).catch(() => undefined);
+      const id = p.recordId || `${p.id}-rec`;
+      if (p.kind === 'income') {
+        addIncome({
+          id,
+          branchId: currentBranch.id,
+          date: d.date,
+          category: 'other',
+          title: d.title,
+          amount: round2(d.amount),
+          paymentMethod: 'other',
+          refNumber: d.refNumber || '',
+          payerName: p.senderName,
+          note: [d.note, 'จาก Telegram'].filter(Boolean).join(' · '),
+          slipImage: image,
+          slipImageName: image ? `telegram-${p.messageId}.jpg` : undefined
+        });
+      } else {
+        addExpense({
+          id,
+          branchId: currentBranch.id,
+          date: d.date,
+          category: d.category,
+          title: d.title,
+          amount: round2(d.amount),
+          includeVat: !!d.includeVat,
+          vatAmount: d.vatAmount || 0,
+          netAmount: round2(d.netAmount || d.amount - (d.vatAmount || 0)),
+          refNumber: d.refNumber || '',
+          note: [d.note, `จาก Telegram: ${p.senderName}`].filter(Boolean).join(' · '),
+          receiptImage: image,
+          receiptImageName: image ? `telegram-${p.messageId}.jpg` : undefined
+        });
+      }
+      if (!p.recordId) patch(p.id, { recordId: id });
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const form = (p: PendingReceipt) => forms[p.id] || formFor(p, ingredients);
   const vatRegistered = isVatRegistered(settings);
@@ -170,6 +233,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
       const recordId = `${p.id}-rec`;
       if (f.kind === 'expense') {
         const saved = addExpense({
+          id: recordId,
           branchId: currentBranch.id,
           date: f.date,
           category: f.category,
@@ -188,6 +252,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         if (drive.enabled && hasExpenseDocs(saved)) void drive.save(saved, true);
       } else {
         addIncome({
+          id: recordId,
           branchId: currentBranch.id,
           date: f.date,
           category: f.incomeCategory,
@@ -668,12 +733,22 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
 
       {history.length > 0 && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 text-xs">
+          {missingRecord.size > 0 && (
+            <div className="mb-3 p-3 rounded-xl border border-amber-600/50 bg-amber-950/30 text-amber-200 leading-relaxed">
+              ⚠️ อนุมัติแล้ว {missingRecord.size} รายการ แต่ไม่พบในบัญชีของเครื่องนี้
+              {cloudReady ? (
+                <span className="block text-amber-300/80">กด "บันทึกกลับเข้าบัญชี" ที่รายการด้านล่าง (สต็อกไม่ถูกเพิ่มซ้ำ)</span>
+              ) : (
+                <span className="block text-amber-300/80">รอให้มุมบนขึ้น "ซิงค์คลาวด์" ก่อน รายการที่อยู่บนคลาวด์จะกลับมาเอง ที่ยังไม่กลับจึงค่อยกู้คืน</span>
+              )}
+            </div>
+          )}
           <button type="button" onClick={() => setShowHistory(s => !s)} className="font-bold text-slate-300">
             {showHistory ? '▾' : '▸'} ประวัติที่ตัดสินแล้ว ({history.length})
           </button>
-          {showHistory && (
+          {(showHistory || missingRecord.size > 0) && (
             <ul className="mt-2 divide-y divide-slate-800">
-              {history.map(p => (
+              {history.filter(p => showHistory || missingRecord.has(p.id)).map(p => (
                 <li key={p.id} className="py-2 flex justify-between gap-2">
                   <span>
                     {p.status === 'approved' ? '✅' : '❌'} {p.data?.title || p.caption || 'บิลจาก Telegram'}
@@ -684,6 +759,21 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                   <span className="font-mono text-right">
                     {p.data ? baht(p.data.amount) : ''}
                     {p.stockAdded?.length ? <span className="block text-emerald-400 font-sans">📦 {p.stockAdded.length} รายการเข้าสต็อก</span> : null}
+                    {missingRecord.has(p.id) && (
+                      <span className="block font-sans">
+                        <span className="block text-amber-300">ไม่พบในบัญชี</span>
+                        {canApprove && cloudReady && (
+                          <button
+                            type="button"
+                            onClick={() => restore(p)}
+                            disabled={busy === p.id}
+                            className="mt-1 h-8 px-2 rounded-lg border border-amber-600/60 bg-amber-950/40 text-amber-200 text-[11px] disabled:opacity-50"
+                          >
+                            ↩ บันทึกกลับเข้าบัญชี
+                          </button>
+                        )}
+                      </span>
+                    )}
                   </span>
                 </li>
               ))}

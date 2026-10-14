@@ -4105,13 +4105,72 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Bill pictures are kept outside the records (see utils/imageRef): a record holds a reference,
   // the picture is on this device and in the cloud. A record is sent to the cloud once its
   // pictures are there, so other devices never get a reference to a picture they cannot read.
+  // Money records are written to this device at once (not with the batched save): a phone that
+  // closes the page right after an approval must not lose it. They are small without pictures.
+  const keepList = <T,>(key: string, list: T[]): T[] => {
+    try {
+      bigStore.setItem(key, JSON.stringify(list));
+      savedListsRef.current.set(key, list);
+    } catch (err) {
+      console.warn(`[POSContext] Failed to save ${key}:`, err);
+    }
+    return list;
+  };
   const pictureBranch = (rec: { branchId?: string }) => rec.branchId || currentBranch?.id || 'main';
-  const sendWithPictures = <T extends Expense | OtherIncome>(rec: T, send: (r: T) => Promise<unknown>) => {
+  // Expenses / income not in the cloud yet ("e:<id>" / "i:<id>"), sent again when the cloud answers
+  const UNSENT_KEY = 'POS_UNSENT_MONEY';
+  const readUnsent = (): string[] => {
+    try {
+      const v = JSON.parse(localStorage.getItem(UNSENT_KEY) || '[]');
+      return Array.isArray(v) ? v : [];
+    } catch {
+      return [];
+    }
+  };
+  const markUnsent = (key: string, unsent: boolean) => {
+    try {
+      const rest = readUnsent().filter(k => k !== key);
+      localStorage.setItem(UNSENT_KEY, JSON.stringify(unsent ? [...rest, key].slice(-500) : rest));
+    } catch {
+      // storage full: sent again only when the record changes
+    }
+  };
+  const sendWithPictures = <T extends Expense | OtherIncome>(kind: 'e' | 'i', rec: T, send: (r: T) => Promise<boolean>) => {
+    const key = `${kind}:${rec.id}`;
+    markUnsent(key, true);
     if (!isFirebaseAvailable()) return;
     void Promise.all(recordImageRefs(rec).map(ref => uploadImageNow(ref)))
       .then(() => send(rec))
+      .then(ok => ok && markUnsent(key, false))
       .catch(err => console.warn('[POSContext] Failed to sync record to Firestore:', err));
   };
+  /** Send the expenses and income the cloud did not take yet */
+  const resendMoneyRef = useRef(async () => undefined as void);
+  resendMoneyRef.current = async () => {
+    if (!isFirebaseAvailable()) return;
+    for (const key of readUnsent()) {
+      const id = key.slice(2);
+      const ok =
+        key.startsWith('i:')
+          ? await (async () => {
+              const rec = incomesRef.current.find(r => r.id === id);
+              if (!rec) return true; // deleted since
+              await Promise.all(recordImageRefs(rec).map(ref => uploadImageNow(ref)));
+              return syncIncomeToFirestore(rec, currentBranch);
+            })()
+          : await (async () => {
+              const rec = expensesRef.current.find(r => r.id === id);
+              if (!rec) return true;
+              await Promise.all(recordImageRefs(rec).map(ref => uploadImageNow(ref)));
+              return syncExpenseToFirestore(rec, currentBranch);
+            })();
+      if (ok) markUnsent(key, false);
+      else break; // the cloud is not taking writes: try again later
+    }
+  };
+  useEffect(() => {
+    if (firebaseSyncState.status === 'connected') void resendMoneyRef.current();
+  }, [firebaseSyncState.status]);
 
   const addExpense = (expData: Omit<Expense, 'id'> & { id?: string }) => {
     const withId: Expense = {
@@ -4119,8 +4178,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: expData.id || `exp-${Date.now()}`
     };
     const newExp = offloadRecordImages(withId, pictureBranch(withId));
-    setExpenses(prev => [newExp, ...prev]);
-    sendWithPictures(newExp, e => syncExpenseToFirestore(e, currentBranch));
+    setExpenses(prev => keepList('POS_EXPENSES_DATA', [newExp, ...prev.filter(e => e.id !== newExp.id)]));
+    sendWithPictures('e', newExp, e => syncExpenseToFirestore(e, currentBranch));
     return newExp;
   };
 
@@ -4129,12 +4188,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // From the latest list (the caller may hold an older render's copy, e.g. after an upload)
     const current = expensesRef.current.find(e => e.id === expenseId);
     const next = current ? offloadRecordImages({ ...current, ...patch, id: current.id }, pictureBranch(current)) : null;
-    setExpenses(prev => prev.map(e => (e.id === expenseId ? next || offloadRecordImages({ ...e, ...patch, id: e.id }, pictureBranch(e)) : e)));
-    if (next) sendWithPictures(next, e => syncExpenseToFirestore(e, currentBranch));
+    setExpenses(prev => keepList('POS_EXPENSES_DATA', prev.map(e => (e.id === expenseId ? next || offloadRecordImages({ ...e, ...patch, id: e.id }, pictureBranch(e)) : e))));
+    if (next) sendWithPictures('e', next, e => syncExpenseToFirestore(e, currentBranch));
   };
 
   const deleteExpense = (expenseId: string) => {
-    setExpenses(prev => prev.filter(e => e.id !== expenseId));
+    setExpenses(prev => keepList('POS_EXPENSES_DATA', prev.filter(e => e.id !== expenseId)));
 
     if (isFirebaseAvailable()) {
       deleteExpenseFromFirestore(expenseId).catch(err => {
@@ -4150,8 +4209,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       createdAt: incData.createdAt || new Date().toISOString()
     };
     const newInc = offloadRecordImages(withId, pictureBranch(withId));
-    setIncomes(prev => [newInc, ...prev]);
-    sendWithPictures(newInc, i => syncIncomeToFirestore(i, currentBranch));
+    setIncomes(prev => keepList('POS_INCOMES_DATA', [newInc, ...prev.filter(i => i.id !== newInc.id)]));
+    sendWithPictures('i', newInc, i => syncIncomeToFirestore(i, currentBranch));
     return newInc;
   };
 
@@ -4161,12 +4220,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!current) return;
     const merged = typeof arg1 === 'string' ? { ...current, ...(arg2 || {}), id } : { ...current, ...arg1 };
     const next = offloadRecordImages(merged, pictureBranch(merged));
-    setIncomes(prev => prev.map(inc => (inc.id === id ? next : inc)));
-    sendWithPictures(next, i => syncIncomeToFirestore(i, currentBranch));
+    setIncomes(prev => keepList('POS_INCOMES_DATA', prev.map(inc => (inc.id === id ? next : inc))));
+    sendWithPictures('i', next, i => syncIncomeToFirestore(i, currentBranch));
   };
 
   const deleteIncome = (incomeId: string) => {
-    setIncomes(prev => prev.filter(inc => inc.id !== incomeId));
+    setIncomes(prev => keepList('POS_INCOMES_DATA', prev.filter(inc => inc.id !== incomeId)));
 
     if (isFirebaseAvailable()) {
       deleteIncomeFromFirestore(incomeId).catch(err => {
