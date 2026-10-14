@@ -3,6 +3,7 @@ import { buildProfitAndLoss, EXPENSE_CATEGORY_LABELS, INCOME_CATEGORY_LABELS, cl
 import { FILINGS, filingDate, FilingRecord, filingsDueIn, monthsOf } from './govFilings';
 import { countsAsRevenue, orderVatBreakdown } from './orderUtils';
 import { monthlyPayroll } from './payroll';
+import { hasImage, imageMime } from './imageRef';
 import type { Party, WhtCertificate } from './staffDocs';
 import { WHT_FORM_LABEL } from './withholding';
 
@@ -115,7 +116,7 @@ export function buildAccountantPack(p: PackInput): PackFile[] {
     path: '04_ค่าใช้จ่ายทั้งหมด.csv',
     text: csv(
       ['วันที่', 'หมวด', 'รายการ', 'จำนวนเงิน', 'มี VAT', 'VAT', 'ก่อน VAT', 'เลขที่อ้างอิง', 'หมายเหตุ', 'ไฟล์ใบเสร็จ'],
-      expenses.map(e => [e.date, EXPENSE_CATEGORY_LABELS[e.category] || e.category, e.title, round2(e.amount), e.includeVat ? 'มี' : '', round2(e.vatAmount || 0), round2(e.netAmount ?? e.amount), e.refNumber || '', e.note || '', e.receiptImage?.startsWith('data:') ? receiptFileName(e) : ''])
+      expenses.map(e => [e.date, EXPENSE_CATEGORY_LABELS[e.category] || e.category, e.title, round2(e.amount), e.includeVat ? 'มี' : '', round2(e.vatAmount || 0), round2(e.netAmount ?? e.amount), e.refNumber || '', e.note || '', hasImage(e.receiptImage) ? receiptFileName(e) : ''])
     )
   });
 
@@ -216,7 +217,8 @@ export function buildAccountantPack(p: PackInput): PackFile[] {
 
 /** File name used for an expense's receipt image inside the pack */
 export function receiptFileName(e: Pick<Expense, 'id' | 'date' | 'title' | 'receiptImage' | 'receiptImageName'>): string {
-  const ext = (e.receiptImage || '').startsWith('data:application/pdf') ? 'pdf' : (e.receiptImage || '').startsWith('data:image/png') ? 'png' : 'jpg';
+  const mime = imageMime(e.receiptImage);
+  const ext = mime === 'application/pdf' ? 'pdf' : mime === 'image/png' ? 'png' : 'jpg';
   const safe = (e.title || 'ใบเสร็จ').replace(/[\\/:*?"<>|]/g, '').slice(0, 40).trim() || 'ใบเสร็จ';
   return `${e.date}_${safe}_${e.id.slice(-6)}.${ext}`;
 }

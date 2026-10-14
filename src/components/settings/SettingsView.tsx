@@ -823,10 +823,10 @@ export const SettingsView: React.FC = () => {
     setTimeout(() => setIsSavedAlert(false), 3000);
   };
 
-  const handleExportJSON = () => {
+  const handleExportJSON = async () => {
     const backupData = {
       timestamp: new Date().toISOString(),
-      localStorage: { ...localStorage, ...bigStoreEntries() }
+      localStorage: { ...localStorage, ...(await bigStoreEntries()) }
     };
 
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupData, null, 2));

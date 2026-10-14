@@ -27,6 +27,7 @@ import { htmlToPdfBlob } from '../../utils/htmlToPdf';
 import { sellerInfo } from '../../utils/seller';
 import { documentHtml } from '../../utils/staffDocs';
 import { expenseDocName, expenseDocPages } from '../../utils/substituteReceipt';
+import { resolveRecordImages } from '../../services/imageStore';
 
 /** Telegram holds the request open until something arrives, so replies feel instant */
 const LONG_POLL_S = 25;
@@ -211,7 +212,7 @@ export const TelegramInboxPoller = () => {
         },
         scan: image => scanReceiptImage(image, 'image/jpeg', serverUrl()),
         sendDoc: async (e, replyTo) => {
-          const pages = expenseDocPages(e, shop);
+          const pages = expenseDocPages(await resolveRecordImages(e), shop);
           if (!pages.length) throw new Error('รายการนี้ไม่มีเอกสาร');
           const pdf = await htmlToPdfBlob(documentHtml(e.title, pages));
           await sendTelegramDocument(token, chatId, pdf, expenseDocName(e, 'pdf'), {

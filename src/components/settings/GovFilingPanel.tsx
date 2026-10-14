@@ -28,6 +28,8 @@ import { sellerInfo } from '../../utils/seller';
 import { documentHtml, printDocument, WhtCertificate } from '../../utils/staffDocs';
 import { localDay } from '../../utils/stockHistory';
 import { buildAccountantPack, receiptFileName } from '../../utils/accountantPack';
+import { hasImage } from '../../utils/imageRef';
+import { resolveRecordImages } from '../../services/imageStore';
 import { addProof, dataUrlBytes, loadProof, openProof, removeProof } from '../../services/filingProofs';
 
 const baht = (n: number) => `฿${(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -194,17 +196,18 @@ export const GovFilingPanel: React.FC = () => {
         }
       }
       if (withReceipts) {
-        expenses
-          .filter(e => (branchId === 'all' || e.branchId === branchId) && e.date.startsWith(String(packYear)) && e.receiptImage?.startsWith('data:'))
-          .forEach(e => (entries[`ใบเสร็จค่าใช้จ่าย/${receiptFileName(e)}`] = dataUrlBytes(e.receiptImage!)));
-        // Photos of what was bought, next to the receipt
-        expenses
-          .filter(e => (branchId === 'all' || e.branchId === branchId) && e.date.startsWith(String(packYear)) && e.purchaseImages?.length)
-          .forEach(e =>
-            e.purchaseImages!.forEach((img, i) => {
-              if (img.dataUrl.startsWith('data:image/')) entries[`ใบเสร็จค่าใช้จ่าย/${receiptFileName({ ...e, receiptImage: img.dataUrl }).replace(/\.(jpg|png)$/, `_สินค้า${i + 1}.$1`)}`] = dataUrlBytes(img.dataUrl);
-            })
-          );
+        // One expense at a time: its pictures are read from storage (the records hold references)
+        const withPictures = expenses.filter(
+          e => (branchId === 'all' || e.branchId === branchId) && e.date.startsWith(String(packYear)) && (hasImage(e.receiptImage) || e.purchaseImages?.length)
+        );
+        for (const rec of withPictures) {
+          const e = await resolveRecordImages(rec);
+          if (e.receiptImage?.startsWith('data:')) entries[`ใบเสร็จค่าใช้จ่าย/${receiptFileName(e)}`] = dataUrlBytes(e.receiptImage);
+          // Photos of what was bought, next to the receipt
+          (e.purchaseImages || []).forEach((img, i) => {
+            if (img.dataUrl?.startsWith('data:image/')) entries[`ใบเสร็จค่าใช้จ่าย/${receiptFileName({ ...e, receiptImage: img.dataUrl }).replace(/\.(jpg|png)$/, `_สินค้า${i + 1}.$1`)}`] = dataUrlBytes(img.dataUrl);
+          });
+        }
       }
       const zip = zipSync(entries, { level: 6 });
       const url = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
