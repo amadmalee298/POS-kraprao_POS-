@@ -8,7 +8,7 @@ import type { Expense } from '../../types';
 import { sellerInfo } from '../../utils/seller';
 import { documentHtml, printDocumentWhenReady } from '../../utils/staffDocs';
 import { resolveRecordImages } from '../../services/imageStore';
-import { expenseDocPages } from '../../utils/substituteReceipt';
+import { expenseDocPages, nextSubstituteNo } from '../../utils/substituteReceipt';
 
 /** Saving an expense's documents to Google Drive, shared by the expense form and the list */
 export function useExpenseDrive() {
@@ -68,12 +68,22 @@ export function printSubstituteReceipt(e: Expense, shop: ReturnType<typeof selle
 
 /** Buttons on an expense: the substitute receipt, and its copy in Google Drive */
 export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<typeof useExpenseDrive> }> = ({ expense: e, drive }) => {
-  const { settings, currentBranch, updateExpense, permissions } = usePOS();
+  const { settings, currentBranch, updateExpense, permissions, expenses, currentUser } = usePOS();
   const signatures = drive.signatures;
   const [signing, setSigning] = useState<'spender' | 'approver' | null>(null);
   const saved = e.driveFiles?.[0];
   const sr = e.substituteReceipt;
-  if (!sr && !saved && !e.purchaseImages?.length && !(drive.enabled && hasExpenseDocs(e))) return null;
+  // Bought without a tax invoice (e.g. from the Telegram bot) and no ใบรับรองแทนใบเสร็จ yet
+  const canIssue = !sr && !e.includeVat && !e.vat36;
+
+  /** Give the expense its ใบรับรองแทนใบเสร็จ (next number of the month), then sign and print it */
+  const issue = () => {
+    const sender = e.note?.match(/จาก Telegram: ([^·]+)/)?.[1]?.trim();
+    const spender = window.prompt('ชื่อผู้เบิกจ่าย (ผู้ที่จ่ายเงิน)', sender || currentUser?.name || '');
+    if (spender === null) return;
+    const docNo = nextSubstituteNo(expenses, e.date);
+    updateExpense(e.id, { substituteReceipt: { docNo, spender: spender.trim() || sender || currentUser?.name || '' } });
+  };
 
   const sign = (who: 'spender' | 'approver', dataUrl: string, remember: boolean) => {
     if (!sr) return;
@@ -89,8 +99,15 @@ export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<t
     if (drive.enabled) void drive.save(next);
   };
 
+  if (!canIssue && !sr && !saved && !e.purchaseImages?.length && !(drive.enabled && hasExpenseDocs(e))) return null;
+
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
+      {canIssue && (
+        <button type="button" onClick={issue} title="ออกใบรับรองแทนใบเสร็จรับเงินให้รายการนี้" className="h-8 px-2 rounded-lg border border-amber-700/60 bg-amber-950/30 text-amber-200 text-[11px] inline-flex items-center gap-1">
+          <FileSignature className="w-3.5 h-3.5" /> ออกใบรับรองแทนใบเสร็จ
+        </button>
+      )}
       {sr && !sr.spenderSignature && (
         <button type="button" onClick={() => setSigning('spender')} title="เซ็นชื่อผู้เบิกจ่าย" className="h-8 px-2 rounded-lg border border-sky-700/60 bg-sky-950/30 text-sky-200 text-[11px] inline-flex items-center gap-1">
           <PenLine className="w-3.5 h-3.5" /> เซ็นผู้เบิก
