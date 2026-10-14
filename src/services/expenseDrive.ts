@@ -2,6 +2,8 @@ import type { Expense, SystemSettings } from '../types';
 import { blobToBase64, htmlToPdfBlob } from '../utils/htmlToPdf';
 import { documentHtml, type Party } from '../utils/staffDocs';
 import { expenseDocName, expenseDocPages, expenseDriveFolder } from '../utils/substituteReceipt';
+import { hasImage } from '../utils/imageRef';
+import { resolveRecordImages } from './imageStore';
 import { saveFileToDrive } from './sheetsScript';
 import { DRIVE_FOLDER_KEY } from './telegramBot';
 
@@ -16,11 +18,13 @@ export const driveEnabled = (settings: Partial<SystemSettings>) => !!(settings.s
 
 /** Has something to save */
 export const hasExpenseDocs = (e: Pick<Expense, 'substituteReceipt' | 'receiptImage' | 'purchaseImages'>) =>
-  !!e.substituteReceipt || !!e.receiptImage?.startsWith('data:') || !!e.purchaseImages?.length;
+  !!e.substituteReceipt || hasImage(e.receiptImage) || !!e.purchaseImages?.length;
 
-export async function saveExpenseToDrive(e: Expense, shop: Party & { phone?: string }, settings: Partial<SystemSettings>): Promise<NonNullable<Expense['driveFiles']>> {
+export async function saveExpenseToDrive(rec: Expense, shop: Party & { phone?: string }, settings: Partial<SystemSettings>): Promise<NonNullable<Expense['driveFiles']>> {
   const script = settings.sheetsScript;
   if (!script?.url || !script.secret) throw new Error('ยังไม่ได้เชื่อม Google Sheets (Apps Script)');
+  // The bill pictures themselves (the record holds references to them)
+  const e = await resolveRecordImages(rec);
   const folder = expenseDriveFolder(e.date);
   const saved: NonNullable<Expense['driveFiles']> = [];
   const upload = async (name: string, mimeType: string, base64: string) => {

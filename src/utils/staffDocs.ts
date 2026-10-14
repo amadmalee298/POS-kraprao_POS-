@@ -52,6 +52,26 @@ export function documentHtml(title: string, pages: string[]): string {
 }
 
 /** Open the document in a new window and print it (returns false when pop-ups are blocked) */
+/**
+ * Like printDocument for a document that needs a moment (e.g. pictures read from storage): the
+ * window opens at once (browsers block windows opened later) and is filled when the page is ready.
+ */
+export function printDocumentWhenReady(html: Promise<string>): boolean {
+  const w = window.open('', '_blank', 'width=900,height=1000');
+  if (!w) return false;
+  w.document.write('<p style="font-family:sans-serif;padding:24px">กำลังเตรียมเอกสาร…</p>');
+  html
+    .then(h => {
+      w.document.open();
+      w.document.write(h.replace('</body>', '<script>window.onload=()=>setTimeout(()=>window.print(),400)</script></body>'));
+      w.document.close();
+    })
+    .catch(() => {
+      w.document.body.innerHTML = '<p style="font-family:sans-serif;padding:24px">เปิดเอกสารไม่สำเร็จ</p>';
+    });
+  return true;
+}
+
 export function printDocument(html: string): boolean {
   const w = window.open('', '_blank', 'width=900,height=1000');
   if (!w) return false;

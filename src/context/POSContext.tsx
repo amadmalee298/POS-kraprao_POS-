@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { isLowStock } from '../utils/stockTypes';
 import { DEFAULT_PIN_HASH, hashPin, isHashedPin } from '../utils/pins';
 import { bigStore, flushBigStore } from '../utils/bigStore';
+import { offloadRecordImages, recordImageRefs, uploadImageNow } from '../services/imageStore';
+import { carriesPictures } from '../utils/imageRef';
 import { averageCostAfterPrep } from '../utils/prep';
 import { localDay } from '../utils/stockHistory';
 import { effectivePermissions } from '../utils/access';
@@ -446,6 +448,56 @@ const withoutLists = <T extends Record<string, unknown>>(state: T): T => {
   void orders; void expenses; void incomes; void ingredients; void menuItems;
   return rest as T;
 };
+/**
+ * The list with its bill pictures moved out of memory (see utils/imageRef): records that still hold
+ * a picture get a reference instead. Pictures already in the cloud are not sent again.
+ */
+const lightenRecords = <T extends Expense | OtherIncome>(list: T[], fallbackBranch = 'main'): T[] => {
+  let changed = false;
+  const out = list.map(r => {
+    if (!r || !carriesPictures(r)) return r;
+    changed = true;
+    return offloadRecordImages(r, r.branchId || fallbackBranch, false);
+  });
+  return changed ? out : list;
+};
+
+/**
+ * Cloud records that still hold their pictures are rewritten with references (pictures saved first),
+ * one at a time in the background, so every device's cloud copy gets small too.
+ */
+const cloudRewriteQueue = new Map<string, () => Promise<unknown>>();
+const cloudRewriteDone = new Set<string>();
+let cloudRewriteRunning = false;
+const queueCloudRewrite = (key: string, rec: Expense | OtherIncome, send: () => Promise<unknown>) => {
+  if (cloudRewriteDone.has(key) || cloudRewriteQueue.has(key)) return;
+  cloudRewriteQueue.set(key, async () => {
+    const saved = await Promise.all(recordImageRefs(rec).map(ref => uploadImageNow(ref)));
+    // A picture that could not be saved (too big, offline) stays inside the cloud record
+    if (saved.length > 0 && saved.every(Boolean)) await send();
+  });
+  if (cloudRewriteRunning) return;
+  cloudRewriteRunning = true;
+  void (async () => {
+    try {
+      while (cloudRewriteQueue.size > 0) {
+        if (typeof navigator !== 'undefined' && !navigator.onLine) break;
+        const [k, job] = cloudRewriteQueue.entries().next().value as [string, () => Promise<unknown>];
+        cloudRewriteQueue.delete(k);
+        cloudRewriteDone.add(k);
+        try {
+          await job();
+        } catch (err) {
+          console.warn('[POSContext] Failed to move pictures out of a cloud record:', err);
+        }
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    } finally {
+      cloudRewriteRunning = false;
+    }
+  })();
+};
+
 /** The earliest day whose sales, expenses and income this device has read from the cloud */
 const HISTORY_FROM_KEY = 'POS_HISTORY_FROM';
 
@@ -885,6 +937,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const expensesRef = useRef(expenses);
   expensesRef.current = expenses;
   const [incomes, setIncomes] = useState<OtherIncome[]>(INITIAL_INCOMES);
+  const incomesRef = useRef(incomes);
+  incomesRef.current = incomes;
   const [settings, setSettings] = useState<SystemSettings>(INITIAL_SETTINGS);
   // The latest settings for callbacks set up once (e.g. the cloud listener)
   const settingsRef = useRef(settings);
@@ -1071,7 +1125,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         if (centralExpList && centralExpList.length > 0) {
           const localMap = new Map(list.map(e => [e.id, e]));
-          centralExpList.forEach(ce => {
+          centralExpList.forEach(cloudExp => {
+            const ce = lightenRecords([cloudExp])[0];
+            if (ce !== cloudExp) queueCloudRewrite(`e:${ce.id}`, ce, () => syncExpenseToFirestore(ce));
             if (!localMap.has(ce.id)) {
               localMap.set(ce.id, ce);
               hasNew = true;
@@ -1134,7 +1190,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         if (centralIncList && centralIncList.length > 0) {
           const localMap = new Map(list.map(i => [i.id, i]));
-          centralIncList.forEach(ci => {
+          centralIncList.forEach(cloudInc => {
+            const ci = lightenRecords([cloudInc])[0];
+            if (ci !== cloudInc) queueCloudRewrite(`i:${ci.id}`, ci, () => syncIncomeToFirestore(ci));
             if (!localMap.has(ci.id)) {
               localMap.set(ci.id, ci);
               hasNew = true;
@@ -1796,8 +1854,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
             return next;
           };
-          setExpenses(prev => addMissing(prev, res.expenses, 'POS_EXPENSES_DATA'));
-          setIncomes(prev => addMissing(prev, res.incomes, 'POS_INCOMES_DATA'));
+          setExpenses(prev => addMissing(prev, lightenRecords(res.expenses), 'POS_EXPENSES_DATA'));
+          setIncomes(prev => addMissing(prev, lightenRecords(res.incomes), 'POS_INCOMES_DATA'));
           try {
             localStorage.setItem(HISTORY_FROM_KEY, fromDay);
           } catch {
@@ -2259,7 +2317,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               console.warn('[POS Storage Sync] Failed to read backup POS_EXPENSES_DATA', e);
             }
           }
-          setExpenses(loadedExpenses);
+          setExpenses(lightenRecords(loadedExpenses));
 
           let loadedIncomes: OtherIncome[] = (parsed.incomes && Array.isArray(parsed.incomes)) ? parsed.incomes : [];
           if (loadedIncomes.length === 0) {
@@ -2275,7 +2333,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               console.warn('[POS Storage Sync] Failed to read backup POS_INCOMES_DATA', e);
             }
           }
-          setIncomes(loadedIncomes);
+          setIncomes(lightenRecords(loadedIncomes));
           if (parsed.settings && typeof parsed.settings === 'object') {
             const mergedSettings = { ...INITIAL_SETTINGS, ...parsed.settings };
             // Replace empty, old-default or no-longer-existing logo URLs with the current brand logo
@@ -4044,36 +4102,25 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deleteWasteLog = (_logId: string) => undefined;
 
   // Accounting functions
+  // Bill pictures are kept outside the records (see utils/imageRef): a record holds a reference,
+  // the picture is on this device and in the cloud. A record is sent to the cloud once its
+  // pictures are there, so other devices never get a reference to a picture they cannot read.
+  const pictureBranch = (rec: { branchId?: string }) => rec.branchId || currentBranch?.id || 'main';
+  const sendWithPictures = <T extends Expense | OtherIncome>(rec: T, send: (r: T) => Promise<unknown>) => {
+    if (!isFirebaseAvailable()) return;
+    void Promise.all(recordImageRefs(rec).map(ref => uploadImageNow(ref)))
+      .then(() => send(rec))
+      .catch(err => console.warn('[POSContext] Failed to sync record to Firestore:', err));
+  };
+
   const addExpense = (expData: Omit<Expense, 'id'> & { id?: string }) => {
-    const newExp: Expense = {
+    const withId: Expense = {
       ...expData,
       id: expData.id || `exp-${Date.now()}`
     };
-    setExpenses(prev => {
-      const updated = [newExp, ...prev];
-      try {
-        bigStore.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Failed to cache expense immediately, retrying compact', e);
-        try {
-          const compact = updated.map(item =>
-            (item.receiptImage && item.receiptImage.length > 50000) || item.purchaseImages?.length
-              ? { ...item, receiptImage: item.receiptImage && item.receiptImage.length > 50000 ? undefined : item.receiptImage, purchaseImages: undefined }
-              : item
-          );
-          bigStore.setItem('POS_EXPENSES_DATA', JSON.stringify(compact));
-        } catch (e2) {
-          console.warn('Failed to cache compact expenses', e2);
-        }
-      }
-      return updated;
-    });
-
-    if (isFirebaseAvailable()) {
-      syncExpenseToFirestore(newExp, currentBranch).catch(err => {
-        console.warn('[POSContext] Failed to sync expense to Firestore:', err);
-      });
-    }
+    const newExp = offloadRecordImages(withId, pictureBranch(withId));
+    setExpenses(prev => [newExp, ...prev]);
+    sendWithPictures(newExp, e => syncExpenseToFirestore(e, currentBranch));
     return newExp;
   };
 
@@ -4081,30 +4128,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateExpense = (expenseId: string, patch: Partial<Expense>) => {
     // From the latest list (the caller may hold an older render's copy, e.g. after an upload)
     const current = expensesRef.current.find(e => e.id === expenseId);
-    setExpenses(prev => {
-      const updated = prev.map(e => (e.id === expenseId ? { ...e, ...patch, id: e.id } : e));
-      try {
-        bigStore.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
-      } catch {
-        // kept in memory and in the cloud
-      }
-      return updated;
-    });
-    if (current && isFirebaseAvailable()) {
-      syncExpenseToFirestore({ ...current, ...patch, id: current.id }, currentBranch).catch(err => console.warn('[POSContext] Failed to sync updated expense:', err));
-    }
+    const next = current ? offloadRecordImages({ ...current, ...patch, id: current.id }, pictureBranch(current)) : null;
+    setExpenses(prev => prev.map(e => (e.id === expenseId ? next || offloadRecordImages({ ...e, ...patch, id: e.id }, pictureBranch(e)) : e)));
+    if (next) sendWithPictures(next, e => syncExpenseToFirestore(e, currentBranch));
   };
 
   const deleteExpense = (expenseId: string) => {
-    setExpenses(prev => {
-      const updated = prev.filter(e => e.id !== expenseId);
-      try {
-        bigStore.setItem('POS_EXPENSES_DATA', JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Failed to cache expense deletion', e);
-      }
-      return updated;
-    });
+    setExpenses(prev => prev.filter(e => e.id !== expenseId));
 
     if (isFirebaseAvailable()) {
       deleteExpenseFromFirestore(expenseId).catch(err => {
@@ -4114,80 +4144,29 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const addIncome = (incData: Omit<OtherIncome, 'id'> & { id?: string }) => {
-    const newInc: OtherIncome = {
+    const withId: OtherIncome = {
       ...incData,
       id: incData.id || `inc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       createdAt: incData.createdAt || new Date().toISOString()
     };
-    setIncomes(prev => {
-      const updated = [newInc, ...prev];
-      try {
-        bigStore.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Failed to cache income immediately, retrying compact', e);
-        try {
-          const compact = updated.map(item => (item.slipImage && item.slipImage.length > 50000) ? { ...item, slipImage: undefined } : item);
-          bigStore.setItem('POS_INCOMES_DATA', JSON.stringify(compact));
-        } catch (e2) {
-          console.warn('Failed to cache compact incomes', e2);
-        }
-      }
-      return updated;
-    });
-
-    if (isFirebaseAvailable()) {
-      syncIncomeToFirestore(newInc, currentBranch).catch(err => {
-        console.warn('[POSContext] Failed to sync income to Firestore:', err);
-      });
-    }
-  return newInc;
+    const newInc = offloadRecordImages(withId, pictureBranch(withId));
+    setIncomes(prev => [newInc, ...prev]);
+    sendWithPictures(newInc, i => syncIncomeToFirestore(i, currentBranch));
+    return newInc;
   };
 
   const updateIncome = (arg1: string | OtherIncome, arg2?: Partial<OtherIncome>) => {
-    let targetToSync: OtherIncome | null = null;
-    setIncomes(prev => {
-      const updated = prev.map(inc => {
-        if (typeof arg1 === 'string') {
-          if (inc.id === arg1) {
-            const merged = { ...inc, ...(arg2 || {}), id: arg1 };
-            targetToSync = merged;
-            return merged;
-          }
-          return inc;
-        } else {
-          if (inc.id === arg1.id) {
-            const merged = { ...inc, ...arg1 };
-            targetToSync = merged;
-            return merged;
-          }
-          return inc;
-        }
-      });
-      try {
-        bigStore.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Failed to cache updated income', e);
-      }
-      return updated;
-    });
-
-    if (targetToSync && isFirebaseAvailable()) {
-      syncIncomeToFirestore(targetToSync, currentBranch).catch(err => {
-        console.warn('[POSContext] Failed to sync updated income to Firestore:', err);
-      });
-    }
+    const id = typeof arg1 === 'string' ? arg1 : arg1.id;
+    const current = incomesRef.current.find(inc => inc.id === id);
+    if (!current) return;
+    const merged = typeof arg1 === 'string' ? { ...current, ...(arg2 || {}), id } : { ...current, ...arg1 };
+    const next = offloadRecordImages(merged, pictureBranch(merged));
+    setIncomes(prev => prev.map(inc => (inc.id === id ? next : inc)));
+    sendWithPictures(next, i => syncIncomeToFirestore(i, currentBranch));
   };
 
   const deleteIncome = (incomeId: string) => {
-    setIncomes(prev => {
-      const updated = prev.filter(inc => inc.id !== incomeId);
-      try {
-        bigStore.setItem('POS_INCOMES_DATA', JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Failed to cache deleted income', e);
-      }
-      return updated;
-    });
+    setIncomes(prev => prev.filter(inc => inc.id !== incomeId));
 
     if (isFirebaseAvailable()) {
       deleteIncomeFromFirestore(incomeId).catch(err => {
@@ -4448,8 +4427,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (parsed.shiftSwapRequests && Array.isArray(parsed.shiftSwapRequests)) setShiftSwapRequests(parsed.shiftSwapRequests);
       if (parsed.cashShifts && Array.isArray(parsed.cashShifts)) setCashShifts(parsed.cashShifts);
       if (parsed.orders && Array.isArray(parsed.orders)) setOrders(parsed.orders);
-      if (parsed.expenses && Array.isArray(parsed.expenses)) setExpenses(parsed.expenses);
-      if (parsed.incomes && Array.isArray(parsed.incomes)) setIncomes(parsed.incomes);
+      if (parsed.expenses && Array.isArray(parsed.expenses)) setExpenses(lightenRecords(parsed.expenses));
+      if (parsed.incomes && Array.isArray(parsed.incomes)) setIncomes(lightenRecords(parsed.incomes));
       if (parsed.settings && typeof parsed.settings === 'object') setSettings(parsed.settings);
       if (parsed.securityLogs && Array.isArray(parsed.securityLogs)) setSecurityLogs(parsed.securityLogs);
       if (parsed.users && Array.isArray(parsed.users)) setUsers(parsed.users);

@@ -6,7 +6,8 @@ import { SavedSignature, SignaturePad } from '../common/SignaturePad';
 import { driveEnabled, hasExpenseDocs, saveExpenseToDrive } from '../../services/expenseDrive';
 import type { Expense } from '../../types';
 import { sellerInfo } from '../../utils/seller';
-import { documentHtml, printDocument } from '../../utils/staffDocs';
+import { documentHtml, printDocumentWhenReady } from '../../utils/staffDocs';
+import { resolveRecordImages } from '../../services/imageStore';
 import { expenseDocPages } from '../../utils/substituteReceipt';
 
 /** Saving an expense's documents to Google Drive, shared by the expense form and the list */
@@ -60,8 +61,9 @@ export function useSavedSignatures() {
 
 /** Print the ใบรับรองแทนใบเสร็จรับเงิน (with the payment proof page when there is one) */
 export function printSubstituteReceipt(e: Expense, shop: ReturnType<typeof sellerInfo>): boolean {
-  const pages = expenseDocPages(e, shop);
-  return printDocument(documentHtml(e.substituteReceipt ? `ใบรับรองแทนใบเสร็จ ${e.substituteReceipt.docNo}` : `หลักฐานรายจ่าย ${e.title}`, pages));
+  const title = e.substituteReceipt ? `ใบรับรองแทนใบเสร็จ ${e.substituteReceipt.docNo}` : `หลักฐานรายจ่าย ${e.title}`;
+  // The bill pictures are read from storage first (the record holds references to them)
+  return printDocumentWhenReady(resolveRecordImages(e).then(full => documentHtml(title, expenseDocPages(full, shop))));
 }
 
 /** Buttons on an expense: the substitute receipt, and its copy in Google Drive */

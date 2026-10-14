@@ -89,6 +89,8 @@ import {
   Receipt
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
+import { useImage } from '../../services/imageStore';
+import { RefImg } from '../common/RefImg';
 import {
   ExpenseCategory,
   OtherIncome,
@@ -512,6 +514,8 @@ export const AccountingView: React.FC = () => {
     paymentMethod?: string;
     payerName?: string;
   } | null>(null);
+  // The picture itself is read only when it is opened (records hold references to their pictures)
+  const previewImage = useImage(selectedReceiptPreview?.url);
   const [expAutoUpdateStock, setExpAutoUpdateStock] = useState(false);
   const [expStockEntries, setExpStockEntries] = useState<Array<{
     id: string;
@@ -2696,11 +2700,7 @@ export const AccountingView: React.FC = () => {
                                 className="inline-flex items-center space-x-1.5 py-1 px-2.5 bg-slate-900 hover:bg-slate-800 border border-emerald-500/40 hover:border-emerald-400 rounded-lg text-[11px] text-emerald-300 hover:text-emerald-200 transition font-medium active:scale-95 group shadow-sm"
                                 title="คลิกเพื่อดูสลิป/หลักฐานการรับเงิน"
                               >
-                                <img
-                                  src={inc.slipImage}
-                                  alt="Income Slip"
-                                  className="w-5 h-5 object-cover rounded border border-slate-700 group-hover:border-emerald-400 shrink-0"
-                                />
+                                <ImageIcon className="w-5 h-5 rounded border border-slate-700 group-hover:border-emerald-400 shrink-0 p-0.5 text-slate-300 bg-slate-800" />
                                 <span className="text-[11px]">ดูสลิป</span>
                               </button>
                             ) : (
@@ -2964,11 +2964,7 @@ export const AccountingView: React.FC = () => {
                             })}
                             className="flex items-center space-x-2 cursor-pointer group"
                           >
-                            <img
-                              src={exp.receiptImage}
-                              alt="Slip"
-                              className="w-8 h-8 object-cover rounded border border-slate-700 group-hover:scale-105 transition shrink-0"
-                            />
+                            <ImageIcon className="w-8 h-8 rounded border border-slate-700 group-hover:scale-105 transition shrink-0 p-0.5 text-slate-300 bg-slate-800" />
                             <div className="text-[11px] text-slate-300 flex items-center space-x-1 group-hover:text-rose-300">
                               <Paperclip className="w-3 h-3 text-rose-400" />
                               <span className="font-medium underline">ดูสลิป / หลักฐานการโอน</span>
@@ -3065,11 +3061,7 @@ export const AccountingView: React.FC = () => {
                                 className="inline-flex items-center space-x-1.5 py-1 px-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-rose-500/50 rounded-lg text-[11px] text-rose-300 hover:text-rose-200 transition font-medium active:scale-95 group shadow-sm"
                                 title="คลิกเพื่อดูสลิป/หลักฐานการโอน"
                               >
-                                <img
-                                  src={exp.receiptImage}
-                                  alt="Receipt"
-                                  className="w-5 h-5 object-cover rounded border border-slate-700 group-hover:border-rose-400 shrink-0"
-                                />
+                                <ImageIcon className="w-5 h-5 rounded border border-slate-700 group-hover:border-rose-400 shrink-0 p-0.5 text-slate-300 bg-slate-800" />
                                 <span className="text-[11px]">ดูสลิป</span>
                               </button>
                             ) : (
@@ -4367,7 +4359,7 @@ export const AccountingView: React.FC = () => {
                         className="w-12 h-12 rounded-lg bg-slate-900 border border-slate-700 overflow-hidden shrink-0 cursor-pointer relative group"
                         title="คลิกเพื่อดูรูปภาพขยาย"
                       >
-                        <img src={expReceiptImage} alt="Receipt preview" className="w-full h-full object-cover" />
+                        <RefImg src={expReceiptImage} alt="Receipt preview" className="w-full h-full object-cover" />
                         <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white">
                           <Eye className="w-4 h-4" />
                         </div>
@@ -4430,7 +4422,7 @@ export const AccountingView: React.FC = () => {
                 <div className="flex flex-wrap gap-2">
                   {expPurchaseImages.map((img, i) => (
                     <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden border border-slate-700 bg-slate-950">
-                      <img src={img.dataUrl} alt={img.name} className="w-full h-full object-cover" />
+                      <RefImg src={img.dataUrl} alt={img.name} className="w-full h-full object-cover" />
                       <button
                         type="button"
                         aria-label={`ลบรูป ${img.name}`}
@@ -4860,7 +4852,7 @@ export const AccountingView: React.FC = () => {
                 ) : (
                   <div className="p-2.5 bg-slate-950 border border-sky-500/40 rounded-xl flex items-center justify-between">
                     <div className="flex items-center space-x-2.5 overflow-hidden">
-                      <img
+                      <RefImg
                         src={editIncForm.slipImage}
                         alt="Slip Preview"
                         className="w-9 h-9 object-cover rounded-lg border border-slate-700 shrink-0"
@@ -5118,16 +5110,16 @@ export const AccountingView: React.FC = () => {
               </div>
 
               <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-950/90 min-h-[220px]">
-                <img
-                  src={selectedReceiptPreview.url}
-                  alt="Receipt / Slip"
-                  className="max-h-[55vh] max-w-full object-contain rounded-xl border border-slate-800 shadow-2xl"
-                />
+                {previewImage ? (
+                  <img src={previewImage} alt="Receipt / Slip" className="max-h-[55vh] max-w-full object-contain rounded-xl border border-slate-800 shadow-2xl" />
+                ) : (
+                  <span className="text-xs text-slate-400 animate-pulse">กำลังโหลดรูป…</span>
+                )}
               </div>
 
               <div className="p-3 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs">
                 <a
-                  href={selectedReceiptPreview.url}
+                  href={previewImage || undefined}
                   download={`${isIncomeReceipt ? 'income-slip' : 'expense-receipt'}-${selectedReceiptPreview.refNumber || Date.now()}.jpg`}
                   className="py-2 px-3 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl transition flex items-center space-x-1.5 font-medium border border-slate-700 active:scale-95"
                 >

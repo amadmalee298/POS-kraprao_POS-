@@ -1,0 +1,237 @@
+/**
+ * Where bill pictures live (see utils/imageRef): this browser's database for fast, offline reading,
+ * and the cloud (branches/<branch>/config/img_<id>) so other devices and the Telegram bot can show
+ * them. Records carry only "img:…" references, so lists of expenses stay small in memory.
+ */
+import { useEffect, useState } from 'react';
+import {
+  contentTag,
+  imageDocKey,
+  imageMime,
+  isDataUrl,
+  isImageRef,
+  makeImageRef,
+  mapRecordImages,
+  mapRecordImagesAsync,
+  OFFLOAD_MIN_LENGTH,
+  parseImageRef
+} from '../utils/imageRef';
+
+// Loaded when first needed (keeps the cloud connection out of code that only formats documents)
+const cloud = () => import('./firebaseService');
+
+const DB_NAME = 'kaprao-pos-images';
+const STORE = 'img';
+const QUEUE_KEY = 'POS_IMAGE_UPLOADS';
+const RECENT_MAX = 12;
+
+// Pictures being written to the database (kept until the write is done)
+const pending = new Map<string, string>();
+// The last pictures shown, so scrolling back does not read them again
+const recent = new Map<string, string>();
+// Pictures already saved on this device in this visit (the cloud sends the same records again and again)
+const known = new Set<string>();
+let dbPromise: Promise<IDBDatabase | null> | null = null;
+
+function openDb(): Promise<IDBDatabase | null> {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise(resolve => {
+    try {
+      if (typeof indexedDB === 'undefined') return resolve(null);
+      const r = indexedDB.open(DB_NAME, 1);
+      r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => resolve(null);
+      r.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+  return dbPromise;
+}
+
+async function localGet(id: string): Promise<string | undefined> {
+  const db = await openDb();
+  if (!db) return undefined;
+  return new Promise(resolve => {
+    try {
+      const q = db.transaction(STORE, 'readonly').objectStore(STORE).get(id);
+      q.onsuccess = () => resolve(typeof q.result === 'string' ? q.result : undefined);
+      q.onerror = () => resolve(undefined);
+    } catch {
+      resolve(undefined);
+    }
+  });
+}
+
+async function localPut(id: string, data: string): Promise<boolean> {
+  const db = await openDb();
+  if (!db) return false;
+  return new Promise(resolve => {
+    try {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(data, id);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+const remember = (id: string, data: string) => {
+  recent.delete(id);
+  recent.set(id, data);
+  while (recent.size > RECENT_MAX) recent.delete(recent.keys().next().value as string);
+};
+
+// ---------- Upload queue (survives reloads: the picture itself is in the database) ----------
+
+type QueueItem = { b: string; id: string; tries: number };
+const readQueue = (): QueueItem[] => {
+  try {
+    const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+    return Array.isArray(q) ? q : [];
+  } catch {
+    return [];
+  }
+};
+const writeQueue = (q: QueueItem[]) => {
+  try {
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(q.slice(-500)));
+  } catch {
+    // storage full: the pictures stay on this device and are offered again next time
+  }
+};
+let uploading = false;
+
+/** Send the pictures not in the cloud yet (one at a time; called again when back online) */
+export async function flushImageUploads(): Promise<void> {
+  if (uploading || typeof navigator !== 'undefined' && !navigator.onLine) return;
+  uploading = true;
+  try {
+    for (;;) {
+      const queue = readQueue();
+      const item = queue[0];
+      if (!item) break;
+      const data = pending.get(item.id) || (await localGet(item.id));
+      let done = !data; // nothing to send
+      if (data) {
+        // A picture too big for one cloud document stays on this device only
+        done = data.length > 950_000 || (await (await cloud()).saveBranchDoc(item.b, imageDocKey(item.id), { data }));
+      }
+      const now = readQueue();
+      if (done || item.tries >= 5) {
+        writeQueue(now.filter(q => q.id !== item.id));
+      } else {
+        writeQueue([...now.filter(q => q.id !== item.id), { ...item, tries: item.tries + 1 }]);
+        break; // offline or refused: try again later
+      }
+    }
+  } finally {
+    uploading = false;
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => void flushImageUploads());
+  setInterval(() => void flushImageUploads(), 60_000);
+}
+
+// ---------- Storing and reading ----------
+
+/**
+ * Keep a picture outside the record: saved on this device and sent to the cloud in the background.
+ * Returns the reference to put in the record.
+ */
+export function storeImage(branchId: string, id: string, dataUrl: string, upload = true): string {
+  if (!known.has(id)) {
+    known.add(id);
+    pending.set(id, dataUrl);
+    void localPut(id, dataUrl).then(ok => {
+      // Not saved (no database here): the picture stays in memory so it can still be shown
+      if (ok) pending.delete(id);
+    });
+  }
+  if (upload) {
+    writeQueue([...readQueue().filter(q => q.id !== id), { b: branchId || 'main', id, tries: 0 }]);
+    setTimeout(() => void flushImageUploads(), 500);
+  }
+  return makeImageRef(branchId, id, imageMime(dataUrl));
+}
+
+/** The picture itself (data: URL) for a picture or a reference; undefined when it cannot be found */
+export async function resolveImage(src: string | undefined | null): Promise<string | undefined> {
+  if (!src) return undefined;
+  if (!isImageRef(src)) return src;
+  const ref = parseImageRef(src);
+  if (!ref) return undefined;
+  const hit = pending.get(ref.id) || recent.get(ref.id);
+  if (hit) return hit;
+  let data = await localGet(ref.id);
+  if (!data) {
+    const doc = await (await cloud()).loadBranchDoc(ref.branchId, imageDocKey(ref.id));
+    data = typeof doc?.data === 'string' ? doc.data : undefined;
+    if (data) void localPut(ref.id, data);
+  }
+  if (data) remember(ref.id, data);
+  return data;
+}
+
+type Pictured = Parameters<typeof mapRecordImages>[0];
+
+/**
+ * The record with its pictures moved out (references instead of data: URLs). `upload: false` for
+ * records that came from the cloud whose pictures are already there.
+ */
+export function offloadRecordImages<T extends Pictured>(rec: T, branchId: string, upload = true): T {
+  return mapRecordImages(rec, (src, slot) =>
+    isDataUrl(src) && src.length >= OFFLOAD_MIN_LENGTH ? storeImage(branchId, `${rec.id}-${slot}-${contentTag(src)}`, src, upload) : src
+  );
+}
+
+/** The record with every picture read back (for printing, the accountant's pack, Google Drive…) */
+export async function resolveRecordImages<T extends Pictured>(rec: T): Promise<T> {
+  return mapRecordImagesAsync(rec, async src => (isImageRef(src) ? (await resolveImage(src)) || '' : src));
+}
+
+/** React: the picture to show for a picture or reference (undefined while it loads) */
+export function useImage(src: string | undefined | null): string | undefined {
+  const [data, setData] = useState<string | undefined>(() => (src && !isImageRef(src) ? src : undefined));
+  useEffect(() => {
+    let alive = true;
+    if (!src) {
+      setData(undefined);
+      return;
+    }
+    if (!isImageRef(src)) {
+      setData(src);
+      return;
+    }
+    setData(undefined);
+    void resolveImage(src).then(d => alive && setData(d));
+    return () => {
+      alive = false;
+    };
+  }, [src]);
+  return data;
+}
+
+/** Send one picture to the cloud now; true when it is there */
+export async function uploadImageNow(ref: string): Promise<boolean> {
+  const p = parseImageRef(ref);
+  if (!p) return false;
+  const data = pending.get(p.id) || (await localGet(p.id));
+  if (!data) return false;
+  if (data.length > 950_000) return false;
+  const ok = await (await cloud()).saveBranchDoc(p.branchId, imageDocKey(p.id), { data });
+  if (ok) writeQueue(readQueue().filter(q => q.id !== p.id));
+  return ok;
+}
+
+/** References in a record (to upload them before the record itself is rewritten in the cloud) */
+export function recordImageRefs(rec: Pictured): string[] {
+  const refs: string[] = [];
+  mapRecordImages(rec, src => (isImageRef(src) && refs.push(src), src));
+  return refs;
+}
