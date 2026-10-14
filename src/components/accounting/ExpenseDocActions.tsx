@@ -3,7 +3,7 @@ import { CloudUpload, ExternalLink, FileSignature, Image as ImageIcon, Loader2, 
 import { usePOS } from '../../context/POSContext';
 import { useKeyedList } from '../../hooks/useKeyedList';
 import { SavedSignature, SignaturePad } from '../common/SignaturePad';
-import { driveEnabled, hasExpenseDocs, saveExpenseToDrive } from '../../services/expenseDrive';
+import { driveEnabled, hasExpenseDocs, releaseCloudPictures, saveExpenseToDrive } from '../../services/expenseDrive';
 import type { Expense } from '../../types';
 import { sellerInfo } from '../../utils/seller';
 import { documentHtml, printDocumentWhenReady } from '../../utils/staffDocs';
@@ -23,7 +23,11 @@ export function useExpenseDrive() {
       setBusyId(e.id);
       try {
         const files = await saveExpenseToDrive(e, { ...sellerInfo(settings, currentBranch) }, settings);
-        if (files.length) updateExpense(e.id, { driveFiles: files });
+        if (files.length) {
+          updateExpense(e.id, { driveFiles: files });
+          // Drive keeps the pictures now: they leave the shop's cloud database
+          void releaseCloudPictures(e).catch(() => undefined);
+        }
         if (!quiet) setMessage({ ok: true, text: `บันทึกเอกสาร "${e.title}" ลง Google Drive แล้ว` });
         return true;
       } catch (err) {

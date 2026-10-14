@@ -2,8 +2,8 @@ import type { Expense, SystemSettings } from '../types';
 import { blobToBase64, htmlToPdfBlob } from '../utils/htmlToPdf';
 import { documentHtml, type Party } from '../utils/staffDocs';
 import { expenseDocName, expenseDocPages, expenseDriveFolder } from '../utils/substituteReceipt';
-import { hasImage } from '../utils/imageRef';
-import { resolveRecordImages } from './imageStore';
+import { hasImage, imageMime } from '../utils/imageRef';
+import { deleteCloudImage, recordImageRefs, resolveRecordImages } from './imageStore';
 import { saveFileToDrive } from './sheetsScript';
 import { DRIVE_FOLDER_KEY } from './telegramBot';
 
@@ -46,8 +46,27 @@ export async function saveExpenseToDrive(rec: Expense, shop: Party & { phone?: s
     const pdf = await htmlToPdfBlob(documentHtml(e.title, pages));
     await upload(expenseDocName(e, 'pdf'), 'application/pdf', await blobToBase64(pdf));
   }
+  const base = expenseDocName(e, 'pdf').replace(/\.pdf$/, '');
   if (isPdfProof) {
-    await upload(expenseDocName(e, 'pdf').replace(/\.pdf$/, '_หลักฐาน.pdf'), 'application/pdf', e.receiptImage!.split(',')[1] || '');
+    await upload(`${base}_หลักฐาน.pdf`, 'application/pdf', e.receiptImage!.split(',')[1] || '');
+  } else if (e.receiptImage?.startsWith('data:image/')) {
+    // The transfer slip / receipt itself, as a picture next to the PDF
+    await upload(`${base}_สลิปโอน.${imageExt(e.receiptImage)}`, imageMime(e.receiptImage), e.receiptImage.split(',')[1] || '');
+  }
+  // Proof of purchase pictures (goods, price boards, the seller's slip)
+  for (const [i, img] of (e.purchaseImages || []).entries()) {
+    if (!img.dataUrl?.startsWith('data:image/')) continue;
+    await upload(`${base}_หลักฐานการซื้อ${i + 1}.${imageExt(img.dataUrl)}`, imageMime(img.dataUrl), img.dataUrl.split(',')[1] || '');
   }
   return saved;
+}
+
+const imageExt = (dataUrl: string) => (imageMime(dataUrl) === 'image/png' ? 'png' : imageMime(dataUrl) === 'image/webp' ? 'webp' : 'jpg');
+
+/**
+ * The expense's documents are in Drive: its pictures leave the shop's cloud database (this device
+ * keeps its copy). Other devices then open them from the Drive links on the expense.
+ */
+export async function releaseCloudPictures(rec: Expense): Promise<void> {
+  await Promise.all(recordImageRefs(rec).map(ref => deleteCloudImage(ref)));
 }
