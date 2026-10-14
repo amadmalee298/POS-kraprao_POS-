@@ -2349,6 +2349,55 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, []);
 
+  // A reload keeps the person signed in (same browser tab only, within the auto-lock time or 12
+  // hours): the session is in sessionStorage, which a closed tab forgets. Locking ends it.
+  const SESSION_KEY = 'POS_SESSION';
+  const sessionRestoredRef = useRef(false);
+  useEffect(() => {
+    if (!isStorageLoaded || sessionRestoredRef.current) return;
+    sessionRestoredRef.current = true;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null') as { userId: string; at: number; tab?: ActiveTab } | null;
+      if (!saved) return;
+      const limitMs = (settings.autoLockMinutes && settings.autoLockMinutes > 0 ? settings.autoLockMinutes : 12 * 60) * 60_000;
+      const user = users.find(u => u.id === saved.userId);
+      if (!user || Date.now() - saved.at > limitMs) {
+        sessionStorage.removeItem(SESSION_KEY);
+        return;
+      }
+      setCurrentUser(user);
+      if (saved.tab) setActiveTab(saved.tab);
+      setIsLocked(false);
+    } catch {
+      // no session
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStorageLoaded]);
+  useEffect(() => {
+    if (!sessionRestoredRef.current) return;
+    try {
+      if (isLocked) sessionStorage.removeItem(SESSION_KEY);
+      else if (currentUser?.id) sessionStorage.setItem(SESSION_KEY, JSON.stringify({ userId: currentUser.id, at: Date.now(), tab: activeTab }));
+    } catch {
+      // private mode
+    }
+  }, [isLocked, currentUser?.id, activeTab]);
+  // Activity keeps the session fresh (checked again on the next reload)
+  useEffect(() => {
+    if (isLocked) return;
+    const touch = () => {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
+        if (saved && Date.now() - saved.at > 60_000) sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...saved, at: Date.now() }));
+      } catch {
+        // ignore
+      }
+    };
+    const events = ['pointerdown', 'keydown'];
+    events.forEach(e => window.addEventListener(e, touch, { passive: true }));
+    return () => events.forEach(e => window.removeEventListener(e, touch));
+  }, [isLocked]);
+
   // Auto-pull incoming central orders on app startup (DO NOT auto-pull menus/inventory to protect local edits!)
   useEffect(() => {
     if (!isStorageLoaded) return;
