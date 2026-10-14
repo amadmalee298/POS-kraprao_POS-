@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { WifiOff, RefreshCw, Zap, ChevronDown, X, Cloud, CloudOff, Layers, Flame, ArrowLeftRight, AlertTriangle, Loader2 } from 'lucide-react';
 import { usePOS } from '../context/POSContext';
-import { FirebaseUserInfo, onFirebaseUserChange } from '../services/firebaseService';
+import { FirebaseUserInfo, onFirebaseUserChange, usesLongPolling } from '../services/firebaseService';
 import { ShopAccountDialog } from './ShopAccountBanner';
 
 interface SyncEvent {
@@ -41,6 +41,7 @@ export const SyncHealthMonitor: React.FC = () => {
     firebaseSyncState,
     centralBranchesLive,
     pushAllBranchDataToCloud,
+    reconnectCloud,
     openConflictResolver,
     conflictReport,
     isScanningConflicts
@@ -191,6 +192,22 @@ export const SyncHealthMonitor: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* A cloud that does not answer: connect again in the other mode */}
+            {(status === 'error' || status === 'syncing') && signedIn && (
+              <div className="bg-slate-950 border border-amber-700/50 rounded-xl p-3 space-y-2 text-amber-100">
+                <div className="text-[11px] leading-relaxed">
+                  ค้างที่ "กำลังเชื่อม" หรือคลาวด์ไม่ตอบ? ลองเชื่อมต่อใหม่{usesLongPolling() ? 'แบบปกติ' : 'แบบสำหรับเน็ตมือถือ'} แอปจะเปิดใหม่ และส่งรายจ่าย/รายรับ 60 วันล่าสุดขึ้นคลาวด์อีกครั้ง (ไม่เกิดรายการซ้ำ)
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void reconnectCloud()}
+                  className="w-full h-9 rounded-xl border border-amber-500/60 bg-amber-900/30 font-bold text-[12px]"
+                >
+                  🔄 เชื่อมต่อคลาวด์ใหม่
+                </button>
+              </div>
+            )}
 
             {/* Branches, as their own devices last reported */}
             <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2">

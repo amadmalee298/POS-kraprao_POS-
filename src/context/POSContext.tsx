@@ -62,6 +62,8 @@ import {
   subscribeToCentralBranches,
   isFirebaseAvailable,
   syncExpenseToFirestore,
+  setLongPolling,
+  usesLongPolling,
   deleteExpenseFromFirestore,
   syncIncomeToFirestore,
   deleteIncomeFromFirestore,
@@ -402,6 +404,8 @@ interface POSContextType {
   firebaseSyncState: FirebaseSyncState;
   centralBranchesLive: Record<string, CentralBranchLiveStats>;
   pushAllBranchDataToCloud: () => Promise<boolean>;
+  /** Reload and connect to the cloud in the other connection mode */
+  reconnectCloud: () => Promise<void>;
   cleanAndSyncCloudNow: (options?: { purgeCloud?: boolean; withStock?: boolean }) => Promise<{
     success: boolean;
     message: string;
@@ -1031,12 +1035,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const todaySales = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
     const lowStock = ingredients.filter(isLowStock).length;
 
+    // A write the cloud never answers (a network holding the connection open) shows as such
+    let answered = false;
+    const silent = setTimeout(() => {
+      if (!answered) setFirebaseSyncState(prev => (prev.status === 'connected' ? prev : { ...prev, status: 'error', errorMessage: 'คลาวด์ไม่ตอบกลับ ลองกด "เชื่อมต่อคลาวด์ใหม่"' }));
+    }, 25_000);
     syncBranchToFirestore(currentBranch, {
       totalSalesToday: todaySales,
       orderCountToday: todayOrders.length,
       lowStockCount: lowStock,
       isOnline: true
     }).then(ok => {
+      answered = true;
+      clearTimeout(silent);
       if (ok) {
         setFirebaseSyncState(prev => ({
           ...prev,
@@ -4172,6 +4183,26 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (firebaseSyncState.status === 'connected') void resendMoneyRef.current();
   }, [firebaseSyncState.status]);
 
+  /**
+   * Connect to the cloud again in the other mode (plain requests ↔ streaming) after a reload. The
+   * recent expenses and income are sent again once connected, in case some never reached the cloud.
+   */
+  const reconnectCloud = async () => {
+    const since = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
+    const keys = [
+      ...expensesRef.current.filter(e => (e.date || '') >= since).map(e => `e:${e.id}`),
+      ...incomesRef.current.filter(i => (i.date || '') >= since).map(i => `i:${i.id}`)
+    ];
+    try {
+      localStorage.setItem(UNSENT_KEY, JSON.stringify([...new Set([...readUnsent(), ...keys])].slice(-800)));
+    } catch {
+      // storage full
+    }
+    setLongPolling(!usesLongPolling());
+    await flushBigStore();
+    window.location.reload();
+  };
+
   const addExpense = (expData: Omit<Expense, 'id'> & { id?: string }) => {
     const withId: Expense = {
       ...expData,
@@ -4784,6 +4815,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         firebaseSyncState,
         centralBranchesLive,
         pushAllBranchDataToCloud,
+        reconnectCloud,
         cleanAndSyncCloudNow,
         pullCloudOrders,
         loadHistory,
