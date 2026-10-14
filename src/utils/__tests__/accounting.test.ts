@@ -190,3 +190,32 @@ describe('equipment (IAS 16)', () => {
     expect(cf.equipmentPaid).toBe(18250);
   });
 });
+
+describe('cost of sales without POS sales', () => {
+  it('counts the ingredients bought as the cost when no sale carries a cost', async () => {
+    const { buildProfitAndLoss } = await import('../accounting');
+    const exp = (id: string, category: any, amount: number) => ({ id, branchId: 'b', date: '2026-10-13', category, title: id, amount, includeVat: false, vatAmount: 0, netAmount: amount });
+    const pl = buildProfitAndLoss(
+      { orders: [], expenses: [exp('a', 'raw_material', 1060), exp('b', 'raw_material', 700), exp('c', 'salary', 500)] as any, incomes: [{ id: 'i', branchId: 'b', date: '2026-10-13', category: 'other', title: 'x', amount: 8620 }] as any },
+      { branchId: 'b' },
+      false
+    );
+    expect(pl.cogsFromPurchases).toBe(true);
+    expect(pl.cogs).toBe(1760);
+    expect(pl.profitBeforeTax).toBe(8620 - 1760 - 500);
+  });
+});
+
+describe('sales recorded by hand', () => {
+  it('counts store_sales income as sales, not other income', async () => {
+    const { buildProfitAndLoss } = await import('../accounting');
+    const pl = buildProfitAndLoss(
+      { orders: [], expenses: [], incomes: [{ id: 'i', branchId: 'b', date: '2026-10-13', category: 'store_sales', title: 'ยอดขาย', amount: 8620 }] as any },
+      { branchId: 'b' },
+      false
+    );
+    expect(pl.storeSales).toBe(8620);
+    expect(pl.salesRevenue).toBe(8620);
+    expect(pl.otherIncome).toBe(0);
+  });
+});

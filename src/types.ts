@@ -276,7 +276,7 @@ export interface WasteLog {
 
 export type ExpenseCategory = 'rent' | 'salary' | 'utilities' | 'raw_material' | 'supplies' | 'equipment' | 'marketing' | 'other';
 
-export type IncomeCategory = 'catering' | 'ad_sponsor' | 'recycling' | 'interest' | 'rental' | 'asset_sale' | 'subsidy' | 'delivery_subsidy' | 'other';
+export type IncomeCategory = 'store_sales' | 'catering' | 'ad_sponsor' | 'recycling' | 'interest' | 'rental' | 'asset_sale' | 'subsidy' | 'delivery_subsidy' | 'other';
 
 export interface OtherIncome {
   id: string;

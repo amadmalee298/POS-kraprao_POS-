@@ -38,7 +38,7 @@ export const claimableInputVat = (e: Pick<Expense, 'includeVat' | 'vatAmount'>, 
   vatRegistered && e.includeVat ? e.vatAmount || 0 : 0;
 
 /** Recorded incomes that are part of selling food (revenue from sales) rather than other income */
-export const SALES_INCOME_CATEGORIES: IncomeCategory[] = ['catering', 'delivery_subsidy'];
+export const SALES_INCOME_CATEGORIES: IncomeCategory[] = ['store_sales', 'catering', 'delivery_subsidy'];
 
 /**
  * Selling and administrative expense lines, in statement order. Not here: ingredient purchases
@@ -119,6 +119,11 @@ export interface ProfitAndLoss {
   cogs: number;
   /** Part of COGS estimated from the menu price because the dish has no cost price yet */
   estimatedCogs: number;
+  /**
+   * No POS sale carried a cost in the period (sales recorded outside the POS, or menus without
+   * recipes), so the ingredients bought in the period are the cost of sales (purchases method)
+   */
+  cogsFromPurchases: boolean;
   grossProfit: number;
   // Selling and administrative expenses, before VAT when it can be claimed
   expenses: Record<ExpenseCategory, number>;
@@ -198,7 +203,9 @@ export function buildProfitAndLoss(
   for (const inc of data.incomes) {
     if (!ownBranch(inc.branchId) || !inPeriod(inc.date)) continue;
     const amount = inc.amount || 0;
-    if (inc.category === 'catering') cateringSales += amount;
+    // Sales recorded by hand (sold outside the POS): the shop's own sales
+    if (inc.category === 'store_sales') storeSales += amount;
+    else if (inc.category === 'catering') cateringSales += amount;
     else if (inc.category === 'delivery_subsidy') deliverySales += amount;
     else otherIncome += amount;
   }
@@ -213,6 +220,10 @@ export function buildProfitAndLoss(
   }
 
   const salesRevenue = storeSales + deliverySales + cateringSales;
+  // Ingredients bought are stock, counted as cost when the dishes are sold through the POS. When no
+  // sale in the period carries a cost, they would never show in the profit: they are the cost then.
+  const cogsFromPurchases = cogs === 0 && expenses.raw_material > 0;
+  if (cogsFromPurchases) cogs = expenses.raw_material;
   const grossProfit = salesRevenue - cogs;
   const depreciation = depreciationFor(
     equipmentItems(data.expenses, ownBranch, vatRegistered, depreciationOptions),
@@ -231,6 +242,7 @@ export function buildProfitAndLoss(
     salesRevenue: round2(salesRevenue),
     cogs: round2(cogs),
     estimatedCogs: round2(estimatedCogs),
+    cogsFromPurchases,
     grossProfit: round2(grossProfit),
     expenses,
     depreciation: round2(depreciation),

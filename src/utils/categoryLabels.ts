@@ -18,6 +18,7 @@ export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
 
 /** Thai names of other-income categories */
 export const INCOME_CATEGORY_LABELS: Record<IncomeCategory, string> = {
+  store_sales: 'ยอดขาย (บันทึกเอง)',
   catering: 'งานจัดเลี้ยง / เหมาบูธ',
   ad_sponsor: 'สปอนเซอร์ / ป้ายโฆษณา',
   recycling: 'ขายของรีไซเคิล / น้ำมันพืชเก่า',
