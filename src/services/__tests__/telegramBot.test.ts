@@ -192,3 +192,14 @@ describe('income categories', () => {
     expect(guessIncomeCategory('เงินคืน')).toBe('other');
   });
 });
+
+describe('bills typed without "จ่าย"', () => {
+  it('reads "ค่าไฟ 18-10-69 50฿" as an expense', async () => {
+    const { looksLikeEntry, parseEntryText } = await import('../telegramBot');
+    expect(looksLikeEntry('ค่าไฟ 18-10-69 50฿')).toBe(true);
+    expect(parseEntryText('ค่าไฟ 18-10-69 50฿', '2026-10-18')).toEqual({ kind: 'expense', date: '2026-10-18', title: 'ค่าไฟ', amount: 50, vendor: '' });
+    expect(parseEntryText('ค่าแก๊ส 380 บาท', '2026-10-18')).toMatchObject({ kind: 'expense', title: 'ค่าแก๊ส', amount: 380 });
+    // Talk about bills without an amount is left alone
+    expect(looksLikeEntry('ค่าไฟเดือนนี้แพงจัง')).toBe(false);
+  });
+});

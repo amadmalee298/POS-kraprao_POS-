@@ -84,6 +84,8 @@ const DATE_LINE = /^\s*(?:วันที่\s*)?\d{1,2}[/.-]\d{1,2}(?:[/.-]\d{2
  */
 function withDateFirst(raw: string): string {
   const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  // "ค่าไฟ 18-10-69 50฿": a bill named "ค่า…" with a number is an expense without "จ่าย"
+  if (lines.length && /^ค่า\S/.test(lines[0]) && /\d/.test(raw)) return [`จ่าย ${lines[0]}`, ...lines.slice(1)].join('\n');
   if (lines.length < 2 || !DATE_LINE.test(lines[0])) return raw;
   const [date, first, ...rest] = lines;
   return [`${KEYWORD(first) ? first : `จ่าย ${first}`} ${date.trim()}`, ...rest].join('\n');
