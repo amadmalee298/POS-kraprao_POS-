@@ -325,7 +325,8 @@ export interface Expense {
   /** Photos showing what was bought (the goods, the stall's price board...), besides the payment proof */
   purchaseImages?: { name: string; dataUrl: string }[];
   /** Copies of this expense's documents saved in the shop's Google Drive */
-  driveFiles?: { name: string; url: string; savedAt: string }[];
+  /** `slot`/`fileId`: a bill picture (r, p0…) saved as its own file; `shared`: open to anyone with the link */
+  driveFiles?: { name: string; url: string; savedAt: string; slot?: string; fileId?: string; shared?: boolean }[];
   /** How it was paid (for the books): bank transfer/QR/card, cash outside the drawer, or the drawer. Missing = bank */
   paidFrom?: 'bank' | 'cash' | 'drawer';
   /**

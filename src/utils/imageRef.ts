@@ -12,8 +12,21 @@ export const OFFLOAD_MIN_LENGTH = 2000;
 
 export const isImageRef = (src: unknown): src is string => typeof src === 'string' && src.startsWith(IMAGE_REF_PREFIX);
 export const isDataUrl = (src: unknown): src is string => typeof src === 'string' && src.startsWith('data:');
+
+/**
+ * A picture kept in the shop's Google Drive, open to anyone with its link: "gdrive:<fileId>|<type>".
+ * The app shows it straight from Drive (the phone loads it, nothing goes into the app's memory).
+ */
+export const DRIVE_REF_PREFIX = 'gdrive:';
+export const isDriveRef = (src: unknown): src is string => typeof src === 'string' && src.startsWith(DRIVE_REF_PREFIX);
+export const makeDriveRef = (fileId: string, mime: string) => `${DRIVE_REF_PREFIX}${fileId}|${mime || 'image/jpeg'}`;
+export const driveRefId = (ref: string) => (isDriveRef(ref) ? ref.slice(DRIVE_REF_PREFIX.length).split('|')[0] : '');
+/** A picture of the Drive file, sized for the screen */
+export const driveImageUrl = (ref: string, width = 1200) => `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveRefId(ref))}&sz=w${width}`;
+export const driveOpenUrl = (ref: string) => `https://drive.google.com/file/d/${encodeURIComponent(driveRefId(ref))}/view`;
+
 /** A picture or a reference to one */
-export const hasImage = (src: unknown): src is string => isDataUrl(src) || isImageRef(src);
+export const hasImage = (src: unknown): src is string => isDataUrl(src) || isImageRef(src) || isDriveRef(src);
 
 export function makeImageRef(branchId: string, id: string, mime: string): string {
   return `${IMAGE_REF_PREFIX}${branchId || 'main'}/${id}|${mime || 'image/jpeg'}`;
@@ -32,6 +45,7 @@ export function parseImageRef(ref: string): { branchId: string; id: string; mime
 export function imageMime(src: string | undefined | null): string {
   if (!src) return '';
   if (isDataUrl(src)) return src.slice(5, src.indexOf(';') > 0 ? src.indexOf(';') : undefined);
+  if (isDriveRef(src)) return (src as string).split('|')[1] || 'image/jpeg';
   return parseImageRef(src)?.mime || '';
 }
 
@@ -66,14 +80,15 @@ export function mapRecordImages<T extends WithPictures>(rec: T, fn: (src: string
     if (v !== rec.slipImage) (out.slipImage = v), (changed = true);
   }
   if (Array.isArray(rec.purchaseImages) && rec.purchaseImages.length) {
+    let photosChanged = false;
     const imgs = rec.purchaseImages.map((p, i) => {
       if (!p || typeof p.dataUrl !== 'string' || !p.dataUrl) return p;
       const v = fn(p.dataUrl, `p${i}`);
       if (v === p.dataUrl) return p;
-      changed = true;
+      photosChanged = true;
       return { ...p, dataUrl: v };
     });
-    if (changed) out.purchaseImages = imgs;
+    if (photosChanged) (out.purchaseImages = imgs), (changed = true);
   }
   return changed ? (out as T) : rec;
 }

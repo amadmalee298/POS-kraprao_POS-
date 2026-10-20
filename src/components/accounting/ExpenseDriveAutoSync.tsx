@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
-import { driveEnabled, hasExpenseDocs, releaseCloudPictures, saveExpenseToDrive } from '../../services/expenseDrive';
+import { driveEnabled, drivePictureFields, hasExpenseDocs, releaseCloudPictures, saveExpenseToDrive, shareSavedPictures, unsharedPictures } from '../../services/expenseDrive';
+import { hasImage } from '../../utils/imageRef';
+import type { Expense } from '../../types';
 import { claimDailyJob, mergeBranchDoc } from '../../services/firebaseService';
 import { getStoredCredentials } from '../../services/notificationService';
 import { BOT_STATE_DOC, DRIVE_FOLDER_KEY, entryKeyboard, expenseCard } from '../../services/telegramBot';
@@ -25,8 +27,13 @@ export const ExpenseDriveAutoSync = () => {
   const busy = useRef(false);
 
   const on = driveEnabled(settings);
+  // Saved to Drive before its pictures were shared by link, or shared but still kept in the cloud
+  const needsPictureMove = (e: Expense) =>
+    !!e.driveFiles?.length && (unsharedPictures(e).length > 0 || Object.keys(drivePictureFields(e, e.driveFiles)).length > 0) && (hasImage(e.receiptImage) || !!e.purchaseImages?.length);
   const pending = on
-    ? expenses.find(e => !tried.current.has(e.id) && !e.driveFiles?.length && hasExpenseDocs(e) && (!e.branchId || e.branchId === currentBranch?.id))
+    ? expenses.find(
+        e => !tried.current.has(e.id) && (!e.branchId || e.branchId === currentBranch?.id) && ((!e.driveFiles?.length && hasExpenseDocs(e)) || needsPictureMove(e))
+      )
     : undefined;
 
   useEffect(() => {
@@ -38,14 +45,25 @@ export const ExpenseDriveAutoSync = () => {
         const e = now.find(x => x.id === pending.id);
         tried.current.add(pending.id);
         try {
-          if (!e || e.driveFiles?.length || !driveEnabled(s)) return;
+          if (!e || !driveEnabled(s)) return;
+          if (e.driveFiles?.length) {
+            // Already in Drive: share its pictures by link and show them from there
+            const shared = await shareSavedPictures(e, s);
+            const pictures = drivePictureFields(e, shared);
+            if (Object.keys(pictures).length) {
+              updateExpense(e.id, { driveFiles: shared, ...pictures });
+              await releaseCloudPictures(e);
+            }
+            return;
+          }
           // Another device has it today (a failed save is tried again the next day)
           const today = new Date().toLocaleDateString('sv-SE');
           if (branch?.id && !(await claimDailyJob(branch.id, `drive_${e.id}`, today))) return;
           const shop = sellerInfo(s, branch);
           const files = await saveExpenseToDrive(e, shop, s);
           if (!files.length) return;
-          updateExpense(e.id, { driveFiles: files });
+          // The pictures are shown from Drive from now on (when the script shares them by link)
+          updateExpense(e.id, { driveFiles: files, ...drivePictureFields(e, files) });
           await releaseCloudPictures(e);
           let folder = '';
           try {

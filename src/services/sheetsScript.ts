@@ -17,10 +17,14 @@ export interface ScriptReply {
   fileUrl?: string;
   fileId?: string;
   folderUrl?: string;
+  /** The file can be opened by anyone with its link (version 3: bill pictures shown in the app) */
+  shared?: boolean;
 }
 
 /** The script version this app expects (bump when the pasted code changes) */
-export const SCRIPT_VERSION = 2;
+export const SCRIPT_VERSION = 3;
+/** Saving documents to Drive works from this version; 3 also shows bill pictures from Drive */
+export const DRIVE_MIN_VERSION = 2;
 /** Top folder in the shop's Google Drive for documents saved from the POS */
 export const DRIVE_ROOT_FOLDER = 'ครัวกะเพรา POS เอกสาร';
 
@@ -47,6 +51,7 @@ function doPost(e) {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     if (data.ping) return reply({ ok: true, name: ss.getName(), url: ss.getUrl(), version: VERSION });
     if (data.file) return saveFile(data.file);
+    if (data.share) return shareFile(data.share);
 
     const lock = LockService.getScriptLock();
     lock.waitLock(30000);
@@ -84,7 +89,24 @@ function saveFile(f) {
   const old = folder.getFilesByName(blob.getName());
   while (old.hasNext()) old.next().setTrashed(true);
   const file = folder.createFile(blob);
-  return reply({ ok: true, version: VERSION, fileId: file.getId(), fileUrl: file.getUrl(), folderUrl: folder.getUrl() });
+  // Bill pictures: anyone with the link may view them, so the POS shows them from Drive
+  const shared = f.share ? share(file) : false;
+  return reply({ ok: true, version: VERSION, fileId: file.getId(), fileUrl: file.getUrl(), folderUrl: folder.getUrl(), shared: shared });
+}
+
+// A picture saved earlier, opened to anyone with the link
+function shareFile(s) {
+  const file = DriveApp.getFileById(String(s.fileId || ''));
+  return reply({ ok: true, version: VERSION, fileId: file.getId(), fileUrl: file.getUrl(), shared: share(file) });
+}
+
+function share(file) {
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return true;
+  } catch (err) {
+    return false; // e.g. a Google Workspace that does not allow sharing by link
+  }
 }
 
 function folderByName(parent, name) {
@@ -131,10 +153,15 @@ export interface DriveFileInput {
   name: string;
   mimeType: string;
   base64: string; // file content, no data: prefix
+  /** Open to anyone with the link (bill pictures shown in the app) */
+  share?: boolean;
 }
 
 /** Save a file into the shop's Google Drive through the script (version 2 and up) */
 export const saveFileToDrive = (url: string, secret: string, file: DriveFileInput) => post(url, { secret, file });
+
+/** Open a file saved earlier to anyone with its link (version 3 and up) */
+export const shareDriveFile = (url: string, secret: string, fileId: string) => post(url, { secret, share: { fileId } });
 
 export const pushSheetsToScript = (url: string, secret: string, sheets: SheetRows[]) => post(url, { secret, sheets });
 

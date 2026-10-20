@@ -74,7 +74,8 @@ ${isPdf ? '<p class="small">(ไฟล์ PDF แนบแยกไว้ใน�
 
 /** Photos of what was bought, two to a page */
 export function purchasePhotoPages(e: Pick<Expense, 'title' | 'date' | 'amount' | 'purchaseImages'>): string[] {
-  const imgs = (e.purchaseImages || []).filter(i => i.dataUrl?.startsWith('data:image/'));
+  // Pictures, or their Drive address when this device has no copy (printing loads them)
+  const imgs = (e.purchaseImages || []).filter(i => i.dataUrl?.startsWith('data:image/') || i.dataUrl?.startsWith('https://drive.google.com/'));
   const pages: string[] = [];
   for (let i = 0; i < imgs.length; i += 2) {
     const pair = imgs.slice(i, i + 2);
