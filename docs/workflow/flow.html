@@ -1,0 +1,66 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}body{margin:0;background:#0f172a;font-family:Loma,'Noto Sans Thai',sans-serif;color:#e2e8f0;width:1100px;padding:28px}
+h1{margin:0 0 4px;font-size:34px;color:#fbbf24}.sub{color:#94a3b8;font-size:17px;margin-bottom:20px}
+.lane{border-radius:18px;padding:16px 18px 18px;margin-bottom:16px;border:2px solid}
+.lane h2{margin:0 0 12px;font-size:22px}
+.row{display:flex;align-items:stretch;gap:8px;flex-wrap:nowrap}
+.box{flex:1;background:#1e293b;border:1.5px solid #334155;border-radius:12px;padding:10px 10px;font-size:15.5px;line-height:1.45;text-align:center}
+.box b{display:block;font-size:17px;margin-bottom:2px;color:#fff}
+.ar{align-self:center;font-size:26px;color:#94a3b8;flex:0 0 auto}
+.down{text-align:center;font-size:24px;color:#94a3b8;margin:4px 0}
+.pos{border-color:#f97316;background:#f9731612}.pos h2{color:#fb923c}
+.tg{border-color:#38bdf8;background:#38bdf812}.tg h2{color:#7dd3fc}
+.acc{border-color:#a78bfa;background:#a78bfa12}.acc h2{color:#c4b5fd}
+.data{border-color:#34d399;background:#34d39912}.data h2{color:#6ee7b7}
+.note{font-size:14px;color:#cbd5e1;margin-top:10px;line-height:1.5}
+.tag{display:inline-block;background:#334155;border-radius:8px;padding:1px 7px;font-size:13px;margin:2px 2px 0}
+.foot{color:#64748b;font-size:14px;margin-top:6px;text-align:right}
+</style></head><body>
+<h1>ผังการทำงาน ครัวกะเพรา POS</h1>
+<div class="sub">ภาพรวมการไหลของงานและข้อมูล · อัปเดตล่าสุด: ดูรูปบิลจากลิงก์ Telegram (21 ต.ค. 2569)</div>
+
+<div class="lane pos"><h2>① ขายหน้าร้าน / สั่งผ่าน QR</h2>
+<div class="row">
+<div class="box"><b>รับออเดอร์</b>หน้าร้าน (POS)<br>หรือลูกค้าสแกน QR โต๊ะ</div><div class="ar">➜</div>
+<div class="box"><b>อนุมัติ QR</b>ออเดอร์ QR รอพนักงานกดรับ</div><div class="ar">➜</div>
+<div class="box"><b>ห้องครัว (KDS)</b>ทำอาหาร → เสิร์ฟ</div><div class="ar">➜</div>
+<div class="box"><b>ชำระเงิน</b>เงินสด / โอน / PromptPay<br>ใบเสร็จ / ใบกำกับภาษี</div><div class="ar">➜</div>
+<div class="box"><b>ตัดสต็อก</b>ตามสูตรอาหาร<br>ต้นทุนขายตามสูตร</div>
+</div></div>
+
+<div class="lane tg"><h2>② รายจ่าย / รายรับ ผ่านบอท Telegram</h2>
+<div class="row">
+<div class="box"><b>ส่งในกลุ่ม</b>รูปบิล/สลิป หรือพิมพ์<br><span class="tag">ค่าไฟ 50฿</span><span class="tag">19-10-69 จ่าย…</span><span class="tag">รับ ยอดขาย…</span></div><div class="ar">➜</div>
+<div class="box"><b>บอทบน Vercel</b>AI อ่านบิล · แยกวันที่/ยอด<br>รูปเก็บแยก (ไม่ฝังในรายการ)</div><div class="ar">➜</div>
+<div class="box"><b>การ์ดรออนุมัติ</b>🔖 BLyymmdd-nnnn<br>📎 แนบสลิป/หลักฐาน · 🗑 ยกเลิก</div><div class="ar">➜</div>
+<div class="box"><b>อนุมัติในแอป</b>การเงิน → บิลจาก Telegram<br>ดูรูปบิลจากลิงก์ Telegram โดยตรง<br>รับเข้าสต็อก (วัตถุดิบ)</div>
+</div>
+<div class="down">⬇</div>
+<div class="row">
+<div class="box"><b>บันทึกรายจ่าย</b>ออกใบรับรองแทนใบเสร็จ<br>เลข 2569/10-xxx อัตโนมัติ</div><div class="ar">➜</div>
+<div class="box"><b>เซ็น &amp; พิมพ์</b>ผู้เบิก / ผู้อนุมัติ</div><div class="ar">➜</div>
+<div class="box"><b>Google Drive</b>PDF + สลิปโอน + หลักฐานการซื้อ<br>ส่งอัตโนมัติทีละรายการ</div><div class="ar">➜</div>
+<div class="box"><b>ย้ายรูปออกจากคลาวด์</b>เครื่องอื่นเปิดจาก Drive</div>
+</div>
+<div class="note">อนุมัติแล้วแต่ไม่พบในบัญชี → แท็บ "บิลจาก Telegram" มีปุ่ม ↩ บันทึกกลับเข้าบัญชี (ไม่เพิ่มสต็อกซ้ำ)</div>
+</div>
+
+<div class="lane acc"><h2>③ บัญชีและรายงาน</h2>
+<div class="row">
+<div class="box"><b>รายได้</b>ยอดขาย POS<br>+ "ยอดขาย (บันทึกเอง)"<br>+ รายได้อื่น</div><div class="ar">➜</div>
+<div class="box"><b>ต้นทุนขาย</b>ตามสูตรเมื่อขายผ่าน POS<br>ไม่มี → ยอดซื้อวัตถุดิบในงวด</div><div class="ar">➜</div>
+<div class="box"><b>ค่าใช้จ่าย</b>ค่าแรง ค่าเช่า ค่าน้ำไฟแก๊ส<br>วัสดุ · ค่าเสื่อมอุปกรณ์</div><div class="ar">➜</div>
+<div class="box"><b>รายงาน</b>ภาพรวม · รายวัน · งบกำไรขาดทุน<br>ภ.พ.30 · ชุดเอกสารนักบัญชี</div><div class="ar">➜</div>
+<div class="box"><b>สรุปรายวัน</b>ส่งเข้ากลุ่ม Telegram</div>
+</div></div>
+
+<div class="lane data"><h2>④ ที่เก็บข้อมูลและการซิงก์</h2>
+<div class="row">
+<div class="box"><b>ในเครื่อง</b>IndexedDB: ออเดอร์ รายการ เมนู สต็อก<br>บันทึกรายจ่าย/รายรับทันที<br>รูปบิลเก็บแยก</div><div class="ar">⇄</div>
+<div class="box"><b>คลาวด์ (Firestore)</b>ซิงก์ทุกเครื่อง · ส่งซ้ำอัตโนมัติถ้าค้าง<br>รายการเก็บแค่ "ที่อยู่รูป" ไม่ฝังรูป</div><div class="ar">⇄</div>
+<div class="box"><b>Google Drive / Sheets</b>เอกสารและรูปถาวร<br>ผ่าน Apps Script ของร้าน</div>
+</div>
+<div class="note">สถานะมุมบน: <span class="tag">ซิงค์คลาวด์</span> ปกติ · <span class="tag">กำลังเชื่อม</span> ค้างนาน → กด 🔄 เชื่อมต่อคลาวด์ใหม่ · หน้าแอปลดหน่วยความจำ (รูปโหลดเมื่อเปิดดูเท่านั้น) เพื่อไม่ให้มือถือรีเฟรชเอง</div>
+</div>
+<div class="foot">ครัวกะเพรา POS Enterprise</div>
+</body></html>

@@ -6,7 +6,7 @@ import { useExpenseDrive } from '../accounting/ExpenseDocActions';
 import { hasExpenseDocs } from '../../services/expenseDrive';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
-import { baht, captionTitle, downloadTelegramImage, telegramCall } from '../../services/telegramInbox';
+import { baht, captionTitle, downloadTelegramImage, telegramCall, telegramFileUrl } from '../../services/telegramInbox';
 import { guessIncomeCategory, readBotMode } from '../../services/telegramBot';
 import { vercelBase } from '../../services/receiptScan';
 import { EXPENSE_CATEGORY_LABELS, isVatRegistered, round2, vatInside, vatRateOf } from '../../utils/accounting';
@@ -87,6 +87,12 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
     }
   }, [forms]);
   const [images, setImages] = useState<Record<string, string>>({});
+  // Bills shown on screen: a Telegram link the phone loads itself (no copy in the app's memory)
+  const [shown, setShown] = useState<Record<string, string>>({});
+  const showBill = async (p: PendingReceipt) => {
+    const url = await telegramFileUrl(token, p.storeFileId || p.fileId);
+    setShown(prev => Object.fromEntries([...Object.entries(prev).filter(([k]) => k !== p.id).slice(-4), [p.id, url]]));
+  };
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -429,14 +435,21 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
             <div className="space-y-2">
               {!p.fileId ? (
                 <div className="w-full h-20 rounded-xl border border-dashed border-slate-700 text-slate-500 flex items-center justify-center">พิมพ์จดในแชท (ไม่มีรูป)</div>
-              ) : images[p.id] ? (
-                <a href={images[p.id]} target="_blank" rel="noopener noreferrer">
-                  <img src={images[p.id]} alt="รูปบิลจาก Telegram" className="w-full rounded-xl border border-slate-700" />
+              ) : shown[p.id] ? (
+                <a href={shown[p.id]} target="_blank" rel="noopener noreferrer">
+                  <img
+                    src={shown[p.id]}
+                    alt="รูปบิลจาก Telegram"
+                    decoding="async"
+                    className="w-full max-h-[70vh] object-contain rounded-xl border border-slate-700 bg-white"
+                    // The link expired (about an hour): ask Telegram for a new one
+                    onError={() => setShown(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== p.id)))}
+                  />
                 </a>
               ) : (
                 <button
                   type="button"
-                  onClick={() => loadImage(p).catch(e => setError(e.message))}
+                  onClick={() => showBill(p).catch(e => setError(e.message))}
                   className="w-full h-32 rounded-xl border border-dashed border-slate-700 text-slate-400 flex flex-col items-center justify-center gap-1"
                 >
                   <ImageIcon className="w-5 h-5" /> ดูรูปบิล
