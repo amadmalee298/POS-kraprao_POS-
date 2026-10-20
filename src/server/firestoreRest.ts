@@ -132,6 +132,26 @@ export class Firestore {
     await this.call(`${this.base}/${path}`, { method: 'DELETE' });
   }
 
+  /** A page of a top-level collection in document-id order, after the given id ('' from the start) */
+  async page(collection: string, afterId: string, limit: number, select?: string[]): Promise<{ id: string; data: { [k: string]: Json } }[]> {
+    const name = `${this.base.replace(/^https:\/\/firestore\.googleapis\.com\/v1\//, '')}/${collection}/${afterId}`;
+    const rows = await this.call(`${this.base}:runQuery`, {
+      method: 'POST',
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: collection }],
+          ...(select ? { select: { fields: select.map(f => ({ fieldPath: fieldPath(f) })) } } : {}),
+          orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+          ...(afterId ? { startAt: { values: [{ referenceValue: name }], before: false } } : {}),
+          limit
+        }
+      })
+    });
+    return (Array.isArray(rows) ? rows : [])
+      .filter(r => r.document)
+      .map(r => ({ id: String(r.document.name).split('/').pop() || '', data: fromFsFields(r.document.fields || {}) }));
+  }
+
   /** Documents of a top-level collection whose field is at least the value */
   async whereAtLeast(collection: string, field: string, value: string, limit = 1000, select?: string[]): Promise<{ [k: string]: Json }[]> {
     const rows = await this.call(`${this.base}:runQuery`, {

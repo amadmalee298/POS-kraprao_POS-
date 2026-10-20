@@ -205,7 +205,8 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
     if (images[p.id] || !token || !p.fileId) return images[p.id];
     // The smaller copy Telegram keeps (enough to read a bill), shrunk without decoding it at full size
     const img = await downloadTelegramImage(token, p.storeFileId || p.fileId, vercelBase(settings.merchantSettings?.serverUrl), 1000, 0.75);
-    setImages(prev => ({ ...prev, [p.id]: img }));
+    // Only the last few pictures opened stay in memory (each bill opened kept its picture before)
+    setImages(prev => Object.fromEntries([...Object.entries(prev).filter(([k]) => k !== p.id).slice(-2), [p.id, img]]));
     return img;
   };
 
