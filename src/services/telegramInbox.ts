@@ -149,6 +149,15 @@ async function shrinkBlob(blob: Blob, maxSide: number, quality: number): Promise
   }
 }
 
+/**
+ * A link to a Telegram file (valid about an hour), for an <img>: the phone shows the picture itself,
+ * nothing is downloaded into the app's memory.
+ */
+export async function telegramFileUrl(token: string, fileId: string): Promise<string> {
+  const file = await telegramCall<{ file_path: string }>(token, 'getFile', { file_id: fileId });
+  return `${API}/file/bot${cleanBotToken(token)}/${file.file_path}`;
+}
+
 /** A Telegram picture, already made small (maxSide px on its longer side) for showing and keeping */
 export async function downloadTelegramImage(token: string, fileId: string, relayBase = '', maxSide = 1000, quality = 0.75): Promise<string> {
   try {
