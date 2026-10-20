@@ -10,7 +10,7 @@ import { BotContext, BotStore, handleBotUpdate } from '../../services/botEngine'
 import {
   baht,
   captionTitle,
-  downloadTelegramFile,
+  downloadTelegramImage,
   INBOX_OFFSET_KEY,
   INBOX_STATUS_EVENT,
   inboxEnabledHere,
@@ -39,14 +39,14 @@ const KEEP_ITEMS = 300;
 
 /** Reads one Telegram photo with AI, keeping a copy of the picture to store with the entry */
 export async function readTelegramReceiptWithImage(token: string, item: Pick<PendingReceipt, 'fileId' | 'receivedAt' | 'caption'>, serverUrl?: string) {
-  const original = await downloadTelegramFile(token, item.fileId, vercelBase(serverUrl));
-  const image = await compressBase64Image(original, 1600, 0.85);
+  // Shrunk straight from the file (a full-size photo decoded on a phone could close the page)
+  const image = await downloadTelegramImage(token, item.fileId, vercelBase(serverUrl), 1600, 0.85);
   const result = await scanReceiptImage(image, 'image/jpeg', serverUrl);
   const data = toPendingData(result, item.receivedAt.slice(0, 10));
   // A transfer slip names the bank, not what was bought: the sender's caption says it better
   const fromCaption = captionTitle(item.caption || '');
   // Kept smaller with the entry (it goes to the cloud with it)
-  const stored = await compressBase64Image(original, 1000, 0.7).catch(() => image);
+  const stored = await compressBase64Image(image, 1000, 0.7).catch(() => image);
   return { data: fromCaption ? { ...data, title: fromCaption } : data, image: stored };
 }
 
@@ -205,9 +205,8 @@ export const TelegramInboxPoller = () => {
         vatRate: vatRateOf(settings),
         tg: (method, params) => telegramCall(token, method, params),
         readPhoto: async p => {
-          const original = await downloadTelegramFile(token, p.fileId, vercelBase(serverUrl()));
-          const scan = await compressBase64Image(original, 1600, 0.85);
-          const keep = await compressBase64Image(original, 1000, 0.7).catch(() => scan);
+          const scan = await downloadTelegramImage(token, p.fileId, vercelBase(serverUrl()), 1600, 0.85);
+          const keep = await compressBase64Image(scan, 1000, 0.7).catch(() => scan);
           return { scan, store: keep };
         },
         scan: image => scanReceiptImage(image, 'image/jpeg', serverUrl()),

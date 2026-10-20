@@ -6,13 +6,12 @@ import { useExpenseDrive } from '../accounting/ExpenseDocActions';
 import { hasExpenseDocs } from '../../services/expenseDrive';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
-import { baht, captionTitle, downloadTelegramFile, telegramCall } from '../../services/telegramInbox';
+import { baht, captionTitle, downloadTelegramImage, telegramCall } from '../../services/telegramInbox';
 import { guessIncomeCategory, readBotMode } from '../../services/telegramBot';
 import { vercelBase } from '../../services/receiptScan';
 import { EXPENSE_CATEGORY_LABELS, isVatRegistered, round2, vatInside, vatRateOf } from '../../utils/accounting';
 import { stockTypeForExpenseCategory, stockTypeLabel } from '../../utils/stockTypes';
 import { allocateCosts, BillItem, buildIntakeRows, hasTarget, IntakeRow, matchIngredient, parseItemsFromText } from '../../utils/stockIntake';
-import { compressBase64Image } from '../../utils/imageCompressor';
 import { nextSubstituteNo } from '../../utils/expenseDocNo';
 import { readTelegramReceipt } from './TelegramInboxPoller';
 
@@ -204,7 +203,8 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
 
   const loadImage = async (p: PendingReceipt) => {
     if (images[p.id] || !token || !p.fileId) return images[p.id];
-    const img = await compressBase64Image(await downloadTelegramFile(token, p.fileId, vercelBase(settings.merchantSettings?.serverUrl)), 900, 0.75);
+    // The smaller copy Telegram keeps (enough to read a bill), shrunk without decoding it at full size
+    const img = await downloadTelegramImage(token, p.storeFileId || p.fileId, vercelBase(settings.merchantSettings?.serverUrl), 1000, 0.75);
     setImages(prev => ({ ...prev, [p.id]: img }));
     return img;
   };
@@ -233,8 +233,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
       const extras = (
         await Promise.all(
           (p.extraFileIds || []).map(fid =>
-            downloadTelegramFile(token, fid, vercelBase(settings.merchantSettings?.serverUrl))
-              .then(d => compressBase64Image(d, 900, 0.75))
+            downloadTelegramImage(token, fid, vercelBase(settings.merchantSettings?.serverUrl), 900, 0.75)
               .catch(() => '')
           )
         )

@@ -118,6 +118,56 @@ const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
  * Downloads a Telegram file as a data URL: straight from Telegram (tried twice), then through the
  * shop's Vercel site (api/telegram/file) when one is set up. The error names each attempt's cause.
  */
+/**
+ * A picture made smaller straight from the downloaded file: the full-size photo (a long receipt can
+ * be thousands of pixels high) is never turned into text nor drawn at full size, which made phones
+ * close the page. null when the browser cannot do it (then the caller shrinks the data URL).
+ */
+async function shrinkBlob(blob: Blob, maxSide: number, quality: number): Promise<string | null> {
+  if (!blob.type.startsWith('image/') || typeof createImageBitmap !== 'function' || typeof document === 'undefined') return null;
+  try {
+    // The size first, from a small decode, so the picture is decoded at the size it is shown
+    const probe = await createImageBitmap(blob, { resizeWidth: 64, resizeQuality: 'low' } as ImageBitmapOptions);
+    const ratio = probe.height / Math.max(1, probe.width);
+    probe.close();
+    const width = Math.round(ratio > 1 ? maxSide / ratio : maxSide);
+    const bitmap = await createImageBitmap(blob, { resizeWidth: Math.max(1, width), resizeQuality: 'high' } as ImageBitmapOptions);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const out = canvas.toDataURL('image/jpeg', quality);
+    canvas.width = canvas.height = 0;
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** A Telegram picture, already made small (maxSide px on its longer side) for showing and keeping */
+export async function downloadTelegramImage(token: string, fileId: string, relayBase = '', maxSide = 1000, quality = 0.75): Promise<string> {
+  try {
+    const file = await telegramCall<{ file_path: string }>(token, 'getFile', { file_id: fileId });
+    const res = await fetch(`${API}/file/bot${cleanBotToken(token)}/${file.file_path}`, { cache: 'no-store' });
+    if (res.ok) {
+      const blob = await res.blob();
+      const small = await shrinkBlob(blob, maxSide, quality);
+      if (small) return small;
+      const { compressBase64Image } = await import('../utils/imageCompressor');
+      return compressBase64Image(await blobToDataUrl(blob), maxSide, quality);
+    }
+  } catch {
+    // tried again below (with retries and the Vercel relay)
+  }
+  const { compressBase64Image } = await import('../utils/imageCompressor');
+  return compressBase64Image(await downloadTelegramFile(token, fileId, relayBase), maxSide, quality);
+}
+
 export async function downloadTelegramFile(token: string, fileId: string, relayBase = ''): Promise<string> {
   const problems: string[] = [];
   for (let attempt = 0; attempt < 2; attempt++) {
