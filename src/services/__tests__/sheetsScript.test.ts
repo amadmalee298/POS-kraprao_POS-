@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appsScriptCode, isScriptUrl, pingScript, pushSheetsToScript } from '../sheetsScript';
 
 /** Run the generated Apps Script against a fake spreadsheet */
-function runScript(secret: string, body: unknown, drive?: { folders: Record<string, string[]>; files: { path: string; name: string; mime: string; data: string; trashed?: boolean }[] }) {
+function runScript(secret: string, body: unknown, drive?: { folders: Record<string, string[]>; files: { path: string; name: string; mime: string; data: string; trashed?: boolean }[]; sharing?: any }) {
   const sheets: Record<string, { values: unknown[][]; frozen: number }> = {};
   const made: Record<string, unknown> = {};
   const makeSheet = (name: string) => {
@@ -37,12 +37,14 @@ function runScript(secret: string, body: unknown, drive?: { folders: Record<stri
     },
     createFile: (blob: { name: string; mime: string; data: string }) => {
       d.files.push({ path, ...blob });
-      return { getId: () => 'id1', getUrl: () => `https://drive/${path}/${blob.name}` };
+      const file = { getId: () => 'id1', getUrl: () => `https://drive/${path}/${blob.name}`, setSharing: (access: string) => void (file.sharing = access), sharing: '' };
+      d.sharing = file;
+      return file;
     },
     getUrl: () => `https://drive/${path}`
   });
   const env = {
-    DriveApp: { getRootFolder: () => folder('') },
+    DriveApp: { getRootFolder: () => folder(''), getFileById: () => d.sharing, Access: { ANYONE_WITH_LINK: 'link' }, Permission: { VIEW: 'view' } },
     Utilities: {
       base64Decode: (b: string) => atob(b),
       newBlob: (data: string, mime: string, name: string) => ({ data, mime, name, getName: () => name })
@@ -61,18 +63,28 @@ describe('Apps Script code', () => {
   });
 
   it('answers a ping with the spreadsheet', () => {
-    expect(runScript('abc', { secret: 'abc', ping: true }).reply).toEqual({ ok: true, name: 'ร้าน', url: 'https://docs.google.com/x', version: 2 });
+    expect(runScript('abc', { secret: 'abc', ping: true }).reply).toEqual({ ok: true, name: 'ร้าน', url: 'https://docs.google.com/x', version: 3 });
   });
 
   it('saves a file into the month folder and replaces an earlier copy', () => {
     const drive = { folders: {} as Record<string, string[]>, files: [] as any[] };
     const body = { secret: 'abc', file: { folder: 'รายจ่าย/2569-10', name: 'a.pdf', mimeType: 'application/pdf', base64: btoa('PDF') } };
     const first = runScript('abc', body, drive).reply;
-    expect(first).toMatchObject({ ok: true, version: 2, fileUrl: 'https://drive//ครัวกะเพรา POS เอกสาร/รายจ่าย/2569-10/a.pdf' });
+    expect(first).toMatchObject({ ok: true, version: 3, shared: false, fileUrl: 'https://drive//ครัวกะเพรา POS เอกสาร/รายจ่าย/2569-10/a.pdf' });
     runScript('abc', body, drive);
     expect(drive.folders['']).toEqual(['ครัวกะเพรา POS เอกสาร']);
     expect(drive.files.filter(f => !f.trashed)).toHaveLength(1);
     expect(drive.files[1]).toMatchObject({ name: 'a.pdf', mime: 'application/pdf', data: 'PDF' });
+  });
+
+  it('opens bill pictures to anyone with the link (saved now, or saved earlier)', () => {
+    const drive: any = { folders: {}, files: [] };
+    const pic = runScript('abc', { secret: 'abc', file: { folder: 'รายจ่าย/2569-10', name: 'a_สลิปโอน.jpg', mimeType: 'image/jpeg', base64: btoa('JPG'), share: true } }, drive).reply;
+    expect(pic).toMatchObject({ ok: true, fileId: 'id1', shared: true });
+    expect(drive.sharing.sharing).toBe('link');
+    drive.sharing.sharing = '';
+    expect(runScript('abc', { secret: 'abc', share: { fileId: 'id1' } }, drive).reply).toMatchObject({ ok: true, shared: true });
+    expect(drive.sharing.sharing).toBe('link');
   });
 
   it('writes each sheet padded, keeping formulas and leading zeros as text', () => {

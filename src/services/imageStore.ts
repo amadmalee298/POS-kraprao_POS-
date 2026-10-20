@@ -9,6 +9,9 @@ import {
   imageDocKey,
   imageMime,
   isDataUrl,
+  driveImageUrl,
+  driveRefId,
+  isDriveRef,
   isImageRef,
   makeImageRef,
   mapRecordImages,
@@ -163,6 +166,8 @@ export function storeImage(branchId: string, id: string, dataUrl: string, upload
 /** The picture itself (data: URL) for a picture or a reference; undefined when it cannot be found */
 export async function resolveImage(src: string | undefined | null): Promise<string | undefined> {
   if (!src) return undefined;
+  // In Drive: this device's copy when it has one, else the picture's Drive address
+  if (isDriveRef(src)) return (await localGet(driveCopyKey(src))) || driveImageUrl(src);
   if (!isImageRef(src)) return src;
   const ref = parseImageRef(src);
   if (!ref) return undefined;
@@ -197,11 +202,15 @@ export async function resolveRecordImages<T extends Pictured>(rec: T): Promise<T
 
 /** React: the picture to show for a picture or reference (undefined while it loads, null when not found) */
 export function useImage(src: string | undefined | null): string | undefined | null {
-  const [data, setData] = useState<string | undefined | null>(() => (src && !isImageRef(src) ? src : undefined));
+  const [data, setData] = useState<string | undefined | null>(() => (src && isDriveRef(src) ? driveImageUrl(src) : src && !isImageRef(src) ? src : undefined));
   useEffect(() => {
     let alive = true;
     if (!src) {
       setData(undefined);
+      return;
+    }
+    if (isDriveRef(src)) {
+      setData(driveImageUrl(src)); // loaded by the phone itself
       return;
     }
     if (!isImageRef(src)) {
@@ -248,4 +257,10 @@ export async function deleteCloudImage(ref: string): Promise<boolean> {
   }
   writeQueue(readQueue().filter(q => q.id !== p.id));
   return (await cloud()).deleteBranchDoc(p.branchId, imageDocKey(p.id));
+}
+
+const driveCopyKey = (ref: string) => `gd_${driveRefId(ref)}`;
+/** Keep this device's copy of a picture now in Drive (printing and PDFs use it when it is here) */
+export async function keepDriveCopy(ref: string, dataUrl: string): Promise<void> {
+  if (isDriveRef(ref) && dataUrl.startsWith('data:')) await localPut(driveCopyKey(ref), dataUrl);
 }

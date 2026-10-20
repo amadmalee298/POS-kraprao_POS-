@@ -38,3 +38,22 @@ describe('image references', () => {
     expect(out.slipImage).toBe('data:image/jpeg;base64,BACK');
   });
 });
+
+describe('pictures kept in Google Drive', () => {
+  it('turns the pictures Drive holds by link into Drive references', async () => {
+    const { drivePictureFields, unsharedPictures } = await import('../../services/expenseDrive');
+    const { driveImageUrl, hasImage, imageMime } = await import('../imageRef');
+    const e: any = { id: 'e1', receiptImage: 'img:b/e1-r-x|image/jpeg', purchaseImages: [{ name: 'a', dataUrl: 'data:image/png;base64,AA' }] };
+    const files = [
+      { name: 'x.pdf', url: 'u', savedAt: 's' },
+      { name: 'x_สลิปโอน.jpg', url: 'u', savedAt: 's', slot: 'r', fileId: 'F1', shared: true },
+      { name: 'x_หลักฐานการซื้อ1.png', url: 'u', savedAt: 's', slot: 'p0', fileId: 'F2', shared: false }
+    ];
+    const out = drivePictureFields(e, files);
+    expect(out).toEqual({ receiptImage: 'gdrive:F1|image/jpeg' });
+    expect(hasImage(out.receiptImage)).toBe(true);
+    expect(imageMime(out.receiptImage)).toBe('image/jpeg');
+    expect(driveImageUrl(out.receiptImage!)).toBe('https://drive.google.com/thumbnail?id=F1&sz=w1200');
+    expect(unsharedPictures({ driveFiles: files })).toHaveLength(1);
+  });
+});

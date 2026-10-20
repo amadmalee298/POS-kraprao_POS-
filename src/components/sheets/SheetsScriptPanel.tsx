@@ -12,6 +12,7 @@ import {
   readLastPush,
   writeAutoMinutes,
   SCRIPT_VERSION,
+  DRIVE_MIN_VERSION,
   DRIVE_ROOT_FOLDER
 } from '../../services/sheetsScript';
 
@@ -66,7 +67,7 @@ export const SheetsScriptPanel: React.FC = () => {
     setBusy('test');
     try {
       const r = await pingScript(url, secret);
-      updateSettings({ sheetsScript: { url: url.trim(), secret, saveDocsToDrive: saved?.saveDocsToDrive && (r.version || 1) >= SCRIPT_VERSION } });
+      updateSettings({ sheetsScript: { url: url.trim(), secret, saveDocsToDrive: saved?.saveDocsToDrive && (r.version || 1) >= DRIVE_MIN_VERSION } });
       setSheetName(r.name || '');
       setShowSetup(false);
     } catch (e: any) {
@@ -99,7 +100,7 @@ export const SheetsScriptPanel: React.FC = () => {
     setBusy('test');
     try {
       const r = await pingScript(saved.url, saved.secret);
-      if ((r.version || 1) < SCRIPT_VERSION) {
+      if ((r.version || 1) < DRIVE_MIN_VERSION) {
         setError('โค้ด Apps Script ยังเป็นเวอร์ชันเก่า: กด "ดูวิธีตั้งค่า / คัดลอกโค้ดใหม่" วางแทนโค้ดเดิม แล้ว ทำให้ใช้งานได้ → จัดการการทำให้ใช้งานได้ → แก้ไข → เวอร์ชันใหม่ (ลิงก์เดิมใช้ต่อได้) และกดอนุญาตสิทธิ์ Google Drive');
         setShowSetup(true);
         return;
@@ -175,7 +176,7 @@ export const SheetsScriptPanel: React.FC = () => {
             </label>
             <p className="text-[10px] text-slate-500">
               ทุกครั้งที่บันทึกรายจ่าย: ใบรับรองแทนใบเสร็จรับเงิน (ถ้ามี) และหลักฐานการชำระ เป็นไฟล์ PDF ในโฟลเดอร์ “{DRIVE_ROOT_FOLDER}/รายจ่าย/ปี-เดือน” ของบัญชี Google เดียวกับไฟล์ Sheets
-              · ต้องใช้โค้ด Apps Script เวอร์ชัน {SCRIPT_VERSION} ขึ้นไป
+              · ต้องใช้โค้ด Apps Script เวอร์ชัน {DRIVE_MIN_VERSION} ขึ้นไป · เวอร์ชัน {SCRIPT_VERSION} ขึ้นไป: รูปสลิปและหลักฐานการซื้อเปิดได้ทุกคนที่มีลิงก์ และแอปแสดงรูปจาก Drive โดยตรง (ไม่เก็บรูปบนคลาวด์ของแอป)
             </p>
           </div>
           {last && (
