@@ -203,3 +203,17 @@ describe('bills typed without "จ่าย"', () => {
     expect(looksLikeEntry('ค่าไฟเดือนนี้แพงจัง')).toBe(false);
   });
 });
+
+describe('the date first on the same line', () => {
+  it('reads "19-10-69 จ่ายค่าไฟ 50 ฿" and "19-10-69ค่าไฟ 50"', async () => {
+    const { looksLikeEntry, parseEntryText } = await import('../telegramBot');
+    const want = { kind: 'expense', date: '2026-10-19', title: 'ค่าไฟ', amount: 50, vendor: '' };
+    for (const t of ['19-10-69 จ่ายค่าไฟ 50 ฿', '19-10-69ค่าไฟ 50', '19/10/69 ค่าไฟ 50', 'วันที่ 19-10-69 จ่าย ค่าไฟ 50']) {
+      expect(looksLikeEntry(t)).toBe(true);
+      expect(parseEntryText(t, '2026-10-20')).toEqual(want);
+    }
+    expect(parseEntryText('19-10-69 รับ ยอดขาย 8,620', '2026-10-20')).toMatchObject({ kind: 'income', date: '2026-10-19', amount: 8620 });
+    // A range of people in a conversation is not an entry
+    expect(looksLikeEntry('1-2 คนมาทาน')).toBe(false);
+  });
+});
