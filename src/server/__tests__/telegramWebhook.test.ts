@@ -26,6 +26,16 @@ function fakeCloud() {
       if (url.startsWith(`${base}:runQuery`)) {
         const q = JSON.parse(String(init.body)).structuredQuery;
         const coll = q.from[0].collectionId;
+        if (!q.where) {
+          // A page in document-name order, after a document
+          const after = q.startAt ? String(q.startAt.values[0].referenceValue).split('/').pop() : '';
+          const rows = [...docs.entries()]
+            .filter(([p]) => p.startsWith(`${coll}/`) && p.split('/').length === 2 && p.split('/')[1] > after)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .slice(0, q.limit)
+            .map(([p, d]) => ({ document: { name: `projects/p1/databases/(default)/documents/${p}`, fields: d } }));
+          return json(200, rows.length ? rows : [{ readTime: 'x' }]);
+        }
         const f = q.where.fieldFilter;
         const rows = [...docs.entries()]
           .filter(([p]) => p.startsWith(`${coll}/`) && p.split('/').length === 2)
@@ -188,6 +198,21 @@ describe('Telegram webhook on Vercel', () => {
     expect(Object.keys(inbox.byId).sort()).toEqual(['dev-1', 'old-1', 'tg--100-12']);
     expect(inbox.byId['dev-1'].status).toBe('rejected');
     expect(inbox.byId['tg--100-12'].status).toBe('approved');
+  });
+
+  it('keeps bill pictures out of the records: a reference, the picture in its own document', async () => {
+    const big = `data:image/jpeg;base64,${'A'.repeat(5000)}`;
+    // An older record with its picture inside, moved over after the bot has answered
+    cloud.write('expenses/exp-old', { id: 'exp-old', branchId: 'b1', date: '2026-10-01', title: 'เก่า', amount: 10, receiptImage: big });
+    cloud.write('incomes/inc-old', { id: 'inc-old', branchId: 'b1', date: '2026-10-01', title: 'รับ', amount: 10, slipImage: big });
+    await deliver(photoUpdate(30));
+    const old: any = cloud.read('expenses/exp-old');
+    expect(old.receiptImage).toMatch(/^img:b1\/exp-old-r-/);
+    expect(old.title).toBe('เก่า');
+    const imgKey = old.receiptImage.slice('img:b1/'.length).split('|')[0];
+    expect((cloud.read(`branches/b1/config/img_${imgKey}`) as any).data).toBe(big);
+    expect((cloud.read('incomes/inc-old') as any).slipImage).toMatch(/^img:b1\/inc-old-s-/);
+    expect((cloud.read('branches/b1/config/telegram_bot_state') as any).pictureCursor).toEqual({ expenses: 'done', incomes: 'done' });
   });
 
   it('handles a delivery Telegram sends twice only once', async () => {

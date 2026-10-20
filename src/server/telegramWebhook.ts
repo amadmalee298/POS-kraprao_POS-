@@ -8,6 +8,7 @@ import { runReceiptOcr } from '../utils/receiptOcr.js';
 import { createClaudeJsonCaller } from '../utils/claudeClient.js';
 import { Firestore, idTokenFor } from './firestoreRest.js';
 import { hasLegacyItems, keyedItems, newestFirst } from '../utils/keyedDoc.js';
+import { carriesPictures, contentTag, imageDocKey, imageMime, isDataUrl, makeImageRef, mapRecordImages, OFFLOAD_MIN_LENGTH } from '../utils/imageRef.js';
 
 /**
  * The shop's Telegram bot on Vercel: Telegram delivers each message to /api/telegram/webhook, so
@@ -166,6 +167,49 @@ export function incomeDoc(i: OtherIncome): Record<string, unknown> {
   };
 }
 
+/**
+ * Bill pictures go into their own documents (branches/<b>/config/img_<id>) and the record keeps a
+ * reference, as the app does (utils/imageRef): records with pictures inside made every device of
+ * the shop hold megabytes for each sync, and phones closed the page.
+ */
+export async function offloadPictures<T extends { id: string }>(db: Firestore, branchId: string, rec: T): Promise<T> {
+  const writes: Promise<void>[] = [];
+  const out = mapRecordImages(rec, (src, slot) => {
+    if (!isDataUrl(src) || src.length < OFFLOAD_MIN_LENGTH || src.length > 950_000) return src;
+    const id = `${rec.id}-${slot}-${contentTag(src)}`;
+    writes.push(db.set(`branches/${branchId}/config/${imageDocKey(id)}`, { data: src, updatedAt: new Date() }));
+    return makeImageRef(branchId, id, imageMime(src));
+  });
+  await Promise.all(writes);
+  return out;
+}
+
+const MIGRATE_BATCH = 10;
+/**
+ * Older records that still hold their pictures are moved to references, page after page while
+ * there is time after the bot has answered (the cursor in the bot's state remembers where it stopped).
+ */
+export async function migrateSomePictures(db: Firestore, branchId: string, cursor: Record<string, string>, until: number): Promise<Record<string, string>> {
+  const next = { ...cursor };
+  for (const collection of ['expenses', 'incomes'] as const) {
+    while (next[collection] !== 'done' && Date.now() <= until) {
+      const rows = await db.page(collection, next[collection] || '', MIGRATE_BATCH, ['id', 'branchId', 'receiptImage', 'purchaseImages', 'slipImage']);
+      for (const row of rows) {
+        if (Date.now() > until) break;
+        next[collection] = row.id;
+        const d: any = row.data;
+        const rec = { id: String(d.id || row.id), receiptImage: d.receiptImage || undefined, purchaseImages: Array.isArray(d.purchaseImages) ? d.purchaseImages : undefined, slipImage: d.slipImage || undefined };
+        if ((d.branchId && d.branchId !== branchId) || !carriesPictures(rec)) continue;
+        const light = await offloadPictures(db, d.branchId || branchId, rec);
+        const fields = collection === 'expenses' ? ['receiptImage', 'purchaseImages'] : ['slipImage'];
+        await db.set(`${collection}/${row.id}`, { receiptImage: light.receiptImage ?? null, purchaseImages: light.purchaseImages ?? null, slipImage: light.slipImage ?? null }, fields);
+      }
+      if (rows.length < MIGRATE_BATCH && Date.now() <= until) next[collection] = 'done';
+    }
+  }
+  return next;
+}
+
 /** The bot's records in Firestore, for one branch */
 export function firestoreStore(db: Firestore, branchId: string, state: { waiting: Record<string, BotWaiting>; driveFolderUrl?: string }): BotStore {
   const cfg = (key: string) => `branches/${branchId}/config/${key}`;
@@ -207,10 +251,18 @@ export function firestoreStore(db: Firestore, branchId: string, state: { waiting
       const d = await db.get(`incomes/${id}`);
       return d ? incomeFromDoc(d) : null;
     },
-    saveExpense: e => db.set(`expenses/${e.id}`, expenseDoc(e)),
-    saveIncome: i => db.set(`incomes/${i.id}`, incomeDoc(i)),
-    updateExpense: (id, patch) => patchDoc(`expenses/${id}`, patch as Record<string, unknown>),
-    updateIncome: (id, patch) => patchDoc(`incomes/${id}`, patch as Record<string, unknown>),
+    saveExpense: async e => db.set(`expenses/${e.id}`, expenseDoc(await offloadPictures(db, e.branchId || branchId, e))),
+    saveIncome: async i => db.set(`incomes/${i.id}`, incomeDoc(await offloadPictures(db, i.branchId || branchId, i))),
+    updateExpense: async (id, patch) => {
+      const { id: _id, ...light } = await offloadPictures(db, branchId, { ...(patch as Record<string, unknown>), id });
+      void _id;
+      await patchDoc(`expenses/${id}`, light);
+    },
+    updateIncome: async (id, patch) => {
+      const { id: _id, ...light } = await offloadPictures(db, branchId, { ...(patch as Record<string, unknown>), id });
+      void _id;
+      await patchDoc(`incomes/${id}`, light);
+    },
     deleteExpense: id => db.delete(`expenses/${id}`),
     deleteIncome: id => db.delete(`incomes/${id}`),
     expensesFrom: async date => (await db.whereAtLeast('expenses', 'date', date, 2000, ['id', 'branchId', 'date', 'category', 'title', 'amount', 'includeVat', 'vatAmount', 'netAmount', 'note', 'substituteReceipt']))
@@ -343,9 +395,16 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
         : undefined
   };
 
+  const started = Date.now();
   try {
     await handleBotUpdate(ctx, store, update);
     await db.set(statePath, { lastError: '' }, ['lastError']).catch(() => {});
+    // Older records with pictures inside, while there is time left
+    const cursor = (stateDoc.pictureCursor || {}) as Record<string, string>;
+    if (cursor.expenses !== 'done' || cursor.incomes !== 'done') {
+      const next = await migrateSomePictures(db, req.branchId, cursor, started + 20_000).catch(() => cursor);
+      if (JSON.stringify(next) !== JSON.stringify(cursor)) await db.set(statePath, { pictureCursor: next }, ['pictureCursor']).catch(() => {});
+    }
   } catch (e: any) {
     const message = e?.message || String(e);
     await db.set(statePath, { lastError: `${new Date().toISOString()} ${message}` }, ['lastError']).catch(() => {});
