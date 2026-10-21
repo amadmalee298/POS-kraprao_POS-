@@ -52,6 +52,20 @@ export const SheetsScriptPanel: React.FC = () => {
 
   const connected = !!saved?.url && saved.secret === secret;
 
+  // The version of the script the shop deployed: an older one gets a clear "update the code" box
+  const [scriptVersion, setScriptVersion] = useState(0);
+  useEffect(() => {
+    if (!saved?.url || !saved.secret) return;
+    let alive = true;
+    pingScript(saved.url, saved.secret)
+      .then(r => alive && setScriptVersion(r.version || 1))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [saved?.url, saved?.secret]);
+  const outdated = connected && scriptVersion > 0 && scriptVersion < SCRIPT_VERSION;
+
   const copyCode = async () => {
     try {
       await navigator.clipboard.writeText(appsScriptCode(secret));
@@ -136,6 +150,22 @@ export const SheetsScriptPanel: React.FC = () => {
           </span>
         )}
       </div>
+
+      {outdated && (
+        <div className="p-3 rounded-xl border-2 border-amber-500/70 bg-amber-950/40 text-amber-100 space-y-2">
+          <div className="font-bold text-sm">⬆️ มีโค้ด Apps Script เวอร์ชันใหม่ ({scriptVersion} → {SCRIPT_VERSION})</div>
+          <div className="text-[11px] leading-relaxed">
+            เวอร์ชันใหม่ทำให้แอปแสดงรูปสลิปและหลักฐานการซื้อจาก Google Drive ได้โดยตรง
+            <br />1. กดปุ่ม “คัดลอกโค้ดใหม่” ด้านล่าง
+            <br />2. เปิดไฟล์ Google Sheets ของร้าน → ส่วนขยาย → Apps Script → ลบโค้ดเดิมทั้งหมด วางโค้ดใหม่ แล้วกดบันทึก
+            <br />3. ทำให้ใช้งานได้ → จัดการการทำให้ใช้งานได้ → ✏️ แก้ไข → เวอร์ชัน: เวอร์ชันใหม่ → ทำให้ใช้งานได้ (ลิงก์เดิมใช้ต่อได้)
+            <br />4. ถ้า Google ขอสิทธิ์ ให้กดอนุญาต แล้วกลับมาเปิดหน้านี้ใหม่ กล่องนี้จะหายไป
+          </div>
+          <button type="button" onClick={copyCode} className="h-11 w-full rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold flex items-center justify-center gap-1.5">
+            <ClipboardCopy className="w-4 h-4" /> {copied ? 'คัดลอกโค้ดแล้ว' : 'คัดลอกโค้ดใหม่'}
+          </button>
+        </div>
+      )}
 
       {connected && (
         <div className="space-y-2">
