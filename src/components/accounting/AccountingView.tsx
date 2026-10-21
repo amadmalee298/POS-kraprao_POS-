@@ -1301,9 +1301,10 @@ export const AccountingView: React.FC = () => {
               spender: expSpender.trim() || currentUser?.name || '',
               approver: expApprover.trim() || ownerName || undefined,
               payee: expPayee.trim() || undefined,
-              spenderSignature: expSpenderSig || undefined,
-              approverSignature: expApproverSig || undefined,
-              approvedAt: expApproverSig ? chosenDate : undefined
+              // Drawn here, else the person's remembered signature
+              spenderSignature: expSpenderSig || expenseDrive.signatures.find(expSpender.trim() || currentUser?.name)?.dataUrl || undefined,
+              approverSignature: expApproverSig || expenseDrive.signatures.find(expApprover.trim() || ownerName)?.dataUrl || undefined,
+              approvedAt: expApproverSig || expenseDrive.signatures.find(expApprover.trim() || ownerName) ? chosenDate : undefined
             }
           }
         : {})
