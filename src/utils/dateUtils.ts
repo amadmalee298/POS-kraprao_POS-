@@ -7,14 +7,27 @@
 /**
  * Converts a Date object, ISO string, or timestamp into a local YYYY-MM-DD string
  */
+// Reports turn the same order times into days again and again: remembered (bounded)
+const dayOfText = new Map<string, string>();
 export const getLocalDateStr = (d?: string | Date | number | null): string => {
   if (!d) return '';
+  if (typeof d === 'string') {
+    const hit = dayOfText.get(d);
+    if (hit !== undefined) return hit;
+  }
   const date = typeof d === 'string' || typeof d === 'number' ? new Date(d) : d;
-  if (isNaN(date.getTime())) return '';
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  let out = '';
+  if (!isNaN(date.getTime())) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    out = `${y}-${m}-${day}`;
+  }
+  if (typeof d === 'string') {
+    if (dayOfText.size > 20000) dayOfText.clear();
+    dayOfText.set(d, out);
+  }
+  return out;
 };
 
 /**

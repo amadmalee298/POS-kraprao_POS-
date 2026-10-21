@@ -90,6 +90,7 @@ import {
   Receipt
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
+import { getLocalDateStr } from '../../utils/dateUtils';
 import { useImage } from '../../services/imageStore';
 import { RefImg } from '../common/RefImg';
 import {
@@ -321,29 +322,31 @@ const isSameDay = (dateOrIso: string | undefined, targetDateStr: string): boolea
   if (!dateOrIso || !targetDateStr) return false;
   // A plain date ("2026-09-27") is compared as written. A timestamp is compared by its local day:
   // "2026-09-27T20:00:00Z" is the 28th in Thailand and must not also count on the 27th.
+  // (Its day is remembered: the daily report asks for every order on every day of the month.)
   if (!dateOrIso.includes('T')) return dateOrIso.startsWith(targetDateStr);
-  try {
-    const d = new Date(dateOrIso);
-    if (!isNaN(d.getTime())) {
-      return getLocalDateString(d) === targetDateStr;
-    }
-  } catch {}
-  return false;
+  return getLocalDateStr(dateOrIso) === targetDateStr;
 };
 
 const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boolean => {
   if (!dateOrIso || !targetMonthStr) return false;
   if (!dateOrIso.includes('T')) return dateOrIso.startsWith(targetMonthStr);
-  try {
-    const d = new Date(dateOrIso);
-    if (!isNaN(d.getTime())) {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      return `${y}-${m}` === targetMonthStr;
-    }
-  } catch {}
-  return false;
+  return getLocalDateStr(dateOrIso).slice(0, 7) === targetMonthStr;
 };
+
+const LIST_STEP = 50;
+/** True on a phone-width screen (the lists show cards there, a table elsewhere) */
+function useNarrowScreen(): boolean {
+  const query = '(max-width: 767px)';
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia?.(query);
+    if (!mq) return;
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, []);
+  return narrow;
+}
 
 export const AccountingView: React.FC = () => {
   const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [], currentUser, users, permissions, loadHistory } = usePOS();
@@ -848,7 +851,8 @@ export const AccountingView: React.FC = () => {
 
   // Receivables, payables and investing/financing entries: shared by every device of the branch
   // (older versions stored them per device, and some first installs carried sample records)
-  const { lines: ledgerLines } = useLedger();
+  // Built only for the export that needs them
+  const { buildLines: buildLedgerLines } = useLedger({ lazy: true });
   const [arListRaw, setArList] = useReceivables();
   const [apListRaw, setApList] = usePayables();
   const [cashFlowEntries, setCashFlowEntries] = useKeyedList<CashFlowEntry>('cash_flow_entries', 'POS_CASH_FLOW_ENTRIES', undefined, list =>
@@ -1150,6 +1154,12 @@ export const AccountingView: React.FC = () => {
   }, [filteredIncomes]);
 
   // Filtered Expense List
+  // Long lists are shown 50 at a time, and only the layout for this screen is built (phone cards or
+  // the table): hundreds of rows twice made typing in the search and opening the page freeze
+  const [listLimit, setListLimit] = useState(LIST_STEP);
+  const isNarrow = useNarrowScreen();
+  useEffect(() => setListLimit(LIST_STEP), [searchQuery, categoryFilter, incomeSearchQuery, incomeCategoryFilter, selectedMonth]);
+
   const filteredExpenses = useMemo(() => {
     return selectedBranchExpenses.filter(e => {
       const matchCat = categoryFilter === 'all' || e.category === categoryFilter;
@@ -1655,7 +1665,7 @@ export const AccountingView: React.FC = () => {
     // The summary is the books' profit and loss for the same months (same figures as the statement)
     const sortedMonths = [...monthsList].sort();
     const [ly, lm] = sortedMonths[sortedMonths.length - 1].split('-').map(Number);
-    const p = profitAndLoss(ledgerLines, `${sortedMonths[0]}-01`, new Date(Date.UTC(ly, lm, 0)).toISOString().slice(0, 10));
+    const p = profitAndLoss(buildLedgerLines(), `${sortedMonths[0]}-01`, new Date(Date.UTC(ly, lm, 0)).toISOString().slice(0, 10));
     rows.push([]);
     rows.push(['สรุปงบกำไรขาดทุน (ตามสมุดบัญชี)', '', '', '', '', '', '', '']);
     ([
@@ -2431,7 +2441,7 @@ export const AccountingView: React.FC = () => {
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 space-y-1">
                   <span className="text-slate-400 text-xs block truncate">รายรับอื่นๆ รวมงวดนี้:</span>
                   <span className="text-base sm:text-lg font-bold text-emerald-400 font-mono block">
-                    ฿{selectedBranchIncomes.reduce((s, i) => s + i.amount, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    ฿{money(selectedBranchIncomes.reduce((s, i) => s + i.amount, 0))}
                   </span>
                   <span className="text-[10px] text-slate-500 block">Total Other Revenue</span>
                 </div>
@@ -2448,7 +2458,7 @@ export const AccountingView: React.FC = () => {
                   <span className="text-slate-400 text-xs block truncate">เฉลี่ยต่อรายการ:</span>
                   <span className="text-base sm:text-lg font-bold text-purple-400 font-mono block">
                     ฿{selectedBranchIncomes.length > 0
-                      ? (selectedBranchIncomes.reduce((s, i) => s + i.amount, 0) / selectedBranchIncomes.length).toLocaleString(undefined, { minimumFractionDigits: 2 })
+                      ? money(selectedBranchIncomes.reduce((s, i) => s + i.amount, 0) / selectedBranchIncomes.length)
                       : '0.00'}
                   </span>
                   <span className="text-[10px] text-slate-500 block">Avg. per Transaction</span>
@@ -2532,7 +2542,7 @@ export const AccountingView: React.FC = () => {
                   <strong className="text-slate-200 font-mono">{selectedBranchIncomes.length}</strong> รายการ
                 </span>
                 <span className="font-mono text-emerald-300">
-                  รวมมูลค่าตามตัวกรอง: <strong>฿{filteredIncomeTotals.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                  รวมมูลค่าตามตัวกรอง: <strong>฿{money(filteredIncomeTotals.total)}</strong>
                 </span>
               </div>
 
@@ -2550,7 +2560,7 @@ export const AccountingView: React.FC = () => {
                     </button>
                   </div>
                 ) : (
-                  filteredIncomes.map(inc => (
+                  filteredIncomes.slice(0, isNarrow ? listLimit : 0).map(inc => (
                     <div key={inc.id} className="p-3 bg-slate-950 border border-slate-800/80 rounded-xl space-y-2">
                       <div className="flex items-center justify-between text-xs">
                         <span className="px-2 py-0.5 bg-emerald-950/60 border border-emerald-500/30 rounded text-[10px] font-medium text-emerald-300">
@@ -2589,7 +2599,7 @@ export const AccountingView: React.FC = () => {
 
                         <div className="text-right shrink-0">
                           <span className="font-mono font-bold text-emerald-400 text-sm block">
-                            +฿{inc.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            +฿{money(inc.amount)}
                           </span>
                         </div>
                       </div>
@@ -2637,6 +2647,11 @@ export const AccountingView: React.FC = () => {
                     </div>
                   ))
                 )}
+                {filteredIncomes.length > listLimit && isNarrow && (
+                  <button type="button" onClick={() => setListLimit(l => l + LIST_STEP)} className="w-full h-11 mt-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-bold">
+                    แสดงเพิ่ม ({filteredIncomes.length - listLimit} รายการที่เหลือ)
+                  </button>
+                )}
               </div>
 
               {/* Desktop Table View */}
@@ -2670,7 +2685,7 @@ export const AccountingView: React.FC = () => {
                         </td>
                       </tr>
                     ) : (
-                      filteredIncomes.map(inc => (
+                      filteredIncomes.slice(0, isNarrow ? 0 : listLimit).map(inc => (
                         <tr key={inc.id} className="hover:bg-slate-800/40 transition">
                           <td className="py-3 px-3.5 font-mono text-slate-400 whitespace-nowrap">{inc.date}</td>
                           <td className="py-3 px-3.5 whitespace-nowrap">
@@ -2716,7 +2731,7 @@ export const AccountingView: React.FC = () => {
                             )}
                           </td>
                           <td className="py-3 px-3.5 font-mono font-bold text-emerald-400 text-sm text-right whitespace-nowrap">
-                            +฿{inc.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            +฿{money(inc.amount)}
                           </td>
                           <td className="py-3 px-3.5 text-center whitespace-nowrap space-x-1">
                             <button
@@ -2737,6 +2752,15 @@ export const AccountingView: React.FC = () => {
                         </tr>
                       ))
                     )}
+                  {!isNarrow && filteredIncomes.length > listLimit && (
+                      <tr>
+                        <td colSpan={9} className="p-2">
+                          <button type="button" onClick={() => setListLimit(l => l + LIST_STEP)} className="w-full h-10 rounded-xl border border-slate-700 text-slate-300 text-xs font-bold">
+                            แสดงเพิ่ม ({filteredIncomes.length - listLimit} รายการที่เหลือ)
+                          </button>
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                   {/* Table Summary Footer */}
                   {filteredIncomes.length > 0 && (
@@ -2746,7 +2770,7 @@ export const AccountingView: React.FC = () => {
                           รวมยอดรายรับตามเงื่อนไขกรอง ({filteredIncomes.length} รายการ):
                         </td>
                         <td className="py-3 px-3.5 text-right font-mono text-emerald-400 text-sm font-black whitespace-nowrap">
-                          +฿{filteredIncomeTotals.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          +฿{money(filteredIncomeTotals.total)}
                         </td>
                         <td></td>
                       </tr>
@@ -2929,7 +2953,7 @@ export const AccountingView: React.FC = () => {
                     ไม่พบรายการค่าใช้จ่ายตรงตามเงื่อนไขค้นหา
                   </div>
                 ) : (
-                  filteredExpenses.map(exp => (
+                  filteredExpenses.slice(0, isNarrow ? listLimit : 0).map(exp => (
                     <div key={exp.id} className="p-3 bg-slate-950 border border-slate-800/80 rounded-xl space-y-2">
                       <div className="flex items-center justify-between text-xs">
                         <span className="px-2 py-0.5 bg-slate-800 border border-slate-700 rounded text-[10px] font-medium text-slate-300">
@@ -3014,6 +3038,11 @@ export const AccountingView: React.FC = () => {
                     </div>
                   ))
                 )}
+                {filteredExpenses.length > listLimit && isNarrow && (
+                  <button type="button" onClick={() => setListLimit(l => l + LIST_STEP)} className="w-full h-11 mt-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-bold">
+                    แสดงเพิ่ม ({filteredExpenses.length - listLimit} รายการที่เหลือ)
+                  </button>
+                )}
               </div>
 
               {/* Desktop Full Data Table Format */}
@@ -3040,7 +3069,7 @@ export const AccountingView: React.FC = () => {
                         </td>
                       </tr>
                     ) : (
-                      filteredExpenses.map(exp => (
+                      filteredExpenses.slice(0, isNarrow ? 0 : listLimit).map(exp => (
                         <tr key={exp.id} className="hover:bg-slate-800/40 transition">
                           <td className="py-3 px-3.5 font-mono text-slate-400 whitespace-nowrap">{exp.date}</td>
                           <td className="py-3 px-3.5 whitespace-nowrap">
@@ -3080,13 +3109,13 @@ export const AccountingView: React.FC = () => {
                             )}
                           </td>
                           <td className="py-3 px-3.5 font-mono text-slate-300 text-right whitespace-nowrap">
-                            {exp.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} ฿
+                            {money(exp.netAmount)} ฿
                           </td>
                           <td className="py-3 px-3.5 font-mono text-rose-400 text-right whitespace-nowrap">
                             {exp.vatAmount > 0 ? `${exp.vatAmount.toFixed(2)} ฿` : '-'}
                           </td>
                           <td className="py-3 px-3.5 font-mono font-bold text-rose-300 text-sm text-right whitespace-nowrap">
-                            {exp.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} ฿
+                            {money(exp.amount)} ฿
                           </td>
                           <td className="py-3 px-3.5 text-center whitespace-nowrap">
                             <button
@@ -3101,6 +3130,17 @@ export const AccountingView: React.FC = () => {
                       ))
                     )}
                   </tbody>
+                  {!isNarrow && filteredExpenses.length > listLimit && (
+                    <tbody>
+                      <tr>
+                        <td colSpan={9} className="p-2">
+                          <button type="button" onClick={() => setListLimit(l => l + LIST_STEP)} className="w-full h-10 rounded-xl border border-slate-700 text-slate-300 text-xs font-bold">
+                            แสดงเพิ่ม ({filteredExpenses.length - listLimit} รายการที่เหลือ)
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  )}
                   {/* Table Summary Footer */}
                   {filteredExpenses.length > 0 && (
                     <tfoot className="bg-slate-950 border-t border-slate-800 font-bold text-slate-200">
@@ -3109,13 +3149,13 @@ export const AccountingView: React.FC = () => {
                           รวมยอดตามเงื่อนไขกรอง:
                         </td>
                         <td className="py-3 px-3.5 text-right font-mono text-slate-300">
-                          {filteredTotals.net.toLocaleString(undefined, { minimumFractionDigits: 2 })} ฿
+                          {money(filteredTotals.net)} ฿
                         </td>
                         <td className="py-3 px-3.5 text-right font-mono text-rose-400">
-                          {filteredTotals.vat.toLocaleString(undefined, { minimumFractionDigits: 2 })} ฿
+                          {money(filteredTotals.vat)} ฿
                         </td>
                         <td className="py-3 px-3.5 text-right font-mono text-rose-300 text-sm font-black">
-                          {filteredTotals.gross.toLocaleString(undefined, { minimumFractionDigits: 2 })} ฿
+                          {money(filteredTotals.gross)} ฿
                         </td>
                         <td></td>
                       </tr>
@@ -5119,7 +5159,7 @@ export const AccountingView: React.FC = () => {
                   <div className="text-right font-mono shrink-0 pl-2">
                     <span className="text-[10px] text-slate-400 block">ยอดเงิน</span>
                     <span className={`font-bold text-base ${isIncomeReceipt ? 'text-emerald-300' : 'text-rose-300'}`}>
-                      {isIncomeReceipt ? '+' : ''}฿{selectedReceiptPreview.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {isIncomeReceipt ? '+' : ''}฿{money(selectedReceiptPreview.amount)}
                     </span>
                   </div>
                 )}
