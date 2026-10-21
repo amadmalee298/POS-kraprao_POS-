@@ -192,6 +192,8 @@ export interface Ingredient {
    * machines are equipment (IAS 16). Missing = decided from the category.
    */
   stockType?: StockType;
+  /** The shop kept this item's stock type although its name suggested another (no more suggestions) */
+  stockTypeConfirmed?: boolean;
 }
 
 export type StockType = 'inventory' | 'supplies' | 'equipment';

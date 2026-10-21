@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
-import { STOCK_TYPES, stockTypeLabel, stockTypeOf, stockValueByType, isLowStock } from '../../utils/stockTypes';
+import { STOCK_TYPES, misfiledStock, stockTypeLabel, stockTypeOf, stockValueByType, isLowStock } from '../../utils/stockTypes';
 import { StockIssuePanel } from './StockIssuePanel';
 import { CountStockPanel } from './CountStockPanel';
 import {
@@ -159,6 +159,7 @@ export const InventoryView: React.FC = () => {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   // Stock, supplies or equipment (each is accounted for differently)
   const [stockTypeFilter, setStockTypeFilter] = useState<StockType | 'all'>('all');
+  const misfiled = useMemo(() => misfiledStock(ingredients), [ingredients]);
   const stockTypeTotals = useMemo(() => stockValueByType(ingredients), [ingredients]);
   const [onlyLowStock, setOnlyLowStock] = useState(false);
   const [selectedIngredientFilter, setSelectedIngredientFilter] = useState<string>('all');
@@ -1012,6 +1013,32 @@ export const InventoryView: React.FC = () => {
             </div>
             {stockTypeFilter !== 'all' && (
               <p className="text-[11px] text-slate-400 -mt-2">{STOCK_TYPES.find(t => t.id === stockTypeFilter)?.hint}</p>
+            )}
+            {/* Equipment and supplies filed as ingredients (e.g. bought on a Makro bill): moved in one tap */}
+            {misfiled.length > 0 && (stockTypeFilter === 'all' || stockTypeFilter === 'inventory') && (
+              <div className="p-3 rounded-2xl border border-amber-600/60 bg-amber-950/30 text-amber-100 space-y-2 text-xs">
+                <div className="font-bold">⚠️ {misfiled.length} รายการในสต็อกวัตถุดิบน่าจะเป็นอุปกรณ์หรือวัสดุสิ้นเปลือง</div>
+                <ul className="space-y-1">
+                  {misfiled.slice(0, 8).map(({ ing, to }) => (
+                    <li key={ing.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate">
+                        {ing.name} → <b>{stockTypeLabel(to)}</b>
+                      </span>
+                      <span className="flex gap-1 shrink-0">
+                        <button type="button" onClick={() => updateIngredient({ ...ing, stockType: to })} className="h-8 px-2 rounded-lg bg-amber-500 text-slate-950 font-bold">
+                          ย้าย
+                        </button>
+                        <button type="button" onClick={() => updateIngredient({ ...ing, stockType: 'inventory', stockTypeConfirmed: true })} className="h-8 px-2 rounded-lg border border-slate-600 text-slate-300">
+                          ไม่ใช่
+                        </button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <button type="button" onClick={() => misfiled.forEach(({ ing, to }) => updateIngredient({ ...ing, stockType: to }))} className="w-full h-10 rounded-xl bg-amber-500 text-slate-950 font-bold">
+                  ย้ายทั้งหมด {misfiled.length} รายการ
+                </button>
+              </div>
             )}
             {/* Filter Bar: search first, then the two filters */}
             <div className="bg-slate-900 border border-slate-800 p-3 rounded-2xl space-y-2">

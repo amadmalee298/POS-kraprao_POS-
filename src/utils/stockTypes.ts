@@ -64,3 +64,23 @@ export function stockTypeForExpenseCategory(category: string): StockType | null 
   if (category === 'equipment') return 'equipment';
   return null;
 }
+
+// Words in an item's name that tell what kind of stock it is. Packaging sold with the food (bags,
+// boxes, cups, plastic spoons) is inventory, like the ingredients.
+const EQUIPMENT_WORDS = /ถัง(?!แก๊ส|ขยะพลาสติก)|หม้อ|กระทะ|ตะหลิว|ทัพพี|มีด|เขียง|กะละมัง|ตะแกรง|กระชอน|ชั้นวาง|ตู้|เตา|เครื่อง|พัดลม|โต๊ะ|เก้าอี้|สแตนเลส|ซึ้ง|ลังถึง|ถาดสแตนเลส|กาต้มน้ำ|ไมโครเวฟ|ตาชั่ง|เครื่องชั่ง|ปลั๊ก|หลอดไฟ/;
+const SUPPLY_WORDS = /ถุงมือ|ทิชชู่|ทิชชู|กระดาษเช็ด|กระดาษชำระ|น้ำยา|สบู่|ฟองน้ำ|สก๊อตไบรต์|สก็อตไบรต์|ฝอยขัด|แปรง|ฟอยล์|แรป|ถุงขยะ|ไม้กวาด|ผ้าเช็ด|ผ้ากันเปื้อน|หมวกคลุมผม|แก๊ส|หนังยาง|ยางรัด|ไม้จิ้มฟัน|ผงซักฟอก|แอลกอฮอล์|ถ่านไฟฉาย/;
+
+/** The kind of stock an item's name suggests, or null when it does not say (then: as bought) */
+export function guessStockType(name: string): StockType | null {
+  const n = (name || '').toLowerCase();
+  if (SUPPLY_WORDS.test(n)) return 'supplies';
+  if (EQUIPMENT_WORDS.test(n)) return 'equipment';
+  return null;
+}
+
+/** Items in the ingredients list whose names say they are supplies or equipment */
+export function misfiledStock(ingredients: Ingredient[]): { ing: Ingredient; to: StockType }[] {
+  return ingredients
+    .map(ing => ({ ing, to: guessStockType(ing.name) }))
+    .filter((x): x is { ing: Ingredient; to: StockType } => !!x.to && stockTypeOf(x.ing) === 'inventory' && !x.ing.stockTypeConfirmed);
+}

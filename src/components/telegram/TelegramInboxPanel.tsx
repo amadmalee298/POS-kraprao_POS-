@@ -10,7 +10,7 @@ import { baht, captionTitle, downloadTelegramImage, telegramCall, telegramFileUr
 import { guessIncomeCategory, readBotMode } from '../../services/telegramBot';
 import { vercelBase } from '../../services/receiptScan';
 import { EXPENSE_CATEGORY_LABELS, isVatRegistered, round2, vatInside, vatRateOf } from '../../utils/accounting';
-import { stockTypeForExpenseCategory, stockTypeLabel } from '../../utils/stockTypes';
+import { guessStockType, stockTypeForExpenseCategory, stockTypeLabel } from '../../utils/stockTypes';
 import { allocateCosts, BillItem, buildIntakeRows, hasTarget, IntakeRow, matchIngredient, parseItemsFromText } from '../../utils/stockIntake';
 import { nextSubstituteNo } from '../../utils/expenseDocNo';
 import { readTelegramReceipt } from './TelegramInboxPoller';
@@ -329,7 +329,8 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
               name: row.newIngredient.name.trim(),
               unit: row.newIngredient.unit,
               category: row.newIngredient.category,
-              stockType: stockTypeForExpenseCategory(f.category) || 'inventory',
+              // From the item's own name first (a stainless bucket on a Makro bill is equipment)
+              stockType: guessStockType(row.newIngredient.name) || stockTypeForExpenseCategory(f.category) || 'inventory',
               unitCost: Math.round((row.cost / row.quantity) * 10000) / 10000,
               minStockAlert: 0
             },
