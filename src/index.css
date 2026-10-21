@@ -28,3 +28,26 @@
 .fixed.inset-0.flex.items-center.justify-center:not(.items-end) > * {
   margin-block: auto;
 }
+
+/*
+ * Phones and tablets: blur (behind dialogs and bars, and the decorative glows) is drawn again on
+ * every frame of scrolling. iPhones ran out of graphics memory with it, left parts of the page
+ * black and froze. Solid, slightly darker backgrounds instead; computers keep the blur.
+ */
+@media (hover: none), (max-width: 1024px) {
+  *,
+  *::before,
+  *::after {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .blur-3xl,
+  .blur-2xl,
+  .blur-xl {
+    display: none !important;
+  }
+  /* Dialog overlays: a little darker, since the page behind is no longer blurred */
+  .fixed.inset-0[class*='backdrop-blur'] {
+    background-color: rgb(2 6 23 / 0.92);
+  }
+}
