@@ -3,8 +3,7 @@ import { isLowStock } from '../utils/stockTypes';
 import {
   getFirestore,
   initializeFirestore,
-  persistentLocalCache,
-  persistentSingleTabManager,
+  memoryLocalCache,
   collection,
   doc,
   setDoc,
@@ -25,8 +24,10 @@ import {
   serverTimestamp,
   Timestamp,
   DocumentData,
-  FieldPath
+  FieldPath,
+  documentId
 } from 'firebase/firestore';
+import { carriesPictures, contentTag, imageDocKey, imageMime, isDataUrl, makeImageRef, mapRecordImages, OFFLOAD_MIN_LENGTH } from '../utils/imageRef';
 import {
   getAuth,
   onAuthStateChanged,
@@ -103,16 +104,16 @@ try {
     }
   }
 
-  // The cloud data this device has seen is kept in the browser's database (IndexedDB), so the
-  // app opens with it offline and does not read everything again after a reload.
-  // One tab owns it: the multi-tab mode also keeps every pending write in localStorage, and when
-  // localStorage is full (about 5 MB) Firestore stops with "INTERNAL ASSERTION FAILED … quota has
-  // been exceeded". A second tab of the app works with a memory cache instead.
+  // The cloud's records are kept in memory only, never in a copy on this device: that copy grew
+  // with old records holding bill pictures, and phones closed the app while reading it at start-up
+  // (Safari: "a problem repeatedly occurred"). The app keeps its own data on the device (bigStore)
+  // and its own queues of what is not in the cloud yet, so it still opens and works offline.
   // A named firestoreDatabaseId in the config is used, otherwise the default database.
   clearMultiTabLeftovers();
+  void removeOldCloudCopy();
   try {
     const settings = {
-      localCache: persistentLocalCache({ tabManager: persistentSingleTabManager({}) }),
+      localCache: memoryLocalCache(),
       // Chosen on a device whose cloud never answered (see setLongPolling): plain requests get
       // through mobile networks and proxies that hold the streaming connection open forever
       ...(usesLongPolling() ? { experimentalForceLongPolling: true } : {})
@@ -2670,6 +2671,75 @@ export function setLongPolling(on: boolean): void {
     else localStorage.removeItem(LONG_POLLING_KEY);
   } catch {
     // storage unavailable
+  }
+}
+
+/**
+ * Every expense and income in the cloud that still holds its bill pictures gets them moved into
+ * their own documents (branches/<b>/config/img_<id>) and a reference instead: the records every
+ * device reads become small. A few records at a time, so the phone running it holds little.
+ */
+export async function cleanCloudPictures(
+  onProgress: (p: { checked: number; moved: number; collection: 'expenses' | 'incomes' }) => void,
+  shouldStop: () => boolean = () => false
+): Promise<{ checked: number; moved: number; stopped: boolean }> {
+  if (!dbInstance || !navigator.onLine) throw new Error('ยังเชื่อมคลาวด์ไม่ได้ (ออฟไลน์)');
+  await waitForFirebaseAuth();
+  const db = dbInstance;
+  const PAGE = 5;
+  let checked = 0;
+  let moved = 0;
+  for (const coll of ['expenses', 'incomes'] as const) {
+    let last: any = null;
+    for (;;) {
+      if (shouldStop()) return { checked, moved, stopped: true };
+      const base = collection(db, coll);
+      const snap = await getDocs(last ? query(base, orderBy(documentId()), startAfter(last), limit(PAGE)) : query(base, orderBy(documentId()), limit(PAGE)));
+      for (const d of snap.docs) {
+        checked++;
+        const data: any = d.data();
+        const branchId = String(data.branchId || 'main');
+        const rec = {
+          id: String(data.id || d.id),
+          receiptImage: typeof data.receiptImage === 'string' ? data.receiptImage : undefined,
+          purchaseImages: Array.isArray(data.purchaseImages) ? data.purchaseImages : undefined,
+          slipImage: typeof data.slipImage === 'string' ? data.slipImage : undefined
+        };
+        if (carriesPictures(rec)) {
+          const writes: Promise<void>[] = [];
+          const light = mapRecordImages(rec, (src, slot) => {
+            if (!isDataUrl(src) || src.length < OFFLOAD_MIN_LENGTH || src.length > 950_000) return src;
+            const id = `${rec.id}-${slot}-${contentTag(src)}`;
+            writes.push(setDoc(doc(db, 'branches', branchId, 'config', imageDocKey(id)), { data: src, updatedAt: serverTimestamp() }));
+            return makeImageRef(branchId, id, imageMime(src));
+          });
+          await Promise.all(writes);
+          await updateDoc(d.ref, coll === 'expenses' ? { receiptImage: light.receiptImage ?? null, purchaseImages: light.purchaseImages ?? null } : { slipImage: light.slipImage ?? null });
+          moved++;
+        }
+        onProgress({ checked, moved, collection: coll });
+      }
+      if (snap.size < PAGE) break;
+      last = snap.docs[snap.docs.length - 1];
+    }
+  }
+  return { checked, moved, stopped: false };
+}
+
+/** The cloud copy earlier versions kept in IndexedDB (firestore/…): no longer read, removed */
+async function removeOldCloudCopy(): Promise<void> {
+  try {
+    if (typeof indexedDB === 'undefined' || !indexedDB.databases) return;
+    const names = (await indexedDB.databases()).map(d => d.name || '').filter(n => n.startsWith('firestore/'));
+    names.forEach(n => {
+      try {
+        indexedDB.deleteDatabase(n);
+      } catch {
+        // in use or unavailable: removed another time
+      }
+    });
+  } catch {
+    // not supported
   }
 }
 
