@@ -21,3 +21,24 @@ describe('stock types', () => {
     expect(v.equipment).toEqual({ value: 10, items: 1 });
   });
 });
+
+describe('stock type from the name', () => {
+  it('tells equipment and supplies apart from ingredients and packaging', async () => {
+    const { guessStockType, misfiledStock } = await import('../stockTypes');
+    expect(guessStockType('ถังฉนวนสแตนเลส 304 หนาพิเศษ หุ้มฉนวน')).toBe('equipment');
+    expect(guessStockType('กระทะเหล็ก 14 นิ้ว')).toBe('equipment');
+    expect(guessStockType('ถุงมือยาง')).toBe('supplies');
+    expect(guessStockType('น้ำยาล้างจาน')).toBe('supplies');
+    // Ingredients and packaging sold with the food stay where they are
+    expect(guessStockType('อองุ่น น้ำมันถั่วเหลือง 1 ล. x 3')).toBeNull();
+    expect(guessStockType('ARO ถุงหูหิ้ว TAPE 6X14"')).toBeNull();
+    expect(guessStockType('เติมทิพ ผงปรุงรสอาหาร รสไก่ 400 ก.')).toBeNull();
+    const ings: any[] = [
+      { id: 'a', name: 'ถังฉนวนสแตนเลส', stockType: 'inventory' },
+      { id: 'b', name: 'กระทะ', stockType: 'equipment' },
+      { id: 'c', name: 'มีดเก่า', stockType: 'inventory', stockTypeConfirmed: true },
+      { id: 'd', name: 'ไก่บด' }
+    ];
+    expect(misfiledStock(ings).map(x => [x.ing.id, x.to])).toEqual([['a', 'equipment']]);
+  });
+});
