@@ -102,6 +102,9 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const token = getStoredCredentials().telegramToken;
 
   const waiting = useMemo(() => items.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading' || stockOnly(p)), [items]);
+  // The bill being reviewed (the first one waiting until another is chosen)
+  const [chosenId, setOpenId] = useState<string | null>(null);
+  const openId = chosenId && waiting.some(p => p.id === chosenId) ? chosenId : waiting[0]?.id || null;
   const history = useMemo(() => items.filter(p => (p.status === 'approved' || p.status === 'rejected') && !stockOnly(p)).slice(0, 50), [items]);
 
   /** The ใบรับรองแทนใบเสร็จ of an approved entry: next number of the month, the sender paid */
@@ -427,6 +430,34 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
       )}
 
       {waiting.map(p => {
+        // One bill is open at a time: every open bill built its whole form (and a list of every
+        // ingredient for each line of the bill), which froze phones with many bills waiting
+        if (p.id !== openId) {
+          const d = p.data;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setOpenId(p.id)}
+              className="w-full text-left bg-slate-900 border border-slate-800 rounded-2xl p-4 text-xs flex items-center justify-between gap-3 active:scale-[0.99]"
+            >
+              <span className="min-w-0">
+                <span className="block font-bold text-slate-100 truncate">
+                  {p.billNo ? `🔖 ${p.billNo} · ` : ''}
+                  {d?.title || p.caption || 'บิลจาก Telegram'}
+                </span>
+                <span className="block text-slate-400 mt-0.5 truncate">
+                  {p.status === 'reading' ? '⏳ กำลังอ่านบิล' : p.status === 'failed' ? '⚠️ อ่านไม่สำเร็จ' : stockOnly(p) ? '📦 รอรับเข้าสต็อก' : 'รออนุมัติ'} · จาก {p.senderName}
+                  {d?.date ? ` · ${d.date}` : ''}
+                </span>
+              </span>
+              <span className="shrink-0 text-right">
+                <span className="block font-mono font-bold text-rose-300">{d ? baht(d.amount) : ''}</span>
+                <span className="block text-sky-300 mt-0.5">เปิดดู ▾</span>
+              </span>
+            </button>
+          );
+        }
         const f = form(p);
         const only = stockOnly(p);
         const vat = f.kind === 'expense' && f.includeVat ? vatInside(f.amount, vatRate) : 0;
