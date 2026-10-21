@@ -307,9 +307,11 @@ export function buildBalanceSheet(i: BalanceSheetInput): BalanceSheet {
   };
 }
 
+// One formatter for every amount (toLocaleString with options builds a new one each call: slow
+// when a list shows hundreds of amounts)
+const MONEY_FORMAT = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /** Baht with two decimals, e.g. 1,234.50 */
-export const money = (n: number): string =>
-  (Number.isFinite(n) ? n : 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const money = (n: number): string => MONEY_FORMAT.format(Number.isFinite(n) ? n : 0);
 
 export interface CashFlowStatement {
   // Operating activities (direct method)

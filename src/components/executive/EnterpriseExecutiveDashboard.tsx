@@ -1377,9 +1377,9 @@ export const EnterpriseExecutiveDashboard: React.FC<EnterpriseExecutiveDashboard
                 formatter={(val: any) => [`฿${Number(val).toLocaleString()}`, '']}
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-              {activeMetrics.sales && <Area type="monotone" dataKey="sales" name="ยอดขาย" stroke="#f59e0b" fillOpacity={1} fill="url(#colorSales)" strokeWidth={2} />}
-              {activeMetrics.profit && <Area type="monotone" dataKey="profit" name="กำไรขั้นต้น" stroke="#10b981" fillOpacity={1} fill="url(#colorProfit)" strokeWidth={2} />}
-              {activeMetrics.cost && <Area type="monotone" dataKey="cost" name="ต้นทุน" stroke="#f43f5e" fillOpacity={1} fill="url(#colorCost)" strokeWidth={2} />}
+              {activeMetrics.sales && <Area type="monotone" dataKey="sales" name="ยอดขาย" stroke="#f59e0b" fillOpacity={1} fill="url(#colorSales)" strokeWidth={2} isAnimationActive={false} />}
+              {activeMetrics.profit && <Area type="monotone" dataKey="profit" name="กำไรขั้นต้น" stroke="#10b981" fillOpacity={1} fill="url(#colorProfit)" strokeWidth={2} isAnimationActive={false} />}
+              {activeMetrics.cost && <Area type="monotone" dataKey="cost" name="ต้นทุน" stroke="#f43f5e" fillOpacity={1} fill="url(#colorCost)" strokeWidth={2} isAnimationActive={false} />}
             </AreaChart>
           </ResponsiveContainer>
         </div>
