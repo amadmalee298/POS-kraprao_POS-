@@ -1146,7 +1146,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     });
 
-    const unsubExpenses = subscribeToCentralExpenses(1000, (centralExpList, removedIds) => {
+    const unsubExpenses = subscribeToCentralExpenses(400, (centralExpList, removedIds) => {
       setExpenses(prev => {
         let list = prev;
         let hasNew = false;
@@ -1211,7 +1211,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     });
 
-    const unsubIncomes = subscribeToCentralIncomes(1000, (centralIncList, removedIds) => {
+    const unsubIncomes = subscribeToCentralIncomes(400, (centralIncList, removedIds) => {
       setIncomes(prev => {
         let list = prev;
         let hasNew = false;
