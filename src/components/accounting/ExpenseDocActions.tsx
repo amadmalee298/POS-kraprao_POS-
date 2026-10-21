@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { CloudUpload, ExternalLink, FileSignature, Image as ImageIcon, Loader2, PenLine } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { useKeyedList } from '../../hooks/useKeyedList';
@@ -46,10 +46,26 @@ export function useExpenseDrive() {
   return { enabled, save, busyId, message, setMessage, signatures };
 }
 
+/**
+ * The person's remembered signature: the same name, else the name without notes or titles
+ * ("อาห์มัด (เจ้าของร้าน)" = "อาห์มัด"), else the same first name when only one signature has it
+ */
+export function matchSignature<T extends { name: string }>(list: T[], name?: string): T | undefined {
+  if (!name?.trim()) return undefined;
+  const exact = list.find(s => s.name.trim() === name.trim());
+  if (exact) return exact;
+  const bare = (n: string) => n.replace(/\([^)]*\)/g, ' ').replace(/^\s*(นาย|นางสาว|นาง|น\.ส\.)\s*/, '').replace(/\s+/g, ' ').trim();
+  const plain = list.find(s => bare(s.name) === bare(name));
+  if (plain) return plain;
+  const first = bare(name).split(' ')[0];
+  const sameFirst = first ? list.filter(s => bare(s.name).split(' ')[0] === first) : [];
+  return sameFirst.length === 1 ? sameFirst[0] : undefined;
+}
+
 /** Signatures remembered per person, shared by the shop's devices */
 export function useSavedSignatures() {
   const [list, setList] = useKeyedList<SavedSignature>('signatures', 'POS_SIGNATURES', undefined);
-  const find = useCallback((name?: string) => (name ? list.find(s => s.name.trim() === name.trim()) : undefined), [list]);
+  const find = useCallback((name?: string) => matchSignature(list, name), [list]);
   const remember = useCallback(
     (name: string, dataUrl: string) => {
       if (!name.trim()) return;
@@ -80,22 +96,40 @@ export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<t
   // Bought without a tax invoice (e.g. from the Telegram bot) and no ใบรับรองแทนใบเสร็จ yet
   const canIssue = !sr && !e.includeVat && !e.vat36;
 
+  // Each person named on the receipt signs with their remembered signature, without asking
+  const autoSpender = sr && !sr.spenderSignature ? signatures.find(sr.spender)?.dataUrl : undefined;
+  const autoApprover = sr && !sr.approverSignature && sr.approver ? signatures.find(sr.approver)?.dataUrl : undefined;
+  useEffect(() => {
+    if (!sr || (!autoSpender && !autoApprover)) return;
+    updateExpense(e.id, {
+      substituteReceipt: {
+        ...sr,
+        ...(autoSpender ? { spenderSignature: autoSpender } : {}),
+        ...(autoApprover ? { approverSignature: autoApprover, approvedAt: sr.approvedAt || new Date().toLocaleDateString('sv-SE') } : {})
+      }
+    });
+  }, [e.id, autoSpender, autoApprover]);
+
   /** Give the expense its ใบรับรองแทนใบเสร็จ (next number of the month), then sign and print it */
   const issue = () => {
     const sender = e.note?.match(/จาก Telegram: ([^·]+)/)?.[1]?.trim();
     const spender = window.prompt('ชื่อผู้เบิกจ่าย (ผู้ที่จ่ายเงิน)', sender || currentUser?.name || '');
     if (spender === null) return;
     const docNo = nextSubstituteNo(expenses, e.date);
-    updateExpense(e.id, { substituteReceipt: { docNo, spender: spender.trim() || sender || currentUser?.name || '' } });
+    const who = spender.trim() || sender || currentUser?.name || '';
+    updateExpense(e.id, { substituteReceipt: { docNo, spender: who, spenderSignature: signatures.find(who)?.dataUrl } });
   };
 
   const sign = (who: 'spender' | 'approver', dataUrl: string, remember: boolean) => {
     if (!sr) return;
-    const name = (who === 'spender' ? sr.spender : sr.approver) || '';
+    // No approver named yet: the one signing is the approver
+    const approver = sr.approver || currentUser?.name || '';
+    const name = (who === 'spender' ? sr.spender : approver) || '';
     if (remember) signatures.remember(name, dataUrl);
     const next: Expense = {
       ...e,
-      substituteReceipt: who === 'spender' ? { ...sr, spenderSignature: dataUrl } : { ...sr, approverSignature: dataUrl, approvedAt: new Date().toISOString().slice(0, 10) }
+      substituteReceipt:
+        who === 'spender' ? { ...sr, spenderSignature: dataUrl } : { ...sr, approver: approver || undefined, approverSignature: dataUrl, approvedAt: new Date().toLocaleDateString('sv-SE') }
     };
     updateExpense(e.id, { substituteReceipt: next.substituteReceipt });
     setSigning(null);
@@ -126,8 +160,8 @@ export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<t
       {signing && sr && (
         <SignaturePad
           title={signing === 'spender' ? 'ลายเซ็นผู้เบิกจ่าย' : 'ลายเซ็นผู้อนุมัติ'}
-          name={(signing === 'spender' ? sr.spender : sr.approver) || ''}
-          saved={signatures.find(signing === 'spender' ? sr.spender : sr.approver)}
+          name={(signing === 'spender' ? sr.spender : sr.approver || currentUser?.name) || ''}
+          saved={signatures.find(signing === 'spender' ? sr.spender : sr.approver || currentUser?.name)}
           onSave={(d, r) => sign(signing, d, r)}
           onClose={() => setSigning(null)}
         />

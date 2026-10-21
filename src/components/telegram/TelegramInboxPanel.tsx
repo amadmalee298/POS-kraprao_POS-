@@ -108,12 +108,19 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const history = useMemo(() => items.filter(p => (p.status === 'approved' || p.status === 'rejected') && !stockOnly(p)).slice(0, 50), [items]);
 
   /** The ใบรับรองแทนใบเสร็จ of an approved entry: next number of the month, the sender paid */
-  const substituteFor = (p: PendingReceipt, date: string, payee?: string) => ({
-    docNo: nextSubstituteNo(expenses, date),
-    spender: p.senderName || '',
-    approver: currentUser?.name || undefined,
-    payee: payee && payee !== p.data?.title ? payee : undefined
-  });
+  const substituteFor = (p: PendingReceipt, date: string, payee?: string) => {
+    // Signed with each person's remembered signature (the approver approves it right now)
+    const spenderSignature = drive.signatures.find(p.senderName)?.dataUrl;
+    const approverSignature = drive.signatures.find(currentUser?.name)?.dataUrl;
+    return {
+      docNo: nextSubstituteNo(expenses, date),
+      spender: p.senderName || '',
+      approver: currentUser?.name || undefined,
+      payee: payee && payee !== p.data?.title ? payee : undefined,
+      ...(spenderSignature ? { spenderSignature } : {}),
+      ...(approverSignature ? { approverSignature, approvedAt: new Date().toLocaleDateString('sv-SE') } : {})
+    };
+  };
 
   /**
    * Approved entries whose expense / income is not in this device's books (e.g. lost when a phone
