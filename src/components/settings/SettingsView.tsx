@@ -62,6 +62,7 @@ import {
   FileText
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
+import { CloudPictureCleanup } from './CloudPictureCleanup';
 import { calculateOrderTotals } from '../../utils/tax';
 import { StaffSchedulingPanel } from './StaffSchedulingPanel';
 import { StaffPinClockTerminal } from './StaffPinClockTerminal';
@@ -1803,6 +1804,9 @@ export const SettingsView: React.FC = () => {
                   </button>
                 </div>
               </div>
+
+              {/* Bill pictures still inside cloud records: moved out once */}
+              <CloudPictureCleanup />
 
               {/* SAVE SYNC SETTINGS BUTTON */}
               <button
