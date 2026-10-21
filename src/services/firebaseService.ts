@@ -687,6 +687,25 @@ export function subscribeToStockHistory(
 /**
  * Real-time listener for central branches
  */
+/**
+ * Whether this device is talking to the cloud right now (from Firestore's own connection, not from
+ * how long writes take: a write waiting behind large pending ones said "connecting" for minutes).
+ * `live` false: answering from this device's copy (offline or reconnecting).
+ */
+export function watchCloudConnection(branchId: string, onChange: (live: boolean) => void, onError?: (err: Error) => void): () => void {
+  if (!dbInstance) return () => {};
+  try {
+    return onSnapshot(
+      doc(dbInstance, 'branches', branchId, 'status', 'sync'),
+      { includeMetadataChanges: true },
+      snap => onChange(!snap.metadata.fromCache),
+      err => onError?.(err)
+    );
+  } catch {
+    return () => {};
+  }
+}
+
 export function subscribeToCentralBranches(
   onUpdate: (branchesMap: Record<string, CentralBranchLiveStats>) => void,
   onError?: (err: Error) => void

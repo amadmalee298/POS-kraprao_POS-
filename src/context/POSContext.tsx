@@ -62,6 +62,7 @@ import {
   subscribeToCentralBranches,
   isFirebaseAvailable,
   syncExpenseToFirestore,
+  watchCloudConnection,
   setLongPolling,
   usesLongPolling,
   deleteExpenseFromFirestore,
@@ -1038,7 +1039,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // A write the cloud never answers (a network holding the connection open) shows as such
     let answered = false;
     const silent = setTimeout(() => {
-      if (!answered) setFirebaseSyncState(prev => (prev.status === 'connected' ? prev : { ...prev, status: 'error', errorMessage: 'คลาวด์ไม่ตอบกลับ ลองกด "เชื่อมต่อคลาวด์ใหม่"' }));
+      if (!answered && !cloudLiveRef.current) setFirebaseSyncState(prev => (prev.status === 'connected' ? prev : { ...prev, status: 'error', errorMessage: 'คลาวด์ไม่ตอบกลับ ลองกด "เชื่อมต่อคลาวด์ใหม่"' }));
     }, 25_000);
     syncBranchToFirestore(currentBranch, {
       totalSalesToday: todaySales,
@@ -1063,6 +1064,29 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     });
   }, [currentBranch.id, effectiveOffline, orders.length, ingredients.length]);
+
+  // The cloud connection as Firestore sees it: connected while it talks to the server, even when
+  // writes wait in line behind large ones (they used to keep "กำลังเชื่อม" up for minutes)
+  const cloudLiveRef = useRef(false);
+  useEffect(() => {
+    if (!isFirebaseAvailable() || effectiveOffline) return;
+    return watchCloudConnection(
+      currentBranch.id,
+      live => {
+        cloudLiveRef.current = live;
+        setFirebaseSyncState(prev =>
+          live
+            ? { ...prev, status: 'connected', errorMessage: undefined, lastSyncedAt: new Date().toISOString(), lastSyncedBranch: currentBranch.name }
+            : prev.status === 'connected'
+              ? { ...prev, status: 'syncing' }
+              : prev
+        );
+      },
+      () => {
+        cloudLiveRef.current = false;
+      }
+    );
+  }, [currentBranch.id, effectiveOffline]);
 
   // Real-time listener for central multi-branch statuses
   useEffect(() => {
@@ -1545,7 +1569,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (pendingOrders.length === 0) {
       console.log('[POS Sync Queue] ℹ️ No pending offline orders in queue.');
       if (isFirebaseAvailable() && !effectiveOffline) {
-        setFirebaseSyncState(prev => ({ ...prev, status: 'syncing' }));
+        setFirebaseSyncState(prev => (cloudLiveRef.current ? prev : { ...prev, status: 'syncing' }));
         await flushPendingStock();
         await flushPendingHistory();
         await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false, onlyMissing: true });
@@ -1569,7 +1593,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     console.log(`[POS Sync Queue] 🔄 Initiating cloud synchronization for ${pendingOrders.length} offline order(s)...`);
     setFirebaseSyncState(prev => ({
       ...prev,
-      status: 'syncing',
+      status: cloudLiveRef.current ? prev.status : 'syncing',
       pendingSyncCount: pendingOrders.length
     }));
 
@@ -1698,7 +1722,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     }
 
-    setFirebaseSyncState(prev => ({ ...prev, status: 'syncing' }));
+    setFirebaseSyncState(prev => (cloudLiveRef.current ? prev : { ...prev, status: 'syncing' }));
     try {
       const purge = options?.purgeCloud !== false && (settings.cloudPurgeDeletions !== false);
       const res = await syncFullCatalogToFirestore({
@@ -4150,8 +4174,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const key = `${kind}:${rec.id}`;
     markUnsent(key, true);
     if (!isFirebaseAvailable()) return;
-    void Promise.all(recordImageRefs(rec).map(ref => uploadImageNow(ref)))
-      .then(() => send(rec))
+    // The record goes at once; its pictures follow in the background (a large picture first in
+    // line held the record and everything after it)
+    void send(rec)
       .then(ok => ok && markUnsent(key, false))
       .catch(err => console.warn('[POSContext] Failed to sync record to Firestore:', err));
   };
@@ -4166,13 +4191,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           ? await (async () => {
               const rec = incomesRef.current.find(r => r.id === id);
               if (!rec) return true; // deleted since
-              await Promise.all(recordImageRefs(rec).map(ref => uploadImageNow(ref)));
               return syncIncomeToFirestore(rec, currentBranch);
             })()
           : await (async () => {
               const rec = expensesRef.current.find(r => r.id === id);
               if (!rec) return true;
-              await Promise.all(recordImageRefs(rec).map(ref => uploadImageNow(ref)));
               return syncExpenseToFirestore(rec, currentBranch);
             })();
       if (ok) markUnsent(key, false);
