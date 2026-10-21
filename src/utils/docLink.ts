@@ -10,7 +10,8 @@ import type { Expense } from '../types';
 
 export interface DocLinkData {
   shop: { name: string; taxId?: string; address?: string; phone?: string };
-  expense: Pick<Expense, 'date' | 'title' | 'amount' | 'note'> & { substituteReceipt?: Pick<NonNullable<Expense['substituteReceipt']>, 'docNo' | 'spender' | 'payee' | 'approver' | 'approvedAt'> };
+  /** `id`: the expense, so a signature drawn on the page can be saved with it (shop account signed in) */
+  expense: Pick<Expense, 'date' | 'title' | 'amount' | 'note'> & { id?: string; substituteReceipt?: Pick<NonNullable<Expense['substituteReceipt']>, 'docNo' | 'spender' | 'payee' | 'approver' | 'approvedAt'> };
 }
 
 const toBase64Url = (bytes: Uint8Array) => {
@@ -31,7 +32,8 @@ export function encodeDocLink(data: DocLinkData): string {
     v: 1,
     s: [data.shop.name, data.shop.taxId || '', data.shop.address || '', data.shop.phone || ''],
     e: [data.expense.date, data.expense.title, data.expense.amount, data.expense.note || ''],
-    r: sr ? [sr.docNo, sr.spender, sr.payee || '', sr.approver || '', sr.approvedAt || ''] : null
+    r: sr ? [sr.docNo, sr.spender, sr.payee || '', sr.approver || '', sr.approvedAt || ''] : null,
+    ...(data.expense.id ? { i: data.expense.id } : {})
   };
   return toBase64Url(deflateSync(strToU8(JSON.stringify(compact)), { level: 9 }));
 }
@@ -50,6 +52,7 @@ export function decodeDocLink(code: string): DocLinkData | null {
         title: String(title),
         amount: Number(amount) || 0,
         note: String(note || ''),
+        ...(typeof c.i === 'string' && c.i ? { id: c.i } : {}),
         substituteReceipt: r ? { docNo: r[0], spender: r[1], payee: r[2] || undefined, approver: r[3] || undefined, approvedAt: r[4] || undefined } : undefined
       }
     };

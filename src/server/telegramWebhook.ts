@@ -391,7 +391,7 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
     scan,
     docUrl: e =>
       e.substituteReceipt && config.appUrl
-        ? docLinkUrl(config.appUrl, { shop: config.shop || { name: '' }, expense: { date: e.date, title: e.title, amount: e.amount, note: e.note, substituteReceipt: e.substituteReceipt } })
+        ? docLinkUrl(config.appUrl, { shop: config.shop || { name: '' }, expense: { id: e.id, date: e.date, title: e.title, amount: e.amount, note: e.note, substituteReceipt: e.substituteReceipt } })
         : undefined
   };
 

@@ -2675,6 +2675,30 @@ export function setLongPolling(on: boolean): void {
 }
 
 /**
+ * A signature drawn on a document page (opened from the Telegram bot) saved with its expense.
+ * Only with the shop account signed in on this browser; false when it could not be saved.
+ */
+export async function saveExpenseSignature(
+  expenseId: string,
+  change: { spenderSignature?: string; approverSignature?: string; approver?: string; approvedAt?: string }
+): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine || !expenseId) return false;
+  await waitForFirebaseAuth();
+  const user = authInstance?.currentUser;
+  if (!user || user.isAnonymous) return false;
+  const id = expenseId.startsWith('exp-') ? expenseId : `exp-${expenseId}`;
+  const fields: Record<string, unknown> = { syncedAt: new Date().toISOString(), updatedAt: serverTimestamp() };
+  Object.entries(change).forEach(([k, v]) => v !== undefined && (fields[`substituteReceipt.${k}`] = v));
+  try {
+    await updateDoc(doc(dbInstance, 'expenses', id), fields);
+    return true;
+  } catch (err) {
+    console.warn('[Firebase Service] Could not save the signature:', err);
+    return false;
+  }
+}
+
+/**
  * Every expense and income in the cloud that still holds its bill pictures gets them moved into
  * their own documents (branches/<b>/config/img_<id>) and a reference instead: the records every
  * device reads become small. A few records at a time, so the phone running it holds little.
