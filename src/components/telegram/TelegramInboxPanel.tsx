@@ -38,6 +38,64 @@ const billItems = (p: PendingReceipt): BillItem[] => {
 
 const APPROVER_ROLES = ['admin', 'manager'];
 
+/** Most matches listed at once in the ingredient picker (the shop can have hundreds) */
+const PICKER_LIMIT = 60;
+
+/**
+ * One list of the shop's ingredients for the line being matched. Each line of the bill used to
+ * carry its own dropdown of every ingredient (thousands of entries on the page), which left
+ * iPhones with black, unpainted areas and froze the page.
+ */
+const IngredientPicker: React.FC<{
+  ingredients: Ingredient[];
+  label: string;
+  onPick: (value: string) => void;
+  onClose: () => void;
+}> = ({ ingredients, label, onPick, onClose }) => {
+  const [q, setQ] = useState('');
+  const matches = useMemo(() => {
+    const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const typed = q.trim().toLowerCase();
+    const list = words.length
+      ? ingredients
+          .filter(i => words.every(w => i.name.toLowerCase().includes(w)))
+          // Names that start with what was typed come first
+          .sort((a, b) => Number(!a.name.toLowerCase().startsWith(typed)) - Number(!b.name.toLowerCase().startsWith(typed)))
+      : ingredients;
+    const near = !words.length && label ? matchIngredient(label, ingredients) : undefined;
+    return near ? [near, ...list.filter(i => i.id !== near.id)] : list;
+  }, [q, ingredients, label]);
+  return (
+    <div className="fixed inset-0 z-[90] bg-slate-950 flex flex-col text-xs" role="dialog" aria-label="เลือกวัตถุดิบ">
+      <div className="p-3 border-b border-slate-800 flex items-center gap-2">
+        <input
+          autoFocus
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          placeholder="ค้นหาวัตถุดิบ..."
+          className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-sky-500"
+        />
+        <button type="button" onClick={onClose} className="h-10 px-3 rounded-lg border border-slate-700 text-slate-300">
+          ปิด
+        </button>
+      </div>
+      {label && <div className="px-3 pt-2 text-slate-400">ในบิล: {label}</div>}
+      <div className="flex-1 overflow-y-auto overscroll-contain p-3 space-y-1.5">
+        <button type="button" onClick={() => onPick('__new__')} className="w-full text-left px-3 py-2.5 rounded-lg border border-sky-700/60 bg-sky-950/40 text-sky-200 font-bold">
+          ＋ สร้างวัตถุดิบใหม่{label ? ` “${label}”` : ''}
+        </button>
+        {matches.slice(0, PICKER_LIMIT).map(i => (
+          <button key={i.id} type="button" onClick={() => onPick(i.id)} className="w-full text-left px-3 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-100">
+            {i.name} <span className="text-slate-500">({i.unit})</span>
+          </button>
+        ))}
+        {matches.length > PICKER_LIMIT && <p className="text-center text-slate-500 py-2">อีก {matches.length - PICKER_LIMIT} รายการ พิมพ์ค้นหาเพื่อหาให้เจอ</p>}
+        {!matches.length && <p className="text-center text-slate-500 py-4">ไม่พบ “{q}” กด “＋ สร้างวัตถุดิบใหม่” ได้</p>}
+      </div>
+    </div>
+  );
+};
+
 /** Recorded by the bot already (บันทึกทันที): only the goods still have to go into stock */
 const stockOnly = (p: PendingReceipt) => p.status === 'approved' && !!p.stockPending && !p.stockAdded?.length;
 const NEW_INGREDIENT_UNITS = ['kg', 'g', 'l', 'ml', 'ชิ้น', 'ฟอง', 'ขวด', 'ถุง', 'แพ็ค', 'กล่อง'];
@@ -89,10 +147,15 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const [images, setImages] = useState<Record<string, string>>({});
   // Bills shown on screen: a Telegram link the phone loads itself (no copy in the app's memory)
   const [shown, setShown] = useState<Record<string, string>>({});
+  // The bill picture opens over the page (drawn inside the scrolling page it left iPhones with black areas)
+  const [viewing, setViewing] = useState<string | null>(null);
   const showBill = async (p: PendingReceipt) => {
-    const url = await telegramFileUrl(token, p.storeFileId || p.fileId);
+    const url = shown[p.id] || (await telegramFileUrl(token, p.storeFileId || p.fileId));
     setShown(prev => Object.fromEntries([...Object.entries(prev).filter(([k]) => k !== p.id).slice(-4), [p.id, url]]));
+    setViewing(p.id);
   };
+  /** The bill line whose ingredient is being chosen */
+  const [picking, setPicking] = useState<{ id: string; key: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -208,6 +271,20 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const editRow = (p: PendingReceipt, key: string, change: Partial<IntakeRow>) => {
     const f = form(p);
     edit(p, { stock: stockRows(p, f).map(r => (r.key === key ? { ...r, ...change } : r)) });
+  };
+  const pickIngredient = (p: PendingReceipt, row: IntakeRow, value: string) => {
+    const f = form(p);
+    if (value !== '__new__') return editRow(p, row.key, { ingredientId: value, selected: !!value, unitMismatch: false, newIngredient: undefined });
+    editRow(p, row.key, {
+      ingredientId: '',
+      selected: true,
+      unitMismatch: false,
+      newIngredient: {
+        name: row.label,
+        unit: row.billUnit || (f.category === 'raw_material' ? 'kg' : 'ชิ้น'),
+        category: f.category === 'supplies' ? 'supplies' : f.category === 'equipment' ? 'equipment' : ingredientCategories[0]?.id || 'dry_good'
+      }
+    });
   };
   const addRow = (p: PendingReceipt) => {
     const f = form(p);
@@ -474,22 +551,11 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
             <div className="space-y-2">
               {!p.fileId ? (
                 <div className="w-full h-20 rounded-xl border border-dashed border-slate-700 text-slate-500 flex items-center justify-center">พิมพ์จดในแชท (ไม่มีรูป)</div>
-              ) : shown[p.id] ? (
-                <a href={shown[p.id]} target="_blank" rel="noopener noreferrer">
-                  <img
-                    src={shown[p.id]}
-                    alt="รูปบิลจาก Telegram"
-                    decoding="async"
-                    className="w-full max-h-[70vh] object-contain rounded-xl border border-slate-700 bg-white"
-                    // The link expired (about an hour): ask Telegram for a new one
-                    onError={() => setShown(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== p.id)))}
-                  />
-                </a>
               ) : (
                 <button
                   type="button"
                   onClick={() => showBill(p).catch(e => setError(e.message))}
-                  className="w-full h-32 rounded-xl border border-dashed border-slate-700 text-slate-400 flex flex-col items-center justify-center gap-1"
+                  className="w-full h-16 md:h-32 rounded-xl border border-dashed border-slate-700 text-slate-400 flex flex-col items-center justify-center gap-1"
                 >
                   <ImageIcon className="w-5 h-5" /> ดูรูปบิล
                 </button>
@@ -646,34 +712,14 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                               <div className="text-amber-300 font-bold">ไม่พบในคลัง: เลือกวัตถุดิบ หรือเลือก “＋ สร้างวัตถุดิบใหม่”</div>
                             )}
                             <div className="grid grid-cols-[1fr_90px] gap-2">
-                              <select
-                                value={row.newIngredient ? '__new__' : row.ingredientId}
-                                onChange={e =>
-                                  e.target.value === '__new__'
-                                    ? editRow(p, row.key, {
-                                        ingredientId: '',
-                                        selected: true,
-                                        unitMismatch: false,
-                                        newIngredient: {
-                                          name: row.label,
-                                          unit: row.billUnit || (f.category === 'raw_material' ? 'kg' : 'ชิ้น'),
-                                          category:
-                                            f.category === 'supplies' ? 'supplies' : f.category === 'equipment' ? 'equipment' : ingredientCategories[0]?.id || 'dry_good'
-                                        }
-                                      })
-                                    : editRow(p, row.key, { ingredientId: e.target.value, selected: !!e.target.value, unitMismatch: false, newIngredient: undefined })
-                                }
-                                className={field}
+                              <button
+                                type="button"
+                                onClick={() => setPicking({ id: p.id, key: row.key })}
+                                className={`${field} text-left truncate ${ing || row.newIngredient ? '' : 'text-slate-400'}`}
                                 aria-label="วัตถุดิบ"
                               >
-                                <option value="">เลือกวัตถุดิบ...</option>
-                                <option value="__new__">＋ สร้างวัตถุดิบใหม่{row.label ? ` “${row.label}”` : ''}</option>
-                                {sortedIngredients.map(i => (
-                                  <option key={i.id} value={i.id}>
-                                    {i.name} ({i.unit})
-                                  </option>
-                                ))}
-                              </select>
+                                {ing ? `${ing.name} (${ing.unit})` : row.newIngredient ? `＋ ใหม่: ${row.newIngredient.name || row.label}` : 'เลือกวัตถุดิบ... ▾'}
+                              </button>
                               <label className="relative">
                                 <span className="sr-only">จำนวน</span>
                                 <input
@@ -844,6 +890,50 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
               ))}
             </ul>
           )}
+        </div>
+      )}
+
+      {picking &&
+        (() => {
+          const p = items.find(x => x.id === picking.id);
+          const row = p && stockRows(p, form(p)).find(r => r.key === picking.key);
+          if (!p || !row) return null;
+          return (
+            <IngredientPicker
+              ingredients={sortedIngredients}
+              label={row.label}
+              onClose={() => setPicking(null)}
+              onPick={value => {
+                pickIngredient(p, row, value);
+                setPicking(null);
+              }}
+            />
+          );
+        })()}
+
+      {viewing && shown[viewing] && (
+        <div className="fixed inset-0 z-[90] bg-black flex flex-col" role="dialog" aria-label="รูปบิล">
+          <div className="p-2 flex justify-between items-center gap-2 text-xs">
+            <a href={shown[viewing]} target="_blank" rel="noopener noreferrer" className="h-10 px-3 rounded-lg border border-slate-700 text-slate-300 flex items-center">
+              เปิดรูปเต็ม
+            </a>
+            <button type="button" onClick={() => setViewing(null)} className="h-10 px-4 rounded-lg bg-slate-800 text-slate-100 font-bold">
+              ปิด
+            </button>
+          </div>
+          <img
+            src={shown[viewing]}
+            alt="รูปบิลจาก Telegram"
+            decoding="async"
+            className="flex-1 min-h-0 w-full object-contain"
+            // The link expired (about an hour): ask Telegram for a new one next time
+            onError={() => {
+              const id = viewing;
+              setViewing(null);
+              setShown(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== id)));
+              setError('เปิดรูปบิลไม่ได้ ลองกด “ดูรูปบิล” อีกครั้ง');
+            }}
+          />
         </div>
       )}
     </div>
