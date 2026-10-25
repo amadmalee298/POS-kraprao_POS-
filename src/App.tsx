@@ -34,6 +34,7 @@ import { TelegramInboxPoller } from './components/telegram/TelegramInboxPoller';
 import { ExpenseDriveAutoSync } from './components/accounting/ExpenseDriveAutoSync';
 import { SheetsScriptAutoSync } from './components/sheets/SheetsScriptAutoSync';
 import { FilingReminder } from './components/filings/FilingReminder';
+import { ScheduleSync } from './components/ScheduleSync';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
 import { AutoCloudPictureCleanup } from './components/settings/CloudPictureCleanup';
 import { startupCrashes } from './utils/bootGuard';
@@ -211,6 +212,7 @@ const MainLayout: React.FC = () => {
       <AutoCloudPictureCleanup branchId={currentBranch?.id || ''} allowed={!effectiveOffline && (currentUser?.role === 'admin' || currentUser?.role === 'manager')} />
       <SheetsScriptAutoSync />
       <FilingReminder />
+      <ScheduleSync />
 
       {/* Visual Conflict Resolver Modal for Local vs Cloud Mismatch */}
       <SyncConflictResolverModal

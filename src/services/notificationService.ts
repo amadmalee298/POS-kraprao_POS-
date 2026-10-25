@@ -487,10 +487,14 @@ export function setNotificationShopName(name: string | undefined) {
 }
 /** Last line of every message: which shop (and branch) it is about */
 function shopLine(shopName?: string, branch?: Branch): string {
+  const label = shopLabel(shopName, branch);
+  return label ? `🏪 ${escHtml(label)}` : '';
+}
+/** The shop (and branch) name, as the last line of messages shows it */
+export function shopLabel(shopName?: string, branch?: Branch): string {
   const shop = (shopName || notifyShopName || '').trim();
   const br = (branch?.name || '').trim();
-  const parts = [shop, br && br !== shop ? br : ''].filter(Boolean);
-  return parts.length ? `🏪 ${escHtml(parts.join(' · '))}` : '';
+  return [shop, br && br !== shop ? br : ''].filter(Boolean).join(' · ');
 }
 const timeOf = (iso?: string) => {
   const d = iso ? new Date(iso) : new Date();

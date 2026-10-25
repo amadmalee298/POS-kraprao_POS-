@@ -2855,3 +2855,19 @@ export async function publishPublicMenu(branchId: string, menu: object): Promise
     return false;
   }
 }
+
+/**
+ * The shop's sign-in sealed by its server (only the server can open it), where the server's
+ * scheduled run finds it: public_menu/sched-<branch>. See src/server/scheduledJobs.
+ */
+export async function savePublicSchedule(branchId: string, sealed: string): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
+  try {
+    await setDoc(doc(dbInstance, 'public_menu', `sched-${branchId}`), { sched: sealed, updatedAt: serverTimestamp() });
+    return true;
+  } catch (err) {
+    console.warn('[Firebase Service] Failed to save the schedule sign-in:', err);
+    return false;
+  }
+}
