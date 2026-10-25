@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/telegram/webhook?tick=1&p=krua-kaprao-pos&k=AIzaSyAu7KL49K6c3k3i5aCZNDmwgTLZg6jajec&o=https%3A%2F%2Famadmalee298.github.io",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/telegram/webhook?tick=1&p=krua-kaprao-pos&k=AIzaSyAu7KL49K6c3k3i5aCZNDmwgTLZg6jajec&o=https%3A%2F%2Famadmalee298.github.io",
+      "schedule": "0 2 * * *"
+    }
+  ]
+}
