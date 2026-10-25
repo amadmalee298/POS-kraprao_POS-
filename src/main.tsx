@@ -10,7 +10,7 @@ const tableLink = readTableFromUrl(window.location.search);
 // A document link from the Telegram bot (#doc=…) opens just that document (no login)
 const docCode = window.location.hash.startsWith('#doc=') ? window.location.hash.slice(5) : '';
 // The staff app's local data is read from the browser's database before the app starts
-// (after a start-up crash loop, the cloud cache is cleared first: see utils/bootGuard)
+// (after the phone closed the app, it opens lighter: see utils/bootGuard)
 const App = lazy(() =>
   import('./utils/bootGuard.ts')
     .then(m => m.bootGuard())

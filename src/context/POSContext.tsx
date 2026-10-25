@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { isLowStock } from '../utils/stockTypes';
 import { DEFAULT_PIN_HASH, hashPin, isHashedPin } from '../utils/pins';
 import { bigStore, flushBigStore } from '../utils/bigStore';
+import { lightStart } from '../utils/bootGuard';
 import { offloadRecordImages, recordImageRefs, uploadImageNow } from '../services/imageStore';
 import { carriesPictures } from '../utils/imageRef';
 import { averageCostAfterPrep } from '../utils/prep';
@@ -1112,7 +1113,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     purgeStubOrderDocs().catch(() => undefined);
 
-    const unsubOrders = subscribeToRecentCentralOrders(1000, (centralOrderList, removedIds) => {
+    // The big lists arrive one after another (each one's first download was arriving at the same
+    // moment as the others), and smaller after the phone closed the app (see utils/bootGuard)
+    const light = lightStart();
+    const later = (ms: number, start: () => () => void) => {
+      let stop: (() => void) | null = null;
+      const timer = setTimeout(() => (stop = start()), ms);
+      return () => {
+        clearTimeout(timer);
+        stop?.();
+      };
+    };
+
+    const unsubOrders = subscribeToRecentCentralOrders(light ? 300 : 1000, (centralOrderList, removedIds) => {
       cloudOrdersReadyAtRef.current = cloudOrdersReadyAtRef.current || Date.now();
       let pushBack: Order[] = [];
       setOrders(prev => {
@@ -1146,7 +1159,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     });
 
-    const unsubExpenses = subscribeToCentralExpenses(400, (centralExpList, removedIds) => {
+    const unsubExpenses = later(light ? 6000 : 2500, () => subscribeToCentralExpenses(light ? 100 : 200, (centralExpList, removedIds) => {
       setExpenses(prev => {
         let list = prev;
         let hasNew = false;
@@ -1209,9 +1222,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         return list;
       });
-    });
+    }));
 
-    const unsubIncomes = subscribeToCentralIncomes(400, (centralIncList, removedIds) => {
+    const unsubIncomes = later(light ? 12000 : 5000, () => subscribeToCentralIncomes(light ? 100 : 200, (centralIncList, removedIds) => {
       setIncomes(prev => {
         let list = prev;
         let hasNew = false;
@@ -1251,7 +1264,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         return list;
       });
-    });
+    }));
 
     const unsubMenus = subscribeToMenuItems((cloudMenuList, removedIds) => {
       setMenuItems(prev => {
@@ -2475,7 +2488,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return;
       }
       setCurrentUser(user);
-      if (saved.tab) setActiveTab(saved.tab);
+      // Not the page the phone closed the app on (it would close again): the sales screen
+      if (saved.tab && !lightStart()) setActiveTab(saved.tab);
       setIsLocked(false);
     } catch {
       // no session
