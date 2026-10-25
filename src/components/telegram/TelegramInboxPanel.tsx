@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ImageIcon, Loader2, Package, RefreshCw, Send, XCircle } from 'lucide-react';
 import type { ExpenseCategory, IncomeCategory, Ingredient, PendingReceipt } from '../../types';
 import { usePOS } from '../../context/POSContext';
@@ -14,6 +14,7 @@ import { guessStockType, stockTypeForExpenseCategory, stockTypeLabel } from '../
 import { allocateCosts, BillItem, buildIntakeRows, hasTarget, IntakeRow, matchIngredient, parseItemsFromText } from '../../utils/stockIntake';
 import { nextSubstituteNo } from '../../utils/expenseDocNo';
 import { readTelegramReceipt } from './TelegramInboxPoller';
+import { claimOnce } from '../../services/firebaseService';
 
 type Form = {
   kind: 'expense' | 'income';
@@ -164,7 +165,38 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   const vatRate = vatRateOf(settings);
   const token = getStoredCredentials().telegramToken;
 
-  const waiting = useMemo(() => items.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading' || stockOnly(p)), [items]);
+  // Bills whose goods went into stock on this device. A second tap, the bill shown again by an older
+  // cloud copy, or another device must never put the same goods in twice
+  const DONE_KEY = 'POS_TG_STOCK_DONE';
+  const [doneIds, setDoneIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(DONE_KEY) || '[]') || [];
+    } catch {
+      return [];
+    }
+  });
+  const markDone = (id: string) =>
+    setDoneIds(prev => {
+      const next = [...prev.filter(x => x !== id), id].slice(-300);
+      try {
+        localStorage.setItem(DONE_KEY, JSON.stringify(next));
+      } catch {
+        // kept for this visit
+      }
+      return next;
+    });
+  const handling = useRef(new Set<string>());
+  /** This device receives the bill's goods (claimed in the cloud first); false: received already */
+  const claimStock = async (p: PendingReceipt) => {
+    if (doneIds.includes(p.id) || p.stockAdded?.length) return false;
+    // Offline or the cloud cannot be asked: received here (this device's own guards still hold)
+    return (await claimOnce(currentBranch.id, `tgstock_${p.id}`)) !== false;
+  };
+
+  const waiting = useMemo(
+    () => items.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading' || (stockOnly(p) && !doneIds.includes(p.id))),
+    [items, doneIds]
+  );
   // The bill being reviewed (the first one waiting until another is chosen)
   const [chosenId, setOpenId] = useState<string | null>(null);
   const openId = chosenId && waiting.some(p => p.id === chosenId) ? chosenId : waiting[0]?.id || null;
@@ -314,11 +346,14 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
       setError('กรอกรายการ วันที่ และยอดเงินให้ครบก่อนอนุมัติ');
       return;
     }
-    if (items.find(x => x.id === p.id)?.status === 'approved') return;
+    if (items.find(x => x.id === p.id)?.status === 'approved' || handling.current.has(p.id)) return;
     if (receivesStock(f)) {
       const left = stockRows(p, f).filter(r => r.label && (!hasTarget(r) || !r.selected || !(r.quantity > 0)));
       if (left.length && !window.confirm(`${left.map(r => r.label).join(', ')} จะไม่เข้าสต็อก (ยังไม่ได้เลือกวัตถุดิบ/จำนวน)\nอนุมัติต่อหรือไม่?`)) return;
     }
+    // A second tap while this one is still saving is ignored
+    if (handling.current.has(p.id)) return;
+    handling.current.add(p.id);
     setBusy(p.id);
     setError(null);
     try {
@@ -372,7 +407,9 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         });
       }
       const docLine = f.kind === 'expense' && !f.includeVat ? `\n📄 ใบรับรองแทนใบเสร็จ ${nextSubstituteNo(expenses, f.date)}` : '';
-      const { stockAdded, stockText } = receivesStock(f) ? receiveStock(p, f) : { stockAdded: undefined, stockText: '' };
+      const stocked = receivesStock(f) && (await claimStock(p));
+      const { stockAdded, stockText } = stocked ? receiveStock(p, f) : { stockAdded: undefined, stockText: '' };
+      if (stocked) markDone(p.id);
       const base = p.data || { vendorName: '', warnings: [], verified: false, confidenceScore: 0, vatAmount: 0, netAmount: 0 };
       patch(p.id, {
         status: 'approved',
@@ -386,6 +423,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
       });
       reply(p, `✅ อนุมัติแล้วโดย ${currentUser?.name || 'ผู้จัดการ'}${p.billNo ? ` · 🔖 ${p.billNo}` : ''}\nบันทึกเป็น${f.kind === 'expense' ? 'ค่าใช้จ่าย' : 'รายรับ'} ${f.title.trim()} ${baht(f.amount)}${docLine}${stockText}`);
     } finally {
+      handling.current.delete(p.id);
       setBusy(null);
     }
   };
@@ -441,7 +479,8 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   };
 
   /** Goods of an entry the bot recorded: into stock (the expense is already in the books) */
-  const receiveOnly = (p: PendingReceipt) => {
+  const receiveOnly = async (p: PendingReceipt) => {
+    if (handling.current.has(p.id)) return;
     const f = form(p);
     const rows = stockRows(p, f);
     if (!rows.some(r => r.selected && hasTarget(r) && r.quantity > 0)) {
@@ -450,10 +489,26 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
     }
     const left = rows.filter(r => r.label && (!hasTarget(r) || !r.selected || !(r.quantity > 0)));
     if (left.length && !window.confirm(`${left.map(r => r.label).join(', ')} จะไม่เข้าสต็อก (ยังไม่ได้เลือกวัตถุดิบ/จำนวน)\nรับเข้าต่อหรือไม่?`)) return;
+    // A second tap while this one is still saving is ignored
+    if (handling.current.has(p.id)) return;
+    handling.current.add(p.id);
+    setBusy(p.id);
     setError(null);
-    const { stockAdded, stockText } = receiveStock(p, f);
-    patch(p.id, { stockPending: false, stockAdded });
-    reply(p, `📦 รับเข้าสต็อกแล้วโดย ${currentUser?.name || 'ผู้จัดการ'} (${f.title.trim()})${stockText}`);
+    try {
+      if (!(await claimStock(p))) {
+        patch(p.id, { stockPending: false });
+        markDone(p.id);
+        setError('บิลนี้รับเข้าสต็อกไปแล้ว (ไม่รับซ้ำ)');
+        return;
+      }
+      const { stockAdded, stockText } = receiveStock(p, f);
+      markDone(p.id);
+      patch(p.id, { stockPending: false, stockAdded });
+      reply(p, `📦 รับเข้าสต็อกแล้วโดย ${currentUser?.name || 'ผู้จัดการ'} (${f.title.trim()})${stockText}`);
+    } finally {
+      handling.current.delete(p.id);
+      setBusy(null);
+    }
   };
 
   const skipStock = (p: PendingReceipt) => {
@@ -798,7 +853,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                 <div className="flex flex-wrap gap-2 pt-1">
                   <button
                     type="button"
-                    disabled={!canApprove}
+                    disabled={!canApprove || busy === p.id}
                     onClick={() => receiveOnly(p)}
                     className="h-11 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 disabled:opacity-40"
                   >
