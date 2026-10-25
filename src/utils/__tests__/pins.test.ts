@@ -58,3 +58,14 @@ describe('wrong PIN lockout', () => {
     expect(notePinAttempt(false, t + 200_000)).toBe(0);
   });
 });
+
+describe('userPinMatches', () => {
+  it('accepts the PIN and the PINs the person had on another device', async () => {
+    const { userPinMatches, hashPinWithSalt } = await import('../pins');
+    const u = { pin: hashPinWithSalt('4321', 's1'), altPins: [hashPinWithSalt('8642', 's2')] };
+    expect(userPinMatches(u, '4321')).toBe(true);
+    expect(userPinMatches(u, '8642')).toBe(true);
+    expect(userPinMatches(u, '1111')).toBe(false);
+    expect(userPinMatches(undefined, '4321')).toBe(false);
+  });
+});

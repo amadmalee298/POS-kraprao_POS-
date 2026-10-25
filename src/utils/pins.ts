@@ -91,6 +91,12 @@ export function pinMatches(stored: string | undefined, entered: string): boolean
   return hashPinWithSalt(p, salt) === stored;
 }
 
+/** The typed PIN is this person's (their PIN, or one they had on another device) */
+export function userPinMatches(u: { pin?: string; altPins?: string[] } | undefined, entered: string): boolean {
+  if (!u) return false;
+  return pinMatches(u.pin, entered) || (u.altPins || []).some(p => pinMatches(p, entered));
+}
+
 /** Factory/demo PINs and repeated digits (0000, 1111, …) are the first things anyone tries */
 export const isWeakPin = (pin: string | undefined): boolean => !pin || pin === DEFAULT_PIN || /^(\d)\1{3}$/.test(pin);
 
@@ -151,7 +157,7 @@ export function pinLockMessage(now = Date.now()): string {
 export function findManagerByPin(pin: string, users: User[], settings: Partial<SystemSettings>): { name: string; role: string } | null {
   const p = (pin || '').trim();
   if (!p) return null;
-  const user = users.find(u => (u.role === 'admin' || u.role === 'manager') && pinMatches(u.pin, p));
+  const user = users.find(u => (u.role === 'admin' || u.role === 'manager') && userPinMatches(u, p));
   if (user) return { name: user.name, role: user.role };
   if (pinMatches(settings.adminPin, p)) return { name: 'เจ้าของร้าน', role: 'admin' };
   if (pinMatches(settings.managerPin, p)) return { name: 'ผู้จัดการ', role: 'manager' };

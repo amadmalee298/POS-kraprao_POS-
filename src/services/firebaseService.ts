@@ -36,6 +36,8 @@ import {
   onAuthStateChanged,
   signInAnonymously,
   signInWithEmailAndPassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
   signOut,
   type Auth
 } from 'firebase/auth';
@@ -2944,4 +2946,29 @@ export async function cloudWritesDone(timeoutMs = 30_000): Promise<boolean> {
     waitForPendingWrites(dbInstance).then(() => true, () => false),
     new Promise<boolean>(resolve => setTimeout(() => resolve(false), timeoutMs))
   ]);
+}
+
+/**
+ * The shop account's password, checked again (e.g. to set a new PIN when nobody remembers one).
+ * Only on a device signed in with the shop account.
+ */
+export async function verifyShopPassword(password: string): Promise<{ ok: boolean; error?: string }> {
+  const u = authInstance?.currentUser;
+  if (!u || u.isAnonymous || !u.email) return { ok: false, error: 'เครื่องนี้ยังไม่ได้เชื่อมบัญชีร้าน' };
+  try {
+    await reauthenticateWithCredential(u, EmailAuthProvider.credential(u.email, password));
+    return { ok: true };
+  } catch (err: any) {
+    const code = String(err?.code || '');
+    if (code.includes('invalid-credential') || code.includes('wrong-password')) return { ok: false, error: 'รหัสผ่านบัญชีร้านไม่ถูกต้อง' };
+    if (code.includes('too-many-requests')) return { ok: false, error: 'ลองผิดหลายครั้ง กรุณารอสักครู่' };
+    if (code.includes('network')) return { ok: false, error: 'เชื่อมต่ออินเทอร์เน็ตไม่ได้' };
+    return { ok: false, error: err?.message || 'ตรวจรหัสผ่านไม่สำเร็จ' };
+  }
+}
+
+/** The email of the shop account this device is signed in with ('' when none) */
+export function shopAccountEmail(): string {
+  const u = authInstance?.currentUser;
+  return u && !u.isAnonymous && u.email ? u.email : '';
 }
