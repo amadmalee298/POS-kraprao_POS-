@@ -15,6 +15,7 @@ import { allocateCosts, BillItem, buildIntakeRows, hasTarget, IntakeRow, matchIn
 import { nextSubstituteNo } from '../../utils/expenseDocNo';
 import { readTelegramReceipt } from './TelegramInboxPoller';
 import { claimOnce } from '../../services/firebaseService';
+import { needsAttention, readStockDone, STOCK_DONE_KEY, stockOnly } from '../../utils/telegramStock';
 
 type Form = {
   kind: 'expense' | 'income';
@@ -98,7 +99,6 @@ const IngredientPicker: React.FC<{
 };
 
 /** Recorded by the bot already (บันทึกทันที): only the goods still have to go into stock */
-const stockOnly = (p: PendingReceipt) => p.status === 'approved' && !!p.stockPending && !p.stockAdded?.length;
 const NEW_INGREDIENT_UNITS = ['kg', 'g', 'l', 'ml', 'ชิ้น', 'ฟอง', 'ขวด', 'ถุง', 'แพ็ค', 'กล่อง'];
 
 const formFor = (p: PendingReceipt, ingredients: Ingredient[]): Form => ({
@@ -167,19 +167,12 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
 
   // Bills whose goods went into stock on this device. A second tap, the bill shown again by an older
   // cloud copy, or another device must never put the same goods in twice
-  const DONE_KEY = 'POS_TG_STOCK_DONE';
-  const [doneIds, setDoneIds] = useState<string[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(DONE_KEY) || '[]') || [];
-    } catch {
-      return [];
-    }
-  });
+  const [doneIds, setDoneIds] = useState<string[]>(readStockDone);
   const markDone = (id: string) =>
     setDoneIds(prev => {
       const next = [...prev.filter(x => x !== id), id].slice(-300);
       try {
-        localStorage.setItem(DONE_KEY, JSON.stringify(next));
+        localStorage.setItem(STOCK_DONE_KEY, JSON.stringify(next));
       } catch {
         // kept for this visit
       }
@@ -194,7 +187,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
   };
 
   const waiting = useMemo(
-    () => items.filter(p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading' || (stockOnly(p) && !doneIds.includes(p.id))),
+    () => items.filter(p => needsAttention(p, doneIds)),
     [items, doneIds]
   );
   // The bill being reviewed (the first one waiting until another is chosen)

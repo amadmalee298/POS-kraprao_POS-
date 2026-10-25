@@ -2972,3 +2972,14 @@ export function shopAccountEmail(): string {
   const u = authInstance?.currentUser;
   return u && !u.isAnonymous && u.email ? u.email : '';
 }
+
+/** A one-time job (claimOnce) was already done: true / false, null when the cloud cannot be asked */
+export async function claimTaken(branchId: string, job: string): Promise<boolean | null> {
+  if (!dbInstance || !navigator.onLine) return null;
+  await waitForFirebaseAuth();
+  try {
+    return (await getDoc(doc(dbInstance, 'branches', branchId, 'status', `job_${job}`))).exists();
+  } catch {
+    return null;
+  }
+}
