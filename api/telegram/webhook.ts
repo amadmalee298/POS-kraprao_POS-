@@ -3,7 +3,8 @@
  * - POST from Telegram (header X-Telegram-Bot-Api-Secret-Token): one update, handled at once
  * - POST ?check=1 from the app: can this server sign in to the shop's data? (before switching over)
  * - POST ?seal=1 from the app: the shop's sign-in sealed for the scheduled notifications
- * - POST ?tick=1 from the scheduled GitHub Actions run: send the notifications due now
+ * - POST ?tick=1 from the scheduled GitHub Actions run, or GET ?tick=1&p=&k=&o= from Vercel's own
+ *   schedule (vercel.json): send the notifications due now
  * - GET: is the function deployed, is ANTHROPIC_API_KEY set?
  */
 // .js: the package is ESM and Vercel runs it as plain Node
@@ -30,11 +31,17 @@ export default async function handler(req: any, res: any) {
   const anthropicKey = process.env.ANTHROPIC_API_KEY || '';
   // Key for the scheduled notifications' sealed sign-ins (SCHEDULE_KEY, or the AI key already set)
   const scheduleKey = (process.env.SCHEDULE_KEY || anthropicKey).trim();
-  if (req.method === 'GET') return res.status(200).json({ ok: true, bot: 3, ai: !!anthropicKey.trim(), schedule: !!scheduleKey });
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-
-  const body = typeof req.body === 'string' ? safeJson(req.body) : req.body || {};
   const q = req.query || {};
+  // Vercel's own schedule (vercel.json crons) calls with GET, the shop's project in the address
+  const cronTick = req.method === 'GET' && one(q.tick) === '1';
+  if (req.method === 'GET' && !cronTick) return res.status(200).json({ ok: true, bot: 4, ai: !!anthropicKey.trim(), schedule: !!scheduleKey });
+  if (req.method !== 'POST' && !cronTick) return res.status(405).json({ error: 'Method not allowed' });
+
+  const body = cronTick
+    ? { projectId: one(q.p), apiKey: one(q.k), databaseId: one(q.d) || undefined, referer: one(q.o) || undefined }
+    : typeof req.body === 'string'
+      ? safeJson(req.body)
+      : req.body || {};
 
   if (one(q.seal) === '1' || one(q.tick) === '1') {
     if (!scheduleKey) return res.status(200).json({ ok: false, error: 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY หรือ SCHEDULE_KEY บน Vercel' });

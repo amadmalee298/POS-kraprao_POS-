@@ -66,7 +66,8 @@ export function FilingReminder() {
           }
         });
       }
-      if (!readRemindOn()) return;
+      // Not in the night: from 09:00, like the server's reminder
+      if (!readRemindOn() || new Date().getHours() < 9) return;
       let sent: Record<string, string> = {};
       try {
         sent = JSON.parse(localStorage.getItem(SENT_KEY) || '{}');
