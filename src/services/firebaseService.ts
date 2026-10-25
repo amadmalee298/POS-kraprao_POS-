@@ -2871,3 +2871,29 @@ export async function savePublicSchedule(branchId: string, sealed: string): Prom
     return false;
   }
 }
+
+/**
+ * Claims a one-time job (e.g. putting one Telegram bill's goods into stock) for this device only.
+ * true: this device does it; false: it was done already; null: the cloud could not be asked.
+ */
+export async function claimOnce(branchId: string, job: string): Promise<boolean | null> {
+  if (!dbInstance || !navigator.onLine) return null;
+  const db = dbInstance;
+  try {
+    // A slow or dropped connection does not keep the person waiting: unanswered after 8 seconds
+    return await Promise.race([
+      waitForFirebaseAuth().then(() => {
+        const ref = doc(db, 'branches', branchId, 'status', `job_${job}`);
+        return runTransaction(db, async tx => {
+          if ((await tx.get(ref)).exists()) return false;
+          tx.set(ref, { day: 'done', claimedAt: new Date().toISOString() });
+          return true;
+        });
+      }),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 8000))
+    ]);
+  } catch (err) {
+    console.warn(`[Firebase Service] Could not claim ${job}:`, err);
+    return null;
+  }
+}
