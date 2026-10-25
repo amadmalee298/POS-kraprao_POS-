@@ -1,0 +1,50 @@
+name: Scheduled notifications
+
+# Every 15 minutes the shop's server sends what is due (daily summary at its set time, filing
+# reminders in the morning), even when no device has the app open. See src/server/scheduledJobs.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-notifications
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: firebase-applet-config.json
+          sparse-checkout-cone-mode: false
+
+      # The anonymous sign-in used to find the shops, kept between runs
+      - uses: actions/cache/restore@v4
+        with:
+          path: .tick
+          key: tick-anon-${{ github.run_id }}
+          restore-keys: tick-anon-
+
+      - name: Ask the server to send what is due
+        env:
+          SERVER: ${{ vars.BOT_SERVER_URL || 'https://pos-kraprao-pos.vercel.app' }}
+          REFERER: ${{ vars.APP_ORIGIN || 'https://amadmalee298.github.io' }}
+        run: |
+          mkdir -p .tick
+          body=$(jq -c --arg anon "$(cat .tick/anon 2>/dev/null)" --arg referer "$REFERER" \
+            '{projectId, apiKey, databaseId: .firestoreDatabaseId, referer: $referer, anon: $anon}' firebase-applet-config.json)
+          out=$(curl -sS -m 60 -X POST -H 'Content-Type: application/json' -d "$body" "$SERVER/api/telegram/webhook?tick=1")
+          echo "$out" | jq -c 'del(.anon)' 2>/dev/null || echo "$out" | head -c 500
+          echo "$out" | jq -r '.anon // empty' 2>/dev/null > .tick/anon.new || true
+          if [ -s .tick/anon.new ]; then mv .tick/anon.new .tick/anon; fi
+
+      - uses: actions/cache/save@v4
+        with:
+          path: .tick
+          key: tick-anon-${{ github.run_id }}

@@ -2,10 +2,13 @@
  * Vercel serverless function: the shop's Telegram bot (see src/server/telegramWebhook).
  * - POST from Telegram (header X-Telegram-Bot-Api-Secret-Token): one update, handled at once
  * - POST ?check=1 from the app: can this server sign in to the shop's data? (before switching over)
+ * - POST ?seal=1 from the app: the shop's sign-in sealed for the scheduled notifications
+ * - POST ?tick=1 from the scheduled GitHub Actions run: send the notifications due now
  * - GET: is the function deployed, is ANTHROPIC_API_KEY set?
  */
 // .js: the package is ESM and Vercel runs it as plain Node
 import { checkWebhookSetup, handleWebhook } from '../../src/server/telegramWebhook.js';
+import { runScheduledJobs, sealSchedule } from '../../src/server/scheduledJobs.js';
 
 // Reading a receipt with AI can take a while (both forms Vercel reads)
 export const maxDuration = 60;
@@ -25,11 +28,46 @@ export default async function handler(req: any, res: any) {
   }
   if (req.method === 'OPTIONS') return res.status(204).end();
   const anthropicKey = process.env.ANTHROPIC_API_KEY || '';
-  if (req.method === 'GET') return res.status(200).json({ ok: true, bot: 2, ai: !!anthropicKey.trim() });
+  // Key for the scheduled notifications' sealed sign-ins (SCHEDULE_KEY, or the AI key already set)
+  const scheduleKey = (process.env.SCHEDULE_KEY || anthropicKey).trim();
+  if (req.method === 'GET') return res.status(200).json({ ok: true, bot: 3, ai: !!anthropicKey.trim(), schedule: !!scheduleKey });
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const body = typeof req.body === 'string' ? safeJson(req.body) : req.body || {};
   const q = req.query || {};
+
+  if (one(q.seal) === '1' || one(q.tick) === '1') {
+    if (!scheduleKey) return res.status(200).json({ ok: false, error: 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY หรือ SCHEDULE_KEY บน Vercel' });
+    try {
+      if (one(q.seal) === '1') {
+        const sealed = await sealSchedule(
+          {
+            branchId: String(body.branchId || ''),
+            projectId: String(body.projectId || ''),
+            apiKey: String(body.apiKey || ''),
+            databaseId: body.databaseId ? String(body.databaseId) : undefined,
+            referer: origin || undefined,
+            refreshToken: String(body.refreshToken || '')
+          },
+          scheduleKey
+        );
+        return res.status(200).json({ ok: true, sealed });
+      }
+      const result = await runScheduledJobs(
+        {
+          projectId: String(body.projectId || ''),
+          apiKey: String(body.apiKey || ''),
+          databaseId: body.databaseId ? String(body.databaseId) : undefined,
+          referer: body.referer ? String(body.referer) : undefined,
+          anon: String(body.anon || '')
+        },
+        scheduleKey
+      );
+      return res.status(200).json({ ok: true, ...result });
+    } catch (e: any) {
+      return res.status(200).json({ ok: false, error: e?.message || 'failed' });
+    }
+  }
 
   if (one(q.check) === '1') {
     try {
