@@ -220,8 +220,10 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     if (forStock) {
       const e = saved.rec as Expense;
       const item = await store.inboxItem(inboxId);
+      // Received already, or decided not to (the card is shown again after an edit or a photo)
+      const decided = item?.stockPending === false || !!item?.stockAdded?.length;
       await store.patchInbox(inboxId, {
-        stockPending: true,
+        stockPending: decided ? item!.stockPending : true,
         data: {
           lineItems: item?.data?.lineItems,
           title: e.title,

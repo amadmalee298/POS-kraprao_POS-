@@ -104,6 +104,8 @@ import {
 } from '../../types';
 import { AIReceiptScannerModal } from './AIReceiptScannerModal';
 import { TelegramInboxPanel } from '../telegram/TelegramInboxPanel';
+import { needsAttention, readStockDone, stockOnly } from '../../utils/telegramStock';
+import { claimTaken } from '../../services/firebaseService';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { usePayables, useReceivables } from '../../hooks/useArAp';
 import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
@@ -391,11 +393,23 @@ export const AccountingView: React.FC = () => {
   const [timeHorizon, setTimeHorizon] = useState<TimeHorizon>('selected');
   const vatRegistered = isVatRegistered(settings);
   const depreciationOptions = useMemo(() => ({ usefulLifeYears: settings.equipmentUsefulLifeYears || DEFAULT_USEFUL_LIFE_YEARS }), [settings.equipmentUsefulLifeYears]);
-  const [telegramInbox] = useTelegramInbox();
-  // Bills to check, and goods the bot recorded that still have to be received into stock
-  const telegramWaiting = telegramInbox.filter(
-    p => p.status === 'pending' || p.status === 'failed' || p.status === 'reading' || (p.status === 'approved' && p.stockPending && !p.stockAdded?.length)
-  ).length;
+  const [telegramInbox, setTelegramInbox] = useTelegramInbox();
+  // Bills to check, and goods the bot recorded that still have to be received into stock (counted
+  // as the Telegram page counts them)
+  const telegramWaiting = telegramInbox.filter(p => needsAttention(p, readStockDone())).length;
+  // A bill shown as waiting for stock whose goods were received already (here, or on another device
+  // that claimed it): the mark is cleared for every device
+  const checkedStock = useRef(new Set<string>());
+  useEffect(() => {
+    const done = readStockDone();
+    telegramInbox.filter(stockOnly).forEach(async p => {
+      if (checkedStock.current.has(p.id) || !currentBranch?.id) return;
+      checkedStock.current.add(p.id);
+      const received = done.includes(p.id) || (await claimTaken(currentBranch.id, `tgstock_${p.id}`)) === true;
+      if (received) setTelegramInbox(prev => prev.map(x => (x.id === p.id ? { ...x, stockPending: false } : x)));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [telegramInbox, currentBranch?.id]);
   const vatRate = vatRateOf(settings);
   const initialSection = useState(() => takePageSection<string>('accounting'))[0];
   const [ledgerTab, setLedgerTab] = useState<LedgerTab>(() => LEGACY_TAB[initialSection || ''] || 'pnl');
