@@ -1,3 +1,4 @@
+import { hashPinWithSalt, isHashedPin } from '../utils/pins';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { isLowStock } from '../utils/stockTypes';
 import {
@@ -1993,8 +1994,10 @@ export async function syncSettingsToFirestore(
   await waitForFirebaseAuth();
 
   try {
-    // Sanitize pins before uploading
-    const { adminPin, managerPin, ...safeSettings } = settings;
+    // Override PINs travel only hashed (the same on every device, none kept on a device alone)
+    const { adminPin, managerPin, ...rest } = settings;
+    const hashed = (pin: string | undefined, salt: string) => (!pin ? undefined : isHashedPin(pin) ? pin : hashPinWithSalt(pin, salt));
+    const safeSettings = { ...rest, adminPin: hashed(adminPin, `cloud-admin-${branchId}`), managerPin: hashed(managerPin, `cloud-manager-${branchId}`) };
     const docRef = doc(dbInstance, 'branches', branchId, 'config', 'settings');
     await setDoc(
       docRef,

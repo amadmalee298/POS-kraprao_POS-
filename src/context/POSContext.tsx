@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from 'react';
 import { isLowStock } from '../utils/stockTypes';
-import { DEFAULT_PIN_HASH, hashPin, isHashedPin } from '../utils/pins';
+import { DEFAULT_PIN_HASH, hashPin, hashPinWithSalt, isHashedPin, pinMatches } from '../utils/pins';
+import { useCloudMirror } from '../hooks/useCloudMirror';
 import { bigStore, flushBigStore } from '../utils/bigStore';
 import { lightStart } from '../utils/bootGuard';
 import { offloadRecordImages, recordImageRefs, uploadImageNow } from '../services/imageStore';
@@ -1454,7 +1455,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (local && isFirebaseAvailable()) syncSettingsToFirestore(local, branchTargetId).catch(console.warn);
         return;
       }
-      const { updatedAt: _u, lastUpdatedIso: _l, adminPin: _a, managerPin: _m, enableKitchenSound: _k, ...cloud } = data as Record<string, unknown>;
+      const { updatedAt: _u, lastUpdatedIso: _l, adminPin, managerPin, enableKitchenSound: _k, ...cloud } = data as Record<string, unknown>;
+      // Override PINs arrive only hashed (a plain one is never taken from the cloud)
+      if (typeof adminPin === 'string' && isHashedPin(adminPin)) (cloud as Record<string, unknown>).adminPin = adminPin;
+      if (typeof managerPin === 'string' && isHashedPin(managerPin)) (cloud as Record<string, unknown>).managerPin = managerPin;
       setSettings(prev => {
         const next = { ...prev, ...(cloud as Partial<SystemSettings>) };
         return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
@@ -1530,6 +1534,55 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       unsubTombstones();
     };
   }, [isStorageLoaded, effectiveOffline, currentBranch?.id, deletedMenuItemIds.length, deletedIngredientIds.length]);
+
+  // The shop's own lists (people and PINs, staff, shifts, cash drawer, tables, categories,
+  // toppings, stock lots…) in the cloud too, the same on every device: before, they lived only on
+  // the device where they were made. PINs travel hashed.
+  const mirrorOn = isStorageLoaded && !effectiveOffline && isFirebaseAvailable();
+  const mirrorBranch = currentBranch?.id;
+  const recentMonths = useMemo(() => {
+    const now = new Date();
+    return Array.from({ length: 13 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    });
+  }, []);
+  const cloudPin = <T extends { id: string; pin?: string }>(x: T): T =>
+    x.pin && !isHashedPin(x.pin) ? { ...x, pin: hashPinWithSalt(x.pin, `cloud-${x.id}`) } : x;
+  // A factory or easy PIN loses to a PIN someone chose (on whichever side it is)
+  const weakPin = (stored?: string) => !stored || stored === DEFAULT_PIN_HASH || ['1234', '0000', '1111', '2222', '3333', '4444', '5555', '6666', '7777', '8888', '9999'].some(p => pinMatches(stored, p));
+  const preferChosenPin = <T extends { pin?: string }>(mine: T, cloud: T): T => (weakPin(cloud.pin) && !weakPin(mine.pin) ? mine : cloud);
+  const single = (key: string) => ({ docOf: () => key, docs: [key] });
+  const monthly = (prefix: string, monthOf: (x: any) => string, months = recentMonths) => ({
+    docOf: (x: any) => `${prefix}_${(monthOf(x) || '').slice(0, 7) || 'undated'}`,
+    docs: [...months.map(m => `${prefix}_${m}`), `${prefix}_undated`]
+  });
+  const mirror = { branchId: mirrorBranch, enabled: mirrorOn };
+  useCloudMirror<User>({ ...mirror, ...single('state_users'), items: users, setItems: setUsers, toCloud: cloudPin, prefer: preferChosenPin, ordered: true });
+  useCloudMirror<StaffMember>({ ...mirror, ...single('state_staff'), items: staffMembers, setItems: setStaffMembers, toCloud: cloudPin, prefer: preferChosenPin, ordered: true });
+  useCloudMirror<Branch>({ ...mirror, ...single('state_branches'), items: branches, setItems: setBranches, ordered: true });
+  useCloudMirror<CategoryItem>({ ...mirror, ...single('state_categories'), items: categories, setItems: setCategories, ordered: true });
+  useCloudMirror<IngredientCategory>({ ...mirror, ...single('state_ing_categories'), items: ingredientCategories, setItems: setIngredientCategories, ordered: true });
+  useCloudMirror<IngredientUnitItem>({ ...mirror, ...single('state_units'), items: ingredientUnits, setItems: setIngredientUnits, ordered: true });
+  useCloudMirror<AddOnOption>({ ...mirror, ...single('state_addons'), items: addOns, setItems: setAddOns, ordered: true });
+  useCloudMirror<ShiftSwapRequest>({ ...mirror, ...single('state_shift_swaps'), items: shiftSwapRequests, setItems: setShiftSwapRequests });
+  useCloudMirror<ShiftEntry>({ ...mirror, ...monthly('state_shifts', x => x.date), items: shifts, setItems: setShifts });
+  useCloudMirror<CashShift>({ ...mirror, ...monthly('state_cash', x => x.openedAt), items: cashShifts, setItems: setCashShifts });
+  useCloudMirror<StockLot>({ ...mirror, ...monthly('state_lots', x => x.receivedDate), items: stockLots, setItems: setStockLots });
+  useCloudMirror<SecurityLogEntry>({ ...mirror, ...monthly('state_security', x => x.timestamp, recentMonths.slice(0, 3)), items: securityLogs, setItems: setSecurityLogs });
+  // Tables (names in order) and the QR auto-accept switch, as records
+  const tableItems = useMemo(() => tables.map(t => ({ id: t })), [tables]);
+  const setTableItems = useCallback((update: (prev: { id: string }[]) => { id: string }[]) => setTables(prev => {
+    const next = update(prev.map(t => ({ id: t }))).map(t => t.id);
+    return next.length === prev.length && next.every((t, i) => t === prev[i]) ? prev : next;
+  }), []);
+  useCloudMirror<{ id: string }>({ ...mirror, ...single('state_tables'), items: tableItems, setItems: setTableItems, ordered: true });
+  const miscItems = useMemo(() => [{ id: 'autoApproveQR', on: autoApproveQR }], [autoApproveQR]);
+  const setMiscItems = useCallback((update: (prev: { id: string; on: boolean }[]) => { id: string; on: boolean }[]) => setAutoApproveQR(prev => {
+    const found = update([{ id: 'autoApproveQR', on: prev }]).find(x => x.id === 'autoApproveQR');
+    return found ? !!found.on : prev;
+  }), []);
+  useCloudMirror<{ id: string; on: boolean }>({ ...mirror, ...single('state_misc'), items: miscItems, setItems: setMiscItems });
 
   // Automated Daily Sales Summary Notification at Scheduled Time (e.g. 22:00)
   useEffect(() => {
