@@ -1,6 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ImageOff, Loader2 } from 'lucide-react';
-import { cleanCloudPictures } from '../../services/firebaseService';
+import { claimDailyJob, cleanCloudPictures } from '../../services/firebaseService';
 
 /**
  * One tap: every expense and income in the cloud that still holds its bill pictures gets them moved
@@ -67,4 +67,46 @@ export const CloudPictureCleanup: React.FC = () => {
       </div>
     </div>
   );
+};
+
+const AUTO_KEY = 'POS_CLOUD_PICS_PASS';
+const AUTO_DELAY_MS = 90_000;
+
+/**
+ * The same clean-up, by itself in the background on the owner's or a manager's device: a minute
+ * and a half after the app opens, again the next day while it still finds pictures, then weekly.
+ * A record in the cloud that still holds its pictures is megabytes for every device that loads it
+ * (enough to make iPhones close the app). One device a day; stops when the app goes to the background.
+ */
+export const AutoCloudPictureCleanup: React.FC<{ branchId: string; allowed: boolean }> = ({ branchId, allowed }) => {
+  useEffect(() => {
+    if (!allowed || !branchId) return;
+    let last: { at: number; moved: number } | null = null;
+    try {
+      last = JSON.parse(localStorage.getItem(AUTO_KEY) || 'null');
+    } catch {
+      last = null;
+    }
+    const waitDays = last && last.moved === 0 ? 7 : 1;
+    if (last && Date.now() - last.at < waitDays * 86_400_000 - 3_600_000) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      if (cancelled || !navigator.onLine || document.visibilityState === 'hidden') return;
+      const today = new Date().toLocaleDateString('sv-SE');
+      if (!(await claimDailyJob(branchId, 'cloud_pictures', today))) return;
+      try {
+        const r = await cleanCloudPictures(() => {}, () => cancelled || document.visibilityState === 'hidden');
+        if (r.stopped) return; // not finished: tried again next time the app opens
+        localStorage.setItem(AUTO_KEY, JSON.stringify({ at: Date.now(), moved: r.moved }));
+        if (r.moved) console.info(`[CloudPictures] Moved the pictures out of ${r.moved} record(s) in the cloud`);
+      } catch (e) {
+        console.warn('[CloudPictures] Background clean-up stopped:', e);
+      }
+    }, AUTO_DELAY_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [branchId, allowed]);
+  return null;
 };

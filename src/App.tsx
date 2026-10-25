@@ -35,6 +35,8 @@ import { ExpenseDriveAutoSync } from './components/accounting/ExpenseDriveAutoSy
 import { SheetsScriptAutoSync } from './components/sheets/SheetsScriptAutoSync';
 import { FilingReminder } from './components/filings/FilingReminder';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
+import { AutoCloudPictureCleanup } from './components/settings/CloudPictureCleanup';
+import { startupCrashes } from './utils/bootGuard';
 import { canOpenTab, firstAllowedTab } from './utils/access';
 import { PrepCostSync } from './components/inventory/PrepCostSync';
 import { MobileClockPage, readClockHash } from './components/attendance/MobileClockPage';
@@ -57,8 +59,12 @@ const MainLayout: React.FC = () => {
     scanForSyncConflicts,
     isScanningConflicts,
     permissions,
-    setActiveTab
+    setActiveTab,
+    currentUser,
+    currentBranch
   } = usePOS();
+  // The phone closed the app just before (out of memory): it opened on the sales screen, lighter
+  const [crashNotice, setCrashNotice] = useState(() => startupCrashes() > 0);
   const effectiveOffline = isOffline || forceOfflineMode;
 
   const [mobileClock, setMobileClock] = useState<{ code: string; at: number } | null>(() => {
@@ -155,6 +161,15 @@ const MainLayout: React.FC = () => {
       {/* Staff device not signed in with the shop account: cloud sync is blocked by the rules */}
       {!isLocked && <ShopAccountBanner />}
 
+      {!isLocked && crashNotice && (
+        <div className="bg-sky-950 border-b border-sky-800 text-sky-100 px-4 py-2 text-xs flex items-center justify-between gap-3">
+          <span>แอปถูกปิดไปเองเมื่อครู่ (หน่วยความจำเครื่องเต็ม) จึงเปิดที่หน้าขายและโหลดข้อมูลคลาวด์ทีละส่วน ข้อมูลไม่หาย</span>
+          <button type="button" onClick={() => setCrashNotice(false)} className="shrink-0 h-8 px-3 rounded-lg bg-sky-800 font-bold">
+            ตกลง
+          </button>
+        </div>
+      )}
+
       {/* Slide-out Sidebar Drawer Navigation */}
       <SidebarDrawer />
 
@@ -193,6 +208,7 @@ const MainLayout: React.FC = () => {
       <NotificationSettingsSync />
       <TelegramInboxPoller />
       <ExpenseDriveAutoSync />
+      <AutoCloudPictureCleanup branchId={currentBranch?.id || ''} allowed={!effectiveOffline && (currentUser?.role === 'admin' || currentUser?.role === 'manager')} />
       <SheetsScriptAutoSync />
       <FilingReminder />
 
