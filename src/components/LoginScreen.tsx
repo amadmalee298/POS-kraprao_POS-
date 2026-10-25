@@ -1,4 +1,5 @@
 import { ShopAccountStatusButton } from './ShopAccountBanner';
+import { shopAccountEmail, verifyShopPassword } from '../services/firebaseService';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
 import { UserRole } from '../types';
@@ -23,7 +24,7 @@ import { usePOS } from '../context/POSContext';
 import { isTypingInField } from '../utils/keyboard';
 import { clockChange, loginClockAllowed, openMobileClock, openShift } from '../utils/clock';
 import { localDay } from '../utils/stockHistory';
-import { DEFAULT_PIN_HASH, isWeakPin, notePinAttempt, pinLockRemaining, pinMatches } from '../utils/pins';
+import { DEFAULT_PIN_HASH, isWeakPin, notePinAttempt, pinLockRemaining, pinMatches, userPinMatches } from '../utils/pins';
 
 
 export const LoginScreen: React.FC = () => {
@@ -95,6 +96,9 @@ export const LoginScreen: React.FC = () => {
   const [selectedManagerId, setSelectedManagerId] = useState('');
   const [managerAuthPin, setManagerAuthPin] = useState('');
   const [isManagerApproved, setIsManagerApproved] = useState(false);
+  // No owner or manager PIN works (e.g. forgotten): the shop account's password approves instead
+  const [shopPassword, setShopPassword] = useState('');
+  const [checkingShopPassword, setCheckingShopPassword] = useState(false);
 
   const [newPin, setNewPin] = useState('');
   const [confirmNewPin, setConfirmNewPin] = useState('');
@@ -143,7 +147,7 @@ export const LoginScreen: React.FC = () => {
       setForgotError('ผู้อนุมัติต้องเป็นผู้จัดการหรือเจ้าของร้านเท่านั้น');
       return;
     }
-    if (managerAuthPin && pinMatches(manager.pin, managerAuthPin)) {
+    if (managerAuthPin && userPinMatches(manager, managerAuthPin)) {
       notePinAttempt(true);
       setIsManagerApproved(true);
       setForgotSuccess(`ผู้จัดการ (${manager.name}) อนุมัติสำเร็จ! กรุณาตั้งค่า PIN ใหม่`);
@@ -167,6 +171,37 @@ export const LoginScreen: React.FC = () => {
       });
       setForgotError('PIN ผู้จัดการไม่ถูกต้อง');
     }
+  };
+
+  const handleApproveWithShopPassword = async () => {
+    setForgotError('');
+    if (isLockedOut) {
+      setForgotError(`ใส่รหัสผิดหลายครั้ง กรุณารอ ${lockoutRemaining} วินาที`);
+      return;
+    }
+    if (!shopPassword) {
+      setForgotError('กรอกรหัสผ่านบัญชีร้าน');
+      return;
+    }
+    setCheckingShopPassword(true);
+    const res = await verifyShopPassword(shopPassword);
+    setCheckingShopPassword(false);
+    setShopPassword('');
+    logSecurityEvent?.({
+      userId: selectedUser.id,
+      userName: selectedUser.name,
+      userRole: selectedUser.role,
+      action: 'PIN Reset Approval',
+      status: res.ok ? 'SUCCESS' : 'FAILED',
+      details: res.ok ? `อนุมัติการรีเซ็ต PIN ให้ ${selectedUser.name} ด้วยรหัสผ่านบัญชีร้าน` : `รหัสผ่านบัญชีร้านไม่ถูกต้องขณะรีเซ็ต PIN ให้ ${selectedUser.name}`
+    });
+    if (!res.ok) {
+      registerFailedAttempt();
+      setForgotError(res.error || 'รหัสผ่านบัญชีร้านไม่ถูกต้อง');
+      return;
+    }
+    setIsManagerApproved(true);
+    setForgotSuccess('ยืนยันด้วยบัญชีร้านสำเร็จ! กรุณาตั้งค่า PIN ใหม่');
   };
 
   // Save New PIN
@@ -225,7 +260,7 @@ export const LoginScreen: React.FC = () => {
 
     // The PIN is checked only against the person whose name is selected. Matching any
     // user with that PIN logged people in (or asked them to reset) as someone else.
-    const authenticatedUser = selectedUser && pinMatches(selectedUser.pin, pinToTest) ? selectedUser : null;
+    const authenticatedUser = selectedUser && userPinMatches(selectedUser, pinToTest) ? selectedUser : null;
 
     if (authenticatedUser && isWeakPin(pinToTest)) {
       // Default or trivially guessable PIN: force the user to choose a new one before unlocking the POS
@@ -786,6 +821,30 @@ export const LoginScreen: React.FC = () => {
                   <UserCheck className="w-5 h-5" />
                   <span>อนุมัติและรับสิทธิ์ตั้ง PIN ใหม่</span>
                 </button>
+
+                {shopAccountEmail() && (
+                  <div className="pt-3 mt-1 border-t border-slate-800 space-y-2">
+                    <div className="text-xs text-slate-400">
+                      จำ PIN ผู้จัดการไม่ได้? ใช้รหัสผ่านบัญชีร้าน <span className="text-orange-300">{shopAccountEmail()}</span> แทน
+                    </div>
+                    <input
+                      type="password"
+                      autoComplete="current-password"
+                      value={shopPassword}
+                      onChange={e => setShopPassword(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 text-sm focus:outline-none focus:border-orange-500"
+                      placeholder="รหัสผ่านบัญชีร้าน"
+                    />
+                    <button
+                      type="button"
+                      disabled={checkingShopPassword}
+                      onClick={() => void handleApproveWithShopPassword()}
+                      className="w-full py-2.5 rounded-xl border border-orange-500/50 bg-orange-950/40 text-orange-200 font-bold text-sm disabled:opacity-50"
+                    >
+                      {checkingShopPassword ? 'กำลังตรวจ...' : 'ยืนยันด้วยบัญชีร้าน แล้วตั้ง PIN ใหม่'}
+                    </button>
+                  </div>
+                )}
               </form>
             )}
           </div>

@@ -428,6 +428,11 @@ export interface User {
   name: string;
   role: UserRole;
   pin: string;
+  /**
+   * PINs this person also had on another device when the devices' lists first came together in the
+   * cloud: each still works until the person sets a new PIN
+   */
+  altPins?: string[];
   branchId?: string; // empty means all branches
   avatarColor: string;
   permissions?: StaffPermissions;

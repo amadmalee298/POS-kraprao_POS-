@@ -567,7 +567,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const updateUserPin = (userId: string, plainPin: string) => {
     const newPin = hashPin(plainPin);
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, pin: newPin } : u));
+    setUsers(prev => prev.map(u => (u.id === userId ? { ...u, pin: newPin, altPins: undefined } : u)));
     setStaffMembers(prev => prev.map(s => s.id === userId ? { ...s, pin: newPin } : s));
     if (currentUser?.id === userId) {
       setCurrentUser(prev => prev ? { ...prev, pin: newPin } : prev);
@@ -1576,7 +1576,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     x.pin && !isHashedPin(x.pin) ? { ...x, pin: hashPinWithSalt(x.pin, `cloud-${x.id}`) } : x;
   // A factory or easy PIN loses to a PIN someone chose (on whichever side it is)
   const weakPin = (stored?: string) => !stored || stored === DEFAULT_PIN_HASH || ['1234', '0000', '1111', '2222', '3333', '4444', '5555', '6666', '7777', '8888', '9999'].some(p => pinMatches(stored, p));
-  const preferChosenPin = <T extends { pin?: string }>(mine: T, cloud: T): T => (weakPin(cloud.pin) && !weakPin(mine.pin) ? mine : cloud);
+  const preferChosenPin = <T extends { pin?: string; altPins?: string[] }>(mine: T, cloud: T): T => {
+    if (weakPin(cloud.pin) && !weakPin(mine.pin)) return mine;
+    // Both chosen and different: the cloud's stays, and this device's keeps working too (the person
+    // may only know one of them); setting a new PIN ends both
+    const minePin = mine.pin && !isHashedPin(mine.pin) ? hashPinWithSalt(mine.pin, `cloud-${(mine as any).id}`) : mine.pin;
+    if (!weakPin(mine.pin) && minePin && minePin !== cloud.pin && !(cloud.altPins || []).includes(minePin)) {
+      return { ...cloud, altPins: [...(cloud.altPins || []), minePin] };
+    }
+    return cloud;
+  };
   const single = (key: string) => ({ docOf: () => key, docs: [key] });
   const monthly = (prefix: string, monthOf: (x: any) => string, months = recentMonths) => ({
     docOf: (x: any) => `${prefix}_${(monthOf(x) || '').slice(0, 7) || 'undated'}`,
