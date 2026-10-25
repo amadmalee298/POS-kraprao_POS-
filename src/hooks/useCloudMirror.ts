@@ -23,9 +23,23 @@ export interface CloudMirrorOptions<T extends WithId> {
   order?: (items: T[]) => T[];
   /** The list's order is shared too (lists kept in one document, e.g. menu categories) */
   ordered?: boolean;
+  /**
+   * This device keeps nothing of its own (it starts from the built-in examples each visit): the
+   * cloud's copy replaces the list, and nothing of the device's is uploaded on a first meeting
+   */
+  trustCloud?: boolean;
+  /** With trustCloud: the list to start with when the cloud has none yet (a new shop) */
+  seedIfMissing?: () => T[];
+  /** Every followed document has arrived once */
+  onReady?: () => void;
 }
 
 const ARCHIVED_KEY = 'POS_CLOUD_ARCHIVED';
+
+/** Each mirror: true while something is not in the cloud yet (or its cloud copy has not arrived) */
+const unsettled = new Map<object, boolean>();
+/** Every list of this device is in the cloud */
+export const mirrorsSettled = () => [...unsettled.values()].every(v => !v);
 const readArchived = (): Set<string> => {
   try {
     return new Set(JSON.parse(localStorage.getItem(ARCHIVED_KEY) || '[]'));
@@ -58,6 +72,14 @@ export function useCloudMirror<T extends WithId>(o: CloudMirrorOptions<T>): void
   /** The shared order (ordered lists) */
   const cloudOrder = useRef<string[]>([]);
   const sending = useRef(false);
+  const token = useRef({});
+  useEffect(() => {
+    const t = token.current;
+    unsettled.set(t, true);
+    return () => {
+      unsettled.delete(t);
+    };
+  }, []);
   const docsKey = o.docs.join('|');
 
   const send = async () => {
@@ -85,12 +107,18 @@ export function useCloudMirror<T extends WithId>(o: CloudMirrorOptions<T>): void
     }
     const orderIds = opts.current.ordered ? items.map(i => i.id) : null;
     const orderChanged = !!orderIds && docs.length === 1 && seen.current.has(docs[0]) && orderIds.join('\n') !== cloudOrder.current.join('\n');
-    if (!groups.size && !orderChanged) return;
+    if (!groups.size && !orderChanged) {
+      unsettled.set(token.current, !docs.every(d => seen.current.has(d)));
+      return;
+    }
+    unsettled.set(token.current, true);
     sending.current = true;
+    let anyOk = false;
     try {
       for (const [key, g] of groups) {
         const ok = await saveKeyedRecords(branchId, key, g.put, g.removed);
         if (!ok) continue;
+        anyOk = true;
         g.put.forEach(p => {
           cloudJson.current.set(p.id, JSON.stringify(p));
           docOfId.current.set(p.id, key);
@@ -108,10 +136,15 @@ export function useCloudMirror<T extends WithId>(o: CloudMirrorOptions<T>): void
           }
         }
       }
-      if (orderChanged && orderIds && (await mergeBranchDoc(branchId, docs[0], { order: orderIds }))) cloudOrder.current = orderIds;
+      if (orderChanged && orderIds && (await mergeBranchDoc(branchId, docs[0], { order: orderIds }))) {
+        cloudOrder.current = orderIds;
+        anyOk = true;
+      }
     } finally {
       sending.current = false;
     }
+    // Checked again: settled once nothing is left to send (a refused save waits for the next try)
+    if (anyOk) setTimeout(() => void sendRef.current(), 1000);
   };
   const sendRef = useRef(send);
   sendRef.current = send;
@@ -144,7 +177,10 @@ export function useCloudMirror<T extends WithId>(o: CloudMirrorOptions<T>): void
     if (!branchId || !enabled || !isFirebaseAvailable()) return;
     seen.current = new Set();
     const unsubs = opts.current.docs.map(key =>
-      subscribeToBranchDoc(branchId, key, data => {
+      subscribeToBranchDoc(branchId, key, (data, fromCache) => {
+        // "Not there" from this device's memory (offline) is not the cloud saying so: a new shop's
+        // starting list, or an empty list, must not follow from it
+        if (!data && fromCache) return;
         const { docOf, prefer, order } = opts.current;
         const first = !seen.current.has(key);
         const cloud = keyedItems<T>(data);
@@ -162,7 +198,16 @@ export function useCloudMirror<T extends WithId>(o: CloudMirrorOptions<T>): void
         // (otherwise this device's order is sent)
         const changedOrder = !!shared && shared.join('\n') !== cloudOrder.current.join('\n');
         if (shared) cloudOrder.current = shared;
+        const { trustCloud, seedIfMissing } = opts.current;
         opts.current.setItems(prev => {
+          if (first && trustCloud) {
+            const others = prev.filter(i => docOf(i) !== key);
+            // None in the cloud yet: what this device starts with becomes the shared list
+            if (!data) return seedIfMissing && prev.length === others.length ? [...seedIfMissing(), ...others] : prev;
+            const at = new Map((shared || []).map((id, i) => [id, i]));
+            const fromCloud = shared ? [...cloud].sort((x, y) => (at.get(x.id) ?? 1e9) - (at.get(y.id) ?? 1e9)) : cloud;
+            return order ? order([...fromCloud, ...others]) : [...fromCloud, ...others];
+          }
           const merged = mergeMirror({ prev, cloud, key, first, before, removed, docOf, toCloud: cloudForm, prefer });
           let next = order ? order(merged) : merged;
           if (shared && changedOrder && (!first || prev.length === 0)) {
@@ -172,6 +217,7 @@ export function useCloudMirror<T extends WithId>(o: CloudMirrorOptions<T>): void
           return next.length === prev.length && next.every((x, i) => x === prev[i]) ? prev : next;
         });
         seen.current.add(key);
+        if (first && opts.current.docs.every(d => seen.current.has(d))) opts.current.onReady?.();
         setTimeout(() => void sendRef.current(), 500);
       })
     );

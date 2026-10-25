@@ -1,10 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from 'react';
 import { isLowStock } from '../utils/stockTypes';
 import { DEFAULT_PIN_HASH, hashPin, hashPinWithSalt, isHashedPin, pinMatches } from '../utils/pins';
-import { useCloudMirror } from '../hooks/useCloudMirror';
-import { bigStore, flushBigStore } from '../utils/bigStore';
+import { mirrorsSettled, useCloudMirror } from '../hooks/useCloudMirror';
+import { isLocalRetired } from '../utils/localRetire';
+import { bigStore, bigStorePendingLists, flushBigStore, retireBigStore } from '../utils/bigStore';
 import { lightStart } from '../utils/bootGuard';
-import { offloadRecordImages, recordImageRefs, uploadImageNow } from '../services/imageStore';
+import { offloadRecordImages, pendingImageUploads, recordImageRefs, retireImageStore, uploadImageNow } from '../services/imageStore';
 import { carriesPictures } from '../utils/imageRef';
 import { averageCostAfterPrep } from '../utils/prep';
 import { localDay } from '../utils/stockHistory';
@@ -89,6 +90,9 @@ import {
   deleteCategoryFromFirestore,
   syncTablesToFirestore,
   syncAddOnsToFirestore,
+  shopAccountRefreshToken,
+  uploadMissingRecords,
+  cloudWritesDone,
   syncSettingsToFirestore,
   syncFullCatalogToFirestore,
   purgeOutdatedCloudData,
@@ -181,6 +185,8 @@ export interface StockMove {
 interface POSContextType {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
+  /** The people who can sign in have arrived (from the cloud when nothing is kept on this device) */
+  usersReady: boolean;
   isDrawerOpen: boolean;
   setIsDrawerOpen: (open: boolean) => void;
   isLocked: boolean;
@@ -526,6 +532,11 @@ const writeSettingsEditedAt = (iso: string) => {
 };
 
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // Nothing of the shop is kept on this device: the lists start empty and come from the cloud (the
+  // built-in examples would otherwise show, and be shared, until the cloud answers)
+  const [retiredStart] = useState(() => isLocalRetired());
+  // The menu and the stock have arrived from the cloud at least once this visit
+  const catalogFromCloudRef = useRef({ menu: false, stock: false });
   // Track recently updated menu item IDs and timestamps to protect local saves from being overwritten by stale cloud snapshots
   const recentLocalMenuUpdatesRef = useRef<Map<string, number>>(new Map());
   // Track recently updated ingredient IDs and timestamps to protect local saves from being overwritten by stale cloud snapshots
@@ -540,8 +551,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Default to true: ทุกครั้งที่เปิดระบบ ต้องใส่รหัสพนักงาน (PIN) เพื่อเข้าสู่ระบบ
   const [isLocked, setIsLocked] = useState(true);
   const [branches, setBranches] = useState<Branch[]>(INITIAL_BRANCHES);
-  const [currentBranch, setCurrentBranch] = useState<Branch>(INITIAL_BRANCHES[0]);
-  const [users, setUsers] = useState<User[]>(INITIAL_USERS);
+  const [currentBranch, setCurrentBranch] = useState<Branch>(() => {
+    // The branch this device works for (its name and details arrive with the branches from the cloud)
+    if (!retiredStart) return INITIAL_BRANCHES[0];
+    let id = '';
+    try {
+      id = localStorage.getItem('POS_CURRENT_BRANCH_ID') || '';
+    } catch {
+      id = '';
+    }
+    return id && id !== INITIAL_BRANCHES[0].id ? { ...INITIAL_BRANCHES[0], id } : INITIAL_BRANCHES[0];
+  });
+  const [users, setUsers] = useState<User[]>(() => (retiredStart ? [] : INITIAL_USERS));
   const [currentUser, setCurrentUser] = useState<User>(INITIAL_USERS[0]);
 
   const updateUserPin = (userId: string, plainPin: string) => {
@@ -776,6 +797,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
+    if (retiredStart) return [];
     try {
       const storedDeleted = localStorage.getItem('POS_DELETED_MENU_IDS');
       const delList: string[] = storedDeleted ? JSON.parse(storedDeleted) : [];
@@ -810,6 +832,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
   const [addOns, setAddOns] = useState<AddOnOption[]>(STANDARD_ADD_ONS);
   const [ingredients, setIngredients] = useState<Ingredient[]>(() => {
+    if (retiredStart) return [];
     try {
       const storedDeleted = localStorage.getItem('POS_DELETED_ING_IDS');
       const delList: string[] = storedDeleted ? JSON.parse(storedDeleted) : [];
@@ -842,9 +865,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return INITIAL_INGREDIENTS;
     }
   });
-  const [stockLots, setStockLots] = useState<StockLot[]>(INITIAL_STOCK_LOTS);
-  const [wasteLogs, setWasteLogs] = useState<WasteLog[]>(INITIAL_WASTE_LOGS);
-  const [stockAdjustmentLogs, setStockAdjustmentLogs] = useState<StockAdjustmentLog[]>(INITIAL_STOCK_ADJUSTMENT_LOGS);
+  const [stockLots, setStockLots] = useState<StockLot[]>(() => (retiredStart ? [] : INITIAL_STOCK_LOTS));
+  const [wasteLogs, setWasteLogs] = useState<WasteLog[]>(() => (retiredStart ? [] : INITIAL_WASTE_LOGS));
+  const [stockAdjustmentLogs, setStockAdjustmentLogs] = useState<StockAdjustmentLog[]>(() => (retiredStart ? [] : INITIAL_STOCK_ADJUSTMENT_LOGS));
 
   const lastLocalSettingsEditRef = useRef(0);
 
@@ -928,29 +951,29 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // is corrected with a new adjustment. (Kept for callers; they no longer offer deletion.)
   const clearStockAdjustmentLogs = () => undefined;
   const deleteStockAdjustmentLog = (_logId: string) => undefined;
-  const [staffMembers, setStaffMembers] = useState<StaffMember[]>(INITIAL_STAFF_MEMBERS);
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>(() => (retiredStart ? [] : INITIAL_STAFF_MEMBERS));
 
   // Permissions come from the person's current PIN card, so a change applies without signing in again
   const permissions = useMemo(() => {
     const card = staffMembers.find(s => s.id === currentUser?.id);
     return effectivePermissions(currentUser ? { role: currentUser.role, permissions: card?.permissions ?? currentUser.permissions } : null);
   }, [staffMembers, currentUser]);
-  const [shifts, setShifts] = useState<ShiftEntry[]>(INITIAL_SHIFTS);
-  const [shiftSwapRequests, setShiftSwapRequests] = useState<ShiftSwapRequest[]>(INITIAL_SHIFT_SWAP_REQUESTS);
-  const [cashShifts, setCashShifts] = useState<CashShift[]>(INITIAL_CASH_SHIFTS);
-  const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
-  const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES);
+  const [shifts, setShifts] = useState<ShiftEntry[]>(() => (retiredStart ? [] : INITIAL_SHIFTS));
+  const [shiftSwapRequests, setShiftSwapRequests] = useState<ShiftSwapRequest[]>(() => (retiredStart ? [] : INITIAL_SHIFT_SWAP_REQUESTS));
+  const [cashShifts, setCashShifts] = useState<CashShift[]>(() => (retiredStart ? [] : INITIAL_CASH_SHIFTS));
+  const [orders, setOrders] = useState<Order[]>(() => (retiredStart ? [] : INITIAL_ORDERS));
+  const [expenses, setExpenses] = useState<Expense[]>(() => (retiredStart ? [] : INITIAL_EXPENSES));
   // Latest expenses for callbacks that run after an await (their render's copy may be old)
   const expensesRef = useRef(expenses);
   expensesRef.current = expenses;
-  const [incomes, setIncomes] = useState<OtherIncome[]>(INITIAL_INCOMES);
+  const [incomes, setIncomes] = useState<OtherIncome[]>(() => (retiredStart ? [] : INITIAL_INCOMES));
   const incomesRef = useRef(incomes);
   incomesRef.current = incomes;
   const [settings, setSettings] = useState<SystemSettings>(INITIAL_SETTINGS);
   // The latest settings for callbacks set up once (e.g. the cloud listener)
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  const [securityLogs, setSecurityLogs] = useState<SecurityLogEntry[]>(INITIAL_SECURITY_LOGS);
+  const [securityLogs, setSecurityLogs] = useState<SecurityLogEntry[]>(() => (retiredStart ? [] : INITIAL_SECURITY_LOGS));
 
   const logSecurityEvent = (entry: Omit<SecurityLogEntry, 'id' | 'timestamp'>) => {
     const newLog: SecurityLogEntry = {
@@ -1268,6 +1291,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
 
     const unsubMenus = subscribeToMenuItems((cloudMenuList, removedIds) => {
+      catalogFromCloudRef.current.menu = true;
       setMenuItems(prev => {
         let currentList = prev;
         let changed = false;
@@ -1362,6 +1386,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const branchTargetId = currentBranch?.id || 'branch-1786349847821';
     const unsubInventory = subscribeToBranchInventory(branchTargetId, (cloudIngList, removedIds) => {
+      catalogFromCloudRef.current.stock = true;
       setIngredients(prev => {
         let currentList = prev;
         let changed = false;
@@ -1557,8 +1582,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     docOf: (x: any) => `${prefix}_${(monthOf(x) || '').slice(0, 7) || 'undated'}`,
     docs: [...months.map(m => `${prefix}_${m}`), `${prefix}_undated`]
   });
-  const mirror = { branchId: mirrorBranch, enabled: mirrorOn };
-  useCloudMirror<User>({ ...mirror, ...single('state_users'), items: users, setItems: setUsers, toCloud: cloudPin, prefer: preferChosenPin, ordered: true });
+  const mirror = { branchId: mirrorBranch, enabled: mirrorOn, trustCloud: retiredStart };
+  // Nobody can sign in with a built-in PIN while the people are still on their way from the cloud
+  const [usersReady, setUsersReady] = useState(!retiredStart);
+  const markUsersReady = useCallback(() => setUsersReady(true), []);
+  useCloudMirror<User>({ ...mirror, ...single('state_users'), items: users, setItems: setUsers, toCloud: cloudPin, prefer: preferChosenPin, ordered: true, seedIfMissing: () => INITIAL_USERS, onReady: markUsersReady });
   useCloudMirror<StaffMember>({ ...mirror, ...single('state_staff'), items: staffMembers, setItems: setStaffMembers, toCloud: cloudPin, prefer: preferChosenPin, ordered: true });
   useCloudMirror<Branch>({ ...mirror, ...single('state_branches'), items: branches, setItems: setBranches, ordered: true });
   useCloudMirror<CategoryItem>({ ...mirror, ...single('state_categories'), items: categories, setItems: setCategories, ordered: true });
@@ -1583,6 +1611,21 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return found ? !!found.on : prev;
   }), []);
   useCloudMirror<{ id: string; on: boolean }>({ ...mirror, ...single('state_misc'), items: miscItems, setItems: setMiscItems });
+
+  // The device's branch (a choice of this device, not shop data)
+  useEffect(() => {
+    try {
+      localStorage.setItem('POS_CURRENT_BRANCH_ID', currentBranch.id);
+    } catch {
+      // asked again
+    }
+  }, [currentBranch.id]);
+  useEffect(() => {
+    if (!retiredStart) return;
+    const b = branches.find(x => x.id === currentBranch.id);
+    if (b && JSON.stringify(b) !== JSON.stringify(currentBranch)) setCurrentBranch(b);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branches]);
 
   // Automated Daily Sales Summary Notification at Scheduled Time (e.g. 22:00)
   useEffect(() => {
@@ -1788,6 +1831,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     }
 
+    // A device that keeps nothing starts empty: before the menu and stock have come from the cloud,
+    // a full sync would remove them from the cloud
+    if (retiredStart && !(catalogFromCloudRef.current.menu && catalogFromCloudRef.current.stock)) {
+      return { success: false, message: 'ยังโหลดเมนูและสต็อกจากคลาวด์ไม่ครบ รอสักครู่แล้วลองอีกครั้ง' };
+    }
     setFirebaseSyncState(prev => (cloudLiveRef.current ? prev : { ...prev, status: 'syncing' }));
     try {
       const purge = options?.purgeCloud !== false && (settings.cloudPurgeDeletions !== false);
@@ -4248,6 +4296,70 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       .catch(err => console.warn('[POSContext] Failed to sync record to Firestore:', err));
   };
   /** Send the expenses and income the cloud did not take yet */
+  /**
+   * The step to keeping nothing on this device: once everything it holds is in the cloud (orders
+   * made offline, money records, stock changes, pictures, shared lists, the shop's own lists, and
+   * any order, expense or income the cloud does not have yet), its copy is removed and from then
+   * on the shop's data is only read from the cloud (see utils/localRetire).
+   */
+  const retiringRef = useRef(false);
+  const [localRetired, setLocalRetired] = useState(retiredStart);
+  const retireLocalRef = useRef(async () => undefined as void);
+  retireLocalRef.current = async () => {
+    if (localRetired || retiringRef.current || !isStorageLoaded || firebaseSyncState.status !== 'connected') return;
+    if (!shopAccountRefreshToken()) return; // only the shop account reaches the shop's data
+    const stockLeft = (() => {
+      try {
+        return Object.keys(JSON.parse(localStorage.getItem('POS_PENDING_STOCK_DELTAS') || '{}') || {}).length;
+      } catch {
+        return 1;
+      }
+    })();
+    const waiting = {
+      orders: orders.filter(o => o.isOfflineOrder && !o.isSynced).length,
+      money: readUnsent().length,
+      stock: stockLeft,
+      pictures: pendingImageUploads(),
+      lists: bigStorePendingLists().length,
+      mirrors: mirrorsSettled() ? 0 : 1
+    };
+    if (Object.values(waiting).some(n => n > 0)) {
+      console.info('[Local data] Still sending to the cloud before removing this device\'s copy:', waiting);
+      return;
+    }
+    retiringRef.current = true;
+    try {
+      const results = await Promise.all([
+        uploadMissingRecords('orders', orders, o => syncOrderToFirestore(o, currentBranch)),
+        uploadMissingRecords('expenses', expenses, e => syncExpenseToFirestore(e, currentBranch)),
+        uploadMissingRecords('incomes', incomes, i => syncIncomeToFirestore(i, currentBranch))
+      ]);
+      if (results.some(r => r.failed > 0)) {
+        console.warn('[Local data] Some records could not be checked or sent; trying again later', results);
+        return;
+      }
+      if (!(await cloudWritesDone())) return;
+      await retireBigStore();
+      await retireImageStore();
+      setLocalRetired(true);
+      console.info('[Local data] Everything is in the cloud: this device no longer keeps the shop\'s data', results);
+    } catch (err) {
+      console.warn('[Local data] Not removed this time:', err);
+    } finally {
+      retiringRef.current = false;
+    }
+  };
+  useEffect(() => {
+    if (localRetired || firebaseSyncState.status !== 'connected') return;
+    // A while after connecting (the lists and queues have had time to go out), then every 2 minutes
+    const first = setTimeout(() => void retireLocalRef.current(), 90_000);
+    const again = setInterval(() => void retireLocalRef.current(), 120_000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(again);
+    };
+  }, [localRetired, firebaseSyncState.status]);
+
   const resendMoneyRef = useRef(async () => undefined as void);
   resendMoneyRef.current = async () => {
     if (!isFirebaseAvailable()) return;
@@ -4764,6 +4876,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   return (
     <POSContext.Provider
       value={{
+        usersReady,
         activeTab,
         setActiveTab,
         isDrawerOpen,

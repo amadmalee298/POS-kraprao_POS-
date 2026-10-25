@@ -9,6 +9,8 @@
  * fallback session, so it is the newer one.
  */
 
+import { deleteLocalDb, isLocalRetired, markLocalRetired } from './localRetire';
+
 export const BIG_KEYS = [
   'kaprao_pos_enterprise_v1',
   'POS_ORDERS_DATA',
@@ -35,6 +37,8 @@ const cache = new Map<string, string>();
 // Keys read once at start-up and then only written: their (large) text is not kept in memory
 const writeOnly = new Set<string>();
 let db: IDBDatabase | null = null;
+/** Nothing is kept on this device any more: the large data lives only in memory this visit */
+let memoryOnly = false;
 const pending = new Map<string, string | null>(); // key → value to write (null: delete)
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -111,7 +115,13 @@ const RETRY_KEY = 'POS_BIGSTORE_RETRY';
 
 /** Read the large data into memory and move it out of localStorage (call once before the app starts) */
 export async function hydrateBigStore(timeoutMs = 15000): Promise<void> {
-  if (db || typeof indexedDB === 'undefined') return;
+  if (db || memoryOnly || typeof indexedDB === 'undefined') return;
+  if (isLocalRetired()) {
+    memoryOnly = true;
+    // Anything left from before (e.g. the removal was interrupted)
+    void deleteLocalDb(DB_NAME);
+    return;
+  }
   let timedOut = false;
   try {
     const opened = await Promise.race([
@@ -138,6 +148,21 @@ export async function hydrateBigStore(timeoutMs = 15000): Promise<void> {
         // private mode
       }
     });
+    // A device that has kept nothing yet starts without keeping anything
+    const anyLocal = stored.size > 0 || [...BIG_KEYS, ...LIST_KEYS].some(k => {
+      try {
+        return localStorage.getItem(k) !== null;
+      } catch {
+        return false;
+      }
+    });
+    if (!anyLocal) {
+      opened.close();
+      markLocalRetired();
+      memoryOnly = true;
+      void deleteLocalDb(DB_NAME);
+      return;
+    }
     const keys = [...BIG_KEYS, ...adopted];
     const values = keys.map(k => stored.get(k));
     const moved: string[] = [];
@@ -209,6 +234,53 @@ export async function hydrateBigStore(timeoutMs = 15000): Promise<void> {
   }
 }
 
+/**
+ * Stop keeping the large data on this device (everything is in the cloud): from now on it lives
+ * only in memory, and the device's copy is removed.
+ */
+export async function retireBigStore(): Promise<void> {
+  await flush();
+  memoryOnly = true;
+  markLocalRetired();
+  const d = db;
+  db = null;
+  pending.clear();
+  writeOnly.clear();
+  try {
+    d?.close();
+  } catch {
+    // closed already
+  }
+  for (const k of [...BIG_KEYS, ...LIST_KEYS, ...adopted]) {
+    try {
+      localStorage.removeItem(k);
+      localStorage.removeItem(`${k}__pending`);
+    } catch {
+      // ignore
+    }
+  }
+  await deleteLocalDb(DB_NAME);
+}
+
+/** The large data is kept only in memory (nothing on this device) */
+export const bigStoreMemoryOnly = () => memoryOnly;
+
+/** Lists changed on this device that the cloud has not confirmed yet (useKeyedList's __pending) */
+export function bigStorePendingLists(): string[] {
+  const out: string[] = [];
+  const keys = new Set<string>([...cache.keys(), ...[...adopted].map(k => `${k}__pending`)]);
+  for (const k of keys) {
+    if (!k.endsWith('__pending')) continue;
+    try {
+      const v = JSON.parse(bigStore.getItem(k) || '[]');
+      if (Array.isArray(v) && v.length) out.push(k);
+    } catch {
+      // unreadable: not counted
+    }
+  }
+  return out;
+}
+
 /** The saved data could not be read this visit (see hydrateBigStore) */
 export const bigStoreUnreachable = () => unreachable;
 
@@ -220,6 +292,7 @@ export const bigStore = {
   adopt(key: string): void {
     if (adopted.has(key) || (BIG_KEYS as readonly string[]).includes(key)) return;
     adopted.add(key);
+    if (memoryOnly) return;
     if (!db) return;
     let local: string | null = null;
     try {
@@ -244,13 +317,14 @@ export const bigStore = {
    * holds too much).
    */
   release(keys: readonly string[]): void {
-    if (!db) return;
+    if (!db && !memoryOnly) return;
     keys.forEach(k => {
       writeOnly.add(k);
       cache.delete(k);
     });
   },
   getItem(key: string): string | null {
+    if (memoryOnly && (isBig(key) || isBigKey(key))) return writeOnly.has(key) ? null : cache.get(key) ?? null;
     if (db && writeOnly.has(key)) {
       console.warn(`[bigStore] ${key} is no longer kept in memory; read it before release()`);
       return null;
@@ -259,6 +333,10 @@ export const bigStore = {
     return cache.has(key) ? cache.get(key)! : null;
   },
   setItem(key: string, value: string): void {
+    if (memoryOnly && (isBig(key) || isBigKey(key))) {
+      if (!writeOnly.has(key)) cache.set(key, value);
+      return;
+    }
     if (unreachable && isBigKey(key)) return;
     if (!db || !isBig(key)) {
       localStorage.setItem(key, value);
@@ -269,6 +347,10 @@ export const bigStore = {
     schedule();
   },
   removeItem(key: string): void {
+    if (memoryOnly && (isBig(key) || isBigKey(key))) {
+      cache.delete(key);
+      return;
+    }
     if (unreachable && isBigKey(key)) return;
     if (!db || !isBig(key)) {
       localStorage.removeItem(key);

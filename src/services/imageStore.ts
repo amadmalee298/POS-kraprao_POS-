@@ -20,6 +20,8 @@ import {
   parseImageRef
 } from '../utils/imageRef';
 
+import { deleteLocalDb, isLocalRetired } from '../utils/localRetire';
+
 // Loaded when first needed (keeps the cloud connection out of code that only formats documents)
 const cloud = () => import('./firebaseService');
 
@@ -35,8 +37,35 @@ const recent = new Map<string, string>();
 // Pictures already saved on this device in this visit (the cloud sends the same records again and again)
 const known = new Set<string>();
 let dbPromise: Promise<IDBDatabase | null> | null = null;
+/** Nothing kept on this device: pictures come from the cloud, the last few stay in memory */
+let memoryOnly = isLocalRetired();
+if (memoryOnly) void deleteLocalDb(DB_NAME);
+let memQueue: QueueItem[] = [];
+
+/** Stop keeping pictures on this device (they are in the cloud): its copy is removed */
+export async function retireImageStore(): Promise<void> {
+  memoryOnly = true;
+  memQueue = readQueue();
+  try {
+    localStorage.removeItem(QUEUE_KEY);
+  } catch {
+    // ignore
+  }
+  const db = dbPromise ? await dbPromise : null;
+  dbPromise = Promise.resolve(null);
+  try {
+    db?.close();
+  } catch {
+    // closed already
+  }
+  await deleteLocalDb(DB_NAME);
+}
+
+/** Pictures not sent to the cloud yet */
+export const pendingImageUploads = () => readQueue().length;
 
 function openDb(): Promise<IDBDatabase | null> {
+  if (memoryOnly) return Promise.resolve(null);
   if (dbPromise) return dbPromise;
   dbPromise = new Promise(resolve => {
     try {
@@ -92,6 +121,7 @@ const remember = (id: string, data: string) => {
 
 type QueueItem = { b: string; id: string; tries: number };
 const readQueue = (): QueueItem[] => {
+  if (memoryOnly) return memQueue;
   try {
     const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
     return Array.isArray(q) ? q : [];
@@ -100,6 +130,10 @@ const readQueue = (): QueueItem[] => {
   }
 };
 const writeQueue = (q: QueueItem[]) => {
+  if (memoryOnly) {
+    memQueue = q.slice(-500);
+    return;
+  }
   try {
     localStorage.setItem(QUEUE_KEY, JSON.stringify(q.slice(-500)));
   } catch {
@@ -126,6 +160,11 @@ export async function flushImageUploads(): Promise<void> {
       const now = readQueue();
       if (done || item.tries >= 5) {
         writeQueue(now.filter(q => q.id !== item.id));
+        // Kept only in memory: once in the cloud it is read from there (the last few stay at hand)
+        if (memoryOnly && done && data) {
+          pending.delete(item.id);
+          remember(item.id, data);
+        }
       } else {
         writeQueue([...now.filter(q => q.id !== item.id), { ...item, tries: item.tries + 1 }]);
         break; // offline or refused: try again later

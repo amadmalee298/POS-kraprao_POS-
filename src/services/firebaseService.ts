@@ -9,6 +9,8 @@ import {
   doc,
   setDoc,
   getDoc,
+  getDocFromServer,
+  waitForPendingWrites,
   getDocs,
   deleteDoc,
   deleteField,
@@ -2025,12 +2027,13 @@ export async function syncSettingsToFirestore(
 export function subscribeToBranchDoc(
   branchId: string,
   key: string,
-  onData: (data: DocumentData | null) => void
+  /** fromCache: the answer is this device's memory, not the cloud's (e.g. offline) */
+  onData: (data: DocumentData | null, fromCache?: boolean) => void
 ): () => void {
   if (!dbInstance) return () => {};
   return onSnapshot(
     doc(dbInstance, 'branches', branchId, 'config', key),
-    snap => onData(snap.exists() ? snap.data() : null),
+    snap => onData(snap.exists() ? snap.data() : null, snap.metadata.fromCache),
     err => console.warn(`[Firebase Service] Shared document ${key} listener error:`, err)
   );
 }
@@ -2899,4 +2902,46 @@ export async function claimOnce(branchId: string, job: string): Promise<boolean 
     console.warn(`[Firebase Service] Could not claim ${job}:`, err);
     return null;
   }
+}
+
+/**
+ * Before a device stops keeping data: every record it has that the cloud does not (by document
+ * id) is sent. Returns how many were checked, sent, and could not be checked or sent.
+ */
+export async function uploadMissingRecords<T extends { id: string }>(
+  collectionName: 'orders' | 'expenses' | 'incomes',
+  records: T[],
+  send: (record: T) => Promise<boolean>
+): Promise<{ checked: number; sent: number; failed: number }> {
+  if (!dbInstance || !navigator.onLine) return { checked: 0, sent: 0, failed: records.length };
+  await waitForFirebaseAuth();
+  const db = dbInstance;
+  const prefix = collectionName === 'orders' ? 'ord-' : collectionName === 'expenses' ? 'exp-' : 'inc-';
+  let sent = 0;
+  let failed = 0;
+  for (let i = 0; i < records.length; i += 20) {
+    await Promise.all(
+      records.slice(i, i + 20).map(async r => {
+        const id = r.id.startsWith(prefix) ? r.id : `${prefix}${r.id}`;
+        try {
+          const snap = await getDocFromServer(doc(db, collectionName, id));
+          if (snap.exists()) return;
+          if (await send(r)) sent++;
+          else failed++;
+        } catch {
+          failed++;
+        }
+      })
+    );
+  }
+  return { checked: records.length, sent, failed };
+}
+
+/** Every write of this visit has reached the cloud (false after the wait) */
+export async function cloudWritesDone(timeoutMs = 30_000): Promise<boolean> {
+  if (!dbInstance) return false;
+  return Promise.race([
+    waitForPendingWrites(dbInstance).then(() => true, () => false),
+    new Promise<boolean>(resolve => setTimeout(() => resolve(false), timeoutMs))
+  ]);
 }

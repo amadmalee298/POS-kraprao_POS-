@@ -1,3 +1,4 @@
+import { ShopAccountStatusButton } from './ShopAccountBanner';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { SHOP_LOGO_URL, FALLBACK_SVG_LOGO } from '../assets/logo';
 import { UserRole } from '../types';
@@ -26,11 +27,13 @@ import { DEFAULT_PIN_HASH, isWeakPin, notePinAttempt, pinLockRemaining, pinMatch
 
 
 export const LoginScreen: React.FC = () => {
-  const { users, setCurrentUser, setIsLocked, currentUser, shifts, addShift, updateShift, updateUserPin, logSecurityEvent, settings } = usePOS();
+  const { users, usersReady, setCurrentUser, setIsLocked, currentUser, shifts, addShift, updateShift, updateUserPin, logSecurityEvent, settings } = usePOS();
   const [loginMode, setLoginMode] = useState<'pin' | 'password'>('pin');
 
   // Filter out any legacy "สมศักดิ์" and ensure "อาห์มัด" is top priority
   const sanitizedUsers = useMemo(() => {
+    // Still on their way from the cloud: nobody (not even the built-in owner with PIN 1234)
+    if (!usersReady) return [];
     const filtered = users
       .filter(u => !u.name?.includes('สมศักดิ์'))
       .map(u => (u.id === 'usr-admin' && u.name?.includes('สมศักดิ์')) ? { ...u, name: 'อาห์มัด (เจ้าของร้าน)', pin: u.pin || DEFAULT_PIN_HASH } : u);
@@ -45,7 +48,7 @@ export const LoginScreen: React.FC = () => {
       });
     }
     return filtered;
-  }, [users]);
+  }, [users, usersReady]);
 
   const defaultUser = sanitizedUsers.find(u => u.name?.includes('อาห์มัด') || u.id === 'usr-admin' || u.id === 'staff-ahmad') || sanitizedUsers[0];
 
@@ -315,7 +318,7 @@ export const LoginScreen: React.FC = () => {
     if (loginMode !== 'pin' || showForgotModal) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isTypingInField(e)) return;
+      if (isTypingInField(e) || !selectedUser) return;
       if (e.key >= '0' && e.key <= '9') {
         e.preventDefault();
         handleNumClick(e.key);
@@ -333,7 +336,7 @@ export const LoginScreen: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [loginMode, showForgotModal, pin, handleNumClick, handleDelete, handleClear, executePinLogin]);
+  }, [loginMode, showForgotModal, pin, handleNumClick, handleDelete, handleClear, executePinLogin, selectedUser]);
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -349,6 +352,19 @@ export const LoginScreen: React.FC = () => {
     executePinLogin(password);
     setPassword('');
   };
+
+  if (!usersReady) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0d0704] text-amber-50 p-6 text-center font-sans">
+        <div className="flex flex-col items-center gap-3">
+        <div className="w-8 h-8 rounded-full border-2 border-orange-500 border-t-transparent animate-spin" />
+        <div className="font-bold">กำลังโหลดรายชื่อผู้ใช้จากคลาวด์...</div>
+        <div className="text-xs text-amber-200/60 max-w-xs">แอปไม่เก็บข้อมูลไว้ในเครื่องแล้ว ต้องต่ออินเทอร์เน็ตและเชื่อมบัญชีร้านไว้ จึงจะเข้าระบบได้</div>
+        <ShopAccountStatusButton className="h-11 px-4 rounded-xl border border-orange-500/50 bg-orange-950/40 text-orange-200 text-sm font-bold flex items-center gap-2" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0d0704] text-amber-50 p-2.5 sm:p-4 font-sans selection:bg-orange-500 selection:text-white overflow-y-auto">
