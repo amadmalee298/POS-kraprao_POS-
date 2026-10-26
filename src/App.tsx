@@ -36,6 +36,7 @@ import { SheetsScriptAutoSync } from './components/sheets/SheetsScriptAutoSync';
 import { FilingReminder } from './components/filings/FilingReminder';
 import { ScheduleSync } from './components/ScheduleSync';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
+import { UpdateWatcher } from './components/UpdateWatcher';
 import { AutoCloudPictureCleanup } from './components/settings/CloudPictureCleanup';
 import { startupCrashes } from './utils/bootGuard';
 import { canOpenTab, firstAllowedTab } from './utils/access';
@@ -161,6 +162,7 @@ const MainLayout: React.FC = () => {
 
       {/* Staff device not signed in with the shop account: cloud sync is blocked by the rules */}
       {!isLocked && <ShopAccountBanner />}
+      <UpdateWatcher />
 
       {!isLocked && crashNotice && (
         <div className="bg-sky-950 border-b border-sky-800 text-sky-100 px-4 py-2 text-xs flex items-center justify-between gap-3">
