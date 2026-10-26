@@ -513,6 +513,10 @@ export interface SystemSettings {
   sheetsScript?: SheetsScriptSettings;
   /** The double-entry books start here (ISO time); earlier records stay but are left out of the statements */
   booksStartAt?: string;
+  /** Records left out of the books by the owner (ids of wrong entries, see utils/ledgerAnomalies) */
+  ledgerExcluded?: string[];
+  /** What each record left out was (shown in the list of records left out) */
+  ledgerExcludedLabels?: Record<string, string>;
   payroll?: PayrollSettings;
   attendance?: AttendanceSettings;
   /** Years over which equipment bought is depreciated (straight line); default 5 */

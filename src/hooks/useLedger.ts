@@ -39,7 +39,8 @@ export function useLedger(opts: { lazy?: boolean } = {}) {
       vatRate: Number(settings.vatRate) || 7,
       usefulLifeYears: settings.equipmentUsefulLifeYears,
       today,
-      startAt: settings.booksStartAt
+      startAt: settings.booksStartAt,
+      excluded: settings.ledgerExcluded
     }),
     [branchId, pos.orders, pos.expenses, pos.incomes, pos.stockLots, pos.wasteLogs, pos.stockAdjustmentLogs, pos.cashShifts, branchJournals, receivables, payables, pos.ingredients, settings, today]
   );

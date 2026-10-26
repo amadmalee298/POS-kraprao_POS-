@@ -167,6 +167,8 @@ export interface LedgerData {
   today?: string;
   /** The books start here (ISO time): records made before are left out, so the statements start at zero */
   startAt?: string;
+  /** Records the owner left out of the books (wrong entries, e.g. a count of thousands of kilos) */
+  excluded?: string[];
 }
 
 /** The shop's day (UTC+7) of a moment */
@@ -210,7 +212,9 @@ const COUNT_REASONS = new Set(['audit_correction', 'manual_adjustment', 'other']
 export function buildGlLines(d: LedgerData): GlLine[] {
   const lines: GlLine[] = [];
   const own = (b?: string) => !b || d.branchId === 'all' || b === d.branchId;
+  const leftOut = new Set(d.excluded || []);
   const push = (base: Omit<GlLine, 'account' | 'debit' | 'credit' | 'cf' | 'detail'>, legs: [string, number, number, CashFlowItem?, string?][]) => {
+    if (leftOut.has(base.sourceId)) return;
     for (const [account, debit, credit, cf, detail] of legs) {
       const dr = round2(debit);
       const cr = round2(credit);
@@ -220,6 +224,10 @@ export function buildGlLines(d: LedgerData): GlLine[] {
   };
   const ingCost = new Map(d.ingredients.map(i => [i.id, effectiveUnitCost(i)]));
   const typeOfIng = new Map(d.ingredients.map(i => [i.id, stockTypeOf(i)]));
+  const unitOf = new Map(d.ingredients.map(i => [i.id, i.unit]));
+  /** e.g. "-12,000 g × ฿0.95": how a stock entry's value came about */
+  const qtyNote = (id: string, qty: number) =>
+    `${qty > 0 ? '+' : ''}${qty.toLocaleString('th-TH', { maximumFractionDigits: 3 })} ${unitOf.get(id) || ''} × ฿${(ingCost.get(id) || 0).toLocaleString('th-TH', { maximumFractionDigits: 4 })}`;
   /** Equipment bought, depreciated below */
   const assets: { id: string; date: string; cost: number; title: string }[] = [];
   /** Made after the books started */
@@ -348,7 +356,7 @@ export function buildGlLines(d: LedgerData): GlLine[] {
     if (kindOf(l.ingredientId) !== 'inventory') continue; // counting supplies or equipment moves no money
     const value = Math.abs(l.changeQty || 0) * (ingCost.get(l.ingredientId) || 0);
     if (!value) continue;
-    const base = { date: thaiDay(l.timestamp), source: 'adjustment' as const, sourceId: l.id, reference: l.ingredientName, memo: l.notes };
+    const base = { date: thaiDay(l.timestamp), source: 'adjustment' as const, sourceId: l.id, reference: l.ingredientName, memo: [qtyNote(l.ingredientId, l.changeQty || 0), l.notes].filter(Boolean).join(' · ') };
     if (reason === 'issue') push(base, [['5000', value, 0], ['1200', 0, value]]);
     else if (l.changeQty > 0) push(base, [['1200', value, 0], ['3100', 0, value]]);
     else push(base, [['5300', value, 0], ['1200', 0, value]]);
