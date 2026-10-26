@@ -19,6 +19,7 @@ import {
   trialBalance
 } from '../../utils/ledger';
 import { sellerInfo } from '../../utils/seller';
+import { ledgerAnomalies } from '../../utils/ledgerAnomalies';
 import { documentHtml, printDocument } from '../../utils/staffDocs';
 
 /**
@@ -56,6 +57,102 @@ const Row: React.FC<{ label: string; amount: number; strong?: boolean; indent?: 
     <td className={`py-1.5 text-right tabular-nums font-mono ${(negative ?? amount < 0) ? 'text-rose-300' : ''}`}>{money(amount)}</td>
   </tr>
 );
+
+/**
+ * Which records make a figure unusual (a stock count of thousands of kilos, a cash count typed with
+ * extra zeros, income that is not a sale): the biggest records behind the accounts where one wrong
+ * entry shows. The owner can leave a wrong record out of the books (and count it again).
+ */
+const AnomalyReport: React.FC<{
+  lines: Parameters<typeof ledgerAnomalies>[0];
+  from: string;
+  to: string;
+  excluded: string[];
+  labels: Record<string, string>;
+  owner: boolean;
+  onChange: (ids: string[], labels: Record<string, string>) => void;
+  onOpen: (code: string) => void;
+}> = ({ lines, from, to, excluded, labels, owner, onChange, onOpen }) => {
+  const groups = useMemo(() => ledgerAnomalies(lines, from, to), [lines, from, to]);
+  const unusual = groups.reduce((n, g) => n + g.entries.filter(e => e.unusual).length, 0);
+  const [open, setOpen] = useState(false);
+  const show = open || unusual > 0;
+  return (
+    <div className={`rounded-2xl border p-3 sm:p-4 text-xs print:hidden ${unusual ? 'border-rose-700/60 bg-rose-950/20' : 'border-slate-800 bg-slate-900/40'}`}>
+      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-2 text-left">
+        <span className={`font-bold flex items-center gap-1.5 ${unusual ? 'text-rose-200' : 'text-slate-300'}`}>
+          <TriangleAlert className="w-4 h-4" /> ตรวจรายการผิดปกติ {unusual ? `(พบ ${unusual} รายการที่สูงผิดปกติ)` : '(ไม่พบรายการสูงผิดปกติ)'}
+        </span>
+        <span className="text-slate-500">{show ? '▴' : '▾'}</span>
+      </button>
+      {show && (
+        <div className="mt-3 space-y-4">
+          <p className="text-slate-400">
+            รายการที่ทำให้ตัวเลขในงบสูงผิดปกติ เช่น นับสต็อกผิดหน่วย (กรัม/กิโล) ใส่ยอดนับเงินเกินหลัก หรือรายรับที่ไม่ใช่ยอดขาย ตรวจที่ “จำนวน × ราคาต่อหน่วย”
+            {owner ? ' ถ้าผิด กด “ไม่นับในบัญชี” (กดนับกลับได้ทุกเมื่อ)' : ' (เจ้าของร้านเลือกไม่นับรายการที่ผิดได้)'}
+          </p>
+          {groups.map(g => (
+            <div key={g.account} className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <button type="button" onClick={() => onOpen(g.account)} className="font-bold text-slate-200 underline decoration-dotted underline-offset-4">
+                  {g.account} {g.name}
+                </button>
+                <span className={`font-mono ${g.total < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{money(g.total)}</span>
+              </div>
+              {g.entries.map(e => (
+                <div key={e.sourceId} className={`rounded-xl px-3 py-2 flex items-start justify-between gap-2 ${e.unusual ? 'bg-rose-950/50 border border-rose-700/60' : 'bg-slate-950/60 border border-slate-800'}`}>
+                  <div className="min-w-0">
+                    <div className="text-slate-100 truncate">
+                      {e.unusual && <span className="text-rose-300 font-bold">ผิดปกติ · </span>}
+                      {e.reference || e.source}
+                    </div>
+                    <div className="text-slate-400">
+                      {thaiDate(e.date)} · {e.source}
+                      {e.memo ? ` · ${e.memo}` : ''}
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right space-y-1">
+                    <div className={`font-mono ${e.amount < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{money(e.amount)}</div>
+                    {owner && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`ไม่นับ “${e.reference || e.source}” ${money(e.amount)} ในบัญชี? (กดนับกลับได้ภายหลัง)`)) onChange([...excluded, e.sourceId], { ...labels, [e.sourceId]: `${thaiDate(e.date)} · ${e.reference || e.source} · ${money(e.amount)}${e.memo ? ` (${e.memo})` : ''}` });
+                        }}
+                        className="h-7 px-2 rounded-lg border border-rose-700/60 text-rose-200 text-[11px]"
+                      >
+                        ไม่นับในบัญชี
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+          {excluded.length > 0 && (
+            <div className="space-y-1.5 pt-2 border-t border-slate-800">
+              <div className="font-bold text-slate-300">รายการที่ไม่นับในบัญชี ({excluded.length})</div>
+              {excluded.map(id => (
+                <div key={id} className="flex items-center justify-between gap-2 text-slate-400">
+                  <span className="truncate">{labels[id] || id}</span>
+                  {owner && (
+                    <button type="button" onClick={() => {
+                        const rest = { ...labels };
+                        delete rest[id];
+                        onChange(excluded.filter(x => x !== id), rest);
+                      }} className="h-7 px-2 rounded-lg border border-slate-700 text-slate-300 text-[11px] shrink-0">
+                      นับกลับ
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => void }> = ({ tab, onTab }) => {
   const pos = usePOS();
@@ -128,6 +225,21 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
           <Row label="กำไร (ขาดทุน) สุทธิ" amount={p.netProfit} strong />
         </tbody>
       </table>
+    );
+    body = (
+      <div className="space-y-4">
+        {body}
+        <AnomalyReport
+          lines={lines}
+          from={from}
+          to={to}
+          excluded={settings.ledgerExcluded || []}
+          labels={settings.ledgerExcludedLabels || {}}
+          owner={isOwner(currentUser?.role)}
+          onChange={(ids, labels) => updateSettings({ ledgerExcluded: ids, ledgerExcludedLabels: labels })}
+          onOpen={code => openLedger(code, 'period')}
+        />
+      </div>
     );
   } else if (tab === 'balance') {
     const b = balanceSheet(lines, asOf);
