@@ -251,7 +251,7 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
                         ({ord.items.length} รายการ - {ord.paymentMethod})
                       </span>
                     </div>
-                    <span className="font-bold text-emerald-400">฿{ord.grandTotal.toFixed(2)}</span>
+                    <span className="font-bold text-emerald-400">฿{(Number(ord.grandTotal) || 0).toFixed(2)}</span>
                   </div>
                 ))}
               </div>

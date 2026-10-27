@@ -141,7 +141,7 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
               <p className="text-xs text-rose-300/70">
                 {order.orderType === 'dine-in' ? `โต๊ะ ${order.tableNumber || '-'}` : order.orderType === 'takeaway' ? 'ใส่กล่อง' : 'เดลิเวอรี่'}
                 {' • '}
-                ฿{order.grandTotal.toFixed(2)} ({order.items.length} รายการ)
+                ฿{(Number(order.grandTotal) || 0).toFixed(2)} ({order.items.length} รายการ)
               </p>
             </div>
           </div>

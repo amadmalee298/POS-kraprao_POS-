@@ -2069,7 +2069,7 @@ export const RecipeCostingView: React.FC = () => {
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1 text-xs">
                     <div className="flex justify-between text-slate-400">
                       <span>ต้นทุนวัตถุดิบ (Food Cost):</span>
-                      <span className="font-bold text-rose-400">฿{item.costPrice.toFixed(2)}</span>
+                      <span className="font-bold text-rose-400">฿{(Number(item.costPrice) || 0).toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between text-slate-400">
                       <span>กำไรขั้นต้น (Margin):</span>
@@ -4263,7 +4263,7 @@ export const QuotationView: React.FC = () => {
                       <td className="p-2.5 font-mono text-slate-500">{i + 1}</td>
                       <td className="p-2.5 font-semibold text-slate-900">{item.name}</td>
                       <td className="p-2.5 text-center font-mono">{item.qty}</td>
-                      <td className="p-2.5 text-right font-mono">฿{item.price.toFixed(2)}</td>
+                      <td className="p-2.5 text-right font-mono">฿{(Number(item.price) || 0).toFixed(2)}</td>
                       <td className="p-2.5 text-right font-mono font-bold text-slate-900">฿{(item.qty * item.price).toFixed(2)}</td>
                     </tr>
                   ))}
@@ -6687,6 +6687,9 @@ export const TaxReceiptView: React.FC = () => {
 
     return matchType && matchSearch;
   });
+  // 50 rows at a time: a row for every bill (thousands) froze phones for seconds
+  const [receiptLimit, setReceiptLimit] = useState(50);
+  useEffect(() => setReceiptLimit(50), [filterType, searchTerm]);
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto animate-in fade-in duration-200">
@@ -6818,7 +6821,7 @@ export const TaxReceiptView: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {filteredOrders.length > 0 ? (
-                filteredOrders.map(o => {
+                filteredOrders.slice(0, receiptLimit).map(o => {
                   const { base: vatBase, vat: vatAmount } = orderVatBreakdown(o);
                   const isFull = !!o.customerTaxInfo;
 
@@ -6847,7 +6850,7 @@ export const TaxReceiptView: React.FC = () => {
                       </td>
                       <td className="p-3.5 text-right font-mono text-slate-300">฿{vatBase.toFixed(2)}</td>
                       <td className="p-3.5 text-right font-mono text-amber-400">฿{vatAmount.toFixed(2)}</td>
-                      <td className="p-3.5 text-right font-mono font-bold text-emerald-400 text-sm">฿{o.grandTotal.toFixed(2)}</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-emerald-400 text-sm">฿{(Number(o.grandTotal) || 0).toFixed(2)}</td>
                       <td className="p-3.5 text-center space-x-1.5">
                         <button
                           onClick={() => handleOpenEditTaxModal(o)}
@@ -6876,6 +6879,11 @@ export const TaxReceiptView: React.FC = () => {
             </tbody>
           </table>
         </div>
+        {filteredOrders.length > receiptLimit && (
+          <button type="button" onClick={() => setReceiptLimit(l => l + 50)} className="w-full h-11 border-t border-slate-800 text-slate-300 text-xs font-bold">
+            แสดงเพิ่ม ({receiptLimit} จาก {filteredOrders.length})
+          </button>
+        )}
       </div>
 
       {/* NEW RECEIPT / TAX INVOICE MODAL (ออกใบเสร็จรับเงิน / ใบกำกับภาษีใหม่) */}
@@ -6910,7 +6918,7 @@ export const TaxReceiptView: React.FC = () => {
                       <option value="">-- เลือกออเดอร์ POS --</option>
                       {receiptOrders.slice(0, 300).map(o => (
                         <option key={o.id} value={o.id}>
-                          {o.orderNumber} - ฿{o.grandTotal.toFixed(2)} ({o.customerTaxInfo?.companyName || 'ลูกค้าทั่วไป'})
+                          {o.orderNumber} - ฿{(Number(o.grandTotal) || 0).toFixed(2)} ({o.customerTaxInfo?.companyName || 'ลูกค้าทั่วไป'})
                         </option>
                       ))}
                     </select>
@@ -7480,7 +7488,7 @@ export const TaxReceiptView: React.FC = () => {
                         )}
                         <div>มูลค่าสินค้า (ก่อน VAT): ฿{vatBase.toFixed(2)}</div>
                         <div className="text-amber-700">ภาษีมูลค่าเพิ่ม (VAT): ฿{vat.toFixed(2)}</div>
-                        <div className="text-sm font-bold text-emerald-700 font-sans">ราคารวมทั้งสิ้น: ฿{printingOrder.grandTotal.toFixed(2)}</div>
+                        <div className="text-sm font-bold text-emerald-700 font-sans">ราคารวมทั้งสิ้น: ฿{(Number(printingOrder.grandTotal) || 0).toFixed(2)}</div>
                       </div>
                     </div>
                     <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 text-center font-sans text-xs text-slate-800 font-bold">

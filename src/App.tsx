@@ -37,6 +37,7 @@ import { FilingReminder } from './components/filings/FilingReminder';
 import { ScheduleSync } from './components/ScheduleSync';
 import { ShopAccountBanner } from './components/ShopAccountBanner';
 import { UpdateWatcher } from './components/UpdateWatcher';
+import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { AutoCloudPictureCleanup } from './components/settings/CloudPictureCleanup';
 import { startupCrashes } from './utils/bootGuard';
 import { canOpenTab, firstAllowedTab } from './utils/access';
@@ -187,7 +188,7 @@ const MainLayout: React.FC = () => {
           }
         >
         {!tabAllowed ? null : (
-        <>
+        <PageErrorBoundary key={activeTab}>
         {(activeTab === 'dashboard' || activeTab === 'analytics') && <ExecutiveDashboardView />}
         {activeTab === 'pos' && <POSView />}
         {activeTab === 'qr' && <QrOrderingView />}
@@ -202,7 +203,7 @@ const MainLayout: React.FC = () => {
         {activeTab === 'crm' && <CRMView />}
         {activeTab === 'line_notify' && <LineNotifyView />}
         {activeTab === 'settings' && <SettingsView />}
-        </>
+        </PageErrorBoundary>
         )}
         </React.Suspense>
       </main>

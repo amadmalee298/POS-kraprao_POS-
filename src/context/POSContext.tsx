@@ -158,7 +158,7 @@ import { SHOP_LOGO_URL, normalizeShopLogoUrl } from '../assets/logo';
 
 export function computeOrderChecksum(order: Order): string {
   const itemsCount = order.items ? order.items.length : 0;
-  const rawStr = `${order.id}:${order.orderNumber || ''}:${order.grandTotal.toFixed(2)}:${itemsCount}:${order.createdAt || ''}:${order.paymentMethod}`;
+  const rawStr = `${order.id}:${order.orderNumber || ''}:${(Number(order.grandTotal) || 0).toFixed(2)}:${itemsCount}:${order.createdAt || ''}:${order.paymentMethod}`;
   return crc16(rawStr);
 }
 
@@ -1755,7 +1755,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             syncLogsTable.push({
               'Order ID': ord.id,
               'Order #': ord.orderNumber,
-              'Grand Total (฿)': ord.grandTotal.toFixed(2),
+              'Grand Total (฿)': (Number(ord.grandTotal) || 0).toFixed(2),
               'Items': ord.items?.length || 0,
               'Payment': ord.paymentMethod,
               'Checksum': computedChecksum,
@@ -1775,7 +1775,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             syncLogsTable.push({
               'Order ID': ord.id,
               'Order #': ord.orderNumber,
-              'Grand Total (฿)': ord.grandTotal.toFixed(2),
+              'Grand Total (฿)': (Number(ord.grandTotal) || 0).toFixed(2),
               'Items': ord.items?.length || 0,
               'Payment': ord.paymentMethod,
               'Checksum': computedChecksum,
