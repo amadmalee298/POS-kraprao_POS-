@@ -1,3 +1,4 @@
+import { withPrintBar } from '../../utils/printBar';
 import React, { useEffect, useState } from 'react';
 import { Crosshair, Download, ExternalLink, MapPin, Printer, QrCode, RefreshCw, X } from 'lucide-react';
 import QRCode from 'qrcode';
@@ -38,7 +39,7 @@ export const ShopClockQR: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const print = () => {
     const w = window.open('', '_blank', 'width=600,height=800');
     if (!w || !img) return;
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>QR ลงเวลา</title><style>body{font-family:sans-serif;text-align:center;padding:32px}img{width:80%;max-width:520px}</style></head><body><h1>สแกนเพื่อลงเวลาเข้า-ออกงาน</h1><p>ใช้กล้องมือถือสแกน แล้วใส่ PIN ของคุณ</p><img src="${img}" alt="QR"><script>window.onload=()=>window.print()</script></body></html>`);
+    w.document.write(withPrintBar(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>QR ลงเวลา</title><style>body{font-family:sans-serif;text-align:center;padding:0 0 32px;margin:0}img{width:80%;max-width:520px}</style></head><body><h1>สแกนเพื่อลงเวลาเข้า-ออกงาน</h1><p>ใช้กล้องมือถือสแกน แล้วใส่ PIN ของคุณ</p><img src="${img}" alt="QR"></body></html>`));
     w.document.close();
   };
 

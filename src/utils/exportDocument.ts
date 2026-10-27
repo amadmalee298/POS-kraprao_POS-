@@ -1,3 +1,4 @@
+import { withPrintBar } from './printBar';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
@@ -416,7 +417,7 @@ export function printElement(
             </div>
           </body>
         </html>
-      `);
+      `.replace(/<body>/, withPrintBar('<body>', false)));
       printWin.document.close();
 
       setTimeout(() => {
