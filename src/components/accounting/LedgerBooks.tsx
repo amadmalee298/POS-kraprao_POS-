@@ -197,8 +197,11 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
   const name = (code: string) => `${code} ${ACCOUNT_BY_CODE.get(code)?.name || ''}`;
 
   const print = () => {
-    const el = printRef.current;
-    if (!el) return;
+    const shown = printRef.current;
+    if (!shown) return;
+    // Parts only for the screen (the unusual-records check, buttons) stay out of the printout
+    const el = shown.cloneNode(true) as HTMLElement;
+    el.querySelectorAll('[class*="print:hidden"]').forEach(n => n.remove());
     const subtitle = ranged ? `งวด ${thaiDate(from)} – ${thaiDate(to)}` : pointInTime ? `ณ วันที่ ${thaiDate(asOf)}` : '';
     printDocument(
       documentHtml(`${company} ${LEDGER_TAB_LABELS[tab]}`, [

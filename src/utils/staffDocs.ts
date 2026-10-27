@@ -1,6 +1,7 @@
 import type { PayrollAdjustment, StaffMember } from '../types';
 import type { MonthlyPay } from './payroll';
 import { thaiBahtText } from './thaiBaht';
+import { withPrintBar } from './printBar';
 import { formatThaiId, WHT_FORM_LABEL, WHT_TABLE_ROWS, WhtForm } from './withholding';
 
 /** Printable documents for staff and suppliers: payslips and withholding tax certificates (50 ทวิ). */
@@ -39,7 +40,8 @@ th,td{padding:5px 7px 7px;vertical-align:middle;line-height:1.5}
 .cb{display:inline-block;width:12px;height:12px;border:1px solid #111;margin:0 4px -2px 10px;text-align:center;line-height:10px;font-size:11px}
 .sig{display:flex;justify-content:space-around;margin-top:22px;font-size:12px;text-align:center}
 .sig div{width:45%}
-@media screen{body{background:#e5e7eb}.page{background:#fff;margin:12px auto;box-shadow:0 1px 6px rgba(0,0,0,.2)}}
+@media screen{body{background:#e5e7eb;margin:0}.page{background:#fff;margin:12px auto;box-shadow:0 1px 6px rgba(0,0,0,.2)}}
+@media screen and (max-width:820px){.page{width:auto;min-height:0;margin:8px;padding:14px;overflow-x:auto}}
 @media print{@page{margin:0}body{background:#fff}}
 `;
 
@@ -59,11 +61,11 @@ export function documentHtml(title: string, pages: string[]): string {
 export function printDocumentWhenReady(html: Promise<string>): boolean {
   const w = window.open('', '_blank', 'width=900,height=1000');
   if (!w) return false;
-  w.document.write('<p style="font-family:sans-serif;padding:24px">กำลังเตรียมเอกสาร…</p>');
+  w.document.write(withPrintBar('<p style="font-family:sans-serif;padding:24px">กำลังเตรียมเอกสาร…</p>', false));
   html
     .then(h => {
       w.document.open();
-      w.document.write(h.replace('</body>', '<script>window.onload=()=>setTimeout(()=>window.print(),400)</script></body>'));
+      w.document.write(withPrintBar(h));
       w.document.close();
     })
     .catch(() => {
@@ -76,7 +78,7 @@ export function printDocument(html: string): boolean {
   const w = window.open('', '_blank', 'width=900,height=1000');
   if (!w) return false;
   w.document.open();
-  w.document.write(html.replace('</body>', '<script>window.onload=()=>setTimeout(()=>window.print(),400)</script></body>'));
+  w.document.write(withPrintBar(html));
   w.document.close();
   return true;
 }
