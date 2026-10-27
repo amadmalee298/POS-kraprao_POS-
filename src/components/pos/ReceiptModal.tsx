@@ -569,7 +569,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
               )}
               <div className="receipt-grand-total flex justify-between font-extrabold text-slate-900 border-t border-b border-slate-800 py-1.5 my-1 text-sm">
                 <span>จำนวนเงินทั้งสิ้น:</span>
-                <span>{order.grandTotal.toFixed(2)} ฿</span>
+                <span>{(Number(order.grandTotal) || 0).toFixed(2)} ฿</span>
               </div>
             </div>
 

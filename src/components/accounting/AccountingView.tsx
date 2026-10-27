@@ -1662,13 +1662,13 @@ export const AccountingView: React.FC = () => {
       .filter(o => o.branchId === currentBranch.id && countsAsRevenue(o) && inMonths(o.createdAt))
       .forEach(o => {
         const { vat, base } = orderVatBreakdown(o);
-        rows.push(['รายได้จากการขาย', o.orderNumber, getLocalDateString(new Date(o.createdAt)), `ขายอาหาร (${o.paymentMethod})`, o.orderType === 'delivery' ? 'ขายเดลิเวอรี' : 'ขายหน้าร้าน', o.grandTotal.toFixed(2), vat.toFixed(2), base.toFixed(2)]);
+        rows.push(['รายได้จากการขาย', o.orderNumber, getLocalDateString(new Date(o.createdAt)), `ขายอาหาร (${o.paymentMethod})`, o.orderType === 'delivery' ? 'ขายเดลิเวอรี' : 'ขายหน้าร้าน', (Number(o.grandTotal) || 0).toFixed(2), vat.toFixed(2), base.toFixed(2)]);
       });
     (incomes || [])
       .filter(inc => own(inc.branchId) && inMonths(inc.date))
       .forEach(inc => {
         const isSales = SALES_INCOME_CATEGORIES.includes(inc.category);
-        rows.push([isSales ? 'รายได้จากการขาย' : 'รายได้อื่น', inc.refNumber || '-', inc.date, inc.title, incomeCategoryLabels[inc.category] || inc.category, inc.amount.toFixed(2), '0.00', inc.amount.toFixed(2)]);
+        rows.push([isSales ? 'รายได้จากการขาย' : 'รายได้อื่น', inc.refNumber || '-', inc.date, inc.title, incomeCategoryLabels[inc.category] || inc.category, (Number(inc.amount) || 0).toFixed(2), '0.00', (Number(inc.amount) || 0).toFixed(2)]);
       });
     expenses
       .filter(e => own(e.branchId) && inMonths(e.date))
@@ -1709,7 +1709,7 @@ export const AccountingView: React.FC = () => {
         inc.paymentMethod ? (incomePaymentMethodLabels[inc.paymentMethod] || inc.paymentMethod) : 'ไม่ระบุ',
         inc.payerName || '-',
         inc.refNumber || '-',
-        inc.amount.toFixed(2),
+        (Number(inc.amount) || 0).toFixed(2),
         inc.note || '-'
       ]);
     });

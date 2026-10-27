@@ -845,7 +845,7 @@ export const InventoryView: React.FC = () => {
         Number((ing.currentStock || 0).toFixed(4)),
         `"${ing.unit}"`,
         ing.minStockAlert,
-        ing.unitCost.toFixed(2),
+        (Number(ing.unitCost) || 0).toFixed(2),
         totalVal.toFixed(2),
         `"${isLow ? 'ใกล้หมดสต๊อก' : 'ปกติ'}"`
       ].join(',');

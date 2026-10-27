@@ -1015,7 +1015,7 @@ export const OrderHistoryView: React.FC = () => {
                   ) : null}
                   <div className="flex justify-between font-extrabold text-sm border-t border-dashed border-slate-300 pt-1.5">
                     <span>ยอดสุทธิ</span>
-                    <span>฿{selectedOrderForDetail.grandTotal.toFixed(2)}</span>
+                    <span>฿{(Number(selectedOrderForDetail.grandTotal) || 0).toFixed(2)}</span>
                   </div>
                 </div>
 

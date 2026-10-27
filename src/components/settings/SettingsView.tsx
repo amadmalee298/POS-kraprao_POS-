@@ -2471,7 +2471,7 @@ export const SettingsView: React.FC = () => {
                           <div className="p-2 bg-emerald-950/50 rounded-lg border border-emerald-500/30">
                             <span className="text-[10px] text-emerald-300 block">ยอดรวมเก็บเงินลูกค้า</span>
                             <span className="font-mono font-extrabold text-emerald-400">
-                              ฿{sampleCalc.grandTotal.toFixed(2)}
+                              ฿{(Number(sampleCalc.grandTotal) || 0).toFixed(2)}
                             </span>
                           </div>
                         </div>
@@ -2480,7 +2480,7 @@ export const SettingsView: React.FC = () => {
                           <span>
                             {vatType === 'inclusive'
                               ? `ราคาสินค้า 100 บาท รวมภาษี VAT ${vatRate}% แล้ว (ภาษีคือ ฿${sampleCalc.vatAmount.toFixed(2)} ยอดเก็บลูกค้าคือ ฿100)`
-                              : `ราคาสินค้า 100 บาท ยังไม่รวมภาษี VAT ${vatRate}% (บวกภาษีเพิ่ม ฿${sampleCalc.vatAmount.toFixed(2)} ยอดเก็บลูกค้าคือ ฿${sampleCalc.grandTotal.toFixed(2)})`}
+                              : `ราคาสินค้า 100 บาท ยังไม่รวมภาษี VAT ${vatRate}% (บวกภาษีเพิ่ม ฿${sampleCalc.vatAmount.toFixed(2)} ยอดเก็บลูกค้าคือ ฿${(Number(sampleCalc.grandTotal) || 0).toFixed(2)})`}
                           </span>
                         </p>
                       </>

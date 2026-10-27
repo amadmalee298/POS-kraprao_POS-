@@ -2043,7 +2043,7 @@ export const AIReceiptScannerModal: React.FC<AIReceiptScannerModalProps> = ({
 
                               <div className="flex items-center justify-between sm:justify-end space-x-2 shrink-0">
                                 <span className="font-mono font-bold text-rose-300 text-xs">
-                                  ฿{item.amount.toFixed(2)}
+                                  ฿{(Number(item.amount) || 0).toFixed(2)}
                                 </span>
 
                                 {autoUpdateStock && (
