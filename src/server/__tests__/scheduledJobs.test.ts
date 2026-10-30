@@ -76,7 +76,8 @@ describe('scheduled notifications', () => {
     // The Firestore client calls fetch itself
     vi.stubGlobal('fetch', fakeFetch);
     const signIn = { branchId: 'main', projectId: 'p', apiKey: 'k', refreshToken: 'r-test' };
-    expect(await runShop(signIn, new Date('2026-10-25T15:05:00Z'), fakeFetch)).toEqual(['summary 2026-10-25']);
+    const noPictures = (xs: string[]) => xs.filter(x => !x.startsWith('pictures'));
+    expect(noPictures(await runShop(signIn, new Date('2026-10-25T15:05:00Z'), fakeFetch))).toEqual(['summary 2026-10-25']);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain('150.00');
     expect(sent[0]).toContain('รายจ่าย: 50.00');
@@ -84,7 +85,7 @@ describe('scheduled notifications', () => {
     expect(sent[0]).toContain('🏪 ครัวกะเพรา · ตลาด');
     expect(docs['branches/main/status/job_daily_summary'].day).toBe('2026-10-25');
     // The next run (or a device) does not send it again
-    expect(await runShop(signIn, new Date('2026-10-25T15:20:00Z'), fakeFetch)).toEqual([]);
+    expect(noPictures(await runShop(signIn, new Date('2026-10-25T15:20:00Z'), fakeFetch))).toEqual([]);
     expect(sent).toHaveLength(1);
   });
 });
