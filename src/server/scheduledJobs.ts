@@ -13,7 +13,7 @@
 import { openWithSecret, sealWithSecret } from '../utils/botSecret.js';
 import { summaryText } from '../services/telegramBot.js';
 import { Firestore, idTokenFor } from './firestoreRest.js';
-import { expenseFromDoc, incomeFromDoc } from './telegramWebhook.js';
+import { expenseFromDoc, incomeFromDoc, migrateSomePictures } from './telegramWebhook.js';
 
 /** Where the sealed sign-in of each shop is kept */
 export const SCHEDULE_COLLECTION = 'public_menu';
@@ -188,6 +188,21 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
       await deliver(creds, `🔔 <b>เตือนยื่นเอกสารราชการ</b>\n━━━━━━━━━━━━━━\n📄 เอกสารที่ต้องยื่น\n${lines.map(esc).join('\n')}\n\nดูตัวเลขและไฟล์ได้ที่ เอกสาร → ยื่นเอกสารราชการ${footer}`, doFetch);
       done.push(`filings ${at.day}`);
     }
+  }
+  // Pictures still inside cloud records (every device downloads them and keeps them in memory;
+  // phones that keep nothing were closed for lack of memory): moved out a little on every run, a
+  // fresh pass each day
+  try {
+    const picPath = `branches/${b}/status/pictures`;
+    const pic: any = (await db.get(picPath)) || {};
+    const cursor = pic.day === at.day ? ((pic.cursor || {}) as Record<string, string>) : {};
+    if (cursor.expenses !== 'done' || cursor.incomes !== 'done') {
+      const next = await migrateSomePictures(db, b, cursor, Date.now() + 15_000);
+      await db.set(picPath, { day: at.day, cursor: next });
+      done.push(`pictures ${next.expenses || '-'}/${next.incomes || '-'}`);
+    }
+  } catch {
+    // tried again on the next run
   }
   return done;
 }

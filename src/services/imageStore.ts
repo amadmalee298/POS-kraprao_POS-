@@ -41,6 +41,8 @@ let dbPromise: Promise<IDBDatabase | null> | null = null;
 let memoryOnly = isLocalRetired();
 if (memoryOnly) void deleteLocalDb(DB_NAME);
 let memQueue: QueueItem[] = [];
+// Pictures this visit has put in the cloud (no copy kept here when nothing is kept on the device)
+const uploaded = new Set<string>();
 
 /** Stop keeping pictures on this device (they are in the cloud): its copy is removed */
 export async function retireImageStore(): Promise<void> {
@@ -163,6 +165,7 @@ export async function flushImageUploads(): Promise<void> {
         // Kept only in memory: once in the cloud it is read from there (the last few stay at hand)
         if (memoryOnly && done && data) {
           pending.delete(item.id);
+          uploaded.add(item.id);
           remember(item.id, data);
         }
       } else {
@@ -195,7 +198,10 @@ export function storeImage(branchId: string, id: string, dataUrl: string, upload
       if (ok) pending.delete(id);
     });
   }
-  if (upload) {
+  // Nothing kept on this device: a picture that came inside a cloud record goes to the cloud on its
+  // own right away and then leaves memory (kept, it stayed in memory for the whole visit; every
+  // opening added more until the phone closed the app)
+  if (upload || (memoryOnly && !uploaded.has(id))) {
     writeQueue([...readQueue().filter(q => q.id !== id), { b: branchId || 'main', id, tries: 0 }]);
     setTimeout(() => void flushImageUploads(), 500);
   }
@@ -270,11 +276,19 @@ export function useImage(src: string | undefined | null): string | undefined | n
 export async function uploadImageNow(ref: string): Promise<boolean> {
   const p = parseImageRef(ref);
   if (!p) return false;
+  if (uploaded.has(p.id)) return true;
   const data = pending.get(p.id) || (await localGet(p.id));
   if (!data) return false;
   if (data.length > 950_000) return false;
   const ok = await (await cloud()).saveBranchDoc(p.branchId, imageDocKey(p.id), { data });
-  if (ok) writeQueue(readQueue().filter(q => q.id !== p.id));
+  if (ok) {
+    writeQueue(readQueue().filter(q => q.id !== p.id));
+    if (memoryOnly) {
+      uploaded.add(p.id);
+      pending.delete(p.id);
+      remember(p.id, data);
+    }
+  }
   return ok;
 }
 
