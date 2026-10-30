@@ -68,14 +68,21 @@ const IngredientPicker: React.FC<{
     return near ? [near, ...list.filter(i => i.id !== near.id)] : list;
   }, [q, ingredients, label]);
   return (
-    <div className="fixed inset-0 z-[90] bg-slate-950 flex flex-col text-xs" role="dialog" aria-label="เลือกวัตถุดิบ">
+    // Below the iPhone's status bar and above its home bar (the app is drawn edge to edge)
+    <div
+      className="fixed inset-0 z-[90] bg-slate-950 flex flex-col text-xs pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      role="dialog"
+      aria-label="เลือกวัตถุดิบ"
+    >
       <div className="p-3 border-b border-slate-800 flex items-center gap-2">
         <input
-          autoFocus
+          // The keyboard on a phone only when the person taps the box (opening with it covered half the list)
+          autoFocus={!window.matchMedia?.('(hover: none)').matches}
           value={q}
           onChange={e => setQ(e.target.value)}
           placeholder="ค้นหาวัตถุดิบ..."
-          className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-sky-500"
+          // 16px: a smaller box makes iPhone zoom the whole page in when it is tapped
+          className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-100 focus:outline-none focus:border-sky-500"
         />
         <button type="button" onClick={onClose} className="h-10 px-3 rounded-lg border border-slate-700 text-slate-300">
           ปิด
@@ -960,7 +967,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         })()}
 
       {viewing && shown[viewing] && (
-        <div className="fixed inset-0 z-[90] bg-black flex flex-col" role="dialog" aria-label="รูปบิล">
+        <div className="fixed inset-0 z-[90] bg-black flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]" role="dialog" aria-label="รูปบิล">
           <div className="p-2 flex justify-between items-center gap-2 text-xs">
             <a href={shown[viewing]} target="_blank" rel="noopener noreferrer" className="h-10 px-3 rounded-lg border border-slate-700 text-slate-300 flex items-center">
               เปิดรูปเต็ม
