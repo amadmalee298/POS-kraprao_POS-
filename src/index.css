@@ -2,6 +2,12 @@
 @import "./styles/print-receipt.css";
 
 /* Large prices / totals on the POS screens */
+/* The app's own dark colour behind everything (white showed below sheets and where the keyboard was) */
+html,
+body {
+  background-color: #0d0704;
+}
+
 @utility font-num {
   font-family: 'Kanit', system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-variant-numeric: tabular-nums;
