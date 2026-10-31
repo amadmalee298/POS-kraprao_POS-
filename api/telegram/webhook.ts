@@ -10,6 +10,7 @@
 // .js: the package is ESM and Vercel runs it as plain Node
 import { checkWebhookSetup, handleWebhook } from '../../src/server/telegramWebhook.js';
 import { runScheduledJobs, sealSchedule } from '../../src/server/scheduledJobs.js';
+import { SHOP_FIREBASE_PROJECT } from '../../src/server/staffAuth.js';
 
 // Reading a receipt with AI can take a while (both forms Vercel reads)
 export const maxDuration = 60;
@@ -60,13 +61,18 @@ export default async function handler(req: any, res: any) {
         );
         return res.status(200).json({ ok: true, sealed });
       }
+      // The shop's own project only (open to anyone, it otherwise made sign-ups on any project)
+      const allowed = new Set([SHOP_FIREBASE_PROJECT.projectId, ...(process.env.SCHEDULE_PROJECTS || '').split(',').map(x => x.trim()).filter(Boolean)]);
+      if (!allowed.has(String(body.projectId || ''))) return res.status(403).json({ ok: false, error: 'project not allowed' });
       const result = await runScheduledJobs(
         {
           projectId: String(body.projectId || ''),
           apiKey: String(body.apiKey || ''),
           databaseId: body.databaseId ? String(body.databaseId) : undefined,
           referer: body.referer ? String(body.referer) : undefined,
-          anon: String(body.anon || '')
+          anon: String(body.anon || ''),
+          // GitHub's run keeps its anonymous sign-in between runs; Vercel's cannot
+          keepAnon: !cronTick
         },
         scheduleKey
       );

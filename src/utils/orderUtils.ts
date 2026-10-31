@@ -160,8 +160,10 @@ export function mergeCloudOrders(
     }
     const key = normalizeOrderId(o.id);
     const existing = byKey.get(key);
-    // Two local copies of one order: keep the served one, else the newer one
-    if (!existing || (o.status === 'served' && existing.status !== 'served') || orderTime(o) > orderTime(existing)) {
+    // Two local copies of one order: keep the served one, else the newer one (a newer copy that is
+    // not served never replaces a served one: the order came back to the kitchen)
+    const servedKept = existing?.status === 'served' && o.status !== 'served';
+    if (!existing || (o.status === 'served' && existing.status !== 'served') || (!servedKept && orderTime(o) > orderTime(existing))) {
       if (existing) changed = true;
       byKey.set(key, o);
     } else {
@@ -297,15 +299,24 @@ export function repriceQrOrder(order: Order, menuItems: MenuItem[], addOns: AddO
   const menuById = new Map(menuItems.map(m => [m.id, m]));
   const addOnById = new Map(addOns.map(a => [a.id, a]));
   const addOnByName = new Map(addOns.map(a => [a.name, a]));
+  // A price the customer's phone sent is never trusted below zero: a made-up line ("discount
+  // -80") or add-on lowered the bill (the cloud's rules do not check prices)
+  const notBelowZero = (n: unknown) => Math.max(0, Number(n) || 0);
   const items = order.items.map(item => {
     const menu = menuById.get(item.menuItem?.id);
-    if (!menu) return item;
+    if (!menu) {
+      // Not on the shop's menu (e.g. removed since): its own price, at least zero
+      const quantity = Math.max(1, Math.floor(item.quantity || 1));
+      const selectedAddOns = (item.selectedAddOns || []).map(a => ({ ...a, price: notBelowZero(a.price) }));
+      const unitPrice = roundMoney(notBelowZero(item.unitPrice ?? (item.totalPrice || 0) / quantity));
+      return { ...item, quantity, selectedAddOns, unitPrice, totalPrice: roundMoney(unitPrice * quantity) };
+    }
     const protein = item.proteinChoice
       ? { ...item.proteinChoice, extraPrice: menu.availableProteins?.find(p => p.name === item.proteinChoice!.name)?.extraPrice ?? 0 }
       : undefined;
     const selectedAddOns = (item.selectedAddOns || []).map(a => {
       const shop = addOnById.get(a.id) || addOnByName.get(a.name);
-      return shop ? { ...a, price: shop.price } : a;
+      return shop ? { ...a, price: shop.price } : { ...a, price: notBelowZero(a.price) };
     });
     const unitPrice = roundMoney(menu.price + (protein?.extraPrice || 0) + selectedAddOns.reduce((s, a) => s + (a.price || 0), 0));
     const quantity = Math.max(1, Math.floor(item.quantity || 1));

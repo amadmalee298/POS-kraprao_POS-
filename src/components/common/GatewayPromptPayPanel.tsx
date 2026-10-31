@@ -38,17 +38,28 @@ export const GatewayPromptPayPanel: React.FC<Props> = ({ amount, reference, serv
 
   const tooSmall = amount < GATEWAY_MIN_AMOUNT;
 
+  // Only the newest request counts: an answer for an amount the bill no longer has (it changed
+  // while the QR was being made) is dropped, and so is a payment report for another charge
+  const requestRef = useRef(0);
+  const chargeIdRef = useRef<string | null>(null);
+  const amountRef = useRef(amount);
+  amountRef.current = amount;
   const create = useCallback(async () => {
+    const request = ++requestRef.current;
     setLoading(true);
     setError('');
     setCharge(null);
+    chargeIdRef.current = null;
     paidRef.current = false;
     try {
-      setCharge(await createGatewayCharge(amount, reference, serverUrl));
+      const c = await createGatewayCharge(amount, reference, serverUrl);
+      if (request !== requestRef.current) return;
+      chargeIdRef.current = c.id;
+      setCharge(c);
     } catch (e: any) {
-      setError(e.message || 'สร้าง QR ไม่สำเร็จ');
+      if (request === requestRef.current) setError(e.message || 'สร้าง QR ไม่สำเร็จ');
     } finally {
-      setLoading(false);
+      if (request === requestRef.current) setLoading(false);
     }
   }, [amount, reference, serverUrl]);
 
@@ -59,7 +70,13 @@ export const GatewayPromptPayPanel: React.FC<Props> = ({ amount, reference, serv
   }, [create, tooSmall]);
 
   const report = (c: GatewayCharge) => {
+    if (c.id !== chargeIdRef.current) return; // an older charge's answer
     setCharge(prev => ({ ...c, qr: c.qr || prev?.qr }));
+    // Paid, but not this bill's amount (it changed after the QR was made): not taken as paid
+    if (c.paid && Math.abs((Number(c.amount) || 0) - amountRef.current) > 0.009) {
+      setError(`ยอดที่ลูกค้าจ่าย ฿${c.amount} ไม่ตรงกับยอดบิล ฿${amountRef.current} ตรวจสอบก่อนบันทึก`);
+      return;
+    }
     if (c.paid && !paidRef.current) {
       paidRef.current = true;
       onPaidRef.current(c);

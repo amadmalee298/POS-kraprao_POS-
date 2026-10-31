@@ -97,6 +97,30 @@ export class Firestore {
     return data;
   }
 
+  /**
+   * Writes the document only if nobody changed it since `updateTime` (from getWithTime), or only
+   * if it does not exist yet (updateTime null). false: someone else got there first.
+   */
+  async setIfUnchanged(path: string, data: Record<string, unknown>, updateTime: string | null): Promise<boolean> {
+    const pre = updateTime ? `currentDocument.updateTime=${encodeURIComponent(updateTime)}` : 'currentDocument.exists=false';
+    const res = await fetch(`${this.base}/${path}?${pre}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await this.idToken()}` },
+      body: JSON.stringify({ fields: toFsFields(data) })
+    });
+    if (res.ok) return true;
+    const body: any = await res.json().catch(() => ({}));
+    const status = String(body?.error?.status || '');
+    if (res.status === 409 || res.status === 412 || res.status === 404 || /FAILED_PRECONDITION|ALREADY_EXISTS|NOT_FOUND|ABORTED/.test(status)) return false;
+    throw new Error(`Firestore: ${body?.error?.message || `HTTP ${res.status}`}`);
+  }
+
+  /** The document and the time it was last written (null when it does not exist) */
+  async getWithTime(path: string): Promise<{ data: { [k: string]: Json } | null; updateTime: string | null }> {
+    const doc = await this.call(`${this.base}/${path}`);
+    return doc ? { data: fromFsFields(doc.fields || {}), updateTime: doc.updateTime || null } : { data: null, updateTime: null };
+  }
+
   async get(path: string): Promise<{ [k: string]: Json } | null> {
     const doc = await this.call(`${this.base}/${path}`);
     return doc ? fromFsFields(doc.fields || {}) : null;

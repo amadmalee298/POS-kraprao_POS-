@@ -1,3 +1,4 @@
+import { shopAccountIdToken } from '../../services/firebaseService';
 import { apiUrl } from '../../utils/apiClient';
 import React, { useState, useEffect } from 'react';
 import { calcRecipeItemCostAndDeduction } from '../../utils/recipeUtils';
@@ -71,11 +72,11 @@ export const AIMenuEngineeringPanel: React.FC = () => {
   const fetchMenuEngineeringAnalysis = async () => {
     setIsLoading(true);
     try {
+      // The shop's sign-in: the server spends its AI credit only for the shop's devices
+      const token = await shopAccountIdToken();
       const response = await fetch(apiUrl('/api/ai/menu-engineering'), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           menuItems,
           ingredients,

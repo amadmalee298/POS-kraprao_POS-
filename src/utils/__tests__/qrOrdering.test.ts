@@ -86,6 +86,24 @@ describe('repriceQrOrder', () => {
     expect(fixed.grandTotal).toBe(170);
   });
 
+  it('a line or add-on not on the menu cannot lower the bill', () => {
+    const o = order(85);
+    const tricked = {
+      ...o,
+      items: [
+        ...o.items,
+        { cartItemId: 'x', menuItem: { id: 'x', name: 'ส่วนลด', price: -80 }, quantity: 1, selectedAddOns: [], unitPrice: -80, totalPrice: -80 },
+        { ...o.items[0], cartItemId: 'c2', quantity: 1, selectedAddOns: [{ id: 'z', name: 'ลดราคา', price: -50 }], unitPrice: 25, totalPrice: 25 }
+      ],
+      subtotal: 115,
+      grandTotal: 115
+    } as unknown as Order;
+    const fixed = repriceQrOrder(tricked, menu, shopAddOns, { enableVat: false });
+    expect(fixed.items[1].totalPrice).toBe(0);
+    expect(fixed.items[2].unitPrice).toBe(75);
+    expect(fixed.subtotal).toBe(245);
+  });
+
   it('leaves a correctly priced order as it is', () => {
     const ok = order(85);
     expect(repriceQrOrder(ok, menu, shopAddOns, { enableVat: false })).toBe(ok);
