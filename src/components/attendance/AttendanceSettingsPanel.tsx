@@ -44,8 +44,8 @@ export const ShopClockQR: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[80] bg-slate-950 flex flex-col items-center justify-center p-4 text-slate-100">
-      <button type="button" onClick={onClose} aria-label="ปิด" className="absolute top-4 right-4 w-11 h-11 rounded-xl border border-slate-700 flex items-center justify-center">
+    <div className="fixed inset-0 z-[80] bg-slate-950 flex flex-col items-center justify-center safe-inset-4 text-slate-100">
+      <button type="button" onClick={onClose} aria-label="ปิด" className="absolute top-[max(1rem,env(safe-area-inset-top))] right-[max(1rem,env(safe-area-inset-right))] w-11 h-11 rounded-xl border border-slate-700 flex items-center justify-center">
         <X className="w-5 h-5" />
       </button>
       <h2 className="text-xl font-bold mb-1">สแกนเพื่อลงเวลาเข้า-ออกงาน</h2>

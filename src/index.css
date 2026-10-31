@@ -1,13 +1,25 @@
 @import "tailwindcss";
 @import "./styles/print-receipt.css";
 
-/* Large prices / totals on the POS screens */
 /* The app's own dark colour behind everything (white showed below sheets and where the keyboard was) */
 html,
 body {
   background-color: #0d0704;
 }
 
+/*
+ * Full-screen sheets keep clear of the iPhone's notch, status bar and home bar (the app is drawn
+ * edge to edge: viewport-fit=cover), in portrait and landscape
+ */
+@utility safe-inset {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+/* The same, with at least 1rem all round (sheets that had p-4) */
+@utility safe-inset-4 {
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+}
+
+/* Large prices / totals on the POS screens */
 @utility font-num {
   font-family: 'Kanit', system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-variant-numeric: tabular-nums;
@@ -30,6 +42,11 @@ body {
   overflow-y: auto;
   overscroll-behavior: contain;
   align-items: flex-start;
+  /* Clear of the notch, status bar and home bar (at least the dialogs' usual spacing) */
+  padding-top: max(1rem, env(safe-area-inset-top));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  padding-left: max(0.5rem, env(safe-area-inset-left));
+  padding-right: max(0.5rem, env(safe-area-inset-right));
 }
 .fixed.inset-0.flex.items-center.justify-center:not(.items-end) > * {
   margin-block: auto;

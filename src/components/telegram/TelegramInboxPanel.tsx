@@ -40,6 +40,9 @@ const billItems = (p: PendingReceipt): BillItem[] => {
 
 const APPROVER_ROLES = ['admin', 'manager'];
 
+/** A phone or tablet (no mouse): worked out once */
+const TOUCH_SCREEN = typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none)').matches;
+
 /** Most matches listed at once in the ingredient picker (the shop can have hundreds) */
 const PICKER_LIMIT = 60;
 
@@ -55,6 +58,12 @@ const IngredientPicker: React.FC<{
   onClose: () => void;
 }> = ({ ingredients, label, onPick, onClose }) => {
   const [q, setQ] = useState('');
+  // On a phone the keyboard stays closed, so the dialog itself takes the focus (screen readers
+  // start inside it, not on the page behind)
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (TOUCH_SCREEN) dialogRef.current?.focus();
+  }, []);
   const matches = useMemo(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const typed = q.trim().toLowerCase();
@@ -68,16 +77,20 @@ const IngredientPicker: React.FC<{
     return near ? [near, ...list.filter(i => i.id !== near.id)] : list;
   }, [q, ingredients, label]);
   return (
-    // Below the iPhone's status bar and above its home bar (the app is drawn edge to edge)
+    // Clear of the iPhone's notch, status bar and home bar (the app is drawn edge to edge)
     <div
-      className="fixed inset-0 z-[90] bg-slate-950 flex flex-col text-xs pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      ref={dialogRef}
+      tabIndex={-1}
+      className="fixed inset-0 z-[90] bg-slate-950 flex flex-col text-xs safe-inset outline-none"
       role="dialog"
+      aria-modal="true"
       aria-label="เลือกวัตถุดิบ"
     >
       <div className="p-3 border-b border-slate-800 flex items-center gap-2">
         <input
           // The keyboard on a phone only when the person taps the box (opening with it covered half the list)
-          autoFocus={!window.matchMedia?.('(hover: none)').matches}
+          autoFocus={!TOUCH_SCREEN}
+          aria-label="ค้นหาวัตถุดิบ"
           value={q}
           onChange={e => setQ(e.target.value)}
           placeholder="ค้นหาวัตถุดิบ..."
@@ -967,7 +980,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
         })()}
 
       {viewing && shown[viewing] && (
-        <div className="fixed inset-0 z-[90] bg-black flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]" role="dialog" aria-label="รูปบิล">
+        <div className="fixed inset-0 z-[90] bg-black flex flex-col safe-inset" role="dialog" aria-modal="true" aria-label="รูปบิล">
           <div className="p-2 flex justify-between items-center gap-2 text-xs">
             <a href={shown[viewing]} target="_blank" rel="noopener noreferrer" className="h-10 px-3 rounded-lg border border-slate-700 text-slate-300 flex items-center">
               เปิดรูปเต็ม

@@ -412,7 +412,7 @@ export const CustomerOrderPage: React.FC<{ table: string; branchId: string }> = 
 
       {/* Options sheet */}
       {draft && (
-        <div className="fixed inset-0 z-40 bg-black/70 flex flex-col justify-end" onClick={() => setDraft(null)}>
+        <div className="fixed inset-0 z-40 bg-black/70 flex flex-col justify-end safe-inset" onClick={() => setDraft(null)}>
           <div
             role="dialog"
             aria-modal="true"
@@ -523,7 +523,7 @@ export const CustomerOrderPage: React.FC<{ table: string; branchId: string }> = 
 
       {/* Cart sheet */}
       {isCartOpen && (
-        <div className="fixed inset-0 z-40 bg-black/70 flex flex-col justify-end" onClick={() => setIsCartOpen(false)}>
+        <div className="fixed inset-0 z-40 bg-black/70 flex flex-col justify-end safe-inset" onClick={() => setIsCartOpen(false)}>
           <div
             role="dialog"
             aria-modal="true"

@@ -135,7 +135,7 @@ export const MobileClockPage: React.FC<{ code: string; openedAt: number; onClose
   };
 
   return (
-    <div className="fixed inset-0 z-[90] bg-[#0d0704] text-stone-100 overflow-y-auto">
+    <div className="fixed inset-0 z-[90] bg-[#0d0704] text-stone-100 overflow-y-auto safe-inset">
       <div className="max-w-md mx-auto p-4 space-y-4">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-bold">ลงเวลาด้วยมือถือ</h1>

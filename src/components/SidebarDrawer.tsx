@@ -231,7 +231,7 @@ export const SidebarDrawer: React.FC = () => {
       />
 
       {/* Side Drawer Drawer Box */}
-      <div className="relative w-80 max-w-[85vw] bg-[#0c1322] border-r border-slate-800/80 text-slate-100 flex flex-col h-full shadow-2xl z-10 animate-in slide-in-from-left duration-200">
+      <div className="relative w-80 max-w-[85vw] bg-[#0c1322] border-r border-slate-800/80 text-slate-100 flex flex-col h-full shadow-2xl z-10 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] animate-in slide-in-from-left duration-200">
         
         {/* Drawer Header */}
         <div className="flex items-center justify-between p-4 border-b border-slate-800/80 bg-slate-900/60">
