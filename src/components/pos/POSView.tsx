@@ -588,7 +588,7 @@ export const POSView: React.FC = () => {
       </div>
 
       {isCartSheetOpen && (
-        <div className="md:hidden fixed inset-0 z-40 bg-[#120a06] flex flex-col" role="dialog" aria-modal="true" aria-label="ตะกร้า">
+        <div className="md:hidden fixed inset-0 z-40 bg-[#120a06] flex flex-col safe-inset" role="dialog" aria-modal="true" aria-label="ตะกร้า">
           {cartPanel}
         </div>
       )}
