@@ -133,10 +133,11 @@ async function deliver(creds: any, html: string, doFetch: Fetch): Promise<string
 /** Claims today's run of a job (the same document the app's devices claim): false if done */
 async function claim(db: Firestore, branchId: string, job: string, day: string): Promise<boolean> {
   const path = `branches/${branchId}/status/job_${job}`;
-  const doc = await db.get(path);
-  if (doc && String(doc.day || '') >= day) return false;
-  await db.set(path, { day, claimedAt: new Date().toISOString(), by: 'server' });
-  return true;
+  const { data, updateTime } = await db.getWithTime(path);
+  if (data && String(data.day || '') >= day) return false;
+  // Written only if nobody claimed it in between (two scheduled runs, or a device, at the same
+  // moment both read it unclaimed and both sent the summary)
+  return db.setIfUnchanged(path, { day, claimedAt: new Date().toISOString(), by: 'server' }, updateTime);
 }
 
 const lastDay = async (db: Firestore, branchId: string, job: string) => String((await db.get(`branches/${branchId}/status/job_${job}`))?.day || '');
@@ -208,7 +209,7 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
 }
 
 /** An anonymous sign-in (enough to read public_menu), reused between runs when given */
-async function anonToken(apiKey: string, referer: string | undefined, refresh: string, doFetch: Fetch): Promise<{ idToken: string; refresh: string }> {
+async function anonToken(apiKey: string, referer: string | undefined, refresh: string, doFetch: Fetch): Promise<{ idToken: string; refresh: string; fresh?: boolean }> {
   if (refresh) {
     try {
       return { idToken: await idTokenFor(apiKey, refresh, referer), refresh };
@@ -223,12 +224,12 @@ async function anonToken(apiKey: string, referer: string | undefined, refresh: s
   });
   const data: any = await res.json().catch(() => ({}));
   if (!res.ok || !data.idToken) throw new Error(`anonymous sign-in failed (${data?.error?.message || res.status})`);
-  return { idToken: data.idToken, refresh: data.refreshToken };
+  return { idToken: data.idToken, refresh: data.refreshToken, fresh: true };
 }
 
 /** Every shop that turned this on: the jobs due now */
 export async function runScheduledJobs(
-  input: { projectId: string; apiKey: string; databaseId?: string; referer?: string; anon?: string },
+  input: { projectId: string; apiKey: string; databaseId?: string; referer?: string; anon?: string; keepAnon?: boolean },
   serverKey: string,
   now = new Date(),
   doFetch: Fetch = fetch
@@ -253,6 +254,16 @@ export async function runScheduledJobs(
     } catch (e: any) {
       shops.push({ branchId: signIn.branchId, error: e?.message || String(e) });
     }
+  }
+  // Made for this run only (Vercel's schedule cannot keep it): removed, so they do not pile up
+  // in the project's users. A caller that keeps it between runs (GitHub's schedule) gets it back.
+  if (anon.fresh && !input.keepAnon) {
+    await doFetch(`https://identitytoolkit.googleapis.com/v1/accounts:delete?key=${encodeURIComponent(input.apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(input.referer ? { Referer: input.referer } : {}) },
+      body: JSON.stringify({ idToken: anon.idToken })
+    }).catch(() => undefined);
+    return { anon: '', shops };
   }
   return { anon: anon.refresh, shops };
 }

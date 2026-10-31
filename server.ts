@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import { runReceiptOcr } from './src/utils/receiptOcr';
 import { handleOpnPromptPay } from './api/_opn';
 import { createClaudeJsonCaller, CLAUDE_MODEL, ClaudeCallError, type ClaudeJsonCaller, type ClaudeEffort } from './src/utils/claudeClient';
+import { bearerToken, isShopStaff } from './src/server/staffAuth';
 
 // JSON Schema type names used by the response schemas below
 const Type = { OBJECT: 'object', ARRAY: 'array', STRING: 'string', NUMBER: 'number', INTEGER: 'integer', BOOLEAN: 'boolean' } as const;
@@ -96,20 +97,34 @@ async function startServer() {
 
   // All AI features run on Claude. The key comes from ANTHROPIC_API_KEY, or from the shop's
   // own key sent by the client. Without a key each route falls back to its rule-based engine.
-  const claudeCallers = new Map<string, ClaudeJsonCaller>();
+  // Only the server's own key keeps a client; a key a shop sends is used for its request only
+  // (keeping one per key sent let anyone grow the server's memory with made-up keys)
+  let envCaller: ClaudeJsonCaller | null = null;
   const getAiClient = (customApiKey?: string): ClaudeJsonCaller | null => {
-    const apiKey =
-      customApiKey && typeof customApiKey === 'string' && customApiKey.trim().length > 10
-        ? customApiKey.trim()
-        : process.env.ANTHROPIC_API_KEY || '';
-    if (!apiKey) return null;
-    let caller = claudeCallers.get(apiKey);
-    if (!caller) {
-      caller = createClaudeJsonCaller({ apiKey });
-      claudeCallers.set(apiKey, caller);
-    }
-    return caller;
+    const custom = customApiKey && typeof customApiKey === 'string' && customApiKey.trim().length > 10 ? customApiKey.trim() : '';
+    if (custom) return createClaudeJsonCaller({ apiKey: custom });
+    const envKey = process.env.ANTHROPIC_API_KEY || '';
+    if (!envKey) return null;
+    envCaller = envCaller || createClaudeJsonCaller({ apiKey: envKey });
+    return envCaller;
   };
+
+  // The shop's AI credit (the server's key) is for the shop's own devices only: a request without
+  // its own key must carry the sign-in of the shop account. The origin check alone let a request
+  // with no Origin header through.
+  app.use('/api/ai', async (req, res, next) => {
+    if (req.method === 'OPTIONS') return next();
+    const ownKey = typeof req.body?.anthropicApiKey === 'string' && req.body.anthropicApiKey.trim().length > 10;
+    if (ownKey) return next();
+    const staff = await isShopStaff(bearerToken(req.headers.authorization)).catch(() => false);
+    if (!staff) {
+      return res.status(401).json({
+        error: 'NOT_SHOP_DEVICE',
+        message: 'ใช้ AI ได้เฉพาะเครื่องที่เข้าสู่ระบบบัญชีร้านแล้ว (ตั้งค่า → บัญชีร้าน)'
+      });
+    }
+    next();
+  });
 
   /** Ask Claude for JSON matching `config.responseSchema`; returns the text plus the model name. */
   const generateWithClaude = async (

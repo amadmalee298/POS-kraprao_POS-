@@ -93,6 +93,7 @@ import {
   shopAccountRefreshToken,
   uploadMissingRecords,
   cloudWritesDone,
+  claimOnce,
   syncSettingsToFirestore,
   syncFullCatalogToFirestore,
   purgeOutdatedCloudData,
@@ -3625,6 +3626,24 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
+  /**
+   * A QR order's ingredients leave the stock once: on this device (a second approval here) and
+   * across devices (two with auto-approve on both approved the same order and both deducted it).
+   * The order is claimed in the cloud first; offline, or when the cloud cannot be asked, this
+   * device's own guard still holds.
+   */
+  const deductRef = useRef(deductStockForSale);
+  deductRef.current = deductStockForSale;
+  const takeQrOrderStock = (order: Order) => {
+    const id = normalizeOrderId(order.id);
+    if (approvedQrStockRef.current.has(id)) return;
+    approvedQrStockRef.current.add(id);
+    const items = resolveItemsForStock(order.items, menuItems, addOns);
+    void claimOnce(currentBranch.id, `qrstock_${id}`).then(mine => {
+      if (mine !== false) deductRef.current(items);
+    });
+  };
+
   const updateOrderStatus = (orderId: string, status: OrderStatus) => {
     const now = new Date().toISOString();
     const normalizedId = normalizeOrderId(orderId);
@@ -3636,10 +3655,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Approving a customer's QR order is when its ingredients leave the stock. A rejected
     // (cancelled) QR order never deducted anything, so nothing needs to be returned.
     const isQrApproval = current.status === 'pending-qr' && status !== 'pending-qr' && status !== 'cancelled';
-    if (isQrApproval && !approvedQrStockRef.current.has(normalizedId)) {
-      approvedQrStockRef.current.add(normalizedId);
-      deductStockForSale(resolveItemsForStock(current.items, menuItems, addOns));
-    }
+    if (isQrApproval) takeQrOrderStock(current);
 
     // The bill of an approved QR order uses the shop's prices (the customer's page sets its own)
     const base = isQrApproval ? repriceQrOrder(current, menuItems, addOns, settings) : current;
@@ -3687,8 +3703,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const target = found.status === 'pending-qr' ? repriceQrOrder(found, menuItems, addOns, settings) : found;
     const now = new Date().toISOString();
     const tendered = method === 'cash' ? tenderedAmount : target.grandTotal;
+    // Paid while still waiting for approval: paying approves it (to the kitchen, its stock taken,
+    // and it counts as a sale; left waiting, the money was in the drawer but not in the sales)
+    const approving = found.status === 'pending-qr';
+    if (approving) takeQrOrderStock(found);
     const settled: Order = {
       ...target,
+      ...(approving ? { status: 'pending' as OrderStatus, acceptedAt: found.acceptedAt || now } : {}),
       paymentMethod: method,
       paymentStatus: 'paid',
       paidAt: now,

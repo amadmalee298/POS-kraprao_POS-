@@ -1,3 +1,4 @@
+import { shopAccountIdToken } from '../../services/firebaseService';
 import { apiUrl } from '../../utils/apiClient';
 import React, { useState, useEffect } from 'react';
 import {
@@ -175,9 +176,11 @@ export const AIWasteAnalysisPanel: React.FC = () => {
   const runWasteAnalysis = async () => {
     setLoading(true);
     try {
+      // The shop's sign-in: the server spends its AI credit only for the shop's devices
+      const token = await shopAccountIdToken();
       const response = await fetch(apiUrl('/api/ai/waste-analysis'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           wasteLogs,
           ingredients

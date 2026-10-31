@@ -329,6 +329,12 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
   const updateId = Number(req.update?.update_id);
   // Telegram sends a delivery again when the answer was late: handle each one once
   if (seen.includes(updateId)) return { status: 200, body: { duplicate: true } };
+  // Two deliveries of the same update at the same moment (Telegram resends while a slow receipt is
+  // still being read) both passed the list above and saved the receipt twice: the first to create
+  // this update's marker handles it, the other stops
+  if (Number.isFinite(updateId) && !(await db.setIfUnchanged(`branches/${req.branchId}/status/tgupdate_${updateId}`, { at: new Date().toISOString() }, null))) {
+    return { status: 200, body: { duplicate: true } };
+  }
   await db.set(statePath, { seen: [...seen, updateId].slice(-KEEP_SEEN), lastUpdateAt: new Date().toISOString() }, ['seen', 'lastUpdateAt']);
 
   const update = req.update;

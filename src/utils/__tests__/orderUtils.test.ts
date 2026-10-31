@@ -67,6 +67,13 @@ describe('mergeCloudOrders', () => {
     expect(r.changed).toBe(false);
   });
 
+  it('of two local copies, a newer one that is not served does not replace the served one', async () => {
+    const { mergeCloudOrders } = await import('../orderUtils');
+    const r = mergeCloudOrders([mk('ord-3', 'served', '2026-09-26T10:00:00Z'), mk('3', 'cooking', '2026-09-26T10:01:00Z')], []);
+    expect(r.orders).toHaveLength(1);
+    expect(r.orders[0].status).toBe('served');
+  });
+
   it('keeps two different orders that share a bill number', async () => {
     const { mergeCloudOrders } = await import('../orderUtils');
     const r = mergeCloudOrders(
