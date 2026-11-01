@@ -130,17 +130,66 @@ async function deliver(creds: any, html: string, doFetch: Fetch): Promise<string
   return sent;
 }
 
-/** Claims today's run of a job (the same document the app's devices claim): false if done */
-async function claim(db: Firestore, branchId: string, job: string, day: string): Promise<boolean> {
+/**
+ * Claims today's run of a job (the same document the app's devices claim). null if done already;
+ * otherwise `release` gives the run back when nothing could be sent (tried again on the next run)
+ */
+async function claim(db: Firestore, branchId: string, job: string, day: string): Promise<{ release: () => Promise<void> } | null> {
   const path = `branches/${branchId}/status/job_${job}`;
   const { data, updateTime } = await db.getWithTime(path);
-  if (data && String(data.day || '') >= day) return false;
+  if (data && String(data.day || '') >= day) return null;
   // Written only if nobody claimed it in between (two scheduled runs, or a device, at the same
   // moment both read it unclaimed and both sent the summary)
-  return db.setIfUnchanged(path, { day, claimedAt: new Date().toISOString(), by: 'server' }, updateTime);
+  const claimedAt = new Date().toISOString();
+  if (!(await db.setIfUnchanged(path, { day, claimedAt, by: 'server' }, updateTime))) return null;
+  const before = String(data?.day || '');
+  return {
+    release: async () => {
+      const now = await db.getWithTime(path);
+      // Only this run's claim is given back
+      if (now.data?.claimedAt === claimedAt) await db.setIfUnchanged(path, { day: before, releasedAt: new Date().toISOString(), by: 'server' }, now.updateTime).catch(() => false);
+    }
+  };
+}
+
+/** Sent somewhere it is set up to go; when it is set up somewhere and went nowhere, the run is given back */
+async function sendClaimed(claimed: { release: () => Promise<void> }, creds: any, text: () => Promise<string> | string, doFetch: Fetch): Promise<boolean> {
+  const channels = (String(creds?.telegramToken || '').trim() && String(creds?.telegramChatId || '').trim() ? 1 : 0) + (String(creds?.lineToken || '').trim() && String(creds?.lineTargetId || '').trim() ? 1 : 0);
+  try {
+    const sent = await deliver(creds, await text(), doFetch);
+    if (sent.length || !channels) return sent.length > 0;
+  } catch {
+    // given back below
+  }
+  await claimed.release();
+  return false;
 }
 
 const lastDay = async (db: Firestore, branchId: string, job: string) => String((await db.get(`branches/${branchId}/status/job_${job}`))?.day || '');
+
+const MARKER_DAYS = 2;
+
+/**
+ * The Telegram bot's markers (one per delivery, one per album) are needed for minutes: the ones
+ * older than two days are removed a few hundred at a time, so the shop's status documents stay few
+ */
+export async function removeOldMarkers(db: Firestore, branchId: string, now: Date, until: number): Promise<number> {
+  const before = new Date(now.getTime() - MARKER_DAYS * 86_400_000).toISOString();
+  let removed = 0;
+  let token = '';
+  for (let page = 0; page < 5 && Date.now() < until; page++) {
+    const { docs, next } = await db.list(`branches/${branchId}/status`, 300, token, ['at']);
+    for (const d of docs) {
+      if (Date.now() >= until || removed >= 300) return removed;
+      if (!/^tg(update|album)_/.test(d.id) || String(d.data.at || '') >= before) continue;
+      await db.delete(`branches/${branchId}/status/${d.id}`);
+      removed++;
+    }
+    if (!next) break;
+    token = next;
+  }
+  return removed;
+}
 
 /** One shop: what is due now goes out */
 export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fetch): Promise<string[]> {
@@ -158,36 +207,41 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
 
   if (triggers.dailySummary) {
     const due = summaryDue(at, String(rules.dailySummaryTime || '22:00'), await lastDay(db, b, 'daily_summary'));
-    if (due && (await claim(db, b, 'daily_summary', due.day))) {
-      // Orders are stamped in UTC: from the shop's midnight (UTC+7)
-      const fromUtc = new Date(Date.parse(`${due.day}T00:00:00Z`) - 7 * 3600_000).toISOString();
-      const sameBranch = (v: unknown) => !v || v === b;
-      const [orders, expenses, incomes] = await Promise.all([
-        db.whereAtLeast('orders', 'createdAt', fromUtc, 10000, ['branchId', 'createdAt', 'status', 'grandTotal', 'paymentStatus']),
-        db.whereAtLeast('expenses', 'date', due.day, 2000, ['id', 'branchId', 'date', 'category', 'title', 'amount']),
-        db.whereAtLeast('incomes', 'date', due.day, 2000, ['id', 'branchId', 'date', 'category', 'title', 'amount'])
-      ]);
-      const low = Number((schedule as any)?.lowStock) || 0;
-      const text =
-        summaryText(due.day, {
-          orders: orders.filter(o => sameBranch(o.branchId)) as any,
-          expenses: expenses.filter(e => sameBranch(e.branchId)).map(expenseFromDoc),
-          incomes: incomes.filter(i => sameBranch(i.branchId)).map(incomeFromDoc),
-          branchId: b
-        }) +
-        `\n${low > 0 ? `⚠️ วัตถุดิบใกล้หมด ${low} รายการ` : '✅ วัตถุดิบยังพอทุกรายการ'}` +
-        footer;
-      await deliver(creds, text, doFetch);
-      done.push(`summary ${due.day}`);
+    const claimed = due ? await claim(db, b, 'daily_summary', due.day) : null;
+    if (due && claimed) {
+      const summary = async () => {
+        // Orders are stamped in UTC: from the shop's midnight (UTC+7)
+        const fromUtc = new Date(Date.parse(`${due.day}T00:00:00Z`) - 7 * 3600_000).toISOString();
+        const sameBranch = (v: unknown) => !v || v === b;
+        const [orders, expenses, incomes] = await Promise.all([
+          db.whereAtLeast('orders', 'createdAt', fromUtc, 10000, ['branchId', 'createdAt', 'status', 'grandTotal', 'paymentStatus']),
+          db.whereAtLeast('expenses', 'date', due.day, 2000, ['id', 'branchId', 'date', 'category', 'title', 'amount']),
+          db.whereAtLeast('incomes', 'date', due.day, 2000, ['id', 'branchId', 'date', 'category', 'title', 'amount'])
+        ]);
+        const low = Number((schedule as any)?.lowStock) || 0;
+        return (
+          summaryText(due.day, {
+            orders: orders.filter(o => sameBranch(o.branchId)) as any,
+            expenses: expenses.filter(e => sameBranch(e.branchId)).map(expenseFromDoc),
+            incomes: incomes.filter(i => sameBranch(i.branchId)).map(incomeFromDoc),
+            branchId: b
+          }) +
+          `\n${low > 0 ? `⚠️ วัตถุดิบใกล้หมด ${low} รายการ` : '✅ วัตถุดิบยังพอทุกรายการ'}` +
+          footer
+        );
+      };
+      if (await sendClaimed(claimed, creds, summary, doFetch)) done.push(`summary ${due.day}`);
+      else done.push(`summary ${due.day} not sent`);
     }
   }
 
   const filings = Array.isArray((schedule as any)?.filings) ? ((schedule as any).filings as ScheduledFiling[]) : [];
   if ((schedule as any)?.remind !== false && filings.length && at.time >= FILING_REMIND_TIME && (await lastDay(db, b, 'filings')) < at.day) {
     const lines = filingsToRemind(filings, at.day);
-    if (lines.length && (await claim(db, b, 'filings', at.day))) {
-      await deliver(creds, `🔔 <b>เตือนยื่นเอกสารราชการ</b>\n━━━━━━━━━━━━━━\n📄 เอกสารที่ต้องยื่น\n${lines.map(esc).join('\n')}\n\nดูตัวเลขและไฟล์ได้ที่ เอกสาร → ยื่นเอกสารราชการ${footer}`, doFetch);
-      done.push(`filings ${at.day}`);
+    const claimed = lines.length ? await claim(db, b, 'filings', at.day) : null;
+    if (claimed) {
+      const sent = await sendClaimed(claimed, creds, () => `🔔 <b>เตือนยื่นเอกสารราชการ</b>\n━━━━━━━━━━━━━━\n📄 เอกสารที่ต้องยื่น\n${lines.map(esc).join('\n')}\n\nดูตัวเลขและไฟล์ได้ที่ เอกสาร → ยื่นเอกสารราชการ${footer}`, doFetch);
+      done.push(sent ? `filings ${at.day}` : `filings ${at.day} not sent`);
     }
   }
   // Pictures still inside cloud records (every device downloads them and keeps them in memory;
@@ -202,6 +256,12 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
       await db.set(picPath, { day: at.day, cursor: next });
       done.push(`pictures ${next.expenses || '-'}/${next.incomes || '-'}`);
     }
+  } catch {
+    // tried again on the next run
+  }
+  try {
+    const removed = await removeOldMarkers(db, b, now, Date.now() + 8_000);
+    if (removed) done.push(`markers ${removed}`);
   } catch {
     // tried again on the next run
   }

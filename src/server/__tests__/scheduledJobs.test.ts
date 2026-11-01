@@ -41,9 +41,13 @@ describe('scheduled notifications', () => {
     const docs: Record<string, any> = {
       'branches/main/config/notifications': { credentials: { telegramToken: 'T', telegramChatId: '-100' }, triggers: { dailySummary: true }, rules: { dailySummaryTime: '22:00' } },
       'branches/main/config/schedule': { lowStock: 2, shopLine: 'ครัวกะเพรา · ตลาด' },
-      'branches/main/status/job_daily_summary': { day: '2026-10-24' }
+      'branches/main/status/job_daily_summary': { day: '2026-10-24' },
+      'branches/main/status/tgupdate_1': { state: 'done', at: '2026-10-01T00:00:00.000Z' },
+      'branches/main/status/tgalbum_-100_9': { owner: 'x', at: '2026-10-01T00:00:00.000Z' },
+      'branches/main/status/tgupdate_2': { state: 'done', at: new Date().toISOString() }
     };
     const sent: string[] = [];
+    let telegramDown = false;
     const fsValue = (v: any): any =>
       typeof v === 'number' ? { integerValue: String(v) } : typeof v === 'string' ? { stringValue: v } : typeof v === 'boolean' ? { booleanValue: v } : v && typeof v === 'object' ? { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fsValue(x)])) } } : { nullValue: null };
     const fromFs = (f: any): any => Object.fromEntries(Object.entries(f || {}).map(([k, v]: any) => [k, v.stringValue ?? (v.integerValue !== undefined ? Number(v.integerValue) : v.mapValue ? fromFs(v.mapValue.fields) : v.booleanValue ?? null)]));
@@ -51,6 +55,7 @@ describe('scheduled notifications', () => {
       const json = (body: any, status = 200) => ({ ok: status < 300, status, json: async () => body }) as any;
       if (url.startsWith('https://securetoken')) return json({ id_token: 'id', expires_in: '3600' });
       if (url.startsWith('https://api.telegram.org')) {
+        if (telegramDown) return json({ ok: false, description: 'Bad Gateway' }, 502);
         sent.push(JSON.parse(init.body).text);
         return json({ ok: true });
       }
@@ -66,6 +71,13 @@ describe('scheduled notifications', () => {
         return json(rows.map(r => ({ document: { name: `x/${coll}/1`, fields: Object.fromEntries(Object.entries(r).map(([k, v]) => [k, fsValue(v)])) } })));
       }
       const path = decodeURIComponent(url.split('/documents/')[1] || '').split('?')[0];
+      if (init.method === 'DELETE') {
+        delete docs[path];
+        return json({});
+      }
+      const children = Object.keys(docs).filter(k => k.startsWith(`${path}/`) && !k.slice(path.length + 1).includes('/'));
+      if (!docs[path] && children.length && (init.method || 'GET') === 'GET')
+        return json({ documents: children.map(k => ({ name: `x/${k}`, fields: fsValue(docs[k]).mapValue.fields })) });
       if (init.method === 'PATCH') {
         docs[path] = fromFs(JSON.parse(init.body).fields);
         return json({});
@@ -76,7 +88,12 @@ describe('scheduled notifications', () => {
     // The Firestore client calls fetch itself
     vi.stubGlobal('fetch', fakeFetch);
     const signIn = { branchId: 'main', projectId: 'p', apiKey: 'k', refreshToken: 'r-test' };
-    const noPictures = (xs: string[]) => xs.filter(x => !x.startsWith('pictures'));
+    const noPictures = (xs: string[]) => xs.filter(x => !x.startsWith('pictures') && !x.startsWith('markers'));
+    // Telegram down: the day is given back, so the next run sends it
+    telegramDown = true;
+    expect(noPictures(await runShop(signIn, new Date('2026-10-25T15:01:00Z'), fakeFetch))).toEqual(['summary 2026-10-25 not sent']);
+    expect(docs['branches/main/status/job_daily_summary'].day).toBe('2026-10-24');
+    telegramDown = false;
     expect(noPictures(await runShop(signIn, new Date('2026-10-25T15:05:00Z'), fakeFetch))).toEqual(['summary 2026-10-25']);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain('150.00');
@@ -87,5 +104,7 @@ describe('scheduled notifications', () => {
     // The next run (or a device) does not send it again
     expect(noPictures(await runShop(signIn, new Date('2026-10-25T15:20:00Z'), fakeFetch))).toEqual([]);
     expect(sent).toHaveLength(1);
+    // The bot's old markers went, the recent one stays
+    expect(Object.keys(docs).filter(k => k.includes('/tg')).sort()).toEqual(['branches/main/status/tgupdate_2']);
   });
 });

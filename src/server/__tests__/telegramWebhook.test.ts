@@ -7,6 +7,7 @@ import { decodeDocLink } from '../../utils/docLink';
 /** A fake Firestore REST API, Firebase token endpoint and Telegram Bot API behind fetch */
 function fakeCloud() {
   const docs = new Map<string, Record<string, any>>(); // path → Firestore fields
+  const versions = new Map<string, number>(); // path → times written (its updateTime)
   const telegram: { method: string; body: any }[] = [];
   const base = 'https://firestore.googleapis.com/v1/projects/p1/databases/(default)/documents';
   let tokenCalls = 0;
@@ -44,13 +45,16 @@ function fakeCloud() {
         return json(200, rows.length ? rows : [{ readTime: 'x' }]);
       }
       const path = decodeURIComponent(pathPart);
-      if (method === 'GET') return docs.has(path) ? json(200, { name: path, fields: docs.get(path) }) : json(404, {});
+      if (method === 'GET') return docs.has(path) ? json(200, { name: path, fields: docs.get(path), updateTime: `t${versions.get(path) || 0}` }) : json(404, {});
       if (method === 'DELETE') {
         docs.delete(path);
         return json(200, {});
       }
       if (method === 'PATCH') {
         if (/currentDocument\.exists=false/.test(query) && docs.has(path)) return json(409, { error: { status: 'ALREADY_EXISTS' } });
+        const at = new URLSearchParams(query).get('currentDocument.updateTime');
+        if (at && (!docs.has(path) || at !== `t${versions.get(path) || 0}`)) return json(412, { error: { status: 'FAILED_PRECONDITION' } });
+        versions.set(path, (versions.get(path) || 0) + 1);
         const fields = JSON.parse(String(init.body)).fields;
         const mask = new URLSearchParams(query).getAll('updateMask.fieldPaths');
         if (!mask.length) docs.set(path, fields);
@@ -253,6 +257,82 @@ describe('Telegram webhook on Vercel', () => {
     const inbox: any = cloud.read('branches/b1/config/telegram_inbox');
     expect(Object.keys(inbox.byId)).toEqual(['tg--100-70']);
     expect(inbox.byId['tg--100-70'].extraFileIds).toEqual(['S71']);
+  });
+
+  const quick = { sleep: () => new Promise<void>(r => setTimeout(r, 2)) };
+  const runWith = (u: any, deps: any) => handleWebhook({ branchId: 'b1', projectId: 'p1', apiKey: 'KEY', sealed, secret, update: u }, { scan: async () => AI_SLIP, ...quick, ...deps });
+  const gated = () => {
+    let release!: () => void;
+    const gate = new Promise<void>(r => (release = r));
+    return { release, scan: async () => (await gate, AI_SLIP) };
+  };
+  const tick = () => new Promise(r => setTimeout(r, 20));
+
+  it('keeps every page of an album that arrives while its first page is read', async () => {
+    const g = gated();
+    const first = runWith(photoUpdate(90, { media_group_id: 'a4' }), { scan: g.scan });
+    await tick();
+    const others = [runWith(photoUpdate(91, { media_group_id: 'a4' }), {}), runWith(photoUpdate(92, { media_group_id: 'a4' }), {})];
+    await Promise.all(others);
+    g.release();
+    await first;
+    const expenses = [...cloud.docs.keys()].filter(k => k.startsWith('expenses/'));
+    expect(expenses).toHaveLength(1);
+    expect((cloud.read(expenses[0]) as any).purchaseImages.map((p: any) => p.name).sort()).toEqual(['telegram-91.jpg', 'telegram-92.jpg']);
+    expect(cloud.telegram.some(t => t.body.text?.startsWith('📄 รวมรูปอีก 2 แผ่น'))).toBe(true);
+  });
+
+  it('pages arriving together after the bill was saved are all kept', async () => {
+    await deliver(photoUpdate(100, { media_group_id: 'a5' }));
+    await Promise.all([runWith(photoUpdate(101, { media_group_id: 'a5' }), {}), runWith(photoUpdate(102, { media_group_id: 'a5' }), {})]);
+    const expenses = [...cloud.docs.keys()].filter(k => k.startsWith('expenses/'));
+    expect(expenses).toHaveLength(1);
+    expect((cloud.read(expenses[0]) as any).purchaseImages).toHaveLength(2);
+  });
+
+  it('approve mode: all pages of an album arriving together are attached', async () => {
+    cloud.write('branches/b1/config/telegram_bot', { ...(cloud.read('branches/b1/config/telegram_bot') as any), mode: 'approve' });
+    const g = gated();
+    const first = runWith(photoUpdate(110, { media_group_id: 'a6' }), { scan: g.scan });
+    await tick();
+    await Promise.all([111, 112, 113].map(n => runWith(photoUpdate(n, { media_group_id: 'a6' }), {})));
+    g.release();
+    await first;
+    const inbox: any = cloud.read('branches/b1/config/telegram_inbox');
+    expect(Object.keys(inbox.byId)).toEqual(['tg--100-110']);
+    expect([...inbox.byId['tg--100-110'].extraFileIds].sort()).toEqual(['S111', 'S112', 'S113']);
+  });
+
+  it('a first page that cannot be read keeps the other pages, and the amount typed after still records them', async () => {
+    const g = gated();
+    const failing = async () => {
+      await g.scan();
+      throw new Error('อ่านไม่ออก');
+    };
+    const first = runWith(photoUpdate(120, { media_group_id: 'a7' }), { scan: failing });
+    await tick();
+    await runWith(photoUpdate(121, { media_group_id: 'a7' }), {});
+    g.release();
+    await first;
+    // A page arriving later, with "เสร็จ": the bot still waits for the amount
+    await runWith(photoUpdate(122, { media_group_id: 'a7', caption: 'เสร็จ' }), {});
+    expect((cloud.read('branches/b1/config/telegram_inbox') as any).byId['tg--100-120'].extraFileIds).toEqual(['S121', 'S122']);
+    await deliver({ update_id: 123, message: { message_id: 123, date: 1790000000, chat: { id: -100 }, from: { id: 5, first_name: 'แม่ครัว' }, text: '1812 แม็คโคร' } });
+    const expenses = [...cloud.docs.keys()].filter(k => k.startsWith('expenses/'));
+    expect(expenses).toHaveLength(1);
+    const e: any = cloud.read(expenses[0]);
+    expect(e.amount).toBe(1812);
+    expect(e.purchaseImages).toHaveLength(2);
+  });
+
+  it('a delivery still being handled is asked again later; one stopped long ago is handled again', async () => {
+    cloud.write('branches/b1/status/tgupdate_130', { state: 'working', at: new Date().toISOString() });
+    expect((await deliver(photoUpdate(130))).status).toBe(503);
+    cloud.write('branches/b1/status/tgupdate_130', { state: 'working', at: new Date(Date.now() - 5 * 60_000).toISOString() });
+    expect((await deliver(photoUpdate(130))).status).toBe(200);
+    expect([...cloud.docs.keys()].filter(k => k.startsWith('expenses/'))).toHaveLength(1);
+    expect(cloud.read('branches/b1/status/tgupdate_130')).toMatchObject({ state: 'done' });
+    expect((await deliver(photoUpdate(130))).body).toMatchObject({ duplicate: true });
   });
 
   it('handles a delivery Telegram sends twice only once', async () => {

@@ -19,10 +19,14 @@ export interface ScriptReply {
   folderUrl?: string;
   /** The file can be opened by anyone with its link (version 3: bill pictures shown in the app) */
   shared?: boolean;
+  /** Files moved to the bin (version 4: documents of a cancelled bill) */
+  trashed?: number;
 }
 
 /** The script version this app expects (bump when the pasted code changes) */
-export const SCRIPT_VERSION = 3;
+export const SCRIPT_VERSION = 4;
+/** Removing a cancelled bill's documents from Drive works from this version */
+export const DRIVE_TRASH_VERSION = 4;
 /** Saving documents to Drive works from this version; 3 also shows bill pictures from Drive */
 export const DRIVE_MIN_VERSION = 2;
 /** Top folder in the shop's Google Drive for documents saved from the POS */
@@ -52,6 +56,7 @@ function doPost(e) {
     if (data.ping) return reply({ ok: true, name: ss.getName(), url: ss.getUrl(), version: VERSION });
     if (data.file) return saveFile(data.file);
     if (data.share) return shareFile(data.share);
+    if (data.trash) return trashFiles(data.trash);
 
     const lock = LockService.getScriptLock();
     lock.waitLock(30000);
@@ -98,6 +103,35 @@ function saveFile(f) {
 function shareFile(s) {
   const file = DriveApp.getFileById(String(s.fileId || ''));
   return reply({ ok: true, version: VERSION, fileId: file.getId(), fileUrl: file.getUrl(), shared: share(file) });
+}
+
+// Documents of a cancelled bill to the bin: only files kept under ROOT_FOLDER
+function trashFiles(t) {
+  let trashed = 0;
+  (t.fileIds || []).forEach(function (id) {
+    try {
+      const file = DriveApp.getFileById(String(id));
+      if (!underRoot(file)) return;
+      file.setTrashed(true);
+      trashed++;
+    } catch (err) {
+      // removed already, or not this account's
+    }
+  });
+  return reply({ ok: true, version: VERSION, trashed: trashed });
+}
+
+function underRoot(file) {
+  const queue = [];
+  const parents = file.getParents();
+  while (parents.hasNext()) queue.push(parents.next());
+  for (let depth = 0; queue.length && depth < 200; depth++) {
+    const folder = queue.shift();
+    if (folder.getName() === ROOT_FOLDER) return true;
+    const up = folder.getParents();
+    while (up.hasNext()) queue.push(up.next());
+  }
+  return false;
 }
 
 function share(file) {
@@ -162,6 +196,15 @@ export const saveFileToDrive = (url: string, secret: string, file: DriveFileInpu
 
 /** Open a file saved earlier to anyone with its link (version 3 and up) */
 export const shareDriveFile = (url: string, secret: string, fileId: string) => post(url, { secret, share: { fileId } });
+
+/** A Drive file's id from what the app keeps (its id, or its link) */
+export const driveFileId = (f: { fileId?: string; url?: string }) => f.fileId || (f.url || '').match(/\/d\/([\w-]{10,})/)?.[1] || (f.url || '').match(/[?&]id=([\w-]{10,})/)?.[1] || '';
+
+/** Move files saved earlier to the bin (version 4 and up). null: the script is older and cannot */
+export async function trashDriveFiles(url: string, secret: string, fileIds: string[]): Promise<number | null> {
+  const r = await post(url, { secret, trash: { fileIds } });
+  return (r.version || 0) >= DRIVE_TRASH_VERSION && typeof r.trashed === 'number' ? r.trashed : null;
+}
 
 export const pushSheetsToScript = (url: string, secret: string, sheets: SheetRows[]) => post(url, { secret, sheets });
 
