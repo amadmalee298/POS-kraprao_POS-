@@ -278,6 +278,11 @@ export function firestoreStore(db: Firestore, branchId: string, state: { waiting
     inboxByRecord: async recordId => (await loadInbox()).items.find(p => p.recordId === recordId) || null,
     inboxItems: async () => (await loadInbox()).items,
     putInbox: item => saveInboxItem(item),
+    claimAlbum: async (key, itemId) => {
+      const path = `branches/${branchId}/status/tgalbum_${key.replace(/[^\w-]/g, '_')}`;
+      if (await db.setIfUnchanged(path, { owner: itemId, at: new Date().toISOString() }, null)) return itemId;
+      return str((await db.get(path))?.owner) || itemId;
+    },
     patchInbox: async (id, change) => {
       const item = (await loadInbox()).items.find(p => p.id === id);
       if (item) await saveInboxItem({ ...item, ...change });
@@ -303,6 +308,8 @@ export interface WebhookDeps {
   anthropicKey?: string;
   /** Read a receipt picture (replaced in tests) */
   scan?: BotContext['scan'];
+  /** Waits (replaced in tests) */
+  sleep?: BotContext['sleep'];
 }
 
 /** Handles one delivery from Telegram. Returns the HTTP status to answer with. */
@@ -387,6 +394,7 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
     mode: config.mode === 'approve' ? 'approve' : 'auto',
     shop: config.shop || { name: '' },
     vatRate: Number(config.vatRate) || 7,
+    sleep: deps.sleep,
     tg: (method, params) => tgCall(token, method, params),
     readPhoto: async p => {
       const scanImage = await downloadFile(token, p.fileId, 8_000_000);
