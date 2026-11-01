@@ -50,6 +50,7 @@ function fakeCloud() {
         return json(200, {});
       }
       if (method === 'PATCH') {
+        if (/currentDocument\.exists=false/.test(query) && docs.has(path)) return json(409, { error: { status: 'ALREADY_EXISTS' } });
         const fields = JSON.parse(String(init.body)).fields;
         const mask = new URLSearchParams(query).getAll('updateMask.fieldPaths');
         if (!mask.length) docs.set(path, fields);
@@ -213,6 +214,45 @@ describe('Telegram webhook on Vercel', () => {
     expect((cloud.read(`branches/b1/config/img_${imgKey}`) as any).data).toBe(big);
     expect((cloud.read('incomes/inc-old') as any).slipImage).toMatch(/^img:b1\/inc-old-s-/);
     expect((cloud.read('branches/b1/config/telegram_bot_state') as any).pictureCursor).toEqual({ expenses: 'done', incomes: 'done' });
+  });
+
+  it('reads an album of one bill once: the other pages join that bill', async () => {
+    await deliver(photoUpdate(40, { media_group_id: 'alb' }));
+    await deliver(photoUpdate(41, { media_group_id: 'alb' }));
+    const expenses = [...cloud.docs.keys()].filter(k => k.startsWith('expenses/'));
+    expect(expenses).toHaveLength(1);
+    const e: any = cloud.read(expenses[0]);
+    expect(e.purchaseImages).toHaveLength(1);
+    expect(cloud.telegram.some(t => t.body.text?.startsWith('📄 รวมเป็นบิลเดียวกับ'))).toBe(true);
+    expect(Object.keys((cloud.read('branches/b1/config/telegram_inbox') as any).byId)).toEqual(['tg--100-40']);
+  });
+
+  it('an album whose photos arrive at the same time is still one bill', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(r => (release = r));
+    const slow = async () => {
+      await gate;
+      return AI_SLIP;
+    };
+    const run = (u: any) => handleWebhook({ branchId: 'b1', projectId: 'p1', apiKey: 'KEY', sealed, secret, update: u }, { scan: slow, sleep: () => new Promise(r => setTimeout(r, 5)) });
+    const first = run(photoUpdate(60, { media_group_id: 'alb2' }));
+    await new Promise(r => setTimeout(r, 20));
+    const second = run(photoUpdate(61, { media_group_id: 'alb2' }));
+    await new Promise(r => setTimeout(r, 20));
+    release();
+    await Promise.all([first, second]);
+    const expenses = [...cloud.docs.keys()].filter(k => k.startsWith('expenses/'));
+    expect(expenses).toHaveLength(1);
+    expect((cloud.read(expenses[0]) as any).purchaseImages).toHaveLength(1);
+  });
+
+  it('pages of an album waiting for approval are attached to that bill', async () => {
+    cloud.write('branches/b1/config/telegram_bot', { ...(cloud.read('branches/b1/config/telegram_bot') as any), mode: 'approve' });
+    await deliver(photoUpdate(70, { media_group_id: 'alb3' }));
+    await deliver(photoUpdate(71, { media_group_id: 'alb3' }));
+    const inbox: any = cloud.read('branches/b1/config/telegram_inbox');
+    expect(Object.keys(inbox.byId)).toEqual(['tg--100-70']);
+    expect(inbox.byId['tg--100-70'].extraFileIds).toEqual(['S71']);
   });
 
   it('handles a delivery Telegram sends twice only once', async () => {

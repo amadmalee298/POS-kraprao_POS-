@@ -69,6 +69,11 @@ export interface BotStore {
   /** Everything in the bot's list (for spotting a bill sent twice) */
   inboxItems?(): Promise<PendingReceipt[]>;
   putInbox(item: PendingReceipt): Promise<void>;
+  /**
+   * The first photo of an album to arrive claims it (the album's photos can arrive at the same
+   * time): returns the bill that owns the album, `itemId` when this one got there first
+   */
+  claimAlbum?(key: string, itemId: string): Promise<string>;
   patchInbox(id: string, change: Partial<PendingReceipt>): Promise<void>;
   getWaiting(chatId: string, userId?: string): Promise<BotWaiting | null>;
   setWaiting(chatId: string, userId: string | undefined, w: Omit<BotWaiting, 'chatId' | 'userId' | 'until'> | null): Promise<void>;
@@ -94,6 +99,8 @@ export interface BotContext {
   /** Saves the expense's documents into Google Drive and returns the files (when switched on here) */
   saveToDrive?(e: Expense): Promise<Expense['driveFiles'] | undefined>;
   newId?(prefix: 'exp' | 'inc'): string;
+  /** Waits (tests pass a quicker one) */
+  sleep?(ms: number): Promise<void>;
 }
 
 export const MAX_PURCHASE_PHOTOS = 3;
@@ -477,6 +484,53 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     return rec ? `${rec.title} ${baht(rec.amount)}` : '';
   };
 
+  /** The bill that owns an album ('' when none yet: this photo is its first) */
+  const albumOwner = async (group: string, itemId: string): Promise<string> => {
+    if (store.claimAlbum) return store.claimAlbum(`${chatId}_${group}`, itemId);
+    const items = store.inboxItems ? await store.inboxItems() : [];
+    return items.find(p => p.mediaGroupId === group && p.chatId === chatId && p.status !== 'rejected')?.id || '';
+  };
+
+  /** Another page of a bill sent in the same album: kept with that bill, not read as a new one */
+  const joinAlbum = async (ownerId: string, photo: IncomingPhoto): Promise<boolean> => {
+    const sleep = ctx.sleep || ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
+    // The first page may still be being read: wait for its card (up to ~40 s)
+    let owner = await store.inboxItem(ownerId);
+    for (let i = 0; i < 27 && (!owner || owner.status === 'reading' || (!owner.cardMessageId && i < 6)); i++) {
+      await sleep(1500);
+      owner = await store.inboxItem(ownerId);
+    }
+    if (!owner || owner.status === 'rejected') return false;
+    const label = (owner.data?.vendorName || owner.data?.title || owner.caption || 'บิลนี้').replace(/[&<>]/g, '').slice(0, 40);
+    if (owner.status !== 'approved' || !owner.recordId) {
+      // Waiting for approval (or not read): the page is attached to it
+      await attachToPending(owner, photo);
+      return true;
+    }
+    const e = owner.recordId.startsWith('exp-') ? await store.getExpense(owner.recordId) : null;
+    if (!e) {
+      await sendQuiet({ text: `📄 รูปนี้อยู่ในชุดเดียวกับ “${label}” จึงไม่บันทึกซ้ำ`, reply_to_message_id: photo.messageId });
+      return true;
+    }
+    const count = e.purchaseImages?.length || 0;
+    if (count >= MAX_PURCHASE_PHOTOS) {
+      await sendQuiet({ text: `📄 รูปนี้อยู่ในชุดเดียวกับ “${label}” (แนบรูปครบ ${MAX_PURCHASE_PHOTOS} รูปแล้ว) จึงไม่บันทึกซ้ำ`, reply_to_message_id: photo.messageId });
+      return true;
+    }
+    try {
+      const { store: dataUrl } = await ctx.readPhoto(photo);
+      if (!dataUrl) throw new Error('รูปใหญ่เกินไป');
+      const next: Expense = { ...e, purchaseImages: [...(e.purchaseImages || []), { name: `telegram-${photo.messageId}.jpg`, dataUrl }] };
+      await store.updateExpense(e.id, { purchaseImages: next.purchaseImages });
+      await sendQuiet({ text: `📄 รวมเป็นบิลเดียวกับ “${label}” แล้ว (แนบรูป ${count + 1}/${MAX_PURCHASE_PHOTOS}) ไม่บันทึกซ้ำ`, reply_to_message_id: photo.messageId });
+      if (owner.cardMessageId) await editCard(owner.cardMessageId, await fullCard('expense', next), keyboardFor(next, 'expense'));
+      if (next.driveFiles?.length) await toDrive(next, owner.cardMessageId);
+    } catch (err: any) {
+      await sendQuiet({ text: `📄 รูปนี้อยู่ในชุดเดียวกับ “${label}” จึงไม่บันทึกซ้ำ (แนบรูปไม่สำเร็จ: ${String(err?.message || '').replace(/[&<>]/g, '')})`, reply_to_message_id: photo.messageId });
+    }
+    return true;
+  };
+
   // ---------- Photos ----------
   const photo = photoFromUpdate(update);
   if (photo) {
@@ -500,6 +554,11 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
 
     const id = pendingId(photo);
     if (await store.inboxItem(id)) return; // already handled (Telegram sent it again)
+    // An album: the pages of one bill sent together. Only the first is read; the rest join it
+    if (photo.mediaGroupId) {
+      const owner = await albumOwner(photo.mediaGroupId, id);
+      if (owner && owner !== id && (await joinAlbum(owner, photo))) return;
+    }
     const item: PendingReceipt = {
       id,
       source: 'telegram',
@@ -511,7 +570,8 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       caption: photo.caption,
       receivedAt: photo.date,
       kind: jotIncome || isIncomeCaption(photo.caption) ? 'income' : 'expense',
-      status: 'reading'
+      status: 'reading',
+      ...(photo.mediaGroupId ? { mediaGroupId: photo.mediaGroupId } : {})
     };
     await store.putInbox(item);
     const progress = await sendQuiet({ text: '⏳ กำลังอ่านบิล...', reply_to_message_id: photo.messageId, allow_sending_without_reply: true });

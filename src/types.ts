@@ -838,6 +838,8 @@ export interface PendingReceipt {
   cardMessageId?: number;
   /** More pictures attached to it (slip, receipt, proof of purchase), after the first in fileId */
   extraFileIds?: string[];
+  /** Sent in an album (several photos at once): the album's other photos are pages of this bill */
+  mediaGroupId?: string;
   /** Recorded by the bot as a purchase of goods: waits for a manager to receive it into stock */
   stockPending?: boolean;
 }
