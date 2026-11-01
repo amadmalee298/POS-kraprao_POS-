@@ -552,16 +552,26 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       owner = await store.inboxItem(ownerId);
     }
     if (!owner || owner.status === 'rejected') return false;
+    const reply = (text: string) => sendQuiet({ text, reply_to_message_id: photo.messageId });
+    const labelOf = (o: PendingReceipt) => (o.data?.vendorName || o.data?.title || o.caption || 'บิลนี้').replace(/[&<>]/g, '').slice(0, 40);
+    // The picture is read before taking the bill, so the bill is held only for its quick change
+    const forExpense = owner.status === 'approved' && !!owner.recordId?.startsWith('exp-');
+    const [pic] = forExpense ? await pagePictures([photo]) : [];
     const holder = String(photo.messageId);
     let locked = !store.album;
-    for (let i = 0; i < 12 && !locked; i++) {
+    for (let i = 0; i < 30 && !locked; i++) {
       locked = await store.album!.lock(albumKey(group), holder).catch(() => false);
       if (!locked) await sleep(1000);
     }
+    if (!locked) {
+      // Never changed without holding it (another page's change would be written over)
+      await reply(`⚠️ รูปนี้อยู่ในชุดเดียวกับ “${labelOf(owner)}” แต่ยังรวมไม่ได้ (มีรูปอื่นกำลังรวมอยู่) ส่งรูปนี้อีกครั้งแบบตอบกลับการ์ดของบิล`);
+      return true;
+    }
+    let after: (() => Promise<void>) | undefined;
     try {
       owner = (await store.inboxItem(ownerId)) || owner;
-      const label = (owner.data?.vendorName || owner.data?.title || owner.caption || 'บิลนี้').replace(/[&<>]/g, '').slice(0, 40);
-      const reply = (text: string) => sendQuiet({ text, reply_to_message_id: photo.messageId });
+      const label = labelOf(owner);
       if (owner.status !== 'approved' || !owner.recordId) {
         // Waiting for approval, or not read: kept with the bill (also when its amount is typed later).
         // The sender's waiting (e.g. for that amount) is left as it is
@@ -571,30 +581,33 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
           return true;
         }
         await store.patchInbox(owner.id, { extraFileIds: [...(owner.extraFileIds || []), photo.storeFileId || photo.fileId] });
-        const updated = await store.inboxItem(owner.id);
-        if (updated?.status === 'pending' && updated.cardMessageId) await editCard(updated.cardMessageId, pendingText(updated), attachKeyboard(updated.id));
-        await reply(`📄 รวมเป็นบิลเดียวกับ “${label}” แล้ว (${count + 1}/${MAX_ATTACHMENTS}) ไม่บันทึกซ้ำ`);
+        after = async () => {
+          const updated = await store.inboxItem(ownerId);
+          if (updated?.status === 'pending' && updated.cardMessageId) await editCard(updated.cardMessageId, pendingText(updated), attachKeyboard(updated.id));
+          await reply(`📄 รวมเป็นบิลเดียวกับ “${label}” แล้ว (${count + 1}/${MAX_ATTACHMENTS}) ไม่บันทึกซ้ำ`);
+        };
         return true;
       }
       const e = owner.recordId.startsWith('exp-') ? await store.getExpense(owner.recordId) : null;
       const count = e?.purchaseImages?.length || 0;
-      if (!e || count >= MAX_PURCHASE_PHOTOS) {
-        await reply(`📄 รูปนี้อยู่ในชุดเดียวกับ “${label}”${e ? ` (แนบรูปครบ ${MAX_PURCHASE_PHOTOS} รูปแล้ว)` : ''} จึงไม่บันทึกซ้ำ`);
-        return true;
-      }
-      const [pic] = await pagePictures([photo]);
-      if (!pic) {
-        await reply(`📄 รูปนี้อยู่ในชุดเดียวกับ “${label}” จึงไม่บันทึกซ้ำ (แนบรูปไม่สำเร็จ)`);
+      if (!e || count >= MAX_PURCHASE_PHOTOS || !pic) {
+        await reply(`📄 รูปนี้อยู่ในชุดเดียวกับ “${label}”${e && count >= MAX_PURCHASE_PHOTOS ? ` (แนบรูปครบ ${MAX_PURCHASE_PHOTOS} รูปแล้ว)` : ''} จึงไม่บันทึกซ้ำ${e && !pic ? ' (แนบรูปไม่สำเร็จ)' : ''}`);
         return true;
       }
       const next: Expense = { ...e, purchaseImages: [...(e.purchaseImages || []), pic] };
       await store.updateExpense(e.id, { purchaseImages: next.purchaseImages });
-      await reply(`📄 รวมเป็นบิลเดียวกับ “${label}” แล้ว (แนบรูป ${count + 1}/${MAX_PURCHASE_PHOTOS}) ไม่บันทึกซ้ำ`);
-      if (owner.cardMessageId) await editCard(owner.cardMessageId, await fullCard('expense', next), keyboardFor(next, 'expense'));
-      if (next.driveFiles?.length) await toDrive(next, owner.cardMessageId);
+      const cardId = owner.cardMessageId;
+      after = async () => {
+        await reply(`📄 รวมเป็นบิลเดียวกับ “${label}” แล้ว (แนบรูป ${count + 1}/${MAX_PURCHASE_PHOTOS}) ไม่บันทึกซ้ำ`);
+        // The card and Drive from the latest copy (other pages may have joined meanwhile)
+        const latest = (await store.getExpense(e.id)) || next;
+        if (cardId) await editCard(cardId, await fullCard('expense', latest), keyboardFor(latest, 'expense'));
+        if (latest.driveFiles?.length) await toDrive(latest, cardId);
+      };
       return true;
     } finally {
-      if (store.album && locked) await store.album.unlock(albumKey(group), holder).catch(() => {});
+      if (store.album) await store.album.unlock(albumKey(group), holder).catch(() => {});
+      if (after) await after();
     }
   };
 

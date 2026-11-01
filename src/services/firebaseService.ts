@@ -2106,6 +2106,21 @@ export async function saveKeyedRecords(
 }
 
 /** Read a shared document once (null when missing or offline) */
+/** Removes fields (each a path, e.g. ['ids', '<id>']) from a shared document */
+export async function removeBranchDocFields(branchId: string, key: string, paths: string[][]): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine || !paths.length) return false;
+  await waitForFirebaseAuth();
+  try {
+    const args: unknown[] = [];
+    paths.forEach(p => args.push(new FieldPath(...p), deleteField()));
+    await (updateDoc as any)(doc(dbInstance, 'branches', branchId, 'config', key), ...args);
+    return true;
+  } catch (err) {
+    console.warn(`[Firebase Service] Failed to update shared document ${key}:`, err);
+    return false;
+  }
+}
+
 export async function loadBranchDoc(branchId: string, key: string): Promise<DocumentData | null> {
   if (!dbInstance || !navigator.onLine) return null;
   await waitForFirebaseAuth();

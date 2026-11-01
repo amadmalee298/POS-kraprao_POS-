@@ -24,8 +24,8 @@ export interface ScriptReply {
 }
 
 /** The script version this app expects (bump when the pasted code changes) */
-export const SCRIPT_VERSION = 4;
-/** Removing a cancelled bill's documents from Drive works from this version */
+export const SCRIPT_VERSION = 5;
+/** Removing a cancelled bill's documents from Drive works from this version (5 adds the Dashboard sheet) */
 export const DRIVE_TRASH_VERSION = 4;
 /** Saving documents to Drive works from this version; 3 also shows bill pictures from Drive */
 export const DRIVE_MIN_VERSION = 2;
@@ -62,6 +62,7 @@ function doPost(e) {
     lock.waitLock(30000);
     let rows = 0;
     try {
+      if (data.dashboard) writeDashboard(ss, data.dashboard);
       (data.sheets || []).forEach(function (s) {
         const sheet = ss.getSheetByName(s.title) || ss.insertSheet(s.title);
         sheet.clearContents();
@@ -143,6 +144,66 @@ function share(file) {
   }
 }
 
+// The Dashboard sheet (version 5): this month's figures, accounts, Top 20 lists and two charts
+function writeDashboard(ss, d) {
+  const sh = ss.getSheetByName('Dashboard') || ss.insertSheet('Dashboard', 0);
+  sh.getCharts().forEach(function (c) { sh.removeChart(c); });
+  sh.clear();
+  const money = '#,##0.00';
+  sh.getRange(1, 1).setValue('แดชบอร์ดการเงิน · ' + d.label + ' (ข้อมูลถึง ' + d.asOf + ')').setFontWeight('bold').setFontSize(14);
+  // Tiles: label above, value below, two columns each
+  const tiles = [
+    ['ยอดเงินคงเหลือ', d.cashBalance, '#e8eaf6', money],
+    ['รายรับเดือนนี้', d.income, '#e3f2fd', money],
+    ['รายจ่ายเดือนนี้', d.expense, '#fbe9e7', money],
+    ['กำไรสุทธิเดือนนี้', d.profit, '#fff8e1', money],
+    ['อัตรากำไรสุทธิ', d.margin === null ? '' : d.margin / 100, '#e0f2f1', '0.00%'],
+    ['กำไรสะสม', d.cumulativeProfit, '#ede7f6', money]
+  ];
+  tiles.forEach(function (t, i) {
+    const col = 1 + i * 2;
+    sh.getRange(3, col, 1, 2).merge().setValue(t[0]).setBackground(t[2]).setFontWeight('bold').setHorizontalAlignment('center');
+    sh.getRange(4, col, 1, 2).merge().setValue(t[1]).setBackground(t[2]).setNumberFormat(t[3]).setFontSize(14).setHorizontalAlignment('center');
+  });
+  // Tables from row 6: accounts (A–C), Top 20 income (E–H), Top 20 expenses (J–M)
+  const table = function (row, col, title, color, head, rows, formats) {
+    sh.getRange(row, col, 1, head.length).merge().setValue(title).setBackground(color).setFontWeight('bold').setHorizontalAlignment('center');
+    sh.getRange(row + 1, col, 1, head.length).setValues([head]).setFontWeight('bold').setBackground('#f5f5f5');
+    if (rows.length) {
+      sh.getRange(row + 2, col, rows.length, head.length).setValues(rows.map(function (r) { return r.map(safe); }));
+      formats.forEach(function (f, i) { if (f) sh.getRange(row + 2, col + i, rows.length, 1).setNumberFormat(f); });
+    }
+  };
+  table(6, 1, 'ยอดเงินคงเหลือแต่ละบัญชี', '#bbdefb', ['บัญชี', 'ยอดคงเหลือ', 'สัดส่วน'], d.accounts.map(function (a) { return [a.name, a.amount, a.share / 100]; }), ['', money, '0.0%']);
+  const up = '[Color10]"▲ "#,##0.00;[Red]"▼ "#,##0.00;"–"';
+  const upBad = '[Red]"▲ "#,##0.00;[Color10]"▼ "#,##0.00;"–"';
+  const items = function (xs) { return xs.map(function (x) { return [x.name, x.group, x.amount, x.change]; }); };
+  table(6, 5, 'Top 20 รายรับ', '#c8e6c9', ['รายการ', 'หมวดหมู่', 'จำนวนเงิน', 'เปลี่ยนแปลงจากเดือนก่อน'], items(d.topIncome), ['', '', money, up]);
+  table(6, 10, 'Top 20 รายจ่าย', '#ffcdd2', ['รายการ', 'หมวดหมู่', 'จำนวนเงิน', 'เปลี่ยนแปลงจากเดือนก่อน'], items(d.topExpense), ['', '', money, upBad]);
+  // Months (the charts read this table) below the charts
+  const mRow = 50;
+  table(mRow, 1, 'รายเดือน', '#eeeeee', ['เดือน', 'รายรับ', 'รายจ่าย', 'กำไร', 'กำไรสะสม'], d.months.map(function (m) { return [m.label, m.income, m.expense, m.profit, m.cumulative]; }), ['', money, money, money, money]);
+  const n = d.months.length;
+  const labels = sh.getRange(mRow + 1, 1, n + 1, 1);
+  sh.insertChart(
+    sh.newChart().setChartType(Charts.ChartType.COLUMN)
+      .addRange(labels).addRange(sh.getRange(mRow + 1, 2, n + 1, 2))
+      .setNumHeaders(1)
+      .setOption('title', 'รายรับ – รายจ่าย รายเดือน').setOption('colors', ['#2a78d6', '#eb6834']).setOption('legend', { position: 'top' })
+      .setPosition(29, 1, 0, 0).setOption('width', 620).setOption('height', 320).build()
+  );
+  sh.insertChart(
+    sh.newChart().setChartType(Charts.ChartType.COMBO)
+      .addRange(labels).addRange(sh.getRange(mRow + 1, 4, n + 1, 2))
+      .setNumHeaders(1)
+      .setOption('title', 'กำไร และกำไรสะสม').setOption('seriesType', 'bars').setOption('series', { 1: { type: 'line', pointSize: 6 } })
+      .setOption('colors', ['#eda100', '#6250d6']).setOption('legend', { position: 'top' })
+      .setPosition(29, 8, 0, 0).setOption('width', 620).setOption('height', 320).build()
+  );
+  sh.setColumnWidths(1, 14, 105);
+  return d.topIncome.length + d.topExpense.length;
+}
+
 function folderByName(parent, name) {
   const found = parent.getFoldersByName(name);
   return found.hasNext() ? found.next() : parent.createFolder(name);
@@ -197,8 +258,7 @@ export const saveFileToDrive = (url: string, secret: string, file: DriveFileInpu
 /** Open a file saved earlier to anyone with its link (version 3 and up) */
 export const shareDriveFile = (url: string, secret: string, fileId: string) => post(url, { secret, share: { fileId } });
 
-/** A Drive file's id from what the app keeps (its id, or its link) */
-export const driveFileId = (f: { fileId?: string; url?: string }) => f.fileId || (f.url || '').match(/\/d\/([\w-]{10,})/)?.[1] || (f.url || '').match(/[?&]id=([\w-]{10,})/)?.[1] || '';
+export { driveFileId } from '../utils/imageRef';
 
 /** Move files saved earlier to the bin (version 4 and up). null: the script is older and cannot */
 export async function trashDriveFiles(url: string, secret: string, fileIds: string[]): Promise<number | null> {
@@ -206,7 +266,8 @@ export async function trashDriveFiles(url: string, secret: string, fileIds: stri
   return (r.version || 0) >= DRIVE_TRASH_VERSION && typeof r.trashed === 'number' ? r.trashed : null;
 }
 
-export const pushSheetsToScript = (url: string, secret: string, sheets: SheetRows[]) => post(url, { secret, sheets });
+/** The sheets, and the Dashboard sheet the script lays out (version 5; older scripts leave it out) */
+export const pushSheetsToScript = (url: string, secret: string, sheets: SheetRows[], dashboard?: unknown) => post(url, { secret, sheets, ...(dashboard ? { dashboard } : {}) });
 
 // When this device last sent (kept per device: each device may run the automatic send)
 const LAST_KEY = 'POS_SHEETS_SCRIPT_LAST';

@@ -6,6 +6,7 @@ import { isLocalRetired } from '../utils/localRetire';
 import { bigStore, bigStorePendingLists, flushBigStore, retireBigStore } from '../utils/bigStore';
 import { lightStart } from '../utils/bootGuard';
 import { offloadRecordImages, pendingImageUploads, recordImageRefs, retireImageStore, uploadImageNow } from '../services/imageStore';
+import { binWaitingDriveFiles, removeRecordFiles } from '../services/recordCleanup';
 import { carriesPictures } from '../utils/imageRef';
 import { averageCostAfterPrep } from '../utils/prep';
 import { localDay } from '../utils/stockHistory';
@@ -4455,8 +4456,27 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (next) sendWithPictures('e', next, e => syncExpenseToFirestore(e, currentBranch));
   };
 
+  // Drive files of records removed where they could not be binned (e.g. by the bot): this device has the shop's script
+  const scriptUrl = settings.sheetsScript?.url;
+  const scriptSecret = settings.sheetsScript?.secret;
+  const settingsNow = useRef(settings);
+  settingsNow.current = settings;
+  useEffect(() => {
+    if (!scriptUrl || !scriptSecret || !currentUser || !isFirebaseAvailable()) return;
+    const run = () => void binWaitingDriveFiles(currentBranch.id, settingsNow.current).catch(() => {});
+    const first = setTimeout(run, 30_000);
+    const every = setInterval(run, 15 * 60_000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  }, [scriptUrl, scriptSecret, currentBranch.id, !!currentUser]);
+
   const deleteExpense = (expenseId: string) => {
+    const gone = expenses.find(e => e.id === expenseId);
     setExpenses(prev => keepList('POS_EXPENSES_DATA', prev.filter(e => e.id !== expenseId)));
+    // Its pictures and Drive files go with it
+    if (gone) void removeRecordFiles(gone.branchId || currentBranch.id, gone, settings).catch(() => {});
 
     if (isFirebaseAvailable()) {
       deleteExpenseFromFirestore(expenseId).catch(err => {
@@ -4488,7 +4508,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const deleteIncome = (incomeId: string) => {
+    const gone = incomes.find(i => i.id === incomeId);
     setIncomes(prev => keepList('POS_INCOMES_DATA', prev.filter(inc => inc.id !== incomeId)));
+    if (gone) void removeRecordFiles(gone.branchId || currentBranch.id, gone, settings).catch(() => {});
 
     if (isFirebaseAvailable()) {
       deleteIncomeFromFirestore(incomeId).catch(err => {

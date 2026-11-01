@@ -64,6 +64,7 @@ const PAGE_SECTIONS: Partial<Record<SectionPage, { id: string; label: string }[]
     { id: 'suppliers', label: 'ซัพพลายเออร์' }
   ],
   accounting: [
+    { id: 'dashboard', label: 'แดชบอร์ดการเงิน' },
     { id: 'statement', label: 'งบกำไรขาดทุน' },
     { id: 'balance_sheet', label: 'งบดุล (งบแสดงฐานะการเงิน)' },
     { id: 'cash_flow', label: 'งบกระแสเงินสด' },

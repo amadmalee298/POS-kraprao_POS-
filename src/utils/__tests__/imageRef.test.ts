@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carriesPictures, contentTag, hasImage, imageMime, isImageRef, makeImageRef, mapRecordImages, mapRecordImagesAsync, parseImageRef } from '../imageRef';
+import { carriesPictures, contentTag, hasImage, imageMime, isImageRef, makeImageRef, mapRecordImages, mapRecordImagesAsync, parseImageRef, recordFiles } from '../imageRef';
 
 const big = (mime = 'image/jpeg', fill = 'A') => `data:${mime};base64,${fill.repeat(3000)}`;
 
@@ -55,5 +55,17 @@ describe('pictures kept in Google Drive', () => {
     expect(imageMime(out.receiptImage)).toBe('image/jpeg');
     expect(driveImageUrl(out.receiptImage!)).toBe('https://drive.google.com/thumbnail?id=F1&sz=w1200');
     expect(unsharedPictures({ driveFiles: files })).toHaveLength(1);
+  });
+});
+
+describe('what a removed record leaves elsewhere', () => {
+  it('finds its cloud pictures and its Drive files (documents and pictures moved there)', () => {
+    const files = recordFiles({
+      id: 'e1',
+      receiptImage: 'img:b1/e1-r-x|image/jpeg',
+      purchaseImages: [{ name: 'p', dataUrl: 'gdrive:PIC_123456789|image/jpeg' }, { name: 'q', dataUrl: 'data:image/jpeg;base64,AA' }],
+      driveFiles: [{ url: 'https://drive.google.com/file/d/DOC_123456789/view' }, { fileId: 'PIC_123456789' }]
+    });
+    expect(files).toEqual({ imageRefs: ['img:b1/e1-r-x|image/jpeg'], driveIds: ['PIC_123456789', 'DOC_123456789'] });
   });
 });

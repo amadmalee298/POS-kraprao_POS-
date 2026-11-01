@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fromFsFields, toFsFields } from '../firestoreRest';
-import { handleWebhook } from '../telegramWebhook';
+import { Firestore, fromFsFields, toFsFields } from '../firestoreRest';
+import { firestoreStore, handleWebhook, migrateSomePictures } from '../telegramWebhook';
 import { newWebhookSecret, openWithSecret, sealWithSecret } from '../../utils/botSecret';
 import { decodeDocLink } from '../../utils/docLink';
 
@@ -210,14 +210,17 @@ describe('Telegram webhook on Vercel', () => {
     // An older record with its picture inside, moved over after the bot has answered
     cloud.write('expenses/exp-old', { id: 'exp-old', branchId: 'b1', date: '2026-10-01', title: 'เก่า', amount: 10, receiptImage: big });
     cloud.write('incomes/inc-old', { id: 'inc-old', branchId: 'b1', date: '2026-10-01', title: 'รับ', amount: 10, slipImage: big });
+    // The delivery answers without this work; the scheduled run moves them
     await deliver(photoUpdate(30));
+    expect((cloud.read('expenses/exp-old') as any).receiptImage).toBe(big);
+    const next = await migrateSomePictures(new Firestore('p1', async () => 'ID'), 'b1', {}, Date.now() + 5000);
     const old: any = cloud.read('expenses/exp-old');
     expect(old.receiptImage).toMatch(/^img:b1\/exp-old-r-/);
     expect(old.title).toBe('เก่า');
     const imgKey = old.receiptImage.slice('img:b1/'.length).split('|')[0];
     expect((cloud.read(`branches/b1/config/img_${imgKey}`) as any).data).toBe(big);
     expect((cloud.read('incomes/inc-old') as any).slipImage).toMatch(/^img:b1\/inc-old-s-/);
-    expect((cloud.read('branches/b1/config/telegram_bot_state') as any).pictureCursor).toEqual({ expenses: 'done', incomes: 'done' });
+    expect(next).toEqual({ expenses: 'done', incomes: 'done' });
   });
 
   it('reads an album of one bill once: the other pages join that bill', async () => {
@@ -333,6 +336,53 @@ describe('Telegram webhook on Vercel', () => {
     expect([...cloud.docs.keys()].filter(k => k.startsWith('expenses/'))).toHaveLength(1);
     expect(cloud.read('branches/b1/status/tgupdate_130')).toMatchObject({ state: 'done' });
     expect((await deliver(photoUpdate(130))).body).toMatchObject({ duplicate: true });
+  });
+
+  it('people waiting at the same time keep their own waiting', async () => {
+    const g = gated();
+    const failing = async () => {
+      await g.scan();
+      throw new Error('อ่านไม่ออก');
+    };
+    const slow = runWith(photoUpdate(140), { scan: failing });
+    await tick();
+    // Meanwhile another person (id 6) is asked for an amount by another delivery
+    await deliver({ update_id: 141, message: { message_id: 141, date: 1790000000, chat: { id: -100 }, from: { id: 6, first_name: 'แคชเชียร์' }, text: '💸 จดรายจ่าย' } });
+    const before = Object.keys((cloud.read('branches/b1/config/telegram_bot_state') as any).waiting || {});
+    expect(before).toContain('-100:6');
+    g.release();
+    await slow;
+    const waiting = (cloud.read('branches/b1/config/telegram_bot_state') as any).waiting;
+    expect(Object.keys(waiting).sort()).toEqual([...new Set([...before, '-100:5'])].sort());
+    expect(waiting['-100:5']).toMatchObject({ action: 'amount' });
+  });
+
+  it('a delivery that failed is handled on Telegram\'s next try', async () => {
+    let fail = true;
+    const real = cloud.fetchMock.getMockImplementation()!;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: any, init: any = {}) => {
+        if (fail && init.method === 'PATCH' && String(input).includes('telegram_bot?')) return new Response(JSON.stringify({ error: { message: 'unavailable' } }), { status: 503 });
+        return real(input, init);
+      })
+    );
+    const moved = { update_id: 150, message: { message_id: 1, date: 1790000000, chat: { id: -100999 }, migrate_from_chat_id: -100 } };
+    await expect(deliver(moved)).rejects.toThrow();
+    expect(cloud.read('branches/b1/status/tgupdate_150')).toBeNull();
+    fail = false;
+    expect((await deliver(moved)).status).toBe(200);
+    expect(cloud.read('branches/b1/config/telegram_bot')).toMatchObject({ chatId: '-100999' });
+  });
+
+  it('removing a record also removes its pictures, and its Drive files wait to be binned', async () => {
+    cloud.write('expenses/exp-9', { id: 'exp-9', branchId: 'b1', date: '2026-10-05', title: 'x', amount: 1, receiptImage: 'img:b1/exp-9-r-abc|image/jpeg', purchaseImages: [{ name: 'p', dataUrl: 'gdrive:FILEID_1234567|image/jpeg' }], driveFiles: [{ name: 'a.pdf', url: 'https://drive.google.com/file/d/PDFID_1234567/view', savedAt: 'x' }] });
+    cloud.write('branches/b1/config/img_exp-9-r-abc', { data: 'data:image/jpeg;base64,AAA' });
+    const db = new Firestore('p1', async () => 'ID');
+    await firestoreStore(db, 'b1', { waiting: {} }).deleteExpense('exp-9');
+    expect(cloud.read('expenses/exp-9')).toBeNull();
+    expect(cloud.read('branches/b1/config/img_exp-9-r-abc')).toBeNull();
+    expect(Object.keys((cloud.read('branches/b1/config/drive_trash') as any).ids).sort()).toEqual(['FILEID_1234567', 'PDFID_1234567']);
   });
 
   it('handles a delivery Telegram sends twice only once', async () => {

@@ -155,7 +155,7 @@ export const SheetsScriptPanel: React.FC = () => {
         <div className="p-3 rounded-xl border-2 border-amber-500/70 bg-amber-950/40 text-amber-100 space-y-2">
           <div className="font-bold text-sm">⬆️ มีโค้ด Apps Script เวอร์ชันใหม่ ({scriptVersion} → {SCRIPT_VERSION})</div>
           <div className="text-[11px] leading-relaxed">
-            เวอร์ชันใหม่ทำให้แอปแสดงรูปสลิปและหลักฐานการซื้อจาก Google Drive ได้โดยตรง
+            เวอร์ชันใหม่: แท็บ Dashboard (แดชบอร์ดการเงินพร้อมกราฟ) ในไฟล์ Google Sheets · ยกเลิกบิลแล้วลบไฟล์ใน Drive ให้ · แสดงรูปสลิปจาก Google Drive ได้โดยตรง
             <br />1. กดปุ่ม “คัดลอกโค้ดใหม่” ด้านล่าง
             <br />2. เปิดไฟล์ Google Sheets ของร้าน → ส่วนขยาย → Apps Script → ลบโค้ดเดิมทั้งหมด วางโค้ดใหม่ แล้วกดบันทึก
             <br />3. ทำให้ใช้งานได้ → จัดการการทำให้ใช้งานได้ → ✏️ แก้ไข → เวอร์ชัน: เวอร์ชันใหม่ → ทำให้ใช้งานได้ (ลิงก์เดิมใช้ต่อได้)

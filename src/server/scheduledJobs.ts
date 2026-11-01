@@ -113,19 +113,27 @@ async function deliver(creds: any, html: string, doFetch: Fetch): Promise<string
       });
       return (await res.json().catch(() => ({}))) as any;
     };
-    let r = await send(html, true);
-    if (!r.ok && /parse entities/i.test(String(r.description || ''))) r = await send(htmlToText(html), false);
-    if (r.ok) sent.push('telegram');
+    try {
+      let r = await send(html, true);
+      if (!r.ok && /parse entities/i.test(String(r.description || ''))) r = await send(htmlToText(html), false);
+      if (r.ok) sent.push('telegram');
+    } catch {
+      // not sent there: the other channel is still tried
+    }
   }
   const lineToken = String(creds?.lineToken || '').trim();
   const lineTo = String(creds?.lineTargetId || '').trim();
   if (lineToken && lineTo) {
-    const res = await doFetch('https://api.line.me/v2/bot/message/push', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${lineToken}` },
-      body: JSON.stringify({ to: lineTo, messages: [{ type: 'text', text: htmlToText(html).slice(0, 4900) }] })
-    });
-    if (res.ok) sent.push('line');
+    try {
+      const res = await doFetch('https://api.line.me/v2/bot/message/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${lineToken}` },
+        body: JSON.stringify({ to: lineTo, messages: [{ type: 'text', text: htmlToText(html).slice(0, 4900) }] })
+      });
+      if (res.ok) sent.push('line');
+    } catch {
+      // not sent there
+    }
   }
   return sent;
 }
@@ -152,7 +160,10 @@ async function claim(db: Firestore, branchId: string, job: string, day: string):
   };
 }
 
-/** Sent somewhere it is set up to go; when it is set up somewhere and went nowhere, the run is given back */
+/**
+ * Sent somewhere it is set up to go. Only when it went nowhere is the run given back (sent to one
+ * channel and not the other: not sent again, or the group would get it every run)
+ */
 async function sendClaimed(claimed: { release: () => Promise<void> }, creds: any, text: () => Promise<string> | string, doFetch: Fetch): Promise<boolean> {
   const channels = (String(creds?.telegramToken || '').trim() && String(creds?.telegramChatId || '').trim() ? 1 : 0) + (String(creds?.lineToken || '').trim() && String(creds?.lineTargetId || '').trim() ? 1 : 0);
   try {
@@ -250,10 +261,14 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
   try {
     const picPath = `branches/${b}/status/pictures`;
     const pic: any = (await db.get(picPath)) || {};
-    const cursor = pic.day === at.day ? ((pic.cursor || {}) as Record<string, string>) : {};
+    // A finished pass is done for a week (new records keep their pictures out already)
+    const finished = pic.cursor?.expenses === 'done' && pic.cursor?.incomes === 'done';
+    const fresh = finished ? String(pic.day || '') <= addDays(at.day, -7) : false;
+    const cursor = fresh ? {} : ((pic.cursor || {}) as Record<string, string>);
     if (cursor.expenses !== 'done' || cursor.incomes !== 'done') {
       const next = await migrateSomePictures(db, b, cursor, Date.now() + 15_000);
-      await db.set(picPath, { day: at.day, cursor: next });
+      // The day a pass started (kept while it runs)
+      await db.set(picPath, { day: fresh || !pic.day ? at.day : pic.day, cursor: next });
       done.push(`pictures ${next.expenses || '-'}/${next.incomes || '-'}`);
     }
   } catch {

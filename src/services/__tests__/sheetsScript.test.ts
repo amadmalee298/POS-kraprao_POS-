@@ -63,14 +63,14 @@ describe('Apps Script code', () => {
   });
 
   it('answers a ping with the spreadsheet', () => {
-    expect(runScript('abc', { secret: 'abc', ping: true }).reply).toEqual({ ok: true, name: 'ร้าน', url: 'https://docs.google.com/x', version: 4 });
+    expect(runScript('abc', { secret: 'abc', ping: true }).reply).toEqual({ ok: true, name: 'ร้าน', url: 'https://docs.google.com/x', version: 5 });
   });
 
   it('saves a file into the month folder and replaces an earlier copy', () => {
     const drive = { folders: {} as Record<string, string[]>, files: [] as any[] };
     const body = { secret: 'abc', file: { folder: 'รายจ่าย/2569-10', name: 'a.pdf', mimeType: 'application/pdf', base64: btoa('PDF') } };
     const first = runScript('abc', body, drive).reply;
-    expect(first).toMatchObject({ ok: true, version: 4, shared: false, fileUrl: 'https://drive//ครัวกะเพรา POS เอกสาร/รายจ่าย/2569-10/a.pdf' });
+    expect(first).toMatchObject({ ok: true, version: 5, shared: false, fileUrl: 'https://drive//ครัวกะเพรา POS เอกสาร/รายจ่าย/2569-10/a.pdf' });
     runScript('abc', body, drive);
     expect(drive.folders['']).toEqual(['ครัวกะเพรา POS เอกสาร']);
     expect(drive.files.filter(f => !f.trashed)).toHaveLength(1);
@@ -100,7 +100,7 @@ describe('Apps Script code', () => {
     };
     const drive: any = { folders: {}, files: [] };
     const { reply } = runScript('abc', { secret: 'abc', trash: { fileIds: ['mine', 'other', 'gone'] } }, Object.assign(drive, { byId: files }));
-    expect(reply).toMatchObject({ ok: true, version: 4, trashed: 1 });
+    expect(reply).toMatchObject({ ok: true, version: 5, trashed: 1 });
     expect(files.mine.trashed).toBe(true);
     expect(files.other.trashed).toBe(false);
   });
@@ -142,5 +142,59 @@ describe('posting to the script', () => {
   it('explains a sign-in page (web app not open to anyone)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ text: async () => '<html>Sign in</html>' }));
     await expect(pushSheetsToScript(url, 's', [])).rejects.toThrow(/ทุกคน/);
+  });
+});
+
+describe('the Dashboard sheet', () => {
+  it('lays out the figures, the tables and two charts', () => {
+    const written: { at: string; value: unknown }[] = [];
+    const charts: string[] = [];
+    // A Sheets object where every call can be chained; what is written is noted
+    const chain = (at: string): any =>
+      new Proxy(function () {}, {
+        get: (_t, k) => {
+          if (k === 'setValue') return (v: unknown) => (written.push({ at, value: v }), chain(at));
+          if (k === 'setValues') return (v: unknown) => (written.push({ at, value: v }), chain(at));
+          if (k === 'getCharts') return () => [];
+          if (k === 'insertChart') return (c: any) => charts.push(c.title);
+          if (k === 'getRange') return (...a: number[]) => chain(a.join(','));
+          if (k === 'newChart') {
+            const opts: any = {};
+            const b: any = new Proxy({}, { get: (_x, m) => (m === 'build' ? () => ({ title: opts.title }) : m === 'setOption' ? (n: string, v: unknown) => ((opts[n] = v), b) : () => b) });
+            return () => b;
+          }
+          return () => chain(at);
+        }
+      });
+    const sheet = chain('');
+    const ss = { getSheetByName: () => null, insertSheet: () => sheet, getName: () => 'ร้าน', getUrl: () => 'u' };
+    const env = {
+      DriveApp: {},
+      Utilities: {},
+      Charts: { ChartType: { COLUMN: 'column', COMBO: 'combo' } },
+      SpreadsheetApp: { getActiveSpreadsheet: () => ss },
+      LockService: { getScriptLock: () => ({ waitLock: () => undefined, releaseLock: () => undefined }) },
+      ContentService: { createTextOutput: (t: string) => ({ setMimeType: () => t }), MimeType: { JSON: 'json' } }
+    };
+    const doPost = new Function(...Object.keys(env), `${appsScriptCode('abc')}\nreturn doPost;`)(...Object.values(env));
+    const dashboard = {
+      label: 'ตุลาคม 2569',
+      asOf: '2026-10-31',
+      cashBalance: 2000,
+      income: 2000,
+      expense: 700,
+      profit: 1300,
+      margin: 65,
+      cumulativeProfit: 2000,
+      accounts: [{ code: '1010', name: 'ธนาคาร', amount: 2000, share: 100 }],
+      topIncome: [{ name: 'รายได้จากการขาย', group: 'รายได้', amount: 2000, change: 1000 }],
+      topExpense: [{ name: '=ค่าไฟ', group: 'ค่าใช้จ่าย', amount: 500, change: 200 }],
+      months: [{ month: '2026-10', label: 'ต.ค. 69', income: 2000, expense: 700, profit: 1300, cumulative: 2000 }]
+    };
+    const reply = JSON.parse(doPost({ postData: { contents: JSON.stringify({ secret: 'abc', sheets: [], dashboard }) } }));
+    expect(reply).toMatchObject({ ok: true });
+    expect(written.find(w => w.at === '4,9,1,2')?.value).toBe(0.65); // the margin tile, as a percent
+    expect(written.find(w => w.at === '8,10,1,4')?.value).toEqual([["'=ค่าไฟ", 'ค่าใช้จ่าย', 500, 200]]); // never a formula
+    expect(charts).toEqual(['รายรับ – รายจ่าย รายเดือน', 'กำไร และกำไรสะสม']);
   });
 });

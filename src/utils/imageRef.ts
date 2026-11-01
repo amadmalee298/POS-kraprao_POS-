@@ -109,3 +109,29 @@ export const carriesPictures = (rec: WithPictures) => {
   mapRecordImages(rec, src => ((found = found || (isDataUrl(src) && src.length >= OFFLOAD_MIN_LENGTH)), src));
   return found;
 };
+
+/** A Drive file's id from what the app keeps (its id, or its link) */
+export const driveFileId = (f: { fileId?: string; url?: string }) =>
+  f.fileId || (f.url || '').match(/\/d\/([\w-]{10,})/)?.[1] || (f.url || '').match(/[?&]id=([\w-]{10,})/)?.[1] || '';
+
+/**
+ * Everything kept elsewhere for a record, removed with it: pictures in their own cloud documents
+ * (img: references) and files in the shop's Google Drive (its documents, and pictures moved there)
+ */
+export function recordFiles(rec: WithPictures & { driveFiles?: { fileId?: string; url?: string }[] }): { imageRefs: string[]; driveIds: string[] } {
+  const imageRefs: string[] = [];
+  const driveIds = new Set<string>();
+  mapRecordImages(rec, src => {
+    if (isImageRef(src)) imageRefs.push(src);
+    else if (isDriveRef(src) && driveRefId(src)) driveIds.add(driveRefId(src));
+    return src;
+  });
+  for (const f of rec.driveFiles || []) {
+    const id = driveFileId(f);
+    if (id) driveIds.add(id);
+  }
+  return { imageRefs, driveIds: [...driveIds] };
+}
+
+/** Drive files of removed records, waiting for a device with the shop's Apps Script to bin them */
+export const DRIVE_TRASH_DOC = 'drive_trash';
