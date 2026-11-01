@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ImageIcon, Loader2, Package, RefreshCw, Send, XCircle } from 'lucide-react';
-import type { Expense, ExpenseCategory, IncomeCategory, Ingredient, PendingReceipt } from '../../types';
+import type { ExpenseCategory, IncomeCategory, Ingredient, PendingReceipt } from '../../types';
 import { usePOS } from '../../context/POSContext';
 import { useExpenseDrive } from '../accounting/ExpenseDocActions';
 import { hasExpenseDocs } from '../../services/expenseDrive';
@@ -15,8 +15,6 @@ import { allocateCosts, BillItem, buildIntakeRows, hasTarget, IntakeRow, matchIn
 import { nextSubstituteNo } from '../../utils/expenseDocNo';
 import { readTelegramReceipt } from './TelegramInboxPoller';
 import { claimOnce } from '../../services/firebaseService';
-import { deleteCloudImage, recordImageRefs } from '../../services/imageStore';
-import { driveFileId, trashDriveFiles } from '../../services/sheetsScript';
 import { needsAttention, readStockDone, STOCK_DONE_KEY, stockOnly } from '../../utils/telegramStock';
 
 type Form = {
@@ -537,27 +535,15 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
     const isIncome = id.startsWith('inc-');
     const rec = isIncome ? incomes.find(i => i.id === id) : expenses.find(e => e.id === id);
     const what = rec ? `${rec.title} ${baht(rec.amount)}` : p.data?.title || 'บิลนี้';
-    const driveIds = (!isIncome && rec ? (rec as Expense).driveFiles || [] : []).map(driveFileId).filter(Boolean);
-    if (!window.confirm(`ยกเลิกบิลนี้?\n${what}\nรายการ${isIncome ? 'รายรับ' : 'รายจ่าย'}จะถูกลบออกจากบัญชี${driveIds.length ? ' พร้อมไฟล์ใน Google Drive' : ''} และไม่รับเข้าสต็อก`)) return;
+    if (!window.confirm(`ยกเลิกบิลนี้?\n${what}\nรายการ${isIncome ? 'รายรับ' : 'รายจ่าย'}จะถูกลบออกจากบัญชี (พร้อมรูปและไฟล์ใน Google Drive) และไม่รับเข้าสต็อก`)) return;
     if (handling.current.has(p.id)) return;
     handling.current.add(p.id);
     setBusy(p.id);
     try {
+      // Its pictures and Drive files go with it (deleteExpense / deleteIncome)
       if (isIncome) deleteIncome(id);
       else if (id) deleteExpense(id);
       patch(p.id, { status: 'rejected', stockPending: false, decidedBy: currentUser?.name, decidedAt: new Date().toISOString() });
-      // Its pictures kept in their own cloud documents
-      if (rec) await Promise.all(recordImageRefs(rec).map(ref => deleteCloudImage(ref).catch(() => false)));
-      // Its documents in Google Drive (the bin; the shop's Apps Script from version 4)
-      let driveNote = '';
-      const script = settings.sheetsScript;
-      if (driveIds.length && script?.url && script.secret) {
-        const trashed = await trashDriveFiles(script.url, script.secret, driveIds).catch(() => null);
-        if (trashed === null) {
-          driveNote = 'ไฟล์ใน Google Drive ยังไม่ถูกลบ (อัปเดตโค้ด Apps Script ในหน้า Google Sheets Sync แล้วลบเองในโฟลเดอร์)';
-          setError(driveNote);
-        }
-      }
       // The bot's card: no more edit buttons on a cancelled bill
       const text = `🗑 ยกเลิกบิลนี้แล้ว ลบออกจากบัญชี (${currentUser?.name || 'ผู้จัดการ'}): ${what}`;
       if (token && p.cardMessageId) {
@@ -568,6 +554,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
       setBusy(null);
     }
   };
+
 
 
   const reject = (p: PendingReceipt) => {

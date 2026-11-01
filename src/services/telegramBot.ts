@@ -2,6 +2,7 @@ import type { Expense, ExpenseCategory, IncomeCategory, Order, OtherIncome, Pend
 // .js: this file also runs in the Vercel bot (plain Node ESM); only import-free modules here
 import { EXPENSE_CATEGORY_LABELS, INCOME_CATEGORY_LABELS } from '../utils/categoryLabels.js';
 import { cleanBotToken } from './telegramInbox.js';
+import { countsAsRevenue } from '../utils/revenue.js';
 
 /**
  * The shop's Telegram bot as a bookkeeping assistant (like the LINE bookkeeping bots): a slip or
@@ -542,7 +543,7 @@ export function summaryText(
   const isDay = period.length === 10;
   const match = (date: string) => (isDay ? date.slice(0, 10) === period : inMonth(date, period));
   const sameBranch = (b?: string) => !data.branchId || !b || b === data.branchId;
-  const orders = data.orders.filter(o => sameBranch(o.branchId) && o.status !== 'cancelled' && o.paymentStatus !== 'unpaid' && match(bangkokDay(o.createdAt)));
+  const orders = data.orders.filter(o => sameBranch(o.branchId) && countsAsRevenue(o) && match(bangkokDay(o.createdAt)));
   const sales = orders.reduce((s, o) => s + (Number(o.grandTotal) || 0), 0);
   const expenses = data.expenses.filter(e => sameBranch(e.branchId) && match(e.date));
   const incomes = data.incomes.filter(i => sameBranch(i.branchId) && match(i.date));

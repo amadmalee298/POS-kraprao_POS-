@@ -48,12 +48,17 @@ describe('scheduled notifications', () => {
     };
     const sent: string[] = [];
     let telegramDown = false;
+    let lineDown = false;
     const fsValue = (v: any): any =>
       typeof v === 'number' ? { integerValue: String(v) } : typeof v === 'string' ? { stringValue: v } : typeof v === 'boolean' ? { booleanValue: v } : v && typeof v === 'object' ? { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fsValue(x)])) } } : { nullValue: null };
     const fromFs = (f: any): any => Object.fromEntries(Object.entries(f || {}).map(([k, v]: any) => [k, v.stringValue ?? (v.integerValue !== undefined ? Number(v.integerValue) : v.mapValue ? fromFs(v.mapValue.fields) : v.booleanValue ?? null)]));
     const fakeFetch = (async (url: string, init: any = {}) => {
       const json = (body: any, status = 200) => ({ ok: status < 300, status, json: async () => body }) as any;
       if (url.startsWith('https://securetoken')) return json({ id_token: 'id', expires_in: '3600' });
+      if (url.startsWith('https://api.line.me')) {
+        if (lineDown) throw new Error('getaddrinfo ENOTFOUND');
+        return json({});
+      }
       if (url.startsWith('https://api.telegram.org')) {
         if (telegramDown) return json({ ok: false, description: 'Bad Gateway' }, 502);
         sent.push(JSON.parse(init.body).text);
@@ -104,6 +109,13 @@ describe('scheduled notifications', () => {
     // The next run (or a device) does not send it again
     expect(noPictures(await runShop(signIn, new Date('2026-10-25T15:20:00Z'), fakeFetch))).toEqual([]);
     expect(sent).toHaveLength(1);
+    // Sent to Telegram while LINE failed: not given back (the group would get it again every run)
+    docs['branches/main/config/notifications'].credentials = { telegramToken: 'T', telegramChatId: '-100', lineToken: 'L', lineTargetId: 'U1' };
+    docs['branches/main/status/job_daily_summary'] = { day: '2026-10-25' };
+    lineDown = true;
+    expect(noPictures(await runShop(signIn, new Date('2026-10-26T15:05:00Z'), fakeFetch))).toEqual(['summary 2026-10-26']);
+    expect(docs['branches/main/status/job_daily_summary'].day).toBe('2026-10-26');
+    expect(sent).toHaveLength(2);
     // The bot's old markers went, the recent one stays
     expect(Object.keys(docs).filter(k => k.includes('/tg')).sort()).toEqual(['branches/main/status/tgupdate_2']);
   });

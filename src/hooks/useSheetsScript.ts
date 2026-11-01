@@ -2,13 +2,17 @@ import { useCallback, useEffect, useRef } from 'react';
 import { usePOS } from '../context/POSContext';
 import { buildAllSheets } from '../services/googleSheetsService';
 import { pushSheetsToScript, writeLastPush } from '../services/sheetsScript';
+import { financeDashboard } from '../utils/financeDashboard';
+import { useLedger } from './useLedger';
 
 /** Send every sheet to the shop's Apps Script; the result is remembered on this device */
 export function useSheetsScriptPush() {
   const { orders, ingredients, menuItems, stockAdjustmentLogs, wasteLogs, currentBranch, settings } = usePOS();
-  const latest = useRef({ orders, ingredients, menuItems, stockAdjustmentLogs, wasteLogs, currentBranch, settings });
+  // The ledger only when sending (building it on every change froze pages)
+  const { buildLines, today } = useLedger({ lazy: true });
+  const latest = useRef({ orders, ingredients, menuItems, stockAdjustmentLogs, wasteLogs, currentBranch, settings, buildLines, today });
   useEffect(() => {
-    latest.current = { orders, ingredients, menuItems, stockAdjustmentLogs, wasteLogs, currentBranch, settings };
+    latest.current = { orders, ingredients, menuItems, stockAdjustmentLogs, wasteLogs, currentBranch, settings, buildLines, today };
   });
 
   return useCallback(async () => {
@@ -24,9 +28,15 @@ export function useSheetsScriptPush() {
       branch: d.currentBranch,
       vatRate: typeof d.settings.vatRate === 'number' ? d.settings.vatRate : 7
     });
+    let dashboard: ReturnType<typeof financeDashboard> | undefined;
     try {
-      const r = await pushSheetsToScript(cfg.url, cfg.secret, sheets);
-      const message = `ส่งแล้ว ${sheets.map(s => `${s.title.split(' ')[0]} ${Math.max(0, s.values.length - 1)}`).join(' · ')}`;
+      dashboard = financeDashboard(d.buildLines(), d.today.slice(0, 7), d.today);
+    } catch {
+      // the other sheets still go
+    }
+    try {
+      const r = await pushSheetsToScript(cfg.url, cfg.secret, sheets, dashboard);
+      const message = `ส่งแล้ว ${sheets.map(s => `${s.title.split(' ')[0]} ${Math.max(0, s.values.length - 1)}`).join(' · ')}${dashboard ? ' · Dashboard' : ''}`;
       writeLastPush({ at: new Date().toISOString(), ok: true, message, url: r.url });
       return r;
     } catch (e: any) {

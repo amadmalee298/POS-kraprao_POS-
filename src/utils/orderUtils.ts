@@ -1,6 +1,7 @@
 import { AddOnOption, CartItem, Ingredient, Order, SpiceLevel, SystemSettings, MenuItem } from '../types';
 import { calcRecipeItemCostAndDeduction, cartItemRecipeLines } from './recipeUtils';
 import { calculateOrderTotals, TaxCalculationResult } from './tax';
+import { countsAsRevenue, isUnpaid } from './revenue';
 
 const randomSuffix = (length: number): string => {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O or 1/I, easy to read aloud
@@ -235,14 +236,8 @@ export function generateQrOrderNumber(table: string): string {
 }
 
 /** Order not paid yet (customer QR orders until the cashier settles them). */
-export const isUnpaid = (o: Pick<Order, 'paymentStatus'>): boolean => o.paymentStatus === 'unpaid';
-
-/**
- * Whether an order counts as sales money received: not cancelled, not waiting for approval,
- * and paid. Every revenue total, cash-drawer figure and report uses this one rule.
- */
-export const countsAsRevenue = (o: Pick<Order, 'status' | 'paymentStatus'>): boolean =>
-  o.status !== 'cancelled' && o.status !== 'pending-qr' && !isUnpaid(o);
+/** Every revenue total, cash-drawer figure and report uses this one rule (utils/revenue) */
+export { countsAsRevenue, isUnpaid };
 
 /**
  * A query with a limit reports a document as "removed" both when it is deleted and when a newer

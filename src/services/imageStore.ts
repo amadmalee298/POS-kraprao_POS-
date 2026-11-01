@@ -312,6 +312,29 @@ export async function deleteCloudImage(ref: string): Promise<boolean> {
   return (await cloud()).deleteBranchDoc(p.branchId, imageDocKey(p.id));
 }
 
+/** A picture of a removed record: gone from the cloud and from this device (no copy kept) */
+export async function forgetImage(ref: string): Promise<boolean> {
+  const p = parseImageRef(ref);
+  if (!p) return false;
+  writeQueue(readQueue().filter(q => q.id !== p.id));
+  pending.delete(p.id);
+  recent.delete(p.id);
+  const db = await openDb();
+  if (db) {
+    await new Promise<void>(resolve => {
+      try {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).delete(p.id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+  return (await cloud()).deleteBranchDoc(p.branchId, imageDocKey(p.id));
+}
+
 const driveCopyKey = (ref: string) => `gd_${driveRefId(ref)}`;
 /** Keep this device's copy of a picture now in Drive (printing and PDFs use it when it is here) */
 export async function keepDriveCopy(ref: string, dataUrl: string): Promise<void> {

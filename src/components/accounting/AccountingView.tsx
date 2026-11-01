@@ -113,7 +113,7 @@ import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
 type TimeHorizon = 'selected' | '6months' | 'year';
 type ViewTab = 'books' | 'vat' | 'ar_ap' | 'expenses' | 'incomes' | 'details' | 'telegram';
 /** Links from elsewhere (sidebar, other pages) to the statements, now in the ledger books */
-const LEGACY_TAB: Record<string, LedgerTab> = { overview: 'pnl', statement: 'pnl', balance_sheet: 'balance', cash_flow: 'cashflow', journal: 'journal', trial: 'trial' };
+const LEGACY_TAB: Record<string, LedgerTab> = { dashboard: 'dashboard', overview: 'pnl', statement: 'pnl', balance_sheet: 'balance', cash_flow: 'cashflow', journal: 'journal', trial: 'trial' };
 
 interface MonthlyFinancialData {
   monthKey: string; // YYYY-MM

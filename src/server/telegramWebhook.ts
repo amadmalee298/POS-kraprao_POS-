@@ -8,7 +8,7 @@ import { runReceiptOcr } from '../utils/receiptOcr.js';
 import { createClaudeJsonCaller } from '../utils/claudeClient.js';
 import { Firestore, idTokenFor } from './firestoreRest.js';
 import { hasLegacyItems, keyedItems, newestFirst } from '../utils/keyedDoc.js';
-import { carriesPictures, contentTag, imageDocKey, imageMime, isDataUrl, makeImageRef, mapRecordImages, OFFLOAD_MIN_LENGTH } from '../utils/imageRef.js';
+import { carriesPictures, contentTag, DRIVE_TRASH_DOC, imageDocKey, imageMime, isDataUrl, makeImageRef, mapRecordImages, OFFLOAD_MIN_LENGTH, parseImageRef, recordFiles } from '../utils/imageRef.js';
 
 /**
  * The shop's Telegram bot on Vercel: Telegram delivers each message to /api/telegram/webhook, so
@@ -280,6 +280,21 @@ export function firestoreStore(db: Firestore, branchId: string, state: { waiting
     await db.setFields(cfg(INBOX_DOC), entries);
   };
 
+  /** A record and what is kept for it elsewhere: its pictures' documents, its Drive files (binned by a device with the shop's script) */
+  const removeRecord = async (collection: 'expenses' | 'incomes', id: string) => {
+    const d: any = await db.get(`${collection}/${id}`);
+    await db.delete(`${collection}/${id}`);
+    if (!d) return;
+    const { imageRefs, driveIds } = recordFiles({ ...d, id });
+    await Promise.all(
+      imageRefs.map(ref => {
+        const p = parseImageRef(ref);
+        return p ? db.delete(`branches/${p.branchId}/config/${imageDocKey(p.id)}`).catch(() => {}) : Promise.resolve();
+      })
+    );
+    if (driveIds.length) await db.setFields(cfg(DRIVE_TRASH_DOC), driveIds.map(fid => ({ path: ['ids', fid], value: new Date().toISOString() }))).catch(() => {});
+  };
+
   const patchDoc = async (path: string, patch: Record<string, unknown>) => {
     const data: Record<string, unknown> = { ...patch, syncedAt: new Date().toISOString(), updatedAt: new Date() };
     if (JSON.stringify(data).length > DOC_LIMIT && Array.isArray(data.purchaseImages)) data.purchaseImages = (data.purchaseImages as unknown[]).slice(0, 1);
@@ -307,8 +322,8 @@ export function firestoreStore(db: Firestore, branchId: string, state: { waiting
       void _id;
       await patchDoc(`incomes/${id}`, light);
     },
-    deleteExpense: id => db.delete(`expenses/${id}`),
-    deleteIncome: id => db.delete(`incomes/${id}`),
+    deleteExpense: id => removeRecord('expenses', id),
+    deleteIncome: id => removeRecord('incomes', id),
     expensesFrom: async date => (await db.whereAtLeast('expenses', 'date', date, 2000, ['id', 'branchId', 'date', 'category', 'title', 'amount', 'includeVat', 'vatAmount', 'netAmount', 'note', 'substituteReceipt']))
       .filter(d => sameBranch(d.branchId))
       .map(expenseFromDoc),
@@ -331,14 +346,20 @@ export function firestoreStore(db: Firestore, branchId: string, state: { waiting
       const w = state.waiting[waitKey(chatId, userId)];
       return w && w.until > Date.now() ? w : null;
     },
+    // Each person's waiting is its own field: deliveries handled at the same time (several people
+    // in the group) do not write over each other's
     setWaiting: async (chatId, userId, w) => {
       const key = waitKey(chatId, userId);
       const now = Date.now();
-      const next: Record<string, BotWaiting> = {};
-      for (const [k, v] of Object.entries(state.waiting)) if (k !== key && v.until > now) next[k] = v;
-      if (w) next[key] = { ...w, chatId, userId, until: now + 10 * 60_000 } as BotWaiting;
+      const value = w ? (JSON.parse(JSON.stringify({ ...w, chatId, userId, until: now + 10 * 60_000 })) as BotWaiting) : undefined;
+      const entries: { path: string[]; value: unknown }[] = [{ path: ['waiting', key], value }];
+      // Ones that ran out (as last read) are tidied away
+      for (const [k, v] of Object.entries(state.waiting)) if (k !== key && !(v.until > now)) entries.push({ path: ['waiting', k], value: undefined });
+      const next = { ...state.waiting };
+      if (value) next[key] = value;
+      else delete next[key];
       state.waiting = next;
-      await db.set(cfg(BOT_STATE_DOC), { waiting: JSON.parse(JSON.stringify(next)) }, ['waiting']);
+      await db.setFields(cfg(BOT_STATE_DOC), entries);
     },
     driveFolderUrl: async () => state.driveFolderUrl || ''
   };
@@ -399,11 +420,16 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
     const list: number[] = Array.isArray(latest.seen) ? latest.seen : [];
     await db.set(statePath, { seen: [...list.filter(x => x !== updateId), updateId].slice(-KEEP_SEEN), lastUpdateAt: new Date().toISOString() }, ['seen', 'lastUpdateAt']).catch(() => {});
   };
+  let answer: { status: number; body: Record<string, unknown> };
   try {
-    return await handleClaimed();
-  } finally {
-    await finished();
+    answer = await handleClaimed();
+  } catch (e) {
+    // Not handled (e.g. the cloud did not answer): the marker goes, so Telegram's next try handles it
+    if (Number.isFinite(updateId)) await db.delete(markerPath).catch(() => {});
+    throw e;
   }
+  await finished();
+  return answer;
 
   async function handleClaimed(): Promise<{ status: number; body: Record<string, unknown> }> {
     const update = req.update;
@@ -471,16 +497,11 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
           : undefined
     };
 
-    const started = Date.now();
+    // (Older records with pictures inside are moved out by the scheduled run, not here: every
+    // delivery answers Telegram as soon as it is handled)
     try {
       await handleBotUpdate(ctx, store, update);
       await db.set(statePath, { lastError: '' }, ['lastError']).catch(() => {});
-      // Older records with pictures inside, while there is time left
-      const cursor = (stateDoc.pictureCursor || {}) as Record<string, string>;
-      if (cursor.expenses !== 'done' || cursor.incomes !== 'done') {
-        const next = await migrateSomePictures(db, req.branchId, cursor, started + 20_000).catch(() => cursor);
-        if (JSON.stringify(next) !== JSON.stringify(cursor)) await db.set(statePath, { pictureCursor: next }, ['pictureCursor']).catch(() => {});
-      }
     } catch (e: any) {
       const message = e?.message || String(e);
       await db.set(statePath, { lastError: `${new Date().toISOString()} ${message}` }, ['lastError']).catch(() => {});

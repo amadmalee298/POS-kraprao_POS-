@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { FinanceDashboard } from './FinanceDashboard';
+import { addMonths } from '../../utils/financeDashboard';
 import { CheckCircle2, ChevronRight, Plus, Printer, RotateCcw, Trash2, TriangleAlert } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { useLedger } from '../../hooks/useLedger';
@@ -28,8 +30,9 @@ import { documentHtml, printDocument } from '../../utils/staffDocs';
  * account's ledger to show where it came from.
  */
 
-export type LedgerTab = 'pnl' | 'balance' | 'cashflow' | 'journal' | 'trial' | 'ledger';
+export type LedgerTab = 'dashboard' | 'pnl' | 'balance' | 'cashflow' | 'journal' | 'trial' | 'ledger';
 export const LEDGER_TAB_LABELS: Record<LedgerTab, string> = {
+  dashboard: 'แดชบอร์ดการเงิน',
   pnl: 'งบกำไรขาดทุน',
   balance: 'งบดุล (งบแสดงฐานะการเงิน)',
   cashflow: 'งบกระแสเงินสด',
@@ -168,10 +171,13 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
   // (or the year before the balance date when no start is set), statements their period
   const { loadHistory, historyLoading } = pos;
   const [historyFailed, setHistoryFailed] = useState(false);
+  const [month, setMonth] = useState(today.slice(0, 7));
   const needFrom = useMemo(() => {
     const start = settings.booksStartAt ? thaiDay(settings.booksStartAt) : `${Number(asOf.slice(0, 4)) - 1}-01-01`;
-    return [start, from].sort()[0];
-  }, [settings.booksStartAt, asOf, from]);
+    // The dashboard: its twelve months (and profit to date from the start of the books)
+    const dashFrom = tab === 'dashboard' ? `${addMonths(month, -11)}-01` : from;
+    return [start, from, dashFrom].sort()[0];
+  }, [settings.booksStartAt, asOf, from, tab, month]);
   useEffect(() => {
     let alive = true;
     loadHistory(needFrom).then(ok => alive && setHistoryFailed(!ok));
@@ -211,7 +217,9 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
   };
 
   let body: React.ReactNode = null;
-  if (tab === 'pnl') {
+  if (tab === 'dashboard') {
+    body = <FinanceDashboard lines={lines} today={today} month={month} onMonth={setMonth} />;
+  } else if (tab === 'pnl') {
     const p = profitAndLoss(lines, from, to);
     body = (
       <table className="w-full text-sm">
