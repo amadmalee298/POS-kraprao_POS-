@@ -70,14 +70,35 @@ export interface BotStore {
   inboxItems?(): Promise<PendingReceipt[]>;
   putInbox(item: PendingReceipt): Promise<void>;
   /**
-   * The first photo of an album to arrive claims it (the album's photos can arrive at the same
-   * time): returns the bill that owns the album, `itemId` when this one got there first
+   * Albums kept where several deliveries can run at once (the server). Without it (the app's bot
+   * handles one update after another) an album's bill is found in the list.
    */
-  claimAlbum?(key: string, itemId: string): Promise<string>;
+  album?: AlbumStore;
   patchInbox(id: string, change: Partial<PendingReceipt>): Promise<void>;
   getWaiting(chatId: string, userId?: string): Promise<BotWaiting | null>;
   setWaiting(chatId: string, userId: string | undefined, w: Omit<BotWaiting, 'chatId' | 'userId' | 'until'> | null): Promise<void>;
   driveFolderUrl(): Promise<string>;
+}
+
+/** A photo of an album that came while its first photo was being read */
+export interface AlbumPage {
+  messageId: number;
+  fileId: string;
+  storeFileId: string;
+  fileSize: number;
+}
+
+/** One document per album; every change only if nobody changed it in between */
+export interface AlbumStore {
+  /** The bill that owns the album: `itemId` when this photo is the first to arrive */
+  claim(key: string, itemId: string): Promise<string>;
+  /** Noted for the owner to collect; false when the owner has collected the pages already */
+  addPage(key: string, page: AlbumPage): Promise<boolean>;
+  /** The pages that came (none can be added afterwards) */
+  close(key: string): Promise<AlbumPage[]>;
+  /** One late page at a time changes the bill (false: another holds it) */
+  lock(key: string, holder: string): Promise<boolean>;
+  unlock(key: string, holder: string): Promise<void>;
 }
 
 export interface BotContext {
@@ -171,7 +192,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     }
   };
 
-  const record = async (entry: Entry, sender: string, image?: string, imageName?: string): Promise<Saved> => {
+  const record = async (entry: Entry, sender: string, image?: string, imageName?: string, extras: Expense['purchaseImages'] = []): Promise<Saved> => {
     if (entry.kind === 'income') {
       const rec: OtherIncome = {
         id: newId('inc'),
@@ -213,7 +234,8 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       receiptImageName: image ? imageName : undefined,
       // A slip is a transfer; an entry typed without one was most likely paid in cash
       paidFrom: image ? 'bank' : 'cash',
-      substituteReceipt: includeVat ? undefined : { docNo, spender: sender, payee: entry.vendor || undefined }
+      substituteReceipt: includeVat ? undefined : { docNo, spender: sender, payee: entry.vendor || undefined },
+      ...(extras?.length ? { purchaseImages: extras.slice(0, MAX_PURCHASE_PHOTOS) } : {})
     };
     await store.saveExpense(rec);
     return { kind: 'expense', rec };
@@ -484,51 +506,105 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     return rec ? `${rec.title} ${baht(rec.amount)}` : '';
   };
 
-  /** The bill that owns an album ('' when none yet: this photo is its first) */
+  const sleep = ctx.sleep || ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
+  const albumKey = (group: string) => `${chatId}_${group}`;
+
+  /** The bill that owns an album: `itemId` when this photo is its first */
   const albumOwner = async (group: string, itemId: string): Promise<string> => {
-    if (store.claimAlbum) return store.claimAlbum(`${chatId}_${group}`, itemId);
+    if (store.album) return store.album.claim(albumKey(group), itemId);
     const items = store.inboxItems ? await store.inboxItems() : [];
-    return items.find(p => p.mediaGroupId === group && p.chatId === chatId && p.status !== 'rejected')?.id || '';
+    return items.find(p => p.mediaGroupId === group && p.chatId === chatId && p.status !== 'rejected')?.id || itemId;
   };
 
-  /** Another page of a bill sent in the same album: kept with that bill, not read as a new one */
-  const joinAlbum = async (ownerId: string, photo: IncomingPhoto): Promise<boolean> => {
-    const sleep = ctx.sleep || ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
-    // The first page may still be being read: wait for its card (up to ~40 s)
+  /** The album's other pages, collected once its first photo is read (none join this way afterwards) */
+  const albumPages = async (group?: string): Promise<AlbumPage[]> => {
+    if (!group || !store.album) return [];
+    try {
+      return await store.album.close(albumKey(group));
+    } catch {
+      return [];
+    }
+  };
+
+  /** Pictures kept with an expense (the smaller size) */
+  const pagePictures = async (pages: Pick<AlbumPage, 'fileId' | 'storeFileId' | 'fileSize' | 'messageId'>[]): Promise<NonNullable<Expense['purchaseImages']>> => {
+    const out: NonNullable<Expense['purchaseImages']> = [];
+    for (const pg of pages.slice(0, MAX_PURCHASE_PHOTOS)) {
+      try {
+        const { store: dataUrl } = await ctx.readPhoto(pg);
+        if (dataUrl) out.push({ name: `telegram-${pg.messageId}.jpg`, dataUrl });
+      } catch {
+        // that page stays in the chat
+      }
+    }
+    return out;
+  };
+
+  /**
+   * A page of an album whose first photo was read already: added to that bill, one page at a time
+   * (pages arriving together would otherwise each write the bill with only their own picture)
+   */
+  const lateAlbumPage = async (group: string, ownerId: string, photo: IncomingPhoto): Promise<boolean> => {
+    // The bill is being saved right now: wait for it and its card briefly
     let owner = await store.inboxItem(ownerId);
-    for (let i = 0; i < 27 && (!owner || owner.status === 'reading' || (!owner.cardMessageId && i < 6)); i++) {
+    for (let i = 0; i < 10 && (!owner || owner.status === 'reading' || !owner.cardMessageId); i++) {
       await sleep(1500);
       owner = await store.inboxItem(ownerId);
     }
     if (!owner || owner.status === 'rejected') return false;
-    const label = (owner.data?.vendorName || owner.data?.title || owner.caption || 'บิลนี้').replace(/[&<>]/g, '').slice(0, 40);
-    if (owner.status !== 'approved' || !owner.recordId) {
-      // Waiting for approval (or not read): the page is attached to it
-      await attachToPending(owner, photo);
-      return true;
-    }
-    const e = owner.recordId.startsWith('exp-') ? await store.getExpense(owner.recordId) : null;
-    if (!e) {
-      await sendQuiet({ text: `📄 รูปนี้อยู่ในชุดเดียวกับ “${label}” จึงไม่บันทึกซ้ำ`, reply_to_message_id: photo.messageId });
-      return true;
-    }
-    const count = e.purchaseImages?.length || 0;
-    if (count >= MAX_PURCHASE_PHOTOS) {
-      await sendQuiet({ text: `📄 รูปนี้อยู่ในชุดเดียวกับ “${label}” (แนบรูปครบ ${MAX_PURCHASE_PHOTOS} รูปแล้ว) จึงไม่บันทึกซ้ำ`, reply_to_message_id: photo.messageId });
-      return true;
+    const holder = String(photo.messageId);
+    let locked = !store.album;
+    for (let i = 0; i < 12 && !locked; i++) {
+      locked = await store.album!.lock(albumKey(group), holder).catch(() => false);
+      if (!locked) await sleep(1000);
     }
     try {
-      const { store: dataUrl } = await ctx.readPhoto(photo);
-      if (!dataUrl) throw new Error('รูปใหญ่เกินไป');
-      const next: Expense = { ...e, purchaseImages: [...(e.purchaseImages || []), { name: `telegram-${photo.messageId}.jpg`, dataUrl }] };
+      owner = (await store.inboxItem(ownerId)) || owner;
+      const label = (owner.data?.vendorName || owner.data?.title || owner.caption || 'บิลนี้').replace(/[&<>]/g, '').slice(0, 40);
+      const reply = (text: string) => sendQuiet({ text, reply_to_message_id: photo.messageId });
+      if (owner.status !== 'approved' || !owner.recordId) {
+        // Waiting for approval, or not read: kept with the bill (also when its amount is typed later).
+        // The sender's waiting (e.g. for that amount) is left as it is
+        const count = attachmentCount(owner);
+        if (count >= MAX_ATTACHMENTS) {
+          await reply(`📄 รูปนี้อยู่ในชุดเดียวกับ “${label}” (แนบครบ ${MAX_ATTACHMENTS} รูปแล้ว) จึงไม่บันทึกซ้ำ`);
+          return true;
+        }
+        await store.patchInbox(owner.id, { extraFileIds: [...(owner.extraFileIds || []), photo.storeFileId || photo.fileId] });
+        const updated = await store.inboxItem(owner.id);
+        if (updated?.status === 'pending' && updated.cardMessageId) await editCard(updated.cardMessageId, pendingText(updated), attachKeyboard(updated.id));
+        await reply(`📄 รวมเป็นบิลเดียวกับ “${label}” แล้ว (${count + 1}/${MAX_ATTACHMENTS}) ไม่บันทึกซ้ำ`);
+        return true;
+      }
+      const e = owner.recordId.startsWith('exp-') ? await store.getExpense(owner.recordId) : null;
+      const count = e?.purchaseImages?.length || 0;
+      if (!e || count >= MAX_PURCHASE_PHOTOS) {
+        await reply(`📄 รูปนี้อยู่ในชุดเดียวกับ “${label}”${e ? ` (แนบรูปครบ ${MAX_PURCHASE_PHOTOS} รูปแล้ว)` : ''} จึงไม่บันทึกซ้ำ`);
+        return true;
+      }
+      const [pic] = await pagePictures([photo]);
+      if (!pic) {
+        await reply(`📄 รูปนี้อยู่ในชุดเดียวกับ “${label}” จึงไม่บันทึกซ้ำ (แนบรูปไม่สำเร็จ)`);
+        return true;
+      }
+      const next: Expense = { ...e, purchaseImages: [...(e.purchaseImages || []), pic] };
       await store.updateExpense(e.id, { purchaseImages: next.purchaseImages });
-      await sendQuiet({ text: `📄 รวมเป็นบิลเดียวกับ “${label}” แล้ว (แนบรูป ${count + 1}/${MAX_PURCHASE_PHOTOS}) ไม่บันทึกซ้ำ`, reply_to_message_id: photo.messageId });
+      await reply(`📄 รวมเป็นบิลเดียวกับ “${label}” แล้ว (แนบรูป ${count + 1}/${MAX_PURCHASE_PHOTOS}) ไม่บันทึกซ้ำ`);
       if (owner.cardMessageId) await editCard(owner.cardMessageId, await fullCard('expense', next), keyboardFor(next, 'expense'));
       if (next.driveFiles?.length) await toDrive(next, owner.cardMessageId);
-    } catch (err: any) {
-      await sendQuiet({ text: `📄 รูปนี้อยู่ในชุดเดียวกับ “${label}” จึงไม่บันทึกซ้ำ (แนบรูปไม่สำเร็จ: ${String(err?.message || '').replace(/[&<>]/g, '')})`, reply_to_message_id: photo.messageId });
+      return true;
+    } finally {
+      if (store.album && locked) await store.album.unlock(albumKey(group), holder).catch(() => {});
     }
-    return true;
+  };
+
+  /** Another photo of an album: noted for its first photo to collect, or added to that bill when read already */
+  const joinAlbum = async (group: string, ownerId: string, photo: IncomingPhoto): Promise<boolean> => {
+    if (store.album) {
+      const page: AlbumPage = { messageId: photo.messageId, fileId: photo.fileId, storeFileId: photo.storeFileId, fileSize: photo.fileSize };
+      if (await store.album.addPage(albumKey(group), page)) return true;
+    }
+    return lateAlbumPage(group, ownerId, photo);
   };
 
   // ---------- Photos ----------
@@ -553,11 +629,14 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     if (waiting?.action === 'jot') await store.setWaiting(chatId, userId, null);
 
     const id = pendingId(photo);
-    if (await store.inboxItem(id)) return; // already handled (Telegram sent it again)
+    // Already handled (Telegram sent it again). One left reading was stopped part way (the server's
+    // time limit): read again
+    const handled = await store.inboxItem(id);
+    if (handled && handled.status !== 'reading') return;
     // An album: the pages of one bill sent together. Only the first is read; the rest join it
     if (photo.mediaGroupId) {
       const owner = await albumOwner(photo.mediaGroupId, id);
-      if (owner && owner !== id && (await joinAlbum(owner, photo))) return;
+      if (owner !== id && (await joinAlbum(photo.mediaGroupId, owner, photo))) return;
     }
     const item: PendingReceipt = {
       id,
@@ -574,6 +653,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       ...(photo.mediaGroupId ? { mediaGroupId: photo.mediaGroupId } : {})
     };
     await store.putInbox(item);
+    let pages: AlbumPage[] = [];
     const progress = await sendQuiet({ text: '⏳ กำลังอ่านบิล...', reply_to_message_id: photo.messageId, allow_sending_without_reply: true });
     const progressId = progress?.message_id as number | undefined;
     try {
@@ -586,11 +666,13 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       if (twinNote) data.warnings = [...data.warnings, twinNote];
       const photoDateNote = futureDateWarning(data.date, today);
       if (photoDateNote) data.warnings = [...data.warnings, photoDateNote];
+      pages = await albumPages(photo.mediaGroupId);
+      const extraFileIds = pages.slice(0, MAX_ATTACHMENTS - 1).map(pg => pg.storeFileId || pg.fileId);
       if (ctx.mode === 'approve') {
         const billNo = await nextBillNo(data.date);
-        await store.patchInbox(id, { status: 'pending', data, error: undefined, billNo });
+        await store.patchInbox(id, { status: 'pending', data, error: undefined, billNo, ...(extraFileIds.length ? { extraFileIds } : {}) });
         const text = pendingCard(
-          { ...item, status: 'pending', data, billNo },
+          { ...item, status: 'pending', data, billNo, ...(extraFileIds.length ? { extraFileIds } : {}) },
           {
             shopName: ctx.shop.name,
             warnings: [photoDateNote, twinNote ? `${twinNote} โปรดตรวจก่อนอนุมัติ` : !photoDateNote && data.warnings.length ? 'ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจก่อนอนุมัติ' : '']
@@ -609,12 +691,17 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
         { kind: item.kind, date: data.date, title, amount: data.amount, vendor: data.vendorName, category: data.category, includeVat: data.includeVat, vatAmount: data.vatAmount, refNumber: data.refNumber, note: data.note },
         photo.senderName,
         images.store,
-        `telegram-${photo.messageId}.jpg`
+        `telegram-${photo.messageId}.jpg`,
+        await pagePictures(pages)
       );
       await store.patchInbox(id, { status: 'approved', data, recordId: saved.rec.id, decidedBy: AUTO_BY, decidedAt: new Date().toISOString(), error: undefined });
       await showCard(saved, id, photo.messageId, progressId, twinNote ? `${twinNote} ถ้าซ้ำกด 🗑 ลบ` : data.warnings.length ? 'ตัวเลขบางส่วนไม่ตรงกัน โปรดตรวจยอด (กด ✏️ แก้ไขได้)' : undefined);
+      if (pages.length) await sendQuiet({ text: `📄 รวมรูปอีก ${pages.length} แผ่นในอัลบั้มเป็นบิลเดียวกันแล้ว (ไม่บันทึกซ้ำ)`, reply_to_message_id: photo.messageId });
     } catch (e: any) {
-      await store.patchInbox(id, { status: 'failed', error: e?.message || 'อ่านบิลไม่สำเร็จ' });
+      // The album's other pages stay with this bill (kept when the amount is typed)
+      if (!pages.length) pages = await albumPages(photo.mediaGroupId);
+      const extraFileIds = pages.slice(0, MAX_ATTACHMENTS - 1).map(pg => pg.storeFileId || pg.fileId);
+      await store.patchInbox(id, { status: 'failed', error: e?.message || 'อ่านบิลไม่สำเร็จ', ...(extraFileIds.length ? { extraFileIds } : {}) });
       // The amount can be typed as the answer, and the photo is kept with the entry
       await store.setWaiting(chatId, userId, { action: 'amount', recordId: id });
       const text = `⚠️ อ่านบิลนี้ไม่สำเร็จ: ${String(e?.message || '').replace(/[&<>]/g, '')}\n✍️ พิมพ์ยอดเงินและชื่อรายการตอบกลับได้เลย เช่น <code>135 ค่าผัก</code>\n(หรือกรอกเองในระบบ POS หน้า “บิลจาก Telegram”)`;
@@ -742,7 +829,10 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
         image = '';
       }
       if (parsed.title === 'รายจ่าย' || parsed.title === 'รายรับ') parsed.title = captionTitle(item.caption) || parsed.title;
-      const saved = await record(parsed, item.senderName || msg.senderName, image || undefined, `telegram-${item.messageId}.jpg`);
+      // Pictures attached to it (the bill's other pages, slips) are kept with the expense
+      const extras =
+        item.kind === 'expense' ? await pagePictures((item.extraFileIds || []).map((fileId, i) => ({ fileId, storeFileId: fileId, fileSize: 0, messageId: item.messageId * 100 + i + 1 }))) : [];
+      const saved = await record(parsed, item.senderName || msg.senderName, image || undefined, `telegram-${item.messageId}.jpg`, extras);
       await store.patchInbox(item.id, { status: 'approved', recordId: saved.rec.id, decidedBy: AUTO_BY, decidedAt: new Date().toISOString(), error: undefined });
       await showCard(saved, item.id, msg.messageId);
       return;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { appsScriptCode, isScriptUrl, pingScript, pushSheetsToScript } from '../sheetsScript';
+import { appsScriptCode, driveFileId, isScriptUrl, pingScript, pushSheetsToScript } from '../sheetsScript';
 
 /** Run the generated Apps Script against a fake spreadsheet */
 function runScript(secret: string, body: unknown, drive?: { folders: Record<string, string[]>; files: { path: string; name: string; mime: string; data: string; trashed?: boolean }[]; sharing?: any }) {
@@ -44,7 +44,7 @@ function runScript(secret: string, body: unknown, drive?: { folders: Record<stri
     getUrl: () => `https://drive/${path}`
   });
   const env = {
-    DriveApp: { getRootFolder: () => folder(''), getFileById: () => d.sharing, Access: { ANYONE_WITH_LINK: 'link' }, Permission: { VIEW: 'view' } },
+    DriveApp: { getRootFolder: () => folder(''), getFileById: (id: string) => ((d as any).byId ? (d as any).byId[id] ?? (() => { throw new Error('not found'); })() : d.sharing), Access: { ANYONE_WITH_LINK: 'link' }, Permission: { VIEW: 'view' } },
     Utilities: {
       base64Decode: (b: string) => atob(b),
       newBlob: (data: string, mime: string, name: string) => ({ data, mime, name, getName: () => name })
@@ -63,14 +63,14 @@ describe('Apps Script code', () => {
   });
 
   it('answers a ping with the spreadsheet', () => {
-    expect(runScript('abc', { secret: 'abc', ping: true }).reply).toEqual({ ok: true, name: 'ร้าน', url: 'https://docs.google.com/x', version: 3 });
+    expect(runScript('abc', { secret: 'abc', ping: true }).reply).toEqual({ ok: true, name: 'ร้าน', url: 'https://docs.google.com/x', version: 4 });
   });
 
   it('saves a file into the month folder and replaces an earlier copy', () => {
     const drive = { folders: {} as Record<string, string[]>, files: [] as any[] };
     const body = { secret: 'abc', file: { folder: 'รายจ่าย/2569-10', name: 'a.pdf', mimeType: 'application/pdf', base64: btoa('PDF') } };
     const first = runScript('abc', body, drive).reply;
-    expect(first).toMatchObject({ ok: true, version: 3, shared: false, fileUrl: 'https://drive//ครัวกะเพรา POS เอกสาร/รายจ่าย/2569-10/a.pdf' });
+    expect(first).toMatchObject({ ok: true, version: 4, shared: false, fileUrl: 'https://drive//ครัวกะเพรา POS เอกสาร/รายจ่าย/2569-10/a.pdf' });
     runScript('abc', body, drive);
     expect(drive.folders['']).toEqual(['ครัวกะเพรา POS เอกสาร']);
     expect(drive.files.filter(f => !f.trashed)).toHaveLength(1);
@@ -85,6 +85,31 @@ describe('Apps Script code', () => {
     drive.sharing.sharing = '';
     expect(runScript('abc', { secret: 'abc', share: { fileId: 'id1' } }, drive).reply).toMatchObject({ ok: true, shared: true });
     expect(drive.sharing.sharing).toBe('link');
+  });
+
+  it('moves the documents of a cancelled bill to the bin, only ones under the POS folder', () => {
+    const named = (name: string, up: any[] = []) => ({ getName: () => name, getParents: () => iter(up) });
+    const iter = (xs: any[]) => {
+      let i = 0;
+      return { hasNext: () => i < xs.length, next: () => xs[i++] };
+    };
+    const root = named('ครัวกะเพรา POS เอกสาร', [named('My Drive')]);
+    const files: Record<string, any> = {
+      mine: { trashed: false, getParents: () => iter([named('2569-11', [named('รายจ่าย', [root])])]), setTrashed: (v: boolean) => (files.mine.trashed = v) },
+      other: { trashed: false, getParents: () => iter([named('Personal', [named('My Drive')])]), setTrashed: (v: boolean) => (files.other.trashed = v) }
+    };
+    const drive: any = { folders: {}, files: [] };
+    const { reply } = runScript('abc', { secret: 'abc', trash: { fileIds: ['mine', 'other', 'gone'] } }, Object.assign(drive, { byId: files }));
+    expect(reply).toMatchObject({ ok: true, version: 4, trashed: 1 });
+    expect(files.mine.trashed).toBe(true);
+    expect(files.other.trashed).toBe(false);
+  });
+
+  it('finds a Drive file id in what the app keeps', () => {
+    expect(driveFileId({ fileId: 'abc' })).toBe('abc');
+    expect(driveFileId({ url: 'https://drive.google.com/file/d/1AbCdEfGhIjK_lm/view?usp=drivesdk' })).toBe('1AbCdEfGhIjK_lm');
+    expect(driveFileId({ url: 'https://drive.google.com/open?id=1AbCdEfGhIjK_lm' })).toBe('1AbCdEfGhIjK_lm');
+    expect(driveFileId({ url: '' })).toBe('');
   });
 
   it('writes each sheet padded, keeping formulas and leading zeros as text', () => {

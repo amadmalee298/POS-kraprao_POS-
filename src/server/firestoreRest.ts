@@ -156,6 +156,18 @@ export class Firestore {
     await this.call(`${this.base}/${path}`, { method: 'DELETE' });
   }
 
+  /** A page of the documents in a collection (any depth, e.g. branches/<b>/status), with only the fields asked for */
+  async list(collectionPath: string, pageSize: number, pageToken = '', fields: string[] = []): Promise<{ docs: { id: string; data: { [k: string]: Json } }[]; next: string }> {
+    const q = new URLSearchParams({ pageSize: String(pageSize) });
+    if (pageToken) q.set('pageToken', pageToken);
+    fields.forEach(f => q.append('mask.fieldPaths', f));
+    const res = await this.call(`${this.base}/${collectionPath}?${q}`);
+    return {
+      docs: (Array.isArray(res?.documents) ? res.documents : []).map((d: any) => ({ id: String(d.name).split('/').pop() || '', data: fromFsFields(d.fields || {}) })),
+      next: String(res?.nextPageToken || '')
+    };
+  }
+
   /** A page of a top-level collection in document-id order, after the given id ('' from the start) */
   async page(collection: string, afterId: string, limit: number, select?: string[]): Promise<{ id: string; data: { [k: string]: Json } }[]> {
     const name = `${this.base.replace(/^https:\/\/firestore\.googleapis\.com\/v1\//, '')}/${collection}/${afterId}`;

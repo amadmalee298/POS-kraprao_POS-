@@ -1,6 +1,6 @@
 import type { Expense, OtherIncome, PendingReceipt } from '../types';
 import type { BotWaiting } from '../services/telegramBot';
-import { BotContext, BotStore, handleBotUpdate } from '../services/botEngine.js';
+import { AlbumPage, AlbumStore, BotContext, BotStore, handleBotUpdate } from '../services/botEngine.js';
 import { BOT_CONFIG_DOC, BOT_STATE_DOC, BotMode, INBOX_DOC } from '../services/telegramBot.js';
 import { openWithSecret } from '../utils/botSecret.js';
 import { docLinkUrl } from '../utils/docLink.js';
@@ -20,6 +20,8 @@ import { carriesPictures, contentTag, imageDocKey, imageMime, isDataUrl, makeIma
 const KEEP_ITEMS = 300;
 const receivedAt = (p: PendingReceipt) => p.receivedAt;
 const KEEP_SEEN = 60;
+/** A delivery still marked working after this long was stopped (Vercel allows 60 s): handled again */
+const STALE_WORK_MS = 75_000;
 /** Firestore documents hold at most 1 MB; pictures that would not fit stay in the Telegram chat */
 const DOC_LIMIT = 900_000;
 const KEEP_PHOTO_BYTES = 450_000;
@@ -211,6 +213,48 @@ export async function migrateSomePictures(db: Firestore, branchId: string, curso
 }
 
 /** The bot's records in Firestore, for one branch */
+/** Album documents (branches/<b>/status/tgalbum_<chat>_<album>), every change made only if unchanged since read */
+export function albumStore(db: Firestore, branchId: string): AlbumStore {
+  const pathOf = (key: string) => `branches/${branchId}/status/tgalbum_${key.replace(/[^\w-]/g, '_')}`;
+  type AlbumDoc = { owner: string; at: string; pages: AlbumPage[]; closed: boolean; lock: string; lockAt: number };
+  const read = async (key: string): Promise<{ doc: AlbumDoc | null; time: string | null }> => {
+    const { data, updateTime } = await db.getWithTime(pathOf(key));
+    if (!data) return { doc: null, time: null };
+    const d: any = data;
+    return {
+      doc: { owner: str(d.owner), at: str(d.at), pages: Array.isArray(d.pages) ? d.pages : [], closed: !!d.closed, lock: str(d.lock), lockAt: num(d.lockAt) },
+      time: updateTime
+    };
+  };
+  /** Changes the document, read again when someone else changed it first */
+  const change = async <R>(key: string, fn: (doc: AlbumDoc) => { next?: AlbumDoc; result: R }, fallback: R): Promise<R> => {
+    for (let i = 0; i < 10; i++) {
+      const { doc, time } = await read(key);
+      if (!doc) return fallback;
+      const { next, result } = fn(doc);
+      if (!next) return result;
+      if (await db.setIfUnchanged(pathOf(key), next as unknown as Record<string, unknown>, time)) return result;
+    }
+    return fallback;
+  };
+  return {
+    claim: async (key, itemId) => {
+      const fresh: AlbumDoc = { owner: itemId, at: new Date().toISOString(), pages: [], closed: false, lock: '', lockAt: 0 };
+      if (await db.setIfUnchanged(pathOf(key), fresh as unknown as Record<string, unknown>, null)) return itemId;
+      return (await read(key)).doc?.owner || itemId;
+    },
+    addPage: (key, page) =>
+      change(key, d => (d.closed ? { result: false } : d.pages.some(p => p.messageId === page.messageId) ? { result: true } : { next: { ...d, pages: [...d.pages, page] }, result: true }), false),
+    close: key => change(key, d => (d.closed ? { result: d.pages } : { next: { ...d, closed: true }, result: d.pages }), [] as AlbumPage[]),
+    // No album document (removed): nothing to keep in order
+    lock: (key, holder) =>
+      change(key, d => (d.lock && d.lock !== holder && Date.now() - d.lockAt < 30_000 ? { result: false } : { next: { ...d, lock: holder, lockAt: Date.now() }, result: true }), true),
+    unlock: async (key, holder) => {
+      await change(key, d => (d.lock === holder ? { next: { ...d, lock: '', lockAt: 0 }, result: undefined } : { result: undefined }), undefined);
+    }
+  };
+}
+
 export function firestoreStore(db: Firestore, branchId: string, state: { waiting: Record<string, BotWaiting>; driveFolderUrl?: string }): BotStore {
   const cfg = (key: string) => `branches/${branchId}/config/${key}`;
   const sameBranch = (b: unknown) => !b || b === branchId;
@@ -278,11 +322,7 @@ export function firestoreStore(db: Firestore, branchId: string, state: { waiting
     inboxByRecord: async recordId => (await loadInbox()).items.find(p => p.recordId === recordId) || null,
     inboxItems: async () => (await loadInbox()).items,
     putInbox: item => saveInboxItem(item),
-    claimAlbum: async (key, itemId) => {
-      const path = `branches/${branchId}/status/tgalbum_${key.replace(/[^\w-]/g, '_')}`;
-      if (await db.setIfUnchanged(path, { owner: itemId, at: new Date().toISOString() }, null)) return itemId;
-      return str((await db.get(path))?.owner) || itemId;
-    },
+    album: albumStore(db, branchId),
     patchInbox: async (id, change) => {
       const item = (await loadInbox()).items.find(p => p.id === id);
       if (item) await saveInboxItem({ ...item, ...change });
@@ -338,93 +378,116 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
   if (seen.includes(updateId)) return { status: 200, body: { duplicate: true } };
   // Two deliveries of the same update at the same moment (Telegram resends while a slow receipt is
   // still being read) both passed the list above and saved the receipt twice: the first to create
-  // this update's marker handles it, the other stops
-  if (Number.isFinite(updateId) && !(await db.setIfUnchanged(`branches/${req.branchId}/status/tgupdate_${updateId}`, { at: new Date().toISOString() }, null))) {
-    return { status: 200, body: { duplicate: true } };
-  }
-  await db.set(statePath, { seen: [...seen, updateId].slice(-KEEP_SEEN), lastUpdateAt: new Date().toISOString() }, ['seen', 'lastUpdateAt']);
-
-  const update = req.update;
-  let chatId = String(update?.callback_query?.message?.chat?.id ?? (update?.message || update?.channel_post)?.chat?.id ?? '');
-  if (!chatId) return { status: 200, body: { ignored: 'no chat' } };
-  // The shop's group became a supergroup (Telegram does this e.g. when an admin is added): it has a
-  // new chat ID, announced in the new chat with the old one. The bot follows it.
-  const migrateFrom = update?.message?.migrate_from_chat_id;
-  const migrateTo = update?.message?.migrate_to_chat_id;
-  const shopChat = String(config.chatId).trim();
-  if (migrateFrom !== undefined && String(migrateFrom) === shopChat && chatId !== shopChat) {
-    await db.set(configPath, { chatId, chatMovedFrom: shopChat }, ['chatId', 'chatMovedFrom']);
-    config.chatId = chatId;
-    await noteDelivery('chat moved', chatId);
-    await tgCall(config.token, 'sendMessage', { chat_id: chatId, text: '✅ กลุ่มนี้ถูกอัปเกรดเป็น supergroup บอทย้ายมาใช้ Chat ID ใหม่แล้ว' }).catch(() => {});
-    return { status: 200, body: { ok: true, movedTo: chatId } };
-  }
-  if (migrateTo !== undefined && chatId === shopChat) {
-    chatId = String(migrateTo);
-    await db.set(configPath, { chatId, chatMovedFrom: shopChat }, ['chatId', 'chatMovedFrom']);
-    config.chatId = chatId;
-    await noteDelivery('chat moved', chatId);
-    return { status: 200, body: { ok: true, movedTo: chatId } };
-  }
-  await noteDelivery(chatId === shopChat ? 'ok' : 'other chat', chatId);
-  if (chatId !== String(config.chatId).trim()) {
-    // Only the shop's chat; the other one is shown in the app so the owner can find its ID
-    const from = (update.message || update.channel_post)?.from || {};
-    await db.set(statePath, { ignoredChatId: chatId, ignoredChatName: [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || '' }, ['ignoredChatId', 'ignoredChatName']);
-    return { status: 200, body: { ignored: 'other chat' } };
-  }
-
-  const token = config.token;
-  const state = { waiting: (stateDoc.waiting || {}) as Record<string, BotWaiting>, driveFolderUrl: str(stateDoc.driveFolderUrl) };
-  const store = firestoreStore(db, req.branchId, state);
-  const scan: BotContext['scan'] =
-    deps.scan ||
-    (async (image, today) => {
-      const key = (deps.anthropicKey || '').trim();
-      if (!key) throw new Error('ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY บน Vercel');
-      const [head, data] = image.split(';base64,');
-      const ai = createClaudeJsonCaller({ apiKey: key });
-      return runReceiptOcr(({ prompt, system, schema, image: img }) => ai({ prompt, system, schema, image: img, effort: 'high' }), { data, mimeType: head.replace(/^data:/, '') || 'image/jpeg' }, { todayIso: today });
-    });
-
-  const ctx: BotContext = {
-    token,
-    chatId,
-    branchId: req.branchId,
-    mode: config.mode === 'approve' ? 'approve' : 'auto',
-    shop: config.shop || { name: '' },
-    vatRate: Number(config.vatRate) || 7,
-    sleep: deps.sleep,
-    tg: (method, params) => tgCall(token, method, params),
-    readPhoto: async p => {
-      const scanImage = await downloadFile(token, p.fileId, 8_000_000);
-      if (!scanImage) throw new Error('ไฟล์รูปใหญ่เกิน 8 MB');
-      const keep = p.storeFileId && p.storeFileId !== p.fileId ? await downloadFile(token, p.storeFileId, KEEP_PHOTO_BYTES) : scanImage.length * 0.75 <= KEEP_PHOTO_BYTES ? scanImage : '';
-      return { scan: scanImage, store: keep };
-    },
-    scan,
-    docUrl: e =>
-      e.substituteReceipt && config.appUrl
-        ? docLinkUrl(config.appUrl, { shop: config.shop || { name: '' }, expense: { id: e.id, date: e.date, title: e.title, amount: e.amount, note: e.note, substituteReceipt: e.substituteReceipt } })
-        : undefined
-  };
-
-  const started = Date.now();
-  try {
-    await handleBotUpdate(ctx, store, update);
-    await db.set(statePath, { lastError: '' }, ['lastError']).catch(() => {});
-    // Older records with pictures inside, while there is time left
-    const cursor = (stateDoc.pictureCursor || {}) as Record<string, string>;
-    if (cursor.expenses !== 'done' || cursor.incomes !== 'done') {
-      const next = await migrateSomePictures(db, req.branchId, cursor, started + 20_000).catch(() => cursor);
-      if (JSON.stringify(next) !== JSON.stringify(cursor)) await db.set(statePath, { pictureCursor: next }, ['pictureCursor']).catch(() => {});
+  // this update's marker handles it. One still working is asked to be sent again later: it may
+  // have been stopped by Vercel's time limit, and a marker left working that long is taken over
+  const markerPath = `branches/${req.branchId}/status/tgupdate_${updateId}`;
+  if (Number.isFinite(updateId)) {
+    const marker = await db.getWithTime(markerPath);
+    const working = { state: 'working', at: new Date().toISOString() };
+    if (!marker.data) {
+      if (!(await db.setIfUnchanged(markerPath, working, null))) return { status: 503, body: { busy: true } };
+    } else if (marker.data.state !== 'working') {
+      return { status: 200, body: { duplicate: true } }; // done (or a marker from before working/done)
+    } else if (Date.now() - Date.parse(String(marker.data.at || '')) < STALE_WORK_MS || !(await db.setIfUnchanged(markerPath, working, marker.updateTime))) {
+      return { status: 503, body: { busy: true } };
     }
-  } catch (e: any) {
-    const message = e?.message || String(e);
-    await db.set(statePath, { lastError: `${new Date().toISOString()} ${message}` }, ['lastError']).catch(() => {});
-    await tgCall(token, 'sendMessage', { chat_id: chatId, text: `⚠️ ระบบบอทขัดข้อง: ${message}` }).catch(() => {});
   }
-  return { status: 200, body: { ok: true } };
+  const finished = async () => {
+    if (!Number.isFinite(updateId)) return;
+    await db.set(markerPath, { state: 'done', at: new Date().toISOString() }).catch(() => {});
+    const latest: any = (await db.get(statePath).catch(() => null)) || {};
+    const list: number[] = Array.isArray(latest.seen) ? latest.seen : [];
+    await db.set(statePath, { seen: [...list.filter(x => x !== updateId), updateId].slice(-KEEP_SEEN), lastUpdateAt: new Date().toISOString() }, ['seen', 'lastUpdateAt']).catch(() => {});
+  };
+  try {
+    return await handleClaimed();
+  } finally {
+    await finished();
+  }
+
+  async function handleClaimed(): Promise<{ status: number; body: Record<string, unknown> }> {
+    const update = req.update;
+    let chatId = String(update?.callback_query?.message?.chat?.id ?? (update?.message || update?.channel_post)?.chat?.id ?? '');
+    if (!chatId) return { status: 200, body: { ignored: 'no chat' } };
+    // The shop's group became a supergroup (Telegram does this e.g. when an admin is added): it has a
+    // new chat ID, announced in the new chat with the old one. The bot follows it.
+    const migrateFrom = update?.message?.migrate_from_chat_id;
+    const migrateTo = update?.message?.migrate_to_chat_id;
+    const shopChat = String(config.chatId).trim();
+    if (migrateFrom !== undefined && String(migrateFrom) === shopChat && chatId !== shopChat) {
+      await db.set(configPath, { chatId, chatMovedFrom: shopChat }, ['chatId', 'chatMovedFrom']);
+      config.chatId = chatId;
+      await noteDelivery('chat moved', chatId);
+      await tgCall(config.token, 'sendMessage', { chat_id: chatId, text: '✅ กลุ่มนี้ถูกอัปเกรดเป็น supergroup บอทย้ายมาใช้ Chat ID ใหม่แล้ว' }).catch(() => {});
+      return { status: 200, body: { ok: true, movedTo: chatId } };
+    }
+    if (migrateTo !== undefined && chatId === shopChat) {
+      chatId = String(migrateTo);
+      await db.set(configPath, { chatId, chatMovedFrom: shopChat }, ['chatId', 'chatMovedFrom']);
+      config.chatId = chatId;
+      await noteDelivery('chat moved', chatId);
+      return { status: 200, body: { ok: true, movedTo: chatId } };
+    }
+    await noteDelivery(chatId === shopChat ? 'ok' : 'other chat', chatId);
+    if (chatId !== String(config.chatId).trim()) {
+      // Only the shop's chat; the other one is shown in the app so the owner can find its ID
+      const from = (update.message || update.channel_post)?.from || {};
+      await db.set(statePath, { ignoredChatId: chatId, ignoredChatName: [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || '' }, ['ignoredChatId', 'ignoredChatName']);
+      return { status: 200, body: { ignored: 'other chat' } };
+    }
+
+    const token = config.token;
+    const state = { waiting: (stateDoc.waiting || {}) as Record<string, BotWaiting>, driveFolderUrl: str(stateDoc.driveFolderUrl) };
+    const store = firestoreStore(db, req.branchId, state);
+    const scan: BotContext['scan'] =
+      deps.scan ||
+      (async (image, today) => {
+        const key = (deps.anthropicKey || '').trim();
+        if (!key) throw new Error('ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY บน Vercel');
+        const [head, data] = image.split(';base64,');
+        const ai = createClaudeJsonCaller({ apiKey: key });
+        return runReceiptOcr(({ prompt, system, schema, image: img }) => ai({ prompt, system, schema, image: img, effort: 'high' }), { data, mimeType: head.replace(/^data:/, '') || 'image/jpeg' }, { todayIso: today });
+      });
+
+    const ctx: BotContext = {
+      token,
+      chatId,
+      branchId: req.branchId,
+      mode: config.mode === 'approve' ? 'approve' : 'auto',
+      shop: config.shop || { name: '' },
+      vatRate: Number(config.vatRate) || 7,
+      sleep: deps.sleep,
+      tg: (method, params) => tgCall(token, method, params),
+      readPhoto: async p => {
+        const scanImage = await downloadFile(token, p.fileId, 8_000_000);
+        if (!scanImage) throw new Error('ไฟล์รูปใหญ่เกิน 8 MB');
+        const keep = p.storeFileId && p.storeFileId !== p.fileId ? await downloadFile(token, p.storeFileId, KEEP_PHOTO_BYTES) : scanImage.length * 0.75 <= KEEP_PHOTO_BYTES ? scanImage : '';
+        return { scan: scanImage, store: keep };
+      },
+      scan,
+      docUrl: e =>
+        e.substituteReceipt && config.appUrl
+          ? docLinkUrl(config.appUrl, { shop: config.shop || { name: '' }, expense: { id: e.id, date: e.date, title: e.title, amount: e.amount, note: e.note, substituteReceipt: e.substituteReceipt } })
+          : undefined
+    };
+
+    const started = Date.now();
+    try {
+      await handleBotUpdate(ctx, store, update);
+      await db.set(statePath, { lastError: '' }, ['lastError']).catch(() => {});
+      // Older records with pictures inside, while there is time left
+      const cursor = (stateDoc.pictureCursor || {}) as Record<string, string>;
+      if (cursor.expenses !== 'done' || cursor.incomes !== 'done') {
+        const next = await migrateSomePictures(db, req.branchId, cursor, started + 20_000).catch(() => cursor);
+        if (JSON.stringify(next) !== JSON.stringify(cursor)) await db.set(statePath, { pictureCursor: next }, ['pictureCursor']).catch(() => {});
+      }
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      await db.set(statePath, { lastError: `${new Date().toISOString()} ${message}` }, ['lastError']).catch(() => {});
+      await tgCall(token, 'sendMessage', { chat_id: chatId, text: `⚠️ ระบบบอทขัดข้อง: ${message}` }).catch(() => {});
+    }
+    return { status: 200, body: { ok: true } };
+  }
 }
 
 /** The setup check from the app: can the server sign in and read the bot's settings? */
