@@ -144,7 +144,7 @@ const formFor = (p: PendingReceipt, ingredients: Ingredient[]): Form => ({
  * approve it into the books (expense or other income), or reject it.
  */
 export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory, string> }> = ({ incomeLabels }) => {
-  const { settings, currentBranch, currentUser, addExpense, addIncome, ingredients, addStockLot, receiveNewIngredient, ingredientCategories = [], expenses, incomes, firebaseSyncState } = usePOS();
+  const { settings, currentBranch, currentUser, addExpense, addIncome, ingredients, addStockLot, receiveNewIngredient, ingredientCategories = [], expenses, incomes, firebaseSyncState, deleteExpense, deleteIncome } = usePOS();
   const drive = useExpenseDrive();
   const [items, setItems] = useTelegramInbox();
   // What was typed into the bills survives a reload of the page (same tab)
@@ -529,6 +529,18 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
     patch(p.id, { stockPending: false });
   };
 
+  /** A bill the bot recorded by itself (e.g. sent twice): its entry leaves the books, nothing goes into stock */
+  const cancelRecorded = (p: PendingReceipt) => {
+    const id = p.recordId || '';
+    const rec = id.startsWith('inc-') ? incomes.find(i => i.id === id) : expenses.find(e => e.id === id);
+    const what = rec ? `${rec.title} ${baht(rec.amount)}` : p.data?.title || 'บิลนี้';
+    if (!window.confirm(`ยกเลิกบิลนี้?\n${what}\nรายการ${id.startsWith('inc-') ? 'รายรับ' : 'รายจ่าย'}จะถูกลบออกจากบัญชี และไม่รับเข้าสต็อก`)) return;
+    if (id.startsWith('inc-')) deleteIncome(id);
+    else if (id) deleteExpense(id);
+    patch(p.id, { status: 'rejected', stockPending: false, decidedBy: currentUser?.name, decidedAt: new Date().toISOString() });
+    reply(p, `🗑 ยกเลิกบิลนี้แล้ว ลบออกจากบัญชี (${currentUser?.name || 'ผู้จัดการ'}): ${what}`);
+  };
+
   const reject = (p: PendingReceipt) => {
     if (!window.confirm('ไม่อนุมัติบิลนี้?')) return;
     patch(p.id, { status: 'rejected', decidedBy: currentUser?.name, decidedAt: new Date().toISOString() });
@@ -874,6 +886,14 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                   </button>
                   <button type="button" disabled={!canApprove} onClick={() => skipStock(p)} className="h-11 px-4 rounded-xl border border-slate-700 text-slate-300 disabled:opacity-40">
                     ไม่ต้องรับเข้าสต็อก
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canApprove || busy === p.id}
+                    onClick={() => cancelRecorded(p)}
+                    className="h-11 px-4 rounded-xl border border-rose-700/60 text-rose-300 flex items-center gap-1.5 disabled:opacity-40"
+                  >
+                    <XCircle className="w-4 h-4" /> ยกเลิกบิล
                   </button>
                 </div>
               ) : (
