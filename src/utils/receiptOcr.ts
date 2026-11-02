@@ -328,16 +328,24 @@ export type ReceiptModelCall = (args: {
   system: string;
   schema: typeof RECEIPT_OCR_SCHEMA;
   image: { data: string; mimeType: string };
+  /** Time left for this call (set when the reading has a deadline) */
+  timeoutMs?: number;
 }) => Promise<string>;
 
 const isRetryable = (err: unknown): boolean => Boolean(err && typeof err === 'object' && (err as { retryable?: boolean }).retryable);
 
-async function callWithRetry(call: ReceiptModelCall, args: Parameters<ReceiptModelCall>[0]): Promise<any> {
+/** Time left before a deadline (Infinity without one) */
+const left = (deadline?: number) => (deadline ? deadline - Date.now() : Infinity);
+/** A call needs at least this long to be worth starting */
+const MIN_CALL_MS = 12_000;
+
+async function callWithRetry(call: ReceiptModelCall, args: Parameters<ReceiptModelCall>[0], deadline?: number): Promise<any> {
+  const withTime = () => (deadline ? { ...args, timeoutMs: Math.max(1000, left(deadline)) } : args);
   try {
-    return parseModelJson(await call(args));
+    return parseModelJson(await call(withTime()));
   } catch (err) {
-    if (!isRetryable(err)) throw err;
-    return parseModelJson(await call(args));
+    if (!isRetryable(err) || left(deadline) < MIN_CALL_MS) throw err;
+    return parseModelJson(await call(withTime()));
   }
 }
 
@@ -348,21 +356,24 @@ async function callWithRetry(call: ReceiptModelCall, args: Parameters<ReceiptMod
 export async function runReceiptOcr(
   call: ReceiptModelCall,
   image: { data: string; mimeType: string },
-  options: { todayIso?: string } = {}
+  /** deadline (ms since epoch): no new call starts too close to it, and calls stop at it */
+  options: { todayIso?: string; deadline?: number } = {}
 ): Promise<VerifiedReceiptData> {
+  const { deadline } = options;
   const todayIso = options.todayIso || new Date().toISOString().split('T')[0];
   const base = { system: RECEIPT_OCR_SYSTEM_INSTRUCTION, schema: RECEIPT_OCR_SCHEMA, image };
 
-  const firstRaw = await callWithRetry(call, { ...base, prompt: buildReceiptOcrPrompt(todayIso) });
+  const firstRaw = await callWithRetry(call, { ...base, prompt: buildReceiptOcrPrompt(todayIso) }, deadline);
   const first = verifyReceiptExtraction(firstRaw, todayIso);
-  if (first.hardProblems.length === 0) return first.data;
+  // No time for a re-read: the first reading stands (its warnings are shown)
+  if (first.hardProblems.length === 0 || left(deadline) < MIN_CALL_MS * 1.5) return first.data;
 
   // Second pass: targeted re-read of the numbers that did not add up
   try {
     const secondRaw = await callWithRetry(call, {
       ...base,
       prompt: buildReceiptRecheckPrompt(todayIso, firstRaw, first.hardProblems)
-    });
+    }, deadline);
     const second = verifyReceiptExtraction(secondRaw, todayIso);
     const better =
       second.hardProblems.length < first.hardProblems.length ||

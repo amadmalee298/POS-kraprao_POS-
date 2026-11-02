@@ -620,6 +620,29 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     return lateAlbumPage(group, ownerId, photo);
   };
 
+  /** The card of a bill whose delivery was stopped after it was saved (Telegram's next try shows it) */
+  const finishCard = async (item: PendingReceipt, replyTo: number) => {
+    try {
+      if (item.status === 'approved' && item.recordId) {
+        const e = item.recordId.startsWith('exp-') ? await store.getExpense(item.recordId) : null;
+        const i = !e && item.recordId.startsWith('inc-') ? await store.getIncome(item.recordId) : null;
+        const saved: Saved | null = e ? { kind: 'expense', rec: e } : i ? { kind: 'income', rec: i } : null;
+        if (saved) await showCard(saved, item.id, replyTo, item.progressMessageId);
+      } else if (item.status === 'pending') {
+        const text = pendingText(item);
+        if (item.progressMessageId) {
+          await editCard(item.progressMessageId, text, attachKeyboard(item.id));
+          await store.patchInbox(item.id, { cardMessageId: item.progressMessageId });
+        } else {
+          const sent = await sendQuiet({ text, reply_to_message_id: replyTo, reply_markup: attachKeyboard(item.id) });
+          if (sent?.message_id) await store.patchInbox(item.id, { cardMessageId: sent.message_id });
+        }
+      }
+    } catch {
+      // shown in the POS (การเงิน → บิลจาก Telegram) either way
+    }
+  };
+
   // ---------- Photos ----------
   const photo = photoFromUpdate(update);
   if (photo) {
@@ -645,7 +668,11 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     // Already handled (Telegram sent it again). One left reading was stopped part way (the server's
     // time limit): read again
     const handled = await store.inboxItem(id);
-    if (handled && handled.status !== 'reading') return;
+    if (handled && handled.status !== 'reading') {
+      // Saved, but stopped before its card was shown (the server's time limit): shown now
+      if (!handled.cardMessageId) await finishCard(handled, photo.messageId);
+      return;
+    }
     // An album: the pages of one bill sent together. Only the first is read; the rest join it
     if (photo.mediaGroupId) {
       const owner = await albumOwner(photo.mediaGroupId, id);
@@ -665,10 +692,14 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       status: 'reading',
       ...(photo.mediaGroupId ? { mediaGroupId: photo.mediaGroupId } : {})
     };
-    await store.putInbox(item);
+    // Tried again after being stopped: the same "reading…" message is used
+    const again = handled?.progressMessageId;
+    await store.putInbox(again ? { ...item, progressMessageId: again } : item);
     let pages: AlbumPage[] = [];
-    const progress = await sendQuiet({ text: '⏳ กำลังอ่านบิล...', reply_to_message_id: photo.messageId, allow_sending_without_reply: true });
-    const progressId = progress?.message_id as number | undefined;
+    if (again) await editCard(again, '⏳ กำลังอ่านบิลอีกครั้ง...');
+    const progress = again ? null : await sendQuiet({ text: '⏳ กำลังอ่านบิล...', reply_to_message_id: photo.messageId, allow_sending_without_reply: true });
+    const progressId = (again || progress?.message_id) as number | undefined;
+    if (progressId && !again) await store.patchInbox(id, { progressMessageId: progressId });
     try {
       const images = await ctx.readPhoto(photo);
       const data = toPendingData(await ctx.scan(images.scan, today), item.receivedAt.slice(0, 10));

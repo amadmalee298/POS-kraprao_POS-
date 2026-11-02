@@ -66,6 +66,18 @@ describe('runReceiptOcr', () => {
     expect(data.passes).toBe(2);
   });
 
+  it('with a deadline: each call gets the time left, and no re-read starts too close to it', async () => {
+    const timeouts: (number | undefined)[] = [];
+    const data = await runReceiptOcr(async ({ timeoutMs }) => {
+      timeouts.push(timeoutMs);
+      return JSON.stringify({ ...goodReceipt, amount: 820, vatAmount: 53.64 });
+    }, image, { todayIso: TODAY, deadline: Date.now() + 15_000 });
+    expect(timeouts).toHaveLength(1);
+    expect(timeouts[0]).toBeGreaterThan(10_000);
+    expect(timeouts[0]).toBeLessThanOrEqual(15_000);
+    expect(data.passes).toBe(1);
+  });
+
   it('retries once on a retryable error but not on a bad key', async () => {
     let attempts = 0;
     const data = await runReceiptOcr(async () => {

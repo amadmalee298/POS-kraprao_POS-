@@ -22,6 +22,8 @@ export interface ClaudeJsonRequest {
   /** `low` for quick suggestions at the counter, `high` (default) for analysis and OCR. */
   effort?: ClaudeEffort;
   maxTokens?: number;
+  /** Give up after this long (default 180 s), e.g. to answer inside a server's time limit */
+  timeoutMs?: number;
 }
 
 /** Structured outputs require every object schema to forbid extra keys. */
@@ -94,7 +96,7 @@ export function createClaudeJsonCaller(options: { apiKey?: string; browser?: boo
           format: { type: 'json_schema', schema: toStructuredSchema(req.schema) }
         },
         messages: [{ role: 'user', content }]
-      });
+      }, req.timeoutMs ? { timeout: req.timeoutMs, maxRetries: 0 } : undefined);
 
       if (response.stop_reason === 'refusal') {
         throw new ClaudeCallError('Claude ปฏิเสธคำขอนี้', false);
