@@ -1575,34 +1575,23 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * null: not known yet (asked before the lists are followed).
    */
   const [cloudOnly, setCloudOnly] = useState<boolean | null>(retiredStart ? true : null);
+  // Followed live: a device that removes its copy while this one is open is heard at once
+  const [metaWritten, setMetaWritten] = useState(false);
   useEffect(() => {
-    if (!isStorageLoaded || effectiveOffline || !mirrorBranch) return;
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const ask = async () => {
-      if (!isFirebaseAvailable()) {
-        timer = setTimeout(() => void ask(), 15_000);
-        return;
+    if (!isStorageLoaded || effectiveOffline || !mirrorBranch || !isFirebaseAvailable()) return;
+    return subscribeToBranchDoc(mirrorBranch, 'state_meta', (data, fromCache) => {
+      if (data?.cloudOnly) {
+        setCloudOnly(true);
+        setMetaWritten(true);
+      } else if (!fromCache) {
+        // A device that keeps nothing says so (the mark is written again until it is there)
+        if (retiredStart) void mergeBranchDoc(mirrorBranch, 'state_meta', { cloudOnly: true, cloudOnlySince: new Date().toISOString() });
+        else setCloudOnly(false);
       }
-      const meta = await readBranchDocFromServer(mirrorBranch, 'state_meta');
-      if (!alive) return;
-      if (meta === undefined) {
-        // Not readable yet (e.g. the shop account is not signed in): asked again
-        timer = setTimeout(() => void ask(), 15_000);
-        return;
-      }
-      if (retiredStart) {
-        if (!meta?.cloudOnly) void mergeBranchDoc(mirrorBranch, 'state_meta', { cloudOnly: true, cloudOnlySince: new Date().toISOString() });
-        return;
-      }
-      setCloudOnly(!!meta?.cloudOnly);
-    };
-    void ask();
-    return () => {
-      alive = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [isStorageLoaded, effectiveOffline, mirrorBranch, retiredStart]);
+    });
+  }, [isStorageLoaded, effectiveOffline, mirrorBranch, retiredStart, firebaseSyncState.status]);
+  // The lists are followed once the answer is known: without it the cloud cannot be read either
+  // (offline, or the shop account not signed in), and the subscription brings it as soon as it can
   const mirrorOn = isStorageLoaded && !effectiveOffline && isFirebaseAvailable() && cloudOnly !== null;
   const recentMonths = useMemo(() => {
     const now = new Date();
@@ -1630,11 +1619,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     docOf: (x: any) => `${prefix}_${(monthOf(x) || '').slice(0, 7) || 'undated'}`,
     docs: [...months.map(m => `${prefix}_${m}`), `${prefix}_undated`]
   });
-  const mirror = { branchId: mirrorBranch, enabled: mirrorOn, trustCloud: retiredStart || cloudOnly === true };
+  const mirror = { branchId: mirrorBranch, enabled: mirrorOn, trustCloud: retiredStart || cloudOnly === true, loaded: isStorageLoaded };
   // Nobody signs in with a built-in or old PIN while the people are still on their way from the
   // cloud. Only a shop not yet in the cloud alone signs in with this device's own list
   const [usersFromCloud, setUsersFromCloud] = useState(false);
-  const usersReady = usersFromCloud || (!retiredStart && cloudOnly === false);
+  // A device that still keeps its own copy signs in with it while the cloud cannot be reached
+  // (offline, offline mode, no cloud set up): the shop keeps selling
+  const cloudUnreachable = effectiveOffline || !isFirebaseAvailable();
+  const usersReady = usersFromCloud || (!retiredStart && (cloudOnly === false || cloudUnreachable));
   const markUsersReady = useCallback(() => setUsersFromCloud(true), []);
   useCloudMirror<User>({ ...mirror, ...single('state_users'), items: users, setItems: setUsers, toCloud: cloudPin, prefer: preferChosenPin, ordered: true, seedIfMissing: () => INITIAL_USERS, onReady: markUsersReady });
   useCloudMirror<StaffMember>({ ...mirror, ...single('state_staff'), items: staffMembers, setItems: setStaffMembers, toCloud: cloudPin, prefer: preferChosenPin, ordered: true });
@@ -2013,14 +2005,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // A device keeps the recent weeks; older records are read from the cloud when a report needs them
   const [historyLoading, setHistoryLoading] = useState<string | null>(null);
   const historyInFlight = useRef<Promise<boolean> | null>(null);
+  const historyCovered = useRef('');
   const loadHistory = useCallback(
     async (fromDay: string): Promise<boolean> => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDay) || !isFirebaseAvailable() || effectiveOffline) return false;
-      let covered = '';
-      try {
-        covered = localStorage.getItem(HISTORY_FROM_KEY) || '';
-      } catch {
-        // private mode
+      // How far back this visit holds (a device that keeps nothing starts each visit without it)
+      let covered = historyCovered.current;
+      if (!retiredStart && !covered) {
+        try {
+          covered = localStorage.getItem(HISTORY_FROM_KEY) || '';
+        } catch {
+          // private mode
+        }
       }
       if (covered && covered <= fromDay) return true;
       if (historyInFlight.current) await historyInFlight.current.catch(() => false);
@@ -2055,10 +2051,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           };
           setExpenses(prev => addMissing(prev, lightenRecords(res.expenses), 'POS_EXPENSES_DATA'));
           setIncomes(prev => addMissing(prev, lightenRecords(res.incomes), 'POS_INCOMES_DATA'));
-          try {
-            localStorage.setItem(HISTORY_FROM_KEY, fromDay);
-          } catch {
-            // private mode
+          historyCovered.current = !historyCovered.current || fromDay < historyCovered.current ? fromDay : historyCovered.current;
+          if (!retiredStart) {
+            try {
+              localStorage.setItem(HISTORY_FROM_KEY, fromDay);
+            } catch {
+              // private mode
+            }
           }
           return true;
         } finally {
@@ -4413,10 +4412,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return;
       }
       if (!(await cloudWritesDone())) return;
+      // The shop is marked as kept in the cloud first (other devices with older copies then stop
+      // bringing removed records back); this device's copy goes only once that mark is there
+      if (!metaWritten && !(await mergeBranchDoc(currentBranch.id, 'state_meta', { cloudOnly: true, cloudOnlySince: new Date().toISOString() }))) return;
       await retireBigStore();
       await retireImageStore();
       setLocalRetired(true);
-      void mergeBranchDoc(currentBranch.id, 'state_meta', { cloudOnly: true, cloudOnlySince: new Date().toISOString() });
       console.info('[Local data] Everything is in the cloud: this device no longer keeps the shop\'s data', results);
     } catch (err) {
       console.warn('[Local data] Not removed this time:', err);
