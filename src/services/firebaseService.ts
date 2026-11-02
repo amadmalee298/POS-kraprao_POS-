@@ -2121,6 +2121,18 @@ export async function removeBranchDocFields(branchId: string, key: string, paths
   }
 }
 
+/** A shared document from the server: its data (null when there is none), or undefined when it could not be read */
+export async function readBranchDocFromServer(branchId: string, key: string): Promise<DocumentData | null | undefined> {
+  if (!dbInstance || !navigator.onLine) return undefined;
+  await waitForFirebaseAuth();
+  try {
+    const snap = await getDocFromServer(doc(dbInstance, 'branches', branchId, 'config', key));
+    return snap.exists() ? snap.data() : null;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function loadBranchDoc(branchId: string, key: string): Promise<DocumentData | null> {
   if (!dbInstance || !navigator.onLine) return null;
   await waitForFirebaseAuth();
