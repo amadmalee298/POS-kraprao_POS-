@@ -413,6 +413,18 @@ describe('Telegram webhook on Vercel', () => {
     expect(Object.keys((cloud.read('branches/b1/config/drive_trash') as any).ids).sort()).toEqual(['FILEID_1234567', 'PDFID_1234567']);
   });
 
+  it('a bill saved but stopped before its card shows the card on Telegram\'s next try', async () => {
+    cloud.write('expenses/exp-77', { id: 'exp-77', branchId: 'b1', date: '2026-10-05', category: 'raw_material', title: 'แม็คโคร', amount: 1812 });
+    cloud.write('branches/b1/config/telegram_inbox', {
+      byId: { 'tg--100-170': { id: 'tg--100-170', source: 'telegram', chatId: '-100', messageId: 170, fileId: 'L170', senderName: 'แม่ครัว', caption: '', receivedAt: '2026-10-05T00:00:00.000Z', kind: 'expense', status: 'approved', recordId: 'exp-77', progressMessageId: 905 } }
+    });
+    await deliver(photoUpdate(170));
+    const card = cloud.telegram.find(t => t.method === 'editMessageText' && t.body.message_id === 905);
+    expect(card?.body.text).toContain('1,812.00');
+    expect((cloud.read('branches/b1/config/telegram_inbox') as any).byId['tg--100-170'].cardMessageId).toBe(905);
+    expect([...cloud.docs.keys()].filter(k => k.startsWith('expenses/'))).toHaveLength(1);
+  });
+
   it('handles a delivery Telegram sends twice only once', async () => {
     await deliver(photoUpdate(11));
     await deliver(photoUpdate(11));

@@ -24,6 +24,8 @@ const KEEP_SEEN = 60;
 const STALE_WORK_MS = 75_000;
 /** A delivery that failed is tried this many times before the chat is told */
 const MAX_TRIES = 3;
+/** Time a bill may be read for, from the start of the delivery (the rest saves it and shows the card) */
+const READ_BUDGET_MS = 40_000;
 /** Firestore documents hold at most 1 MB; pictures that would not fit stay in the Telegram chat */
 const DOC_LIMIT = 900_000;
 const KEEP_PHOTO_BYTES = 450_000;
@@ -377,6 +379,7 @@ export interface WebhookDeps {
 
 /** Handles one delivery from Telegram. Returns the HTTP status to answer with. */
 export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {}): Promise<{ status: number; body: Record<string, unknown> }> {
+  const started = Date.now();
   if (!req.secret || !req.sealed || !req.branchId || !req.projectId || !req.apiKey) return { status: 401, body: { error: 'missing' } };
   const refreshToken = await openWithSecret(req.sealed, req.secret);
   // Not from Telegram (or from an address replaced since): refused
@@ -482,7 +485,13 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
         if (!key) throw new Error('ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY บน Vercel');
         const [head, data] = image.split(';base64,');
         const ai = createClaudeJsonCaller({ apiKey: key });
-        return runReceiptOcr(({ prompt, system, schema, image: img }) => ai({ prompt, system, schema, image: img, effort: 'high' }), { data, mimeType: head.replace(/^data:/, '') || 'image/jpeg' }, { todayIso: today });
+        // Vercel stops the function at 60 s: the reading must be done well before, so the card is
+        // shown and the bill saved (a long bill read slowly was saved but its card never came)
+        return runReceiptOcr(
+          ({ prompt, system, schema, image: img, timeoutMs }) => ai({ prompt, system, schema, image: img, effort: 'medium', timeoutMs }),
+          { data, mimeType: head.replace(/^data:/, '') || 'image/jpeg' },
+          { todayIso: today, deadline: started + READ_BUDGET_MS }
+        );
       });
 
     const ctx: BotContext = {
