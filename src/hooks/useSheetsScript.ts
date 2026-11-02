@@ -16,7 +16,8 @@ export function useSheetsScriptPush() {
     latest.current = { orders, ingredients, menuItems, stockAdjustmentLogs, wasteLogs, currentBranch, settings, buildLines, today };
   });
 
-  return useCallback(async () => {
+  /** dashboard: false leaves the Dashboard sheet out (it reads a year of history: not on a phone's automatic send) */
+  return useCallback(async (opts: { dashboard?: boolean } = {}) => {
     const d = latest.current;
     const cfg = d.settings.sheetsScript;
     if (!cfg?.url || !cfg.secret) throw new Error('ยังไม่ได้ตั้งค่า Apps Script');
@@ -32,17 +33,19 @@ export function useSheetsScriptPush() {
     // The dashboard from the same history as the app's page (loaded first), so every device sends
     // the same figures; when the history cannot be loaded it is left out rather than sent short
     let dashboard: ReturnType<typeof financeDashboard> | undefined;
-    try {
-      const month = d.today.slice(0, 7);
-      const since = dashboardSince(d.settings.booksStartAt ? thaiDay(d.settings.booksStartAt) : undefined, month);
-      if (await loadHistory(since)) {
-        // The loaded records reach the ledger on the next render
-        await new Promise(r => setTimeout(r, 800));
-        const now = latest.current;
-        dashboard = financeDashboard(now.buildLines(), month, now.today, { since });
+    if (opts.dashboard !== false) {
+      try {
+        const month = d.today.slice(0, 7);
+        const since = dashboardSince(d.settings.booksStartAt ? thaiDay(d.settings.booksStartAt) : undefined, month);
+        if (await loadHistory(since)) {
+          // The loaded records reach the ledger on the next render
+          await new Promise(r => setTimeout(r, 800));
+          const now = latest.current;
+          dashboard = financeDashboard(now.buildLines(), month, now.today, { since });
+        }
+      } catch {
+        // the other sheets still go
       }
-    } catch {
-      // the other sheets still go
     }
     try {
       const r = await pushSheetsToScript(cfg.url, cfg.secret, sheets, dashboard);

@@ -69,6 +69,12 @@ body {
   .blur-xl {
     display: none !important;
   }
+  /* Endless pulsing and pinging dots repaint their layer every frame (graphics memory): still */
+  .animate-pulse,
+  .animate-ping,
+  .animate-bounce {
+    animation: none !important;
+  }
   /* Dialog overlays: a little darker, since the page behind is no longer blurred */
   .fixed.inset-0[class*='backdrop-blur'] {
     background-color: rgb(2 6 23 / 0.92);

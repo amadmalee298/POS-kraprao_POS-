@@ -109,6 +109,7 @@ import { claimTaken } from '../../services/firebaseService';
 import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { usePayables, useReceivables } from '../../hooks/useArAp';
 import { useFrequentIngredients } from '../../utils/useFrequentIngredients';
+import { useNarrowScreen } from '../../hooks/useNarrowScreen';
 
 type TimeHorizon = 'selected' | '6months' | 'year';
 type ViewTab = 'books' | 'vat' | 'ar_ap' | 'expenses' | 'incomes' | 'details' | 'telegram';
@@ -336,19 +337,6 @@ const isSameMonth = (dateOrIso: string | undefined, targetMonthStr: string): boo
 };
 
 const LIST_STEP = 50;
-/** True on a phone-width screen (the lists show cards there, a table elsewhere) */
-function useNarrowScreen(): boolean {
-  const query = '(max-width: 767px)';
-  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(query).matches);
-  useEffect(() => {
-    const mq = window.matchMedia?.(query);
-    if (!mq) return;
-    const on = () => setNarrow(mq.matches);
-    mq.addEventListener?.('change', on);
-    return () => mq.removeEventListener?.('change', on);
-  }, []);
-  return narrow;
-}
 
 export const AccountingView: React.FC = () => {
   const { orders, expenses, incomes = [], settings, updateSettings, addExpense, deleteExpense, addIncome, updateIncome, deleteIncome, currentBranch, ingredients, addStockLot, updateIngredient, menuItems = [], stockLots = [], currentUser, users, permissions, loadHistory } = usePOS();
