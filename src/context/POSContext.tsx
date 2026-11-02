@@ -93,6 +93,8 @@ import {
   syncAddOnsToFirestore,
   shopAccountRefreshToken,
   uploadMissingRecords,
+  readBranchDocFromServer,
+  mergeBranchDoc,
   cloudWritesDone,
   claimOnce,
   syncSettingsToFirestore,
@@ -1565,8 +1567,43 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // The shop's own lists (people and PINs, staff, shifts, cash drawer, tables, categories,
   // toppings, stock lots…) in the cloud too, the same on every device: before, they lived only on
   // the device where they were made. PINs travel hashed.
-  const mirrorOn = isStorageLoaded && !effectiveOffline && isFirebaseAvailable();
   const mirrorBranch = currentBranch?.id;
+  /**
+   * The shop keeps its data only in the cloud (some device has removed its own copy): a device
+   * still holding an older copy (another browser, an old tablet) must not bring old people,
+   * PINs or lists back. Its lists take the cloud's, and only what it never sent goes up.
+   * null: not known yet (asked before the lists are followed).
+   */
+  const [cloudOnly, setCloudOnly] = useState<boolean | null>(retiredStart ? true : null);
+  useEffect(() => {
+    if (!isStorageLoaded || effectiveOffline || !mirrorBranch) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = async () => {
+      if (!isFirebaseAvailable()) {
+        timer = setTimeout(() => void ask(), 15_000);
+        return;
+      }
+      const meta = await readBranchDocFromServer(mirrorBranch, 'state_meta');
+      if (!alive) return;
+      if (meta === undefined) {
+        // Not readable yet (e.g. the shop account is not signed in): asked again
+        timer = setTimeout(() => void ask(), 15_000);
+        return;
+      }
+      if (retiredStart) {
+        if (!meta?.cloudOnly) void mergeBranchDoc(mirrorBranch, 'state_meta', { cloudOnly: true, cloudOnlySince: new Date().toISOString() });
+        return;
+      }
+      setCloudOnly(!!meta?.cloudOnly);
+    };
+    void ask();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [isStorageLoaded, effectiveOffline, mirrorBranch, retiredStart]);
+  const mirrorOn = isStorageLoaded && !effectiveOffline && isFirebaseAvailable() && cloudOnly !== null;
   const recentMonths = useMemo(() => {
     const now = new Date();
     return Array.from({ length: 13 }, (_, i) => {
@@ -1593,10 +1630,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     docOf: (x: any) => `${prefix}_${(monthOf(x) || '').slice(0, 7) || 'undated'}`,
     docs: [...months.map(m => `${prefix}_${m}`), `${prefix}_undated`]
   });
-  const mirror = { branchId: mirrorBranch, enabled: mirrorOn, trustCloud: retiredStart };
-  // Nobody can sign in with a built-in PIN while the people are still on their way from the cloud
-  const [usersReady, setUsersReady] = useState(!retiredStart);
-  const markUsersReady = useCallback(() => setUsersReady(true), []);
+  const mirror = { branchId: mirrorBranch, enabled: mirrorOn, trustCloud: retiredStart || cloudOnly === true };
+  // Nobody signs in with a built-in or old PIN while the people are still on their way from the
+  // cloud. Only a shop not yet in the cloud alone signs in with this device's own list
+  const [usersFromCloud, setUsersFromCloud] = useState(false);
+  const usersReady = usersFromCloud || (!retiredStart && cloudOnly === false);
+  const markUsersReady = useCallback(() => setUsersFromCloud(true), []);
   useCloudMirror<User>({ ...mirror, ...single('state_users'), items: users, setItems: setUsers, toCloud: cloudPin, prefer: preferChosenPin, ordered: true, seedIfMissing: () => INITIAL_USERS, onReady: markUsersReady });
   useCloudMirror<StaffMember>({ ...mirror, ...single('state_staff'), items: staffMembers, setItems: setStaffMembers, toCloud: cloudPin, prefer: preferChosenPin, ordered: true });
   useCloudMirror<Branch>({ ...mirror, ...single('state_branches'), items: branches, setItems: setBranches, ordered: true });
@@ -4360,11 +4399,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     retiringRef.current = true;
     try {
-      const results = await Promise.all([
-        uploadMissingRecords('orders', orders, o => syncOrderToFirestore(o, currentBranch)),
-        uploadMissingRecords('expenses', expenses, e => syncExpenseToFirestore(e, currentBranch)),
-        uploadMissingRecords('incomes', incomes, i => syncIncomeToFirestore(i, currentBranch))
-      ]);
+      // Records the cloud does not have go up only while the shop is moving to the cloud: once it
+      // keeps its data only there, a record missing from it was removed (not brought back)
+      const results = cloudOnly
+        ? []
+        : await Promise.all([
+            uploadMissingRecords('orders', orders, o => syncOrderToFirestore(o, currentBranch)),
+            uploadMissingRecords('expenses', expenses, e => syncExpenseToFirestore(e, currentBranch)),
+            uploadMissingRecords('incomes', incomes, i => syncIncomeToFirestore(i, currentBranch))
+          ]);
       if (results.some(r => r.failed > 0)) {
         console.warn('[Local data] Some records could not be checked or sent; trying again later', results);
         return;
@@ -4373,6 +4416,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       await retireBigStore();
       await retireImageStore();
       setLocalRetired(true);
+      void mergeBranchDoc(currentBranch.id, 'state_meta', { cloudOnly: true, cloudOnlySince: new Date().toISOString() });
       console.info('[Local data] Everything is in the cloud: this device no longer keeps the shop\'s data', results);
     } catch (err) {
       console.warn('[Local data] Not removed this time:', err);
