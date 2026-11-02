@@ -14,12 +14,12 @@ const HEARTBEAT_MS = 20_000;
 // A run last seen on screen longer ago than this ended some other way (e.g. the phone slept)
 const CRASH_WINDOW_MS = 3 * 60_000;
 
-type RunState = { visible: boolean; at: number; crashes: number };
+type RunState = { visible: boolean; at: number; crashes: number; page?: string };
 
 export function readRunState(raw: string | null): RunState | null {
   try {
     const s = JSON.parse(raw || 'null');
-    return s && typeof s.at === 'number' ? { visible: !!s.visible, at: s.at, crashes: Number(s.crashes) || 0 } : null;
+    return s && typeof s.at === 'number' ? { visible: !!s.visible, at: s.at, crashes: Number(s.crashes) || 0, ...(typeof s.page === 'string' && s.page ? { page: s.page } : {}) } : null;
   } catch {
     return null;
   }
@@ -32,6 +32,17 @@ export function crashesBefore(prev: RunState | null, now: number): number {
 }
 
 let crashes = 0;
+/** The page the run closed by the phone was on ('' when unknown) */
+let crashedOn = '';
+/** The page this run is on (kept with each note, so a crash says where it happened) */
+let page = '';
+let markNow: (() => void) | null = null;
+export const crashPage = () => crashedOn;
+/** The page now shown (called when it changes) */
+export function setRunPage(name: string): void {
+  page = name;
+  markNow?.();
+}
 /** Runs in a row closed by the phone just before this one */
 export const startupCrashes = () => crashes;
 /** Open on the sales screen and load the cloud lists in smaller pieces (the last run was closed) */
@@ -47,7 +58,9 @@ function save(state: RunState) {
 
 export async function bootGuard(): Promise<void> {
   try {
-    crashes = crashesBefore(readRunState(localStorage.getItem(KEY)), Date.now());
+    const prev = readRunState(localStorage.getItem(KEY));
+    crashes = crashesBefore(prev, Date.now());
+    crashedOn = crashes ? prev?.page || '' : '';
   } catch {
     crashes = 0;
   }
@@ -60,7 +73,8 @@ export async function bootGuard(): Promise<void> {
 
   // Counted as closed by the phone until it has been on screen for a minute
   let stored = crashes;
-  const mark = () => save({ visible: document.visibilityState !== 'hidden', at: Date.now(), crashes: stored });
+  const mark = () => save({ visible: document.visibilityState !== 'hidden', at: Date.now(), crashes: stored, ...(page ? { page } : {}) });
+  markNow = mark;
   mark();
   setTimeout(() => {
     stored = 0;
@@ -71,5 +85,5 @@ export async function bootGuard(): Promise<void> {
   }, HEARTBEAT_MS);
   // Going to the background or closing the tab is a normal end
   document.addEventListener('visibilitychange', mark);
-  window.addEventListener('pagehide', () => save({ visible: false, at: Date.now(), crashes: stored }));
+  window.addEventListener('pagehide', () => save({ visible: false, at: Date.now(), crashes: stored, ...(page ? { page } : {}) }));
 }

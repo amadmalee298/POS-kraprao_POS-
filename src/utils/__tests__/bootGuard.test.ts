@@ -16,6 +16,7 @@ describe('crashesBefore', () => {
   });
   it('reads what was saved, and ignores anything else', () => {
     expect(readRunState('{"visible":true,"at":5,"crashes":1}')).toEqual({ visible: true, at: 5, crashes: 1 });
+    expect(readRunState('{"visible":true,"at":5,"crashes":0,"page":"บิลจาก Telegram"}')).toEqual({ visible: true, at: 5, crashes: 0, page: 'บิลจาก Telegram' });
     expect(readRunState('nope')).toBeNull();
     expect(readRunState(null)).toBeNull();
   });

@@ -4,6 +4,7 @@ import { useSheetsScriptPush } from '../../hooks/useSheetsScript';
 import { readAutoMinutes, readLastPush } from '../../services/sheetsScript';
 
 const CHECK_MS = 60 * 1000;
+const PHONE = typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none), (max-width: 1024px)').matches;
 // After a failed send, wait before trying again (the next check would otherwise retry every minute)
 const RETRY_MS = 10 * 60 * 1000;
 
@@ -31,7 +32,8 @@ export const SheetsScriptAutoSync: React.FC = () => {
       if (since < (last && !last.ok ? Math.min(RETRY_MS, minutes * 60000) : minutes * 60000)) return;
       running = true;
       try {
-        await push();
+        // The Dashboard sheet loads a year of history: computers only (a phone sends it by hand)
+        await push({ dashboard: !PHONE });
       } catch (e) {
         console.warn('[Sheets Apps Script] automatic send failed:', e);
       } finally {

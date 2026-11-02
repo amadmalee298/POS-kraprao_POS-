@@ -39,7 +39,7 @@ import { ShopAccountBanner } from './components/ShopAccountBanner';
 import { UpdateWatcher } from './components/UpdateWatcher';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { AutoCloudPictureCleanup } from './components/settings/CloudPictureCleanup';
-import { startupCrashes } from './utils/bootGuard';
+import { crashPage, setRunPage, startupCrashes } from './utils/bootGuard';
 import { canOpenTab, firstAllowedTab } from './utils/access';
 import { PrepCostSync } from './components/inventory/PrepCostSync';
 import { MobileClockPage, readClockHash } from './components/attendance/MobileClockPage';
@@ -68,6 +68,10 @@ const MainLayout: React.FC = () => {
   } = usePOS();
   // The phone closed the app just before (out of memory): it opened on the sales screen, lighter
   const [crashNotice, setCrashNotice] = useState(() => startupCrashes() > 0);
+  // Each run notes its page: the next start says where the phone closed it (to find the heavy page)
+  useEffect(() => {
+    setRunPage(activeTab);
+  }, [activeTab]);
   const effectiveOffline = isOffline || forceOfflineMode;
 
   const [mobileClock, setMobileClock] = useState<{ code: string; at: number } | null>(() => {
@@ -167,7 +171,9 @@ const MainLayout: React.FC = () => {
 
       {!isLocked && crashNotice && (
         <div className="bg-sky-950 border-b border-sky-800 text-sky-100 px-4 py-2 text-xs flex items-center justify-between gap-3">
-          <span>แอปถูกปิดไปเองเมื่อครู่ (หน่วยความจำเครื่องเต็ม) จึงเปิดที่หน้าขายและโหลดข้อมูลคลาวด์ทีละส่วน ข้อมูลไม่หาย</span>
+          <span>
+            แอปถูกปิดไปเองเมื่อครู่{crashPage() ? ` ขณะอยู่หน้า ${PAGE_NAMES[crashPage()] || crashPage()}` : ''} (หน่วยความจำเครื่องเต็ม) จึงเปิดที่หน้าขายและโหลดข้อมูลคลาวด์ทีละส่วน ข้อมูลไม่หาย
+          </span>
           <button type="button" onClick={() => setCrashNotice(false)} className="shrink-0 h-8 px-3 rounded-lg bg-sky-800 font-bold">
             ตกลง
           </button>
@@ -230,6 +236,24 @@ const MainLayout: React.FC = () => {
       <PrepCostSync />
     </div>
   );
+};
+
+/** Page names for the notice after the phone closed the app */
+const PAGE_NAMES: Record<string, string> = {
+  dashboard: 'วิเคราะห์ผลประกอบการ',
+  pos: 'ขายหน้าร้าน',
+  qr: 'สั่งอาหาร QR',
+  kds: 'ห้องครัว',
+  inventory: 'คลังวัตถุดิบ',
+  recipes: 'เมนูและสูตร',
+  po: 'จัดซื้อ',
+  accounting: 'การเงินและสมุดบัญชี',
+  quotation: 'ใบเสนอราคา',
+  tax_receipt: 'ใบเสร็จ',
+  order_history: 'ประวัติออเดอร์',
+  crm: 'สมาชิก CRM',
+  line_notify: 'แจ้งเตือน',
+  settings: 'ตั้งค่า'
 };
 
 export default function App() {

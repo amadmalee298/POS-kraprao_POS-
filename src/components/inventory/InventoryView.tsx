@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNarrowScreen } from '../../hooks/useNarrowScreen';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { STOCK_TYPES, misfiledStock, stockTypeLabel, stockTypeOf, stockValueByType, isLowStock } from '../../utils/stockTypes';
 import { StockIssuePanel } from './StockIssuePanel';
@@ -57,7 +58,16 @@ import { AdjustmentLogModal } from './AdjustmentLogModal';
 import { InventoryReportModal } from './InventoryReportModal';
 import { GoogleSheetsModal } from '../common/GoogleSheetsModal';
 
+/** Phones show the ingredients a page at a time (each card is a large part of the page) */
+const CARD_STEP = 40;
+/** Stock movements shown at a time (the newest first) */
+const LOG_STEP = 60;
+
 export const InventoryView: React.FC = () => {
+  // One of the two layouts is drawn (cards on a phone, the table elsewhere), never both
+  const narrow = useNarrowScreen();
+  const [cardLimit, setCardLimit] = useState(CARD_STEP);
+  const [logLimit, setLogLimit] = useState(LOG_STEP);
   const {
     ingredients,
     stockLots,
@@ -1142,8 +1152,9 @@ export const InventoryView: React.FC = () => {
             )}
 
             {/* Phones: one card per ingredient (the table needs a wide screen) */}
+            {narrow && (
             <div className="md:hidden space-y-2">
-              {filteredIngredients.map(ing => {
+              {filteredIngredients.slice(0, cardLimit).map(ing => {
                 const isLow = isLowStock(ing);
                 const { lot, state } = expiryOf(ing.id);
                 const isSelected = selectedIngIds.includes(ing.id);
@@ -1194,8 +1205,15 @@ export const InventoryView: React.FC = () => {
                 );
               })}
             </div>
+            )}
+            {narrow && filteredIngredients.length > cardLimit && (
+              <button type="button" onClick={() => setCardLimit(n => n + CARD_STEP)} className="w-full h-11 rounded-xl border border-slate-700 text-slate-300 text-sm font-bold">
+                แสดงเพิ่ม ({filteredIngredients.length - cardLimit} รายการ)
+              </button>
+            )}
 
             {/* Current Stock Table with Horizontal Scroll Safety */}
+            {!narrow && (
             <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-slate-300 min-w-[750px]">
@@ -1536,6 +1554,7 @@ export const InventoryView: React.FC = () => {
                 </table>
               </div>
             </div>
+            )}
             {/* Several items at once (by dish sold, or waste) */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl">
               <button type="button" onClick={() => setShowIssuePanel(o => !o)} className="w-full flex items-center justify-between px-4 py-3 text-sm font-bold text-slate-200">
@@ -1680,7 +1699,7 @@ export const InventoryView: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
-                    {filteredLogs.map(log => (
+                    {filteredLogs.slice(0, logLimit).map(log => (
                       <tr key={log.id} className="hover:bg-slate-800/40 transition">
                         <td className="py-3.5 px-4 font-mono text-slate-400 whitespace-nowrap">{log.date}</td>
                         <td className="py-3.5 px-4 font-bold text-slate-100 whitespace-nowrap">
@@ -1727,6 +1746,11 @@ export const InventoryView: React.FC = () => {
                 </table>
               </div>
             </div>
+            {filteredLogs.length > logLimit && (
+              <button type="button" onClick={() => setLogLimit(n => n + LOG_STEP)} className="w-full h-11 rounded-xl border border-slate-700 text-slate-300 text-sm font-bold">
+                แสดงเพิ่ม ({filteredLogs.length - logLimit} รายการ)
+              </button>
+            )}
           </div>
         )}
 
@@ -1767,6 +1791,7 @@ export const InventoryView: React.FC = () => {
             </div>
 
             {/* Phones: the card's entries as a list */}
+            {narrow && (
             <div className="md:hidden space-y-2">
               {stockCardRecords.length === 0 && <div className="p-6 text-center text-xs text-slate-500 bg-slate-900 border border-slate-800 rounded-2xl">ยังไม่มีการรับ-เบิกของวัตถุดิบนี้</div>}
               {stockCardRecords.map(sc => (
@@ -1790,8 +1815,10 @@ export const InventoryView: React.FC = () => {
                 </div>
               ))}
             </div>
+            )}
 
             {/* Stock Card Table with Horizontal Scroll Safety */}
+            {!narrow && (
             <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-slate-300 min-w-[800px]">
@@ -1852,6 +1879,7 @@ export const InventoryView: React.FC = () => {
                 </table>
               </div>
             </div>
+            )}
           </div>
         )}
       </div>
