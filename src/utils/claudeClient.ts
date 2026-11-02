@@ -65,6 +65,10 @@ export class ClaudeCallError extends Error {
  * Create a caller bound to one API key. Returns the model's JSON text.
  * `browser: true` only for the shop's own key on its own device (static hosting).
  */
+/** The Anthropic account behind the key has no credit left (the owner tops it up; nothing else helps) */
+export const CREDIT_EMPTY_MESSAGE =
+  'เครดิต Anthropic API หมด: เจ้าของร้านเติมเครดิตที่ console.anthropic.com → Settings → Billing (บัญชีเดียวกับ API Key ที่ใส่ไว้ใน Vercel) แล้วส่งรูปบิลใหม่';
+
 export function createClaudeJsonCaller(options: { apiKey?: string; browser?: boolean } = {}) {
   const client = new Anthropic({
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
@@ -123,6 +127,9 @@ export function createClaudeJsonCaller(options: { apiKey?: string; browser?: boo
       }
       if (err instanceof Anthropic.APIConnectionError) {
         throw new ClaudeCallError('เชื่อมต่อ Claude ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ต', true);
+      }
+      if (err instanceof Anthropic.APIError && /credit balance is too low/i.test(err.message || '')) {
+        throw new ClaudeCallError(CREDIT_EMPTY_MESSAGE, false);
       }
       if (err instanceof Anthropic.APIError) {
         throw new ClaudeCallError(`Claude API error ${err.status ?? ''}: ${err.message}`, (err.status ?? 500) >= 500);
