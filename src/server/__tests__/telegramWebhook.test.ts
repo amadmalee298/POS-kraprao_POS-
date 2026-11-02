@@ -369,10 +369,38 @@ describe('Telegram webhook on Vercel', () => {
     );
     const moved = { update_id: 150, message: { message_id: 1, date: 1790000000, chat: { id: -100999 }, migrate_from_chat_id: -100 } };
     await expect(deliver(moved)).rejects.toThrow();
-    expect(cloud.read('branches/b1/status/tgupdate_150')).toBeNull();
+    expect(cloud.read('branches/b1/status/tgupdate_150')).toMatchObject({ state: 'retry', tries: 1 });
     fail = false;
     expect((await deliver(moved)).status).toBe(200);
     expect(cloud.read('branches/b1/config/telegram_bot')).toMatchObject({ chatId: '-100999' });
+  });
+
+  it('a bill the bot could not save is tried again by Telegram, and the chat is told after the last try', async () => {
+    let failures = 0;
+    const real = cloud.fetchMock.getMockImplementation()!;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: any, init: any = {}) => {
+        if (failures > 0 && init.method === 'PATCH' && String(input).includes('/expenses/')) {
+          failures--;
+          return new Response(JSON.stringify({ error: { message: 'deadline exceeded' } }), { status: 503 });
+        }
+        return real(input, init);
+      })
+    );
+    const entry = (id: number) => ({ update_id: id, message: { message_id: id, date: 1790000000, chat: { id: -100 }, from: { id: 5, first_name: 'แม่ครัว' }, text: 'จ่าย ค่าแก๊ส 350' } });
+    failures = 1;
+    expect((await deliver(entry(160))).status).toBe(500);
+    expect([...cloud.docs.keys()].filter(k => k.startsWith('expenses/'))).toHaveLength(0);
+    expect((await deliver(entry(160))).status).toBe(200);
+    expect([...cloud.docs.keys()].filter(k => k.startsWith('expenses/'))).toHaveLength(1);
+    // Failing every time: after the third try the chat is told, and it is not tried again
+    failures = 99;
+    expect((await deliver(entry(161))).status).toBe(500);
+    expect((await deliver(entry(161))).status).toBe(500);
+    expect((await deliver(entry(161))).status).toBe(200);
+    expect(cloud.telegram.some(t => t.body.text?.includes('ลองแล้ว 3 ครั้ง'))).toBe(true);
+    expect((await deliver(entry(161))).body).toMatchObject({ duplicate: true });
   });
 
   it('removing a record also removes its pictures, and its Drive files wait to be binned', async () => {

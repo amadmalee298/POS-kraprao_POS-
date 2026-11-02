@@ -26,12 +26,19 @@ describe('finance dashboard', () => {
     expect(d.margin).toBe(65);
     expect(d.cumulativeProfit).toBe(balanceSheet(lines, '2026-10-31').earningsToDate);
     expect(d.cumulativeProfit).toBe(2000);
+    // Counted from a given day only (the same on every device)
+    expect(financeDashboard(lines, '2026-10', '2026-11-01', { months: 1, since: '2026-10-01' }).cumulativeProfit).toBe(1300);
   });
 
   it('shows each cash account and its share', () => {
     expect(d.cashBalance).toBe(2000);
     expect(d.accounts.find(a => a.code === '1010')).toMatchObject({ amount: 3000, share: 100 });
     expect(d.accounts.find(a => a.code === '1001')).toMatchObject({ amount: -1000, share: 0 });
+  });
+
+  it('compares a month still running with the same days of last month', () => {
+    const partial = financeDashboard([...lines, ...spend('2026-09-28', 100, 'ค่าไฟ'), ...spend('2026-11-01', 40, 'ค่าไฟ')], '2026-11', '2026-11-01', { months: 2 });
+    expect(partial.topExpense.find(x => x.name === 'ค่าไฟ')).toMatchObject({ amount: 40, change: 40 });
   });
 
   it('lists the largest items against last month, and the months for the charts', () => {

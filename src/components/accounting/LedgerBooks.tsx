@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FinanceDashboard } from './FinanceDashboard';
-import { addMonths } from '../../utils/financeDashboard';
+import { dashboardSince } from '../../utils/financeDashboard';
 import { CheckCircle2, ChevronRight, Plus, Printer, RotateCcw, Trash2, TriangleAlert } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { useLedger } from '../../hooks/useLedger';
@@ -172,12 +172,14 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
   const { loadHistory, historyLoading } = pos;
   const [historyFailed, setHistoryFailed] = useState(false);
   const [month, setMonth] = useState(today.slice(0, 7));
+  // The dashboard counts from the start of the books, or its first month (same as Google Sheets)
+  const dashboardFrom = dashboardSince(settings.booksStartAt ? thaiDay(settings.booksStartAt) : undefined, month);
   const needFrom = useMemo(() => {
     const start = settings.booksStartAt ? thaiDay(settings.booksStartAt) : `${Number(asOf.slice(0, 4)) - 1}-01-01`;
     // The dashboard: its twelve months (and profit to date from the start of the books)
-    const dashFrom = tab === 'dashboard' ? `${addMonths(month, -11)}-01` : from;
+    const dashFrom = tab === 'dashboard' ? dashboardFrom : from;
     return [start, from, dashFrom].sort()[0];
-  }, [settings.booksStartAt, asOf, from, tab, month]);
+  }, [settings.booksStartAt, asOf, from, tab, dashboardFrom]);
   useEffect(() => {
     let alive = true;
     loadHistory(needFrom).then(ok => alive && setHistoryFailed(!ok));
@@ -218,7 +220,7 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
 
   let body: React.ReactNode = null;
   if (tab === 'dashboard') {
-    body = <FinanceDashboard lines={lines} today={today} month={month} onMonth={setMonth} />;
+    body = <FinanceDashboard lines={lines} today={today} month={month} since={dashboardFrom} onMonth={setMonth} />;
   } else if (tab === 'pnl') {
     const p = profitAndLoss(lines, from, to);
     body = (

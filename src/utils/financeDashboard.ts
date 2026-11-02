@@ -22,7 +22,7 @@ export interface DashboardMonth {
   income: number;
   expense: number;
   profit: number;
-  /** Profit from the start of the books to the end of this month */
+  /** Profit from `since` to the end of this month */
   cumulative: number;
 }
 
@@ -39,6 +39,8 @@ export interface FinanceDashboardData {
   /** Net profit ÷ income (null without income) */
   margin: number | null;
   cumulativeProfit: number;
+  /** The first day profit to date counts from */
+  since: string;
   topIncome: DashboardItem[];
   topExpense: DashboardItem[];
   months: DashboardMonth[];
@@ -88,12 +90,23 @@ const top = (now: Map<string, { group: string; amount: number }>, before: Map<st
     .sort((a, b) => b.amount - a.amount)
     .slice(0, n);
 
-export function financeDashboard(lines: GlLine[], month: string, today: string, opts: { months?: number; top?: number } = {}): FinanceDashboardData {
+/**
+ * The first day the dashboard counts from: the start of the books when set, otherwise its first
+ * month shown. The app's page and the Google Sheets dashboard both load history from here, so
+ * every device shows the same figures.
+ */
+export const dashboardSince = (booksStartDay: string | undefined, month: string, months = 12) => {
+  const first = `${addMonths(month, -(months - 1))}-01`;
+  return booksStartDay && booksStartDay < first ? booksStartDay : first;
+};
+
+export function financeDashboard(lines: GlLine[], month: string, today: string, opts: { months?: number; top?: number; since?: string } = {}): FinanceDashboardData {
   const from = `${month}-01`;
   const end = monthEnd(month);
   const asOf = today < end && today >= from ? today : end;
   const count = opts.months || 12;
   const first = addMonths(month, -(count - 1));
+  const since = opts.since || `${first}-01`;
   // One pass: each month's income and expenses, profit up to each month, and the cash accounts
   const byMonth = new Map<string, { income: number; expense: number }>();
   let profitBefore = 0; // before the first month shown
@@ -105,7 +118,7 @@ export function financeDashboard(lines: GlLine[], month: string, today: string, 
     if (type !== 'REVENUE' && type !== 'EXPENSE') continue;
     const ym = l.date.slice(0, 7);
     if (ym < first) {
-      profitBefore += l.credit - l.debit;
+      if (l.date >= since) profitBefore += l.credit - l.debit;
       continue;
     }
     const m = byMonth.get(ym) || { income: 0, expense: 0 };
@@ -127,7 +140,10 @@ export function financeDashboard(lines: GlLine[], month: string, today: string, 
   const positive = accounts.reduce((s, a) => s + Math.max(0, a.amount), 0);
   const prev = addMonths(month, -1);
   const nowItems = items(lines, from, asOf);
-  const beforeItems = items(lines, `${prev}-01`, monthEnd(prev));
+  // Against the same days of last month (1st to the same day; the whole month once this one is over)
+  const prevEnd = monthEnd(prev);
+  const sameDay = `${prev}-${asOf.slice(8, 10)}`;
+  const beforeItems = items(lines, `${prev}-01`, asOf === end || sameDay > prevEnd ? prevEnd : sameDay);
   return {
     month,
     label: thaiMonthLabel(month),
@@ -139,6 +155,7 @@ export function financeDashboard(lines: GlLine[], month: string, today: string, 
     profit: now.profit,
     margin: now.income > 0 ? round2((now.profit / now.income) * 100) : null,
     cumulativeProfit: now.cumulative,
+    since,
     topIncome: top(nowItems.income, beforeItems.income, opts.top || 20),
     topExpense: top(nowItems.expense, beforeItems.expense, opts.top || 20),
     months

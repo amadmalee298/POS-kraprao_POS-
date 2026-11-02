@@ -32,6 +32,11 @@ export interface CloudMirrorOptions<T extends WithId> {
   seedIfMissing?: () => T[];
   /** Every followed document has arrived once */
   onReady?: () => void;
+  /**
+   * This device's own copy has been read (its list as kept on the device). With trustCloud, what
+   * changed or was added here after that (e.g. offline, before the cloud answered) is kept and sent
+   */
+  loaded?: boolean;
 }
 
 const ARCHIVED_KEY = 'POS_CLOUD_ARCHIVED';
@@ -72,6 +77,9 @@ export function useCloudMirror<T extends WithId>(o: CloudMirrorOptions<T>): void
   /** The shared order (ordered lists) */
   const cloudOrder = useRef<string[]>([]);
   const sending = useRef(false);
+  /** Each record as this device's copy was read (null until then) */
+  const baseline = useRef<Map<string, string> | null>(null);
+  if (o.loaded && !baseline.current) baseline.current = new Map(o.items.map(i => [i.id, JSON.stringify(cloudForm(i))]));
   const token = useRef({});
   useEffect(() => {
     const t = token.current;
@@ -205,7 +213,12 @@ export function useCloudMirror<T extends WithId>(o: CloudMirrorOptions<T>): void
             // None in the cloud yet: what this device starts with becomes the shared list
             if (!data) return seedIfMissing && prev.length === others.length ? [...seedIfMissing(), ...others] : prev;
             const at = new Map((shared || []).map((id, i) => [id, i]));
-            const fromCloud = shared ? [...cloud].sort((x, y) => (at.get(x.id) ?? 1e9) - (at.get(y.id) ?? 1e9)) : cloud;
+            const sorted = shared ? [...cloud].sort((x, y) => (at.get(x.id) ?? 1e9) - (at.get(y.id) ?? 1e9)) : cloud;
+            // Changed or added here during this visit (not part of the old copy): kept, and sent
+            const base = baseline.current;
+            const madeHere = base ? prev.filter(i => docOf(i) === key && base.get(i.id) !== JSON.stringify(cloudForm(i))) : [];
+            const mine = new Map(madeHere.map(i => [i.id, i]));
+            const fromCloud = [...sorted.map(c => mine.get(c.id) || c), ...madeHere.filter(i => !sorted.some(c => c.id === i.id))];
             return order ? order([...fromCloud, ...others]) : [...fromCloud, ...others];
           }
           const merged = mergeMirror({ prev, cloud, key, first, before, removed, docOf, toCloud: cloudForm, prefer });

@@ -554,9 +554,9 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     if (!owner || owner.status === 'rejected') return false;
     const reply = (text: string) => sendQuiet({ text, reply_to_message_id: photo.messageId });
     const labelOf = (o: PendingReceipt) => (o.data?.vendorName || o.data?.title || o.caption || 'บิลนี้').replace(/[&<>]/g, '').slice(0, 40);
-    // The picture is read before taking the bill, so the bill is held only for its quick change
-    const forExpense = owner.status === 'approved' && !!owner.recordId?.startsWith('exp-');
-    const [pic] = forExpense ? await pagePictures([photo]) : [];
+    // The picture is read before taking the bill, so the bill is held only for its quick change.
+    // Read whatever the bill's state now: it may be saved as an expense while this page waits
+    const [pic] = await pagePictures([photo]);
     const holder = String(photo.messageId);
     let locked = !store.album;
     for (let i = 0; i < 30 && !locked; i++) {
@@ -870,7 +870,9 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     return;
   }
   const id = `tg-${chatId}-${msg.messageId}`;
-  if (await store.inboxItem(id)) return;
+  // Handled already; one left 'reading' was stopped before it was saved (tried again)
+  const earlier = await store.inboxItem(id);
+  if (earlier && earlier.status !== 'reading') return;
   const base: PendingReceipt = {
     id,
     source: 'telegram',
@@ -913,7 +915,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     if (sent?.message_id) await store.patchInbox(id, { cardMessageId: sent.message_id });
     return;
   }
-  await store.putInbox(base);
+  await store.putInbox({ ...base, status: 'reading' });
   const saved = await record(parsed, msg.senderName);
   await store.patchInbox(id, { status: 'approved', recordId: saved.rec.id, decidedBy: AUTO_BY, decidedAt: new Date().toISOString() });
   await showCard(saved, id, msg.messageId, undefined, dateWarning ? `${dateWarning} (กด ✏️ แก้ไข → วันที่)` : undefined);

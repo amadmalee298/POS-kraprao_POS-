@@ -22,6 +22,8 @@ const receivedAt = (p: PendingReceipt) => p.receivedAt;
 const KEEP_SEEN = 60;
 /** A delivery still marked working after this long was stopped (Vercel allows 60 s): handled again */
 const STALE_WORK_MS = 75_000;
+/** A delivery that failed is tried this many times before the chat is told */
+const MAX_TRIES = 3;
 /** Firestore documents hold at most 1 MB; pictures that would not fit stay in the Telegram chat */
 const DOC_LIMIT = 900_000;
 const KEEP_PHOTO_BYTES = 450_000;
@@ -402,12 +404,18 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
   // this update's marker handles it. One still working is asked to be sent again later: it may
   // have been stopped by Vercel's time limit, and a marker left working that long is taken over
   const markerPath = `branches/${req.branchId}/status/tgupdate_${updateId}`;
+  // Which try this is (a delivery that failed is tried again by Telegram, up to MAX_TRIES)
+  let tries = 1;
   if (Number.isFinite(updateId)) {
     const marker = await db.getWithTime(markerPath);
-    const working = { state: 'working', at: new Date().toISOString() };
+    const state = String(marker.data?.state || '');
+    tries = (Number(marker.data?.tries) || 0) + 1;
+    const working = { state: 'working', tries, at: new Date().toISOString() };
     if (!marker.data) {
       if (!(await db.setIfUnchanged(markerPath, working, null))) return { status: 503, body: { busy: true } };
-    } else if (marker.data.state !== 'working') {
+    } else if (state === 'retry') {
+      if (!(await db.setIfUnchanged(markerPath, working, marker.updateTime))) return { status: 503, body: { busy: true } };
+    } else if (state !== 'working') {
       return { status: 200, body: { duplicate: true } }; // done (or a marker from before working/done)
     } else if (Date.now() - Date.parse(String(marker.data.at || '')) < STALE_WORK_MS || !(await db.setIfUnchanged(markerPath, working, marker.updateTime))) {
       return { status: 503, body: { busy: true } };
@@ -415,20 +423,22 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
   }
   const finished = async () => {
     if (!Number.isFinite(updateId)) return;
-    await db.set(markerPath, { state: 'done', at: new Date().toISOString() }).catch(() => {});
+    await db.set(markerPath, { state: 'done', tries, at: new Date().toISOString() }).catch(() => {});
     const latest: any = (await db.get(statePath).catch(() => null)) || {};
     const list: number[] = Array.isArray(latest.seen) ? latest.seen : [];
     await db.set(statePath, { seen: [...list.filter(x => x !== updateId), updateId].slice(-KEEP_SEEN), lastUpdateAt: new Date().toISOString() }, ['seen', 'lastUpdateAt']).catch(() => {});
   };
+  /** Not handled this time: Telegram's next try handles it */
+  const tryAgain = () => (Number.isFinite(updateId) ? db.set(markerPath, { state: 'retry', tries, at: new Date().toISOString() }).catch(() => {}) : Promise.resolve());
   let answer: { status: number; body: Record<string, unknown> };
   try {
     answer = await handleClaimed();
   } catch (e) {
-    // Not handled (e.g. the cloud did not answer): the marker goes, so Telegram's next try handles it
-    if (Number.isFinite(updateId)) await db.delete(markerPath).catch(() => {});
+    await tryAgain();
     throw e;
   }
-  await finished();
+  if (answer.status >= 500) await tryAgain();
+  else await finished();
   return answer;
 
   async function handleClaimed(): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -505,7 +515,9 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
     } catch (e: any) {
       const message = e?.message || String(e);
       await db.set(statePath, { lastError: `${new Date().toISOString()} ${message}` }, ['lastError']).catch(() => {});
-      await tgCall(token, 'sendMessage', { chat_id: chatId, text: `⚠️ ระบบบอทขัดข้อง: ${message}` }).catch(() => {});
+      // Telegram sends it again (the bill is not lost); after the last try the chat is told
+      if (tries < MAX_TRIES) return { status: 500, body: { error: message, tries } };
+      await tgCall(token, 'sendMessage', { chat_id: chatId, text: `⚠️ ระบบบอทขัดข้อง (ลองแล้ว ${tries} ครั้ง): ${message}\nส่งข้อความหรือรูปนี้อีกครั้ง` }).catch(() => {});
     }
     return { status: 200, body: { ok: true } };
   }

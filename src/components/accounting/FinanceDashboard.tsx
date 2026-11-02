@@ -71,8 +71,8 @@ const TopTable: React.FC<{ title: string; items: DashboardItem[]; goodWhenUp: bo
   </div>
 );
 
-export const FinanceDashboard: React.FC<{ lines: GlLine[]; today: string; month: string; onMonth: (m: string) => void }> = ({ lines, today, month, onMonth }) => {
-  const d = useMemo(() => financeDashboard(lines, month, today), [lines, month, today]);
+export const FinanceDashboard: React.FC<{ lines: GlLine[]; today: string; month: string; since: string; onMonth: (m: string) => void }> = ({ lines, today, month, since, onMonth }) => {
+  const d = useMemo(() => financeDashboard(lines, month, today, { since }), [lines, month, today, since]);
   const [table, setTable] = useState(false);
   const pct = (n: number | null) => (n === null ? '–' : `${n.toLocaleString('th-TH', { maximumFractionDigits: 2 })}%`);
 
@@ -92,7 +92,7 @@ export const FinanceDashboard: React.FC<{ lines: GlLine[]; today: string; month:
         <Tile label="รายจ่ายเดือนนี้" value={money(d.expense)} dot={C.expense} />
         <Tile label="กำไรสุทธิเดือนนี้" value={money(d.profit)} dot={C.profit} />
         <Tile label="อัตรากำไรสุทธิ" value={pct(d.margin)} dot="#94a3b8" />
-        <Tile label="กำไรสะสม" value={money(d.cumulativeProfit)} dot={C.cumulative} note="ตั้งแต่เริ่มบัญชี" />
+        <Tile label="กำไรสะสม" value={money(d.cumulativeProfit)} dot={C.cumulative} note={`ตั้งแต่ ${new Date(`${d.since}T00:00:00`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}`} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
