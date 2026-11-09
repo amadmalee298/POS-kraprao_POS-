@@ -1,5 +1,6 @@
 import React, { ErrorInfo, ReactNode } from 'react';
 import { clearBigStore } from '../utils/bigStore';
+import { isChunkLoadError, reloadApp, reloadForChunks } from '../utils/chunkLoad';
 import { AlertTriangle, RefreshCw, Trash2 } from 'lucide-react';
 
 interface Props {
@@ -29,10 +30,13 @@ export class ErrorBoundary extends React.Component<Props, State> {
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught React Error:', error, errorInfo);
     this.setState({ errorInfo });
+    // The app's code did not load (weak signal): loaded again once by itself
+    if (isChunkLoadError(error)) reloadForChunks();
   }
 
   private handleReload = () => {
-    window.location.reload();
+    // At an address the browser has not cached (a newer version's files replace the old ones)
+    reloadApp();
   };
 
   private handleClearCacheAndReload = async () => {
