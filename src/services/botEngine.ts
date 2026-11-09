@@ -559,7 +559,8 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     const [pic] = await pagePictures([photo]);
     const holder = String(photo.messageId);
     let locked = !store.album;
-    for (let i = 0; i < 30 && !locked; i++) {
+    // (bounded: the whole delivery must finish inside the server's 60 s)
+    for (let i = 0; i < 15 && !locked; i++) {
       locked = await store.album!.lock(albumKey(group), holder).catch(() => false);
       if (!locked) await sleep(1000);
     }

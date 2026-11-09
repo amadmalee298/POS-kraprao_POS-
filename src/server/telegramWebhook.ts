@@ -414,6 +414,19 @@ export async function handleWebhook(req: WebhookRequest, deps: WebhookDeps = {})
     const state = String(marker.data?.state || '');
     tries = (Number(marker.data?.tries) || 0) + 1;
     const working = { state: 'working', tries, at: new Date().toISOString() };
+    const stale = state === 'working' && Date.now() - Date.parse(String(marker.data?.at || '')) >= STALE_WORK_MS;
+    // Tried enough (failed, or stopped by the time limit each time): given up, so the messages
+    // after it are not held back behind it; the chat is told to send it again
+    if ((state === 'retry' || stale) && tries > MAX_TRIES) {
+      await db.set(markerPath, { state: 'done', tries, gaveUp: true, at: new Date().toISOString() }).catch(() => {});
+      const chat = req.update?.callback_query?.message?.chat?.id ?? (req.update?.message || req.update?.channel_post)?.chat?.id;
+      const replyTo = (req.update?.message || req.update?.channel_post)?.message_id;
+      if (chat !== undefined && String(chat) === String(config.chatId)) {
+        await tgCall(config.token, 'sendMessage', { chat_id: chat, text: '⚠️ ข้อความนี้บอททำไม่สำเร็จ (ลองแล้วหลายครั้ง) ส่งใหม่อีกครั้ง หรือกรอกในระบบ POS', ...(replyTo ? { reply_to_message_id: replyTo, allow_sending_without_reply: true } : {}) }).catch(() => {});
+      }
+      await db.set(statePath, { lastError: `${new Date().toISOString()} update ${updateId}: gave up after ${tries - 1} tries` }, ['lastError']).catch(() => {});
+      return { status: 200, body: { gaveUp: true } };
+    }
     if (!marker.data) {
       if (!(await db.setIfUnchanged(markerPath, working, null))) return { status: 503, body: { busy: true } };
     } else if (state === 'retry') {

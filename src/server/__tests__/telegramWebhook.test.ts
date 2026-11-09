@@ -425,6 +425,17 @@ describe('Telegram webhook on Vercel', () => {
     expect([...cloud.docs.keys()].filter(k => k.startsWith('expenses/'))).toHaveLength(1);
   });
 
+  it('a delivery stopped by the time limit every time is given up, so later messages are not held back', async () => {
+    cloud.write('branches/b1/status/tgupdate_180', { state: 'working', tries: 3, at: new Date(Date.now() - 5 * 60_000).toISOString() });
+    const r = await deliver(photoUpdate(180));
+    expect(r).toMatchObject({ status: 200, body: { gaveUp: true } });
+    expect(cloud.read('branches/b1/status/tgupdate_180')).toMatchObject({ state: 'done' });
+    expect(cloud.telegram.some(t => t.body.text?.includes('บอททำไม่สำเร็จ'))).toBe(true);
+    // The next message is handled as usual
+    expect((await deliver(photoUpdate(181))).status).toBe(200);
+    expect([...cloud.docs.keys()].filter(k => k.startsWith('expenses/'))).toHaveLength(1);
+  });
+
   it('handles a delivery Telegram sends twice only once', async () => {
     await deliver(photoUpdate(11));
     await deliver(photoUpdate(11));
