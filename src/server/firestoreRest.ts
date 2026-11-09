@@ -168,6 +168,27 @@ export class Firestore {
     };
   }
 
+  /**
+   * Documents of a collection under a parent (e.g. status under branches/<b>) whose field is below
+   * the value: only those are read (each document returned is a billed read)
+   */
+  async whereBelow(parentPath: string, collection: string, field: string, value: string, limit: number): Promise<{ id: string; data: { [k: string]: Json } }[]> {
+    const rows = await this.call(`${this.base}/${parentPath}:runQuery`, {
+      method: 'POST',
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: collection }],
+          where: { fieldFilter: { field: { fieldPath: fieldPath(field) }, op: 'LESS_THAN', value: { stringValue: value } } },
+          select: { fields: [{ fieldPath: fieldPath(field) }] },
+          limit
+        }
+      })
+    });
+    return (Array.isArray(rows) ? rows : [])
+      .filter(r => r.document)
+      .map(r => ({ id: String(r.document.name).split('/').pop() || '', data: fromFsFields(r.document.fields || {}) }));
+  }
+
   /** A page of a top-level collection in document-id order, after the given id ('' from the start) */
   async page(collection: string, afterId: string, limit: number, select?: string[]): Promise<{ id: string; data: { [k: string]: Json } }[]> {
     const name = `${this.base.replace(/^https:\/\/firestore\.googleapis\.com\/v1\//, '')}/${collection}/${afterId}`;
