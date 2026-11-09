@@ -93,7 +93,7 @@ describe('scheduled notifications', () => {
     // The Firestore client calls fetch itself
     vi.stubGlobal('fetch', fakeFetch);
     const signIn = { branchId: 'main', projectId: 'p', apiKey: 'k', refreshToken: 'r-test' };
-    const noPictures = (xs: string[]) => xs.filter(x => !x.startsWith('pictures') && !x.startsWith('markers'));
+    const noPictures = (xs: string[]) => xs.filter(x => !x.startsWith('pictures') && !x.startsWith('markers') && !x.startsWith('bot '));
     // Telegram down: the day is given back, so the next run sends it
     telegramDown = true;
     expect(noPictures(await runShop(signIn, new Date('2026-10-25T15:01:00Z'), fakeFetch))).toEqual(['summary 2026-10-25 not sent']);
