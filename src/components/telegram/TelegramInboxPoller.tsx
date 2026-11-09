@@ -5,7 +5,8 @@ import { useTelegramInbox } from '../../hooks/useTelegramInbox';
 import { getStoredCredentials } from '../../services/notificationService';
 import { scanReceiptImage, vercelBase } from '../../services/receiptScan';
 import { driveEnabled, hasExpenseDocs, releaseCloudPictures, saveExpenseToDrive } from '../../services/expenseDrive';
-import { isFirebaseAvailable, mergeBranchDoc, subscribeToBranchDoc } from '../../services/firebaseService';
+import { isFirebaseAvailable, mergeBranchDoc, shopAccountRefreshToken, subscribeToBranchDoc } from '../../services/firebaseService';
+import { activateServerBot } from '../../services/telegramServer';
 import { BotContext, BotStore, handleBotUpdate } from '../../services/botEngine';
 import {
   baht,
@@ -70,7 +71,9 @@ export const TelegramInboxPoller = () => {
   const [enabledHere, setEnabled] = useState(inboxEnabledHere);
   const [keepAwake, setKeepAwake] = useState(keepAwakeHere);
   // The bot runs on Vercel for this branch: no device polls (Telegram would refuse anyway)
-  const [onServer, setOnServer] = useState(false);
+  // null: not known yet (the cloud not read): the device does not poll meanwhile (it polled while the
+  // cloud could not be read and handled the same bill again and again)
+  const [onServer, setOnServer] = useState<boolean | null>(null);
   const branchId = pos.currentBranch?.id;
   useEffect(() => {
     if (!branchId || !isFirebaseAvailable()) return;
@@ -79,7 +82,44 @@ export const TelegramInboxPoller = () => {
       setServerConfig(data);
     });
   }, [branchId]);
-  const enabled = enabledHere && !onServer;
+  const enabled = enabledHere && onServer === false;
+
+  // The bot is set to run on the server, but Telegram no longer delivers there (its webhook was
+  // dropped): nobody answered in the group. A device with the shop account connects it again
+  useEffect(() => {
+    if (!onServer || !branchId) return;
+    let alive = true;
+    const heal = async () => {
+      const { telegramToken, telegramChatId } = getStoredCredentials();
+      const base = vercelBase(posRef.current.settings.merchantSettings?.serverUrl);
+      if (!alive || !telegramToken || !telegramChatId || !base || !shopAccountRefreshToken() || !navigator.onLine) return;
+      try {
+        const info = await telegramCall<any>(telegramToken, 'getWebhookInfo', {});
+        if (!alive || info?.url) return;
+        const { settings, currentBranch } = posRef.current;
+        const seller = sellerInfo(settings, currentBranch);
+        await activateServerBot({
+          base,
+          branchId,
+          token: telegramToken,
+          chatId: telegramChatId,
+          mode: readBotMode(),
+          shop: { name: seller.name, taxId: seller.taxId, address: seller.address, phone: seller.phone },
+          vatRate: vatRateOf(settings)
+        });
+        console.info('[Telegram bot] the server connection was gone: connected again');
+      } catch (e) {
+        console.warn('[Telegram bot] reconnecting the server bot failed', e);
+      }
+    };
+    const first = setTimeout(() => void heal(), 20_000);
+    const every = setInterval(() => void heal(), 15 * 60_000);
+    return () => {
+      alive = false;
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  }, [onServer, branchId]);
 
   // The bot on the server uses the shop's name, tax ID and address from the app's settings: kept
   // the same whenever they change (on any device of the shop)
