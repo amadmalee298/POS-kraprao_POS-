@@ -1,3 +1,5 @@
+import { isPhoneLike } from './device';
+
 /**
  * A printable HTML document (pages marked with class "page", see staffDocs.documentHtml) as an A4
  * PDF file, made in the browser: each page is drawn to a picture and placed on its own PDF page.
@@ -29,7 +31,8 @@ export async function htmlToPdfBlob(html: string): Promise<Blob> {
       const el = pages[i];
       el.style.boxShadow = 'none';
       el.style.margin = '0';
-      const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false, windowWidth: 820 });
+      // A phone draws at a lower scale (an A4 page at 2× is a 16 MB picture in memory)
+      const canvas = await html2canvas(el, { scale: isPhoneLike() ? 1.25 : 2, backgroundColor: '#ffffff', useCORS: true, logging: false, windowWidth: 820 });
       const img = canvas.toDataURL('image/jpeg', 0.85);
       if (i > 0) pdf.addPage();
       const w = 210;

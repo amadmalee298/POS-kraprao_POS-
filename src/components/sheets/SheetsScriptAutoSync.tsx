@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { useSheetsScriptPush } from '../../hooks/useSheetsScript';
 import { readAutoMinutes, readLastPush } from '../../services/sheetsScript';
+import { isPhoneLike } from '../../utils/device';
 
 const CHECK_MS = 60 * 1000;
-const PHONE = typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none), (max-width: 1024px)').matches;
+const PHONE = isPhoneLike();
 // After a failed send, wait before trying again (the next check would otherwise retry every minute)
 const RETRY_MS = 10 * 60 * 1000;
 

@@ -15,6 +15,7 @@ import { allocateCosts, BillItem, buildIntakeRows, hasTarget, IntakeRow, matchIn
 import { nextSubstituteNo } from '../../utils/expenseDocNo';
 import { readTelegramReceipt } from './TelegramInboxPoller';
 import { claimOnce } from '../../services/firebaseService';
+import { isPhoneLike } from '../../utils/device';
 import { needsAttention, readStockDone, STOCK_DONE_KEY, stockOnly } from '../../utils/telegramStock';
 
 type Form = {
@@ -401,8 +402,9 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           ...(f.includeVat ? {} : { substituteReceipt: substituteFor(p, f.date, p.data?.vendorName) }),
           ...(extras.length ? { purchaseImages: extras.map((dataUrl, i) => ({ name: `telegram-${p.messageId}-${i + 2}.jpg`, dataUrl })) } : {})
         });
-        // The bill photo into Google Drive too, when the shop turned that on
-        if (drive.enabled && hasExpenseDocs(saved)) void drive.save(saved, true);
+        // The bill photo into Google Drive too, when the shop turned that on (a computer does it; on a
+        // phone drawing the PDF froze the app: it is saved by hand there, or by the next computer)
+        if (drive.enabled && !isPhoneLike() && hasExpenseDocs(saved)) void drive.save(saved, true);
       } else {
         addIncome({
           id: recordId,

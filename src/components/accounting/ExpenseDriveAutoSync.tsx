@@ -11,6 +11,9 @@ import { telegramCall } from '../../services/telegramInbox';
 import { STOCK_NOTE } from '../../services/botEngine';
 import { docLinkUrl } from '../../utils/docLink';
 import { sellerInfo } from '../../utils/seller';
+import { isPhoneLike } from '../../utils/device';
+
+const PHONE = isPhoneLike();
 
 /**
  * Every expense with documents goes into Google Drive (ใบรับรองแทนใบเสร็จ PDF, transfer slip and
@@ -26,7 +29,10 @@ export const ExpenseDriveAutoSync = () => {
   const tried = useRef(new Set<string>());
   const busy = useRef(false);
 
-  const on = driveEnabled(settings);
+  // Computers only: each save draws the documents into a PDF (pictures at print size), which froze
+  // iPhones (also on the PIN screen) and ran them out of memory. On a phone it is saved by hand
+  // (📁 Drive on the expense); a computer that opens the app saves the rest
+  const on = driveEnabled(settings) && !PHONE;
   // Saved to Drive before its pictures were shared by link, or shared but still kept in the cloud
   const needsPictureMove = (e: Expense) =>
     !!e.driveFiles?.length && (unsharedPictures(e).length > 0 || Object.keys(drivePictureFields(e, e.driveFiles)).length > 0) && (hasImage(e.receiptImage) || !!e.purchaseImages?.length);
