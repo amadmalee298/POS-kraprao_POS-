@@ -1,7 +1,7 @@
 // Bump when static assets change so phones drop the old (broken) logo from the cache
-const CACHE_NAME = 'kaprao-pos-v5';
+const CACHE_NAME = 'kaprao-pos-v6';
 // The cache keeps the app's newest files only (it used to keep every version's, without end)
-const MAX_ENTRIES = 120;
+const MAX_ENTRIES = 300;
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -73,6 +73,32 @@ self.addEventListener('fetch', (event) => {
             headers: { 'Content-Type': 'application/json' }
           }
         );
+      })
+    );
+    return;
+  }
+
+  // The app's files (assets/<name>-<hash>.js|css) never change under the same name: taken from the
+  // cache when there, otherwise from the network (tried twice: a weak signal failing once left the
+  // app blank)
+  if (event.request.method === 'GET' && url.pathname.includes('/assets/')) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        const get = () => fetch(event.request);
+        return get()
+          .catch(() => new Promise((r) => setTimeout(r, 800)).then(get))
+          .then((res) => {
+            if (res.status === 200 && res.type === 'basic') {
+              const copy = res.clone();
+              caches.open(CACHE_NAME).then(async (cache) => {
+                await cache.put(event.request, copy);
+                const keys = await cache.keys();
+                for (const old of keys.slice(0, Math.max(0, keys.length - MAX_ENTRIES))) await cache.delete(old);
+              });
+            }
+            return res;
+          });
       })
     );
     return;

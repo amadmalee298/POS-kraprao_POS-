@@ -23,13 +23,58 @@
     <!-- Kanit: large, easy-to-read prices and totals on the POS screen -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@500;600;700&display=swap" rel="stylesheet" />
+    <!-- Not render-blocking: on a weak signal the page (and the app's code, which waits for blocking
+         stylesheets) stayed white until Google answered. The app shows in the system font meanwhile -->
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+
+    <!-- The app's colour from the first moment (not a white page while its code loads) -->
+    <style>
+      html, body { background: #0d0704; margin: 0; }
+      #boot { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #f5e6d8; font-family: -apple-system, system-ui, sans-serif; text-align: center; padding: 24px; box-sizing: border-box; }
+      #boot .spin { width: 32px; height: 32px; border-radius: 50%; border: 3px solid #f97316; border-top-color: transparent; animation: bootspin 1s linear infinite; }
+      #boot button { height: 44px; padding: 0 18px; border-radius: 12px; border: 1px solid #c2410c; background: #431407; color: #fed7aa; font-size: 15px; font-weight: 700; }
+      #boot .msg { display: none; font-size: 14px; line-height: 1.5; max-width: 300px; }
+      @keyframes bootspin { to { transform: rotate(360deg); } }
+    </style>
 
     <!-- Google Identity Services for Direct OAuth -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div id="boot"><div class="spin"></div><div>ครัวกะเพรา POS กำลังเปิด…</div><div class="msg" id="boot-msg">เปิดแอปไม่สำเร็จ (สัญญาณเน็ตอาจสะดุด) ข้อมูลไม่หาย<br /><br /><button type="button" onclick="kpReload()">โหลดแอปใหม่</button></div></div></div>
+    <script>
+      // The app's code did not start (a file failed to load on a weak signal): say so with a button
+      // instead of a blank page; a file that failed loads the app again once by itself (not again within 2 minutes)
+      (function () {
+        window.kpReload = function () {
+          var u = new URL(location.href);
+          u.searchParams.set('v', String(Date.now()));
+          location.replace(u.toString());
+        };
+        var shown = false;
+        function failed(reload) {
+          var boot = document.getElementById('boot');
+          if (shown || !boot) return; // the app is on screen
+          shown = true;
+          var msg = document.getElementById('boot-msg');
+          if (msg) msg.style.display = 'block';
+          if (!reload) return;
+          try {
+            var last = Number(sessionStorage.getItem('POS_BOOT_RELOADED') || 0);
+            if (Date.now() - last > 120000) {
+              sessionStorage.setItem('POS_BOOT_RELOADED', String(Date.now()));
+              window.kpReload();
+            }
+          } catch (e) {}
+        }
+        window.addEventListener('error', function (e) {
+          var t = e && e.target;
+          if (t && (t.tagName === 'SCRIPT' || (t.tagName === 'LINK' && t.rel === 'modulepreload'))) failed(true);
+        }, true);
+        // Still not open after 20 s (a slow signal): the button is offered, nothing reloads by itself
+        setTimeout(function () { if (document.getElementById('boot')) failed(false); }, 20000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
