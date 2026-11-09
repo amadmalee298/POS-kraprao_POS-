@@ -186,18 +186,19 @@ const MARKER_DAYS = 2;
  */
 export async function removeOldMarkers(db: Firestore, branchId: string, now: Date, until: number): Promise<number> {
   const before = new Date(now.getTime() - MARKER_DAYS * 86_400_000).toISOString();
+  // Once a day, and only the old ones are read: listing the whole status collection on every run
+  // (every 15 minutes) used up the project's free daily reads, and the app and the bot stopped
+  const day = before.slice(0, 10);
+  const mark = `branches/${branchId}/status/markers_cleanup`;
+  if (String((await db.get(mark))?.day || '') >= day) return 0;
+  await db.set(mark, { day });
   let removed = 0;
-  let token = '';
-  for (let page = 0; page < 5 && Date.now() < until; page++) {
-    const { docs, next } = await db.list(`branches/${branchId}/status`, 300, token, ['at']);
-    for (const d of docs) {
-      if (Date.now() >= until || removed >= 300) return removed;
-      if (!/^tg(update|album)_/.test(d.id) || String(d.data.at || '') >= before) continue;
-      await db.delete(`branches/${branchId}/status/${d.id}`);
-      removed++;
-    }
-    if (!next) break;
-    token = next;
+  const old = await db.whereBelow(`branches/${branchId}`, 'status', 'at', before, 300);
+  for (const d of old) {
+    if (Date.now() >= until) break;
+    if (!/^tg(update|album)_/.test(d.id)) continue;
+    await db.delete(`branches/${branchId}/status/${d.id}`);
+    removed++;
   }
   return removed;
 }
@@ -281,13 +282,10 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
     // tried again on the next run
   }
   // The bot's health in numbers (no bill details): the size of its list against Firestore's 1 MiB per
-  // document, deliveries not done, and the kind of the last error
+  // document, and the kind of the last error (two reads)
   try {
     const inbox: any = await db.get(`branches/${b}/config/telegram_inbox`);
     done.push(`bot inbox ${Math.round(JSON.stringify(inbox || {}).length / 1024)}KB/${Object.keys(inbox?.byId || {}).length}`);
-    const { docs } = await db.list(`branches/${b}/status`, 300, '', ['state', 'tries', 'at']);
-    const open = docs.filter(d => d.id.startsWith('tgupdate_') && d.data.state && d.data.state !== 'done');
-    for (const d of open.slice(-5)) done.push(`bot ${d.id.slice(9)} ${d.data.state} x${d.data.tries || 1} ${Math.round((Date.now() - Date.parse(String(d.data.at || ''))) / 60000)}m`);
     const state: any = await db.get(`branches/${b}/config/telegram_bot_state`);
     const err = String(state?.lastError || '');
     const kind = (err.match(/exceed|maximum|size|deadline|timeout|timed out|permission|quota|credit|unavailable|fetch failed|ECONN|abort/i) || [''])[0];

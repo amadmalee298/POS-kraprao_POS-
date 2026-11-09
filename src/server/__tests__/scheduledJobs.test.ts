@@ -67,6 +67,12 @@ describe('scheduled notifications', () => {
       if (url.endsWith(':runQuery')) {
         const q = JSON.parse(init.body).structuredQuery;
         const coll = q.from[0].collectionId;
+        if (coll === 'status') {
+          const parent = decodeURIComponent(url.split('/documents/')[1]).replace(/:runQuery$/, '');
+          const below = q.where.fieldFilter.value.stringValue;
+          const hits = Object.keys(docs).filter(k => k.startsWith(`${parent}/status/`) && String(docs[k].at || '') && String(docs[k].at) < below);
+          return json(hits.map(k => ({ document: { name: `x/${k}`, fields: fsValue({ at: docs[k].at }).mapValue.fields } })));
+        }
         const rows =
           coll === 'orders'
             ? [{ branchId: 'main', createdAt: '2026-10-25T05:00:00.000Z', status: 'served', grandTotal: 150 }]
