@@ -280,6 +280,21 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
   } catch {
     // tried again on the next run
   }
+  // The bot's health in numbers (no bill details): the size of its list against Firestore's 1 MiB per
+  // document, deliveries not done, and the kind of the last error
+  try {
+    const inbox: any = await db.get(`branches/${b}/config/telegram_inbox`);
+    done.push(`bot inbox ${Math.round(JSON.stringify(inbox || {}).length / 1024)}KB/${Object.keys(inbox?.byId || {}).length}`);
+    const { docs } = await db.list(`branches/${b}/status`, 300, '', ['state', 'tries', 'at']);
+    const open = docs.filter(d => d.id.startsWith('tgupdate_') && d.data.state && d.data.state !== 'done');
+    for (const d of open.slice(-5)) done.push(`bot ${d.id.slice(9)} ${d.data.state} x${d.data.tries || 1} ${Math.round((Date.now() - Date.parse(String(d.data.at || ''))) / 60000)}m`);
+    const state: any = await db.get(`branches/${b}/config/telegram_bot_state`);
+    const err = String(state?.lastError || '');
+    const kind = (err.match(/exceed|maximum|size|deadline|timeout|timed out|permission|quota|credit|unavailable|fetch failed|ECONN|abort/i) || [''])[0];
+    if (err) done.push(`bot error ${err.slice(0, 24)} ${kind || 'other'}`);
+  } catch (e: any) {
+    done.push(`bot check failed ${String(e?.message || '').slice(0, 40)}`);
+  }
   return done;
 }
 
