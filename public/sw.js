@@ -1,5 +1,7 @@
 // Bump when static assets change so phones drop the old (broken) logo from the cache
-const CACHE_NAME = 'kaprao-pos-v4';
+const CACHE_NAME = 'kaprao-pos-v5';
+// The cache keeps the app's newest files only (it used to keep every version's, without end)
+const MAX_ENTRIES = 120;
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -87,15 +89,21 @@ self.addEventListener('fetch', (event) => {
           networkResponse.type === 'basic'
         ) {
           const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
+          // The page under one key (it is opened as ./, ./?v=… and so on)
+          const isPage = event.request.mode === 'navigate' || url.pathname.endsWith('/index.html');
+          const key = isPage ? './index.html' : event.request;
+          caches.open(CACHE_NAME).then(async (cache) => {
+            await cache.put(key, responseToCache);
+            const keys = await cache.keys();
+            // Oldest first: the files of versions long gone go
+            for (const old of keys.slice(0, Math.max(0, keys.length - MAX_ENTRIES))) await cache.delete(old);
           });
         }
         return networkResponse;
       })
       .catch(() => {
         // Network failed - load from cache
-        return caches.match(event.request).then((cachedResponse) => {
+        return caches.match(event.request, { ignoreSearch: event.request.mode === 'navigate' }).then((cachedResponse) => {
           if (cachedResponse) {
             return cachedResponse;
           }

@@ -1,3 +1,4 @@
+import { isChunkLoadError, reloadApp, reloadForChunks } from '../utils/chunkLoad';
 import React, { ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
@@ -14,6 +15,9 @@ export class PageErrorBoundary extends React.Component<{ children?: ReactNode },
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('Page error:', error, info.componentStack);
+    // The page's code did not load (still failing after the retries): the app is loaded again once
+    // by itself, since a failed page load is kept until the app reloads
+    if (isChunkLoadError(error)) reloadForChunks();
   }
 
   render() {
@@ -24,10 +28,21 @@ export class PageErrorBoundary extends React.Component<{ children?: ReactNode },
           <AlertTriangle className="w-8 h-8 text-rose-400 mx-auto" />
           <div className="font-bold">หน้านี้แสดงผลไม่ได้</div>
           <div className="text-xs text-slate-400 break-words">{this.state.error.message}</div>
-          <div className="text-xs text-slate-400">ข้อมูลไม่หาย เลือกหน้าอื่นจากเมนูได้ตามปกติ</div>
-          <button type="button" onClick={() => this.setState({ error: null })} className="h-10 px-4 rounded-xl bg-slate-800 border border-slate-700 font-bold inline-flex items-center gap-2">
-            <RefreshCw className="w-4 h-4" /> ลองอีกครั้ง
-          </button>
+          {isChunkLoadError(this.state.error) ? (
+            <>
+              <div className="text-xs text-slate-400">โหลดหน้านี้ไม่สำเร็จ (สัญญาณเน็ตสะดุด) ข้อมูลไม่หาย กดโหลดแอปใหม่</div>
+              <button type="button" onClick={reloadApp} className="h-10 px-4 rounded-xl bg-slate-800 border border-slate-700 font-bold inline-flex items-center gap-2">
+                <RefreshCw className="w-4 h-4" /> โหลดแอปใหม่
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="text-xs text-slate-400">ข้อมูลไม่หาย เลือกหน้าอื่นจากเมนูได้ตามปกติ</div>
+              <button type="button" onClick={() => this.setState({ error: null })} className="h-10 px-4 rounded-xl bg-slate-800 border border-slate-700 font-bold inline-flex items-center gap-2">
+                <RefreshCw className="w-4 h-4" /> ลองอีกครั้ง
+              </button>
+            </>
+          )}
         </div>
       </div>
     );

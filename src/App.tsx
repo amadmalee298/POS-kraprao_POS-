@@ -4,9 +4,11 @@ import { HeaderNavbar } from './components/HeaderNavbar';
 import { SidebarDrawer } from './components/SidebarDrawer';
 import { LoginScreen } from './components/LoginScreen';
 import { POSView } from './components/pos/POSView';
+import { importWithRetry } from './utils/chunkLoad';
 // Heavy views are code-split so the POS screen loads fast on tablets; each chunk is fetched on first use
+// (a page whose code fails to load for a moment is tried again: utils/chunkLoad)
 const lazyNamed = <T extends Record<string, any>>(loader: () => Promise<T>, name: keyof T) =>
-  React.lazy(() => loader().then(m => ({ default: m[name] as React.ComponentType })));
+  React.lazy(() => importWithRetry(loader).then(m => ({ default: m[name] as React.ComponentType })));
 
 const KDSView = lazyNamed(() => import('./components/kds/KDSView'), 'KDSView');
 const InventoryView = lazyNamed(() => import('./components/inventory/InventoryView'), 'InventoryView');
