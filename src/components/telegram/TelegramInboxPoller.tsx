@@ -7,6 +7,8 @@ import { scanReceiptImage, vercelBase } from '../../services/receiptScan';
 import { driveEnabled, hasExpenseDocs, releaseCloudPictures, saveExpenseToDrive } from '../../services/expenseDrive';
 import { isFirebaseAvailable, mergeBranchDoc, shopAccountRefreshToken, subscribeToBranchDoc } from '../../services/firebaseService';
 import { activateServerBot } from '../../services/telegramServer';
+import { isPhoneLike } from '../../utils/device';
+import { startupCrashes } from '../../utils/bootGuard';
 import { BotContext, BotStore, handleBotUpdate } from '../../services/botEngine';
 import {
   baht,
@@ -29,6 +31,8 @@ import { sellerInfo } from '../../utils/seller';
 import { documentHtml } from '../../utils/staffDocs';
 import { expenseDocName, expenseDocPages } from '../../utils/substituteReceipt';
 import { resolveRecordImages } from '../../services/imageStore';
+
+const PHONE = isPhoneLike();
 
 /** Telegram holds the request open until something arrives, so replies feel instant */
 const LONG_POLL_S = 25;
@@ -82,7 +86,11 @@ export const TelegramInboxPoller = () => {
       setServerConfig(data);
     });
   }, [branchId]);
-  const enabled = enabledHere && onServer === false;
+  // Never on a phone, nor right after the phone closed the app: reading a bill photo here (download,
+  // shrink, AI) ran iPhones out of memory, and as the update was not confirmed before that, every
+  // opening read the same photo again and the phone closed the page again and again. The bot
+  // answers from the server; a computer can stand in
+  const enabled = enabledHere && onServer === false && !PHONE && startupCrashes() === 0;
 
   // The bot answers from the server (Vercel). Telegram no longer delivering there (its webhook
   // dropped, or the bot moved back to a device) left the group to a phone reading bills itself:
@@ -114,7 +122,7 @@ export const TelegramInboxPoller = () => {
         console.warn('[Telegram bot] reconnecting the server bot failed', e);
       }
     };
-    const first = setTimeout(() => void heal(), 20_000);
+    const first = setTimeout(() => void heal(), 3_000);
     const every = setInterval(() => void heal(), 15 * 60_000);
     return () => {
       alive = false;
