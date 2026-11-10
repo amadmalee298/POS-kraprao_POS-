@@ -95,9 +95,19 @@ function withDateFirst(raw: string): string {
   }
   // "ค่าไฟ 18-10-69 50฿": a bill named "ค่า…" with a number is an expense without "จ่าย"
   if (lines.length && /^ค่า\S/.test(lines[0]) && /\d/.test(raw)) return [`จ่าย ${lines[0]}`, ...lines.slice(1)].join('\n');
+  // "ไก่บด 4กก รวม 280฿" / a shopping list ending "รวม 235฿": goods with an amount in baht are an
+  // expense without "จ่าย" (money coming in is never written this way)
+  if (lines.length && !KEYWORD(lines[0]) && isPurchaseNote(raw)) return [`จ่าย ${lines[0]}`, ...lines.slice(1)].join('\n');
   if (lines.length < 2 || !DATE_LINE.test(lines[0])) return raw;
   const [date, first, ...rest] = lines;
   return [`${KEYWORD(first) ? first : `จ่าย ${first}`} ${date.trim()}`, ...rest].join('\n');
+}
+
+/** Goods bought with their price in baht: a quantity (4กก, 2 ขวด) or a total (รวม), and ฿/บาท */
+function isPurchaseNote(raw: string): boolean {
+  if (!/\d[\d,]*(?:\.\d+)?\s*(?:บาท|฿)/i.test(raw)) return false;
+  if (/ขาย|รายได้|รายรับ|รับเงิน|ได้รับ|เงินเข้า|ยอดขาย|คืนเงิน|โอนเข้า/.test(raw)) return false;
+  return /(^|\s)รวม/.test(raw) || new RegExp(`\d\s*(?:${QTY_WORDS})`, 'i').test(raw);
 }
 
 /** A message that starts like an entry (so other chat in the group is left alone) */
@@ -128,7 +138,9 @@ const cleanTitle = (text: string) =>
     .replace(/\s+/g, ' ')
     .trim()
     // "รายได้ -ค่าแรง 500": dashes and colons around the words are not part of the title
-    .replace(/^[-–—:：,.\s]+|[-–—:：,\s]+$/g, '');
+    .replace(/^[-–—:：,.\s]+|[-–—:：,\s]+$/g, '')
+    // "… รวม 280฿": the word for the total is not part of the title
+    .replace(/\s*รวม(?:ทั้งหมด|เงิน)?$/, '');
 
 /** Kind, date and vendor of an entry's first line; `rest` is what is left for the title and amount */
 function entryHead(line: string, today: string): { kind: TypedEntry['kind']; date: string; vendor: string; rest: string } | { error: string } {
