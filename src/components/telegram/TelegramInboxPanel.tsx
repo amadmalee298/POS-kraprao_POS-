@@ -809,7 +809,7 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                             {unmatched && (
                               <div className="text-amber-300 font-bold">ไม่พบในคลัง: เลือกวัตถุดิบ หรือเลือก “＋ สร้างวัตถุดิบใหม่”</div>
                             )}
-                            <div className="grid grid-cols-[1fr_90px] gap-2">
+                            <div className="grid grid-cols-[1fr_72px_84px] gap-1.5">
                               <button
                                 type="button"
                                 onClick={() => setPicking({ id: p.id, key: row.key })}
@@ -829,6 +829,21 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                                   className={`${field} pr-9 font-mono`}
                                 />
                                 <span className="absolute right-2 top-2 text-slate-500">{ing?.unit || row.newIngredient?.unit || ''}</span>
+                              </label>
+                              {/* The price of this line (as on the bill): left empty, it gets a share of the bill's total */}
+                              <label className="relative">
+                                <span className="sr-only">ราคา (บาท)</span>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="any"
+                                  min={0}
+                                  value={row.lineAmount ? row.lineAmount : ''}
+                                  placeholder={row.selected && hasTarget(row) && row.cost > 0 ? String(Math.round(row.cost * 100) / 100) : 'ราคา'}
+                                  onChange={e => editRow(p, row.key, { lineAmount: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)) })}
+                                  className={`${field} pr-5 font-mono`}
+                                />
+                                <span className="absolute right-1.5 top-2 text-slate-500">฿</span>
                               </label>
                             </div>
                             {row.newIngredient && (
@@ -886,8 +901,15 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
                       + เพิ่มรายการ
                     </button>
                     <p className="text-[11px] text-slate-500">
-                      ต้นทุน{vatRegistered && f.includeVat ? 'ก่อน VAT' : ''}รวม {baht(stockCost(f))} แบ่งตามราคาในบิล หรือตามมูลค่าวัตถุดิบเมื่อบิลไม่ได้แยกราคา
+                      ต้นทุน{vatRegistered && f.includeVat ? 'ก่อน VAT' : ''}รวม {baht(stockCost(f))} · ใส่ราคาแต่ละรายการในช่อง ฿ ได้ รายการที่ไม่ใส่จะแบ่งจากยอดที่เหลือตามมูลค่าวัตถุดิบ
                     </p>
+                    {(() => {
+                      const typed = rows.filter(r => r.selected && (r.lineAmount || 0) > 0).reduce((t, r) => t + (r.lineAmount || 0), 0);
+                      const total = stockCost(f);
+                      return typed > total + 0.005 ? (
+                        <p className="text-[11px] text-amber-300">ราคาที่ใส่รวม {baht(typed)} เกินยอดบิล {baht(total)}: ระบบปรับลดตามสัดส่วนให้เท่ายอดบิล (แก้ยอดบิลได้ด้านบน)</p>
+                      ) : null;
+                    })()}
                   </div>
                 );
               })()}
