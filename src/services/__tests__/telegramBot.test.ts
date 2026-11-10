@@ -216,4 +216,20 @@ describe('the date first on the same line', () => {
     // A range of people in a conversation is not an entry
     expect(looksLikeEntry('1-2 คนมาทาน')).toBe(false);
   });
+
+describe('goods with a price in baht, without "จ่าย"', () => {
+  it('is an expense: the total is the amount', () => {
+    expect(looksLikeEntry('ไก่บด 4กก รวม 280฿')).toBe(true);
+    expect(parseEntryText('ไก่บด 4กก รวม 280฿', '2026-11-10')).toMatchObject({ kind: 'expense', title: 'ไก่บด 4กก', amount: 280 });
+    const list = 'ผักสด ใบกะเพรา 1กก\nพริกแดงจินดาเด็ด 1กก\nกะเทียม 1.5กก\nรวม 235฿';
+    expect(looksLikeEntry(list)).toBe(true);
+    expect(parseEntryText(list, '2026-11-10')).toMatchObject({ kind: 'expense', amount: 235 });
+  });
+  it('leaves sales and chat alone', () => {
+    expect(looksLikeEntry('วันนี้ขายได้ 5000฿')).toBe(false);
+    expect(looksLikeEntry('ยอดขายรวม 3200฿')).toBe(false);
+    expect(looksLikeEntry('สวัสดีครับ 2 คน')).toBe(false);
+    expect(looksLikeEntry('ไก่บด 4กก')).toBe(false);
+  });
+});
 });
