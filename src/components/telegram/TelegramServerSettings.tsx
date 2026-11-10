@@ -5,7 +5,7 @@ import { getStoredCredentials, saveStoredCredentials, sendTelegramMessage } from
 import { isFirebaseAvailable, onFirebaseUserChange, subscribeToBranchDoc } from '../../services/firebaseService';
 import { vercelBase } from '../../services/receiptScan';
 import { BOT_CONFIG_DOC, BOT_STATE_DOC, readBotMode } from '../../services/telegramBot';
-import { activateServerBot, botIsGroupAdmin, checkBotServer, deactivateServerBot, isGroupChat, ServerCheck, serverWebhookInfo, updateServerBotConfig, WebhookInfo } from '../../services/telegramServer';
+import { activateServerBot, botIsGroupAdmin, checkBotServer, isGroupChat, ServerCheck, serverWebhookInfo, updateServerBotConfig, WebhookInfo } from '../../services/telegramServer';
 import { vatRateOf } from '../../utils/accounting';
 import { sellerInfo } from '../../utils/seller';
 
@@ -87,19 +87,7 @@ export const TelegramServerSettings: React.FC<{ bot: ReturnType<typeof useServer
     }
   };
 
-  const deactivate = async () => {
-    if (!window.confirm('หยุดบอทบนเซิร์ฟเวอร์ แล้วกลับไปใช้เครื่องที่เปิดแอปค้างไว้?')) return;
-    setBusy(true);
-    try {
-      await deactivateServerBot(currentBranch.id, token);
-      setMessage({ ok: true, text: 'หยุดบอทบนเซิร์ฟเวอร์แล้ว (เปิดสวิตช์ “รับบิลที่เครื่องนี้” ด้านล่างถ้าจะใช้แบบเดิม)' });
-      setInfo(null);
-    } catch (e: any) {
-      setMessage({ ok: false, text: e?.message || 'ปิดไม่สำเร็จ' });
-    } finally {
-      setBusy(false);
-    }
-  };
+
 
   // The shop's group answered from a new chat ID (e.g. it became a supergroup): switch to it
   const adoptChat = async (chatId: string) => {
@@ -236,9 +224,6 @@ export const TelegramServerSettings: React.FC<{ bot: ReturnType<typeof useServer
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={activate} disabled={busy || !ready} className="h-10 px-4 rounded-xl border border-sky-700 text-sky-200 font-bold disabled:opacity-50 inline-flex items-center gap-1.5">
               {busy && <Loader2 className="w-4 h-4 animate-spin" />} เชื่อมต่อใหม่ / อัปเดต
-            </button>
-            <button type="button" onClick={deactivate} disabled={busy} className="h-10 px-4 rounded-xl border border-slate-700 text-slate-300 disabled:opacity-50">
-              หยุดใช้บนเซิร์ฟเวอร์
             </button>
           </div>
         </div>
