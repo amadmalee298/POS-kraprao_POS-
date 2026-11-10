@@ -84,10 +84,12 @@ export const TelegramInboxPoller = () => {
   }, [branchId]);
   const enabled = enabledHere && onServer === false;
 
-  // The bot is set to run on the server, but Telegram no longer delivers there (its webhook was
-  // dropped): nobody answered in the group. A device with the shop account connects it again
+  // The bot answers from the server (Vercel). Telegram no longer delivering there (its webhook
+  // dropped, or the bot moved back to a device) left the group to a phone reading bills itself:
+  // slow, stopped part way when the app closed, and two devices answered the same bill. A device
+  // with the shop account puts it back on the server; polling here only while that cannot be done
   useEffect(() => {
-    if (!onServer || !branchId) return;
+    if (onServer === null || !branchId) return;
     let alive = true;
     const heal = async () => {
       const { telegramToken, telegramChatId } = getStoredCredentials();
