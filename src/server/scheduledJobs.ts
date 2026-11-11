@@ -211,7 +211,9 @@ export async function removeOldMarkers(db: Firestore, branchId: string, now: Dat
 export async function healWebhook(db: Firestore, signIn: ShopSignIn, serverBase: string | undefined, doFetch: Fetch = fetch): Promise<string> {
   const b = signIn.branchId;
   const config: any = await db.get(`branches/${b}/config/${BOT_CONFIG_DOC}`);
-  if (!config?.webhook || !config.token) return '';
+  // The bot answers from the server always (the app moves it back there too): also when it was left
+  // on a device. A shop that never set it up has no token here
+  if (!config?.token || !config.chatId) return config ? 'bot not set up on the server' : '';
   const tg = async (method: string, params: Record<string, unknown>) => {
     const res = await doFetch(`https://api.telegram.org/bot${config.token}/${method}`, {
       method: 'POST',
@@ -227,7 +229,7 @@ export async function healWebhook(db: Firestore, signIn: ShopSignIn, serverBase:
   const err = String(info?.last_error_message || '');
   // Answers refused for the secret: the address was replaced by another device's setup since
   const refused = /401|unauthorized/i.test(err) && Number(info?.pending_update_count || 0) > 0;
-  if (url && !refused) return `bot webhook ok${info?.pending_update_count ? ` pending ${info.pending_update_count}` : ''}${err ? ` (last error ${err.slice(0, 40)})` : ''}`;
+  if (url && !refused && config.webhook) return `bot webhook ok${info?.pending_update_count ? ` pending ${info.pending_update_count}` : ''}${err ? ` (last error ${err.slice(0, 40)})` : ''}`;
   const base = url ? url.split('/api/telegram/webhook')[0] : serverBase;
   if (!base || !/^https:\/\/[a-z0-9.-]+$/i.test(base)) return 'bot webhook missing (no server address)';
   const secret = await newWebhookSecret();
@@ -239,8 +241,10 @@ export async function healWebhook(db: Firestore, signIn: ShopSignIn, serverBase:
     allowed_updates: ['message', 'channel_post', 'callback_query'],
     max_connections: 1
   });
+  // Deliveries are taken from now on (a device polling stops: it sees the bot on the server)
+  if (!config.webhook) await db.set(`branches/${b}/config/${BOT_CONFIG_DOC}`, { webhook: true }, ['webhook']);
   await db.set(`branches/${b}/config/${BOT_STATE_DOC}`, { webhookHealedAt: new Date().toISOString() }, ['webhookHealedAt']).catch(() => {});
-  return `bot webhook set again (${url ? 'refused' : 'was gone'})`;
+  return `bot webhook set again (${!config.webhook ? 'was on a device' : url ? 'refused' : 'was gone'})`;
 }
 
 /** One shop: what is due now goes out */
