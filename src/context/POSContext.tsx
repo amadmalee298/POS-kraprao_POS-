@@ -1135,11 +1135,24 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, [effectiveOffline]);
 
+  const deletedMenuIdsRef = useRef(deletedMenuItemIds);
+  deletedMenuIdsRef.current = deletedMenuItemIds;
+  const deletedIngredientIdsRef = useRef(deletedIngredientIds);
+  deletedIngredientIdsRef.current = deletedIngredientIds;
   // Real-time listener for central orders, expenses, incomes, menu, inventory, and deletions from Firestore
   useEffect(() => {
     if (!isStorageLoaded || !isFirebaseAvailable() || effectiveOffline) return;
 
-    purgeStubOrderDocs().catch(() => undefined);
+    // Once a day per device (it reads 500 orders)
+    try {
+      const today = new Date().toLocaleDateString('sv-SE');
+      if (localStorage.getItem('POS_STUB_PURGE_DAY') !== today) {
+        localStorage.setItem('POS_STUB_PURGE_DAY', today);
+        purgeStubOrderDocs().catch(() => undefined);
+      }
+    } catch {
+      // storage unavailable: skipped
+    }
 
     // The big lists arrive one after another (each one's first download was arriving at the same
     // moment as the others), and smaller after the phone closed the app (see utils/bootGuard)
@@ -1153,7 +1166,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     };
 
-    const unsubOrders = subscribeToRecentCentralOrders(light ? 300 : 1000, (centralOrderList, removedIds) => {
+    // Recent orders (older ones are loaded when a report needs them): each one is a billed read on
+    // every opening of the app
+    const unsubOrders = subscribeToRecentCentralOrders(light ? 150 : 300, (centralOrderList, removedIds) => {
       cloudOrdersReadyAtRef.current = cloudOrdersReadyAtRef.current || Date.now();
       let pushBack: Order[] = [];
       setOrders(prev => {
@@ -1318,7 +1333,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
 
         const localMap = new Map<string, MenuItem>(currentList.map(m => [m.id, m]));
-        const deletedSet = new Set(deletedMenuItemIds.map(d => String(d).trim().toLowerCase()));
+        const deletedSet = new Set(deletedMenuIdsRef.current.map(d => String(d).trim().toLowerCase()));
 
         cloudMenuList.forEach(cm => {
           // Strictly filter by deleted document ID only. Never filter by name so valid dishes are never wiped out.
@@ -1421,7 +1436,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
 
         const localMap = new Map<string, Ingredient>(currentList.map(i => [i.id, i]));
-        const deletedSet = new Set(deletedIngredientIds.filter(id => id.startsWith('ing-') || /^[a-zA-Z0-9_-]+$/.test(id)).map(d => String(d).trim().toLowerCase()));
+        const deletedSet = new Set(deletedIngredientIdsRef.current.filter(id => id.startsWith('ing-') || /^[a-zA-Z0-9_-]+$/.test(id)).map(d => String(d).trim().toLowerCase()));
 
         cloudIngList.forEach(ci => {
           // Strictly filter by system ID only
@@ -1562,7 +1577,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       unsubSettings();
       unsubTombstones();
     };
-  }, [isStorageLoaded, effectiveOffline, currentBranch?.id, deletedMenuItemIds.length, deletedIngredientIds.length]);
+    // (The deleted ids are read when cloud lists arrive, not followed: a change to them restarted
+    // every listener here, so each app start downloaded the orders, expenses and stock twice and
+    // used up the project's free daily reads)
+  }, [isStorageLoaded, effectiveOffline, currentBranch?.id]);
 
   // The shop's own lists (people and PINs, staff, shifts, cash drawer, tables, categories,
   // toppings, stock lots…) in the cloud too, the same on every device: before, they lived only on

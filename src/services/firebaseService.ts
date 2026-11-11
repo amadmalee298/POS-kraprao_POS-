@@ -675,12 +675,12 @@ export function subscribeToStockHistory(
     return rest as T;
   };
   const unsubAdj = onSnapshot(
-    query(collection(dbInstance, 'stock_adjustments'), orderBy('timestamp', 'desc'), limit(1000)),
+    query(collection(dbInstance, 'stock_adjustments'), orderBy('timestamp', 'desc'), limit(300)),
     snap => onAdjustments(snap.docs.map(d => d.data()).filter(forBranch).map(d => strip<StockAdjustmentLog>(d))),
     err => console.warn('[Firebase Service] Stock history listener error:', err)
   );
   const unsubWaste = onSnapshot(
-    query(collection(dbInstance, 'waste_logs'), orderBy('loggedDate', 'desc'), limit(500)),
+    query(collection(dbInstance, 'waste_logs'), orderBy('loggedDate', 'desc'), limit(200)),
     snap => onWaste(snap.docs.map(d => d.data()).filter(forBranch).map(d => strip<WasteLog>(d))),
     err => console.warn('[Firebase Service] Waste history listener error:', err)
   );

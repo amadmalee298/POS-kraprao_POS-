@@ -175,7 +175,9 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
   // The dashboard counts from the start of the books, or its first month (same as Google Sheets)
   const dashboardFrom = dashboardSince(settings.booksStartAt ? thaiDay(settings.booksStartAt) : undefined, month);
   const needFrom = useMemo(() => {
-    const start = settings.booksStartAt ? thaiDay(settings.booksStartAt) : `${Number(asOf.slice(0, 4)) - 1}-01-01`;
+    // Without a start of the books: from the start of the balance date's year (each order loaded is
+    // a billed read; a year earlier doubled them)
+    const start = settings.booksStartAt ? thaiDay(settings.booksStartAt) : `${asOf.slice(0, 4)}-01-01`;
     // The dashboard: its twelve months (and profit to date from the start of the books)
     const dashFrom = tab === 'dashboard' ? dashboardFrom : from;
     return [start, from, dashFrom].sort()[0];
