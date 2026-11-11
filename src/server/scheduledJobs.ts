@@ -287,6 +287,9 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
     const inbox: any = await db.get(`branches/${b}/config/telegram_inbox`);
     done.push(`bot inbox ${Math.round(JSON.stringify(inbox || {}).length / 1024)}KB/${Object.keys(inbox?.byId || {}).length}`);
     const state: any = await db.get(`branches/${b}/config/telegram_bot_state`);
+    // When Telegram last delivered to the server (none for long: its webhook is gone)
+    const last = Date.parse(String(state?.lastDeliveryAt || ''));
+    done.push(`bot last delivery ${Number.isFinite(last) ? `${Math.round((Date.now() - last) / 60000)}m ago (${String(state?.lastDeliveryResult || '')})` : 'never'}`);
     const err = String(state?.lastError || '');
     const kind = (err.match(/exceed|maximum|size|deadline|timeout|timed out|permission|quota|credit|unavailable|fetch failed|ECONN|abort/i) || [''])[0];
     if (err) done.push(`bot error ${err.slice(0, 24)} ${kind || 'other'}`);
