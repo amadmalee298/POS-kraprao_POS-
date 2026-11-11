@@ -23,14 +23,14 @@ const telegram = (info: any) => {
 
 describe('the bot webhook, checked by the scheduled run', () => {
   it('is left alone while Telegram delivers', async () => {
-    const { db } = fakeDb({ webhook: true, token: 't' });
+    const { db } = fakeDb({ webhook: true, token: 't', chatId: '-1' });
     const { calls, doFetch } = telegram({ url: 'https://x.vercel.app/api/telegram/webhook?b=main', pending_update_count: 0 });
     expect(await healWebhook(db, signIn, 'https://x.vercel.app', doFetch)).toBe('bot webhook ok');
     expect(calls.map(c => c.method)).toEqual(['getWebhookInfo']);
   });
 
   it('is set again when it is gone, with a sign-in only Telegram’s deliveries open', async () => {
-    const { db, writes } = fakeDb({ webhook: true, token: 't' });
+    const { db, writes } = fakeDb({ webhook: true, token: 't', chatId: '-1' });
     const { calls, doFetch } = telegram({ url: '', pending_update_count: 0 });
     expect(await healWebhook(db, signIn, 'https://x.vercel.app', doFetch)).toBe('bot webhook set again (was gone)');
     const set = calls.find(c => c.method === 'setWebhook')!.body;
@@ -43,15 +43,23 @@ describe('the bot webhook, checked by the scheduled run', () => {
     expect(writes[0].webhookHealedAt).toBeTruthy();
   });
 
-  it('does nothing for a shop whose bot runs on a device', async () => {
-    const { db } = fakeDb({ webhook: false, token: 't' });
+  it('takes the bot back from a device', async () => {
+    const { db, writes } = fakeDb({ webhook: false, token: 't', chatId: '-1' });
+    const { calls, doFetch } = telegram({ url: '' });
+    expect(await healWebhook(db, signIn, 'https://x.vercel.app', doFetch)).toBe('bot webhook set again (was on a device)');
+    expect(calls.map(c => c.method)).toEqual(['getWebhookInfo', 'setWebhook']);
+    expect(writes[0]).toEqual({ webhook: true });
+  });
+
+  it('does nothing for a shop without the bot', async () => {
+    const { db } = fakeDb(null);
     const { calls, doFetch } = telegram({ url: '' });
     expect(await healWebhook(db, signIn, 'https://x.vercel.app', doFetch)).toBe('');
     expect(calls).toEqual([]);
   });
 
   it('is not set to an address other than a server', async () => {
-    const { db } = fakeDb({ webhook: true, token: 't' });
+    const { db } = fakeDb({ webhook: true, token: 't', chatId: '-1' });
     const { calls, doFetch } = telegram({ url: '' });
     expect(await healWebhook(db, signIn, undefined, doFetch)).toBe('bot webhook missing (no server address)');
     expect(calls.map(c => c.method)).toEqual(['getWebhookInfo']);
