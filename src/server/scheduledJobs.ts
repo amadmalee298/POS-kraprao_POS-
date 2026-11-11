@@ -10,8 +10,8 @@
  *   shop, whatever is due and not yet sent today goes out. A device that sent it first (it claims
  *   the same job document) is not repeated.
  */
-import { openWithSecret, sealWithSecret } from '../utils/botSecret.js';
-import { summaryText } from '../services/telegramBot.js';
+import { newWebhookSecret, openWithSecret, sealWithSecret } from '../utils/botSecret.js';
+import { BOT_CONFIG_DOC, BOT_STATE_DOC, summaryText } from '../services/telegramBot.js';
 import { Firestore, idTokenFor } from './firestoreRest.js';
 import { expenseFromDoc, incomeFromDoc, migrateSomePictures } from './telegramWebhook.js';
 
@@ -203,8 +203,48 @@ export async function removeOldMarkers(db: Firestore, branchId: string, now: Dat
   return removed;
 }
 
+/**
+ * The bot's webhook, checked on every run: when Telegram no longer delivers to the server (its
+ * webhook is gone), it is set again here, as the app does when opened on a device signed in with
+ * the shop account. Before, the bot stayed silent until someone opened the app there.
+ */
+export async function healWebhook(db: Firestore, signIn: ShopSignIn, serverBase: string | undefined, doFetch: Fetch = fetch): Promise<string> {
+  const b = signIn.branchId;
+  const config: any = await db.get(`branches/${b}/config/${BOT_CONFIG_DOC}`);
+  if (!config?.webhook || !config.token) return '';
+  const tg = async (method: string, params: Record<string, unknown>) => {
+    const res = await doFetch(`https://api.telegram.org/bot${config.token}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params)
+    });
+    const data: any = await res.json().catch(() => ({}));
+    if (!data?.ok) throw new Error(data?.description || `HTTP ${res.status}`);
+    return data.result;
+  };
+  const info: any = await tg('getWebhookInfo', {});
+  const url = String(info?.url || '');
+  const err = String(info?.last_error_message || '');
+  // Answers refused for the secret: the address was replaced by another device's setup since
+  const refused = /401|unauthorized/i.test(err) && Number(info?.pending_update_count || 0) > 0;
+  if (url && !refused) return `bot webhook ok${info?.pending_update_count ? ` pending ${info.pending_update_count}` : ''}${err ? ` (last error ${err.slice(0, 40)})` : ''}`;
+  const base = url ? url.split('/api/telegram/webhook')[0] : serverBase;
+  if (!base || !/^https:\/\/[a-z0-9.-]+$/i.test(base)) return 'bot webhook missing (no server address)';
+  const secret = await newWebhookSecret();
+  const params = new URLSearchParams({ b, p: signIn.projectId, k: signIn.apiKey, o: signIn.referer || '', s: await sealWithSecret(signIn.refreshToken, secret) });
+  if (signIn.databaseId) params.set('d', signIn.databaseId);
+  await tg('setWebhook', {
+    url: `${base}/api/telegram/webhook?${params}`,
+    secret_token: secret,
+    allowed_updates: ['message', 'channel_post', 'callback_query'],
+    max_connections: 1
+  });
+  await db.set(`branches/${b}/config/${BOT_STATE_DOC}`, { webhookHealedAt: new Date().toISOString() }, ['webhookHealedAt']).catch(() => {});
+  return `bot webhook set again (${url ? 'refused' : 'was gone'})`;
+}
+
 /** One shop: what is due now goes out */
-export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fetch): Promise<string[]> {
+export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fetch, serverBase?: string): Promise<string[]> {
   const db = new Firestore(signIn.projectId, () => idTokenFor(signIn.apiKey, signIn.refreshToken, signIn.referer), signIn.databaseId);
   const b = signIn.branchId;
   const [notify, schedule] = await Promise.all([db.get(`branches/${b}/config/notifications`), db.get(`branches/${b}/config/${SCHEDULE_CONFIG_DOC}`)]);
@@ -281,6 +321,12 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
   } catch {
     // tried again on the next run
   }
+  try {
+    const healed = await healWebhook(db, signIn, serverBase, doFetch);
+    if (healed) done.push(healed);
+  } catch (e: any) {
+    done.push(`bot webhook check failed ${String(e?.message || '').slice(0, 40)}`);
+  }
   // The bot's health in numbers (no bill details): the size of its list against Firestore's 1 MiB per
   // document, and the kind of the last error (two reads)
   try {
@@ -320,7 +366,7 @@ async function anonToken(apiKey: string, referer: string | undefined, refresh: s
 
 /** Every shop that turned this on: the jobs due now */
 export async function runScheduledJobs(
-  input: { projectId: string; apiKey: string; databaseId?: string; referer?: string; anon?: string; keepAnon?: boolean },
+  input: { projectId: string; apiKey: string; databaseId?: string; referer?: string; anon?: string; keepAnon?: boolean; serverBase?: string },
   serverKey: string,
   now = new Date(),
   doFetch: Fetch = fetch
@@ -341,7 +387,7 @@ export async function runScheduledJobs(
       continue;
     }
     try {
-      shops.push({ branchId: signIn.branchId, done: await runShop(signIn, now, doFetch) });
+      shops.push({ branchId: signIn.branchId, done: await runShop(signIn, now, doFetch, input.serverBase) });
     } catch (e: any) {
       shops.push({ branchId: signIn.branchId, error: e?.message || String(e) });
     }

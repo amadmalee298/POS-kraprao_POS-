@@ -18,6 +18,12 @@ export const config = { maxDuration: 60 };
 
 const ALLOWED_ORIGIN = /^https:\/\/([a-z0-9-]+\.github\.io|[a-z0-9-]+\.vercel\.app)$|^http:\/\/localhost(:\d+)?$/i;
 
+/** This site's own address (a Vercel domain only) */
+const serverBase = (req: any) => {
+  const host = String(req.headers?.['x-forwarded-host'] || req.headers?.host || '').split(',')[0].trim();
+  return /^[a-z0-9-]+\.vercel\.app$/i.test(host) ? `https://${host}` : undefined;
+};
+
 const one = (v: unknown) => String(Array.isArray(v) ? v[0] : v ?? '');
 
 export default async function handler(req: any, res: any) {
@@ -72,7 +78,9 @@ export default async function handler(req: any, res: any) {
           referer: body.referer ? String(body.referer) : undefined,
           anon: String(body.anon || ''),
           // GitHub's run keeps its anonymous sign-in between runs; Vercel's cannot
-          keepAnon: !cronTick
+          keepAnon: !cronTick,
+          // This server, for setting the bot's webhook again when Telegram dropped it
+          serverBase: serverBase(req)
         },
         scheduleKey
       );
