@@ -258,8 +258,9 @@ export const isScriptAuthError = (message: string) =>
 export const SCRIPT_AUTH_HELP =
   'Google ยังไม่ได้อนุญาตให้ Apps Script ใช้ Google Drive (ทำครั้งเดียวบนคอมพิวเตอร์): ' +
   '1) เปิดไฟล์ Google Sheets ของร้าน → ส่วนขยาย → Apps Script ' +
-  '2) แถบด้านบน เลือกฟังก์ชัน authorize (ถ้าไม่มี เลือก doPost) แล้วกด ▶ เรียกใช้ ' +
-  '3) กด ตรวจสอบสิทธิ์ → เลือกบัญชี Google ของร้าน → ขั้นสูง → ไปที่โปรเจกต์ (ไม่ปลอดภัย) → อนุญาต ' +
+  '2) แถบด้านบน เลือกฟังก์ชัน authorize (ถ้าไม่มี เลือก saveFile — doPost ไม่แตะ Drive จึงไม่ขอสิทธิ์) แล้วกด ▶ เรียกใช้ ' +
+  '3) กด ตรวจสอบสิทธิ์ → เลือกบัญชี Google ของร้าน → ขั้นสูง → ไปที่โปรเจกต์ (ไม่ปลอดภัย) → ติ๊ก “เลือกทั้งหมด” (ต้องมี Google ไดรฟ์) → อนุญาต ' +
+  '(saveFile ขึ้น error “reading \'folder\'” = Drive ได้รับอนุญาตแล้ว) ' +
   '4) ถ้ายังไม่หาย: ทำให้ใช้งานได้ → จัดการการทำให้ใช้งานได้ → ✏️ แก้ไข → เวอร์ชันใหม่ → ทำให้ใช้งานได้ (ลิงก์เดิมใช้ต่อได้)';
 
 const scriptErrorText = (message: string) => (isScriptAuthError(message) ? SCRIPT_AUTH_HELP : message);
