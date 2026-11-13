@@ -198,3 +198,14 @@ describe('the Dashboard sheet', () => {
     expect(charts).toEqual(['รายรับ – รายจ่าย รายเดือน', 'กำไร และกำไรสะสม']);
   });
 });
+
+describe('Drive not allowed for the script', () => {
+  it('is told as the steps to allow it', async () => {
+    const { isScriptAuthError, appsScriptCode } = await import('../sheetsScript');
+    expect(isScriptAuthError('Exception: คุณไม่ได้รับอนุญาตให้เรียกใช้ DriveApp.getRootFolder สิทธิ์ที่จำเป็นคือ (https://www.googleapis.com/auth/drive)')).toBe(true);
+    expect(isScriptAuthError('Exception: You do not have permission to call DriveApp.getRootFolder.')).toBe(true);
+    expect(isScriptAuthError('รหัสลับไม่ตรงกับในแอป')).toBe(false);
+    expect(appsScriptCode('x')).toContain('function authorize()');
+  });
+});
+
