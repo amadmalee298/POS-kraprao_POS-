@@ -215,6 +215,13 @@ function safe(v) {
   return v;
 }
 
+// Run this once in the Apps Script editor (▶ เรียกใช้): Google asks to allow Drive and Sheets
+function authorize() {
+  DriveApp.getRootFolder();
+  SpreadsheetApp.getActiveSpreadsheet();
+  return 'อนุญาตแล้ว';
+}
+
 function reply(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
@@ -237,9 +244,25 @@ async function post(url: string, body: unknown): Promise<ScriptReply> {
     // A Google sign-in page instead of the script's answer: the web app is not open to "Anyone"
     throw new Error('Apps Script ไม่ตอบกลับเป็นข้อมูล: ตอนเผยแพร่ต้องเลือก “เรียกใช้ในฐานะ: ฉัน” และ “ผู้ที่มีสิทธิ์เข้าถึง: ทุกคน” แล้วใช้ลิงก์ /exec ใหม่');
   }
-  if (!reply.ok) throw new Error(reply.error || 'Apps Script แจ้งว่าไม่สำเร็จ');
+  if (!reply.ok) throw new Error(scriptErrorText(reply.error || 'Apps Script แจ้งว่าไม่สำเร็จ'));
   return reply;
 }
+
+/**
+ * Google has not been allowed to let the script use Drive (or the Sheets file): asked once, in the
+ * Apps Script editor, by running a function there. Saving a new deployment version does not ask
+ */
+export const isScriptAuthError = (message: string) =>
+  /ไม่ได้รับอนุญาตให้เรียกใช้|do not have permission to call|authorization is required|ต้องได้รับการให้สิทธิ์|ต้องมีการให้สิทธิ์/i.test(message || '');
+
+export const SCRIPT_AUTH_HELP =
+  'Google ยังไม่ได้อนุญาตให้ Apps Script ใช้ Google Drive (ทำครั้งเดียวบนคอมพิวเตอร์): ' +
+  '1) เปิดไฟล์ Google Sheets ของร้าน → ส่วนขยาย → Apps Script ' +
+  '2) แถบด้านบน เลือกฟังก์ชัน authorize (ถ้าไม่มี เลือก doPost) แล้วกด ▶ เรียกใช้ ' +
+  '3) กด ตรวจสอบสิทธิ์ → เลือกบัญชี Google ของร้าน → ขั้นสูง → ไปที่โปรเจกต์ (ไม่ปลอดภัย) → อนุญาต ' +
+  '4) ถ้ายังไม่หาย: ทำให้ใช้งานได้ → จัดการการทำให้ใช้งานได้ → ✏️ แก้ไข → เวอร์ชันใหม่ → ทำให้ใช้งานได้ (ลิงก์เดิมใช้ต่อได้)';
+
+const scriptErrorText = (message: string) => (isScriptAuthError(message) ? SCRIPT_AUTH_HELP : message);
 
 export const pingScript = (url: string, secret: string) => post(url, { secret, ping: true });
 

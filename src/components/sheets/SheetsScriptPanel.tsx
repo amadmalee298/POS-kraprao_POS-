@@ -159,7 +159,7 @@ export const SheetsScriptPanel: React.FC = () => {
             <br />1. กดปุ่ม “คัดลอกโค้ดใหม่” ด้านล่าง
             <br />2. เปิดไฟล์ Google Sheets ของร้าน → ส่วนขยาย → Apps Script → ลบโค้ดเดิมทั้งหมด วางโค้ดใหม่ แล้วกดบันทึก
             <br />3. ทำให้ใช้งานได้ → จัดการการทำให้ใช้งานได้ → ✏️ แก้ไข → เวอร์ชัน: เวอร์ชันใหม่ → ทำให้ใช้งานได้ (ลิงก์เดิมใช้ต่อได้)
-            <br />4. ถ้า Google ขอสิทธิ์ ให้กดอนุญาต แล้วกลับมาเปิดหน้านี้ใหม่ กล่องนี้จะหายไป
+            <br />4. ในหน้า Apps Script เลือกฟังก์ชัน authorize แล้วกด ▶ เรียกใช้ → ตรวจสอบสิทธิ์ → เลือกบัญชีร้าน → ขั้นสูง → ไปที่โปรเจกต์ → อนุญาต (ไม่ทำข้อนี้ บันทึกลง Drive จะขึ้น “ไม่ได้รับอนุญาต”) แล้วกลับมาเปิดหน้านี้ใหม่ กล่องนี้จะหายไป
           </div>
           <button type="button" onClick={copyCode} className="h-11 w-full rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold flex items-center justify-center gap-1.5">
             <ClipboardCopy className="w-4 h-4" /> {copied ? 'คัดลอกโค้ดแล้ว' : 'คัดลอกโค้ดใหม่'}
