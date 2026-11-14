@@ -65,6 +65,12 @@ export async function readTelegramReceipt(token: string, item: Pick<PendingRecei
  * no server needed). Receives slips and bills, typed entries, menu buttons and the buttons under
  * saved entries. Mounted once in the app.
  */
+/** The same shop details, whatever order the fields come in (missing = empty) */
+export const sameShop = (a: Record<string, unknown> | undefined, b: Record<string, unknown>) => {
+  const x = a || {};
+  return [...new Set([...Object.keys(x), ...Object.keys(b)])].every(k => String(x[k] ?? '') === String(b[k] ?? ''));
+};
+
 export const TelegramInboxPoller = () => {
   const pos = usePOS();
   const posRef = useRef(pos);
@@ -138,10 +144,17 @@ export const TelegramInboxPoller = () => {
   const shopNow = { name: shop.name, taxId: shop.taxId, address: shop.address, phone: shop.phone };
   const shopKey = JSON.stringify(shopNow);
   const vatNow = vatRateOf(pos.settings);
+  // What this device last wrote: written once per change, never again for the same values (the
+  // check compared JSON text, and the cloud gives the fields back in another order, so every write
+  // came back "different" and was written again, thousands of times, until the daily write quota ran out)
+  const lastShopWrite = useRef('');
   useEffect(() => {
     if (!onServer || !branchId || !serverConfig) return;
-    const same = JSON.stringify(serverConfig.shop || {}) === shopKey && Number(serverConfig.vatRate) === vatNow;
-    if (!same) void mergeBranchDoc(branchId, BOT_CONFIG_DOC, { shop: shopNow, vatRate: vatNow });
+    const same = sameShop(serverConfig.shop, shopNow) && Number(serverConfig.vatRate) === vatNow;
+    const key = `${branchId}|${shopKey}|${vatNow}`;
+    if (same || lastShopWrite.current === key) return;
+    lastShopWrite.current = key;
+    void mergeBranchDoc(branchId, BOT_CONFIG_DOC, { shop: shopNow, vatRate: vatNow });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onServer, branchId, shopKey, vatNow, serverConfig?.shop, serverConfig?.vatRate]);
 
