@@ -93,15 +93,46 @@ export function useKeyedList<T extends { id: string }>(
     };
   }, [localKey]);
 
+  /**
+   * A save on its way, and when a refused one may be tried again. Each save shows up at once as a
+   * new copy of the document (before the cloud confirms it), and every copy used to send the
+   * pending records again: while the cloud did not answer (the daily quota used up) that repeated
+   * without end, each time queueing another save, until the phone ran out of memory
+   */
+  const flushing = useRef(false);
+  const retryAfter = useRef(0);
+  const flushAgain = useRef(false);
   /** Send the records changed here; ids stay pending until the cloud accepts them */
   const flush = async (ids: Set<string>, extraPut: T[] = [], dropLegacy = false) => {
     if (!branchId || !isFirebaseAvailable()) return;
+    if (flushing.current) {
+      // Sent after the one on its way (still pending until then)
+      flushAgain.current = true;
+      return;
+    }
+    flushing.current = true;
+    try {
+      await flushNow(ids, extraPut, dropLegacy);
+    } finally {
+      flushing.current = false;
+    }
+    if (flushAgain.current && retryAfter.current === 0) {
+      flushAgain.current = false;
+      const left = readPending();
+      if (left.size > 0) void flushRef.current(left);
+    }
+  };
+  const flushNow = async (ids: Set<string>, extraPut: T[], dropLegacy: boolean) => {
     const byId = new Map(itemsRef.current.map(i => [i.id, i]));
     const raw = [...extraPut.filter(i => !ids.has(i.id)), ...[...ids].map(id => byId.get(id)).filter((i): i is T => !!i)];
     const put = raw.map(forCloud);
     const removed = [...ids].filter(id => !byId.has(id));
     const ok = await saveKeyedRecords(branchId, cloudKey, put, removed, dropLegacy);
-    if (!ok) return;
+    if (!ok) {
+      retryAfter.current = Date.now() + 60_000;
+      return;
+    }
+    retryAfter.current = 0;
     const still = readPending();
     // A record changed again while this save was on its way stays pending
     const sent = new Map(raw.map(p => [p.id, JSON.stringify(p)]));
@@ -114,7 +145,7 @@ export function useKeyedList<T extends { id: string }>(
 
   useEffect(() => {
     if (!branchId || !isFirebaseAvailable()) return;
-    const unsub = subscribeToBranchDoc(branchId, cloudKey, data => {
+    const unsub = subscribeToBranchDoc(branchId, cloudKey, (data, _fromCache, pendingWrites) => {
       const pending = readPending();
       const local = new Map(itemsRef.current.map(i => [i.id, i]));
       if (!data) {
@@ -135,17 +166,26 @@ export function useKeyedList<T extends { id: string }>(
         // Move the old whole-list copy into per-record fields
         const inById = new Set(Object.keys((data as { byId?: object }).byId || {}));
         flushRef.current(pending, next.filter(i => !inById.has(i.id)), true);
-      } else if (pending.size > 0) {
+      } else if (pending.size > 0 && !pendingWrites && Date.now() >= retryAfter.current) {
+        // Left from an earlier visit or a refused save (not this device's own save on its way)
         flushRef.current(pending);
       }
     });
     const onOnline = () => {
+      retryAfter.current = 0;
       const pending = readPending();
       if (pending.size > 0) flushRef.current(pending);
     };
     window.addEventListener('online', onOnline);
+    // A refused save is tried again once a minute (not on every copy of the document)
+    const retry = setInterval(() => {
+      if (!retryAfter.current || Date.now() < retryAfter.current) return;
+      const pending = readPending();
+      if (pending.size > 0) flushRef.current(pending);
+    }, 60_000);
     return () => {
       unsub();
+      clearInterval(retry);
       window.removeEventListener('online', onOnline);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
