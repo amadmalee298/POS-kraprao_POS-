@@ -59,6 +59,8 @@ export interface CentralBranchLiveStats {
   isOnline: boolean;
   lastSyncedOrderNo?: string;
   lastOrderAmount?: number;
+  /** The branch's details as saved in the cloud (name, address, tax ID…), for every device to show */
+  details?: { name: string; nameEn: string; address: string; phone: string; taxId: string; promptpayMobileOrTaxId: string };
 }
 
 export interface CentralBranchInventoryItem {
@@ -220,6 +222,28 @@ export function cleanForFirestore<T>(data: T): T {
 /**
  * Register/Heartbeat a branch in central Firebase
  */
+/**
+ * The branch's heartbeat (online, today's figures) without its details. Every device sent its own
+ * copy of the name, address and tax ID with each heartbeat: a device holding the old ones (or the
+ * built-in sample a device that keeps nothing starts with) put them back over a change made on
+ * another device, so the new tax ID kept returning to the old one
+ */
+export async function pingBranchToFirestore(branchId: string, stats?: Partial<CentralBranchLiveStats>): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
+  try {
+    const nowIso = new Date().toISOString();
+    const { details: _d, branchId: _b, branchName: _n, ...rest } = stats || {};
+    await setDoc(doc(dbInstance, 'branches', branchId), { id: branchId, lastActiveAt: nowIso, isOnline: true, updatedAt: serverTimestamp(), ...rest }, { merge: true });
+    await setDoc(doc(dbInstance, 'branches', branchId, 'status', 'sync'), { lastPingAt: nowIso, isOnline: true, clientVersion: 'Enterprise v1.2', updatedAt: serverTimestamp() }, { merge: true });
+    return true;
+  } catch (err) {
+    console.error(`[Firebase Service] ❌ Failed to sync branch ${branchId}:`, err);
+    return false;
+  }
+}
+
+/** The branch's details as changed in this device's settings (and the heartbeat) */
 export async function syncBranchToFirestore(branch: Branch, additionalStats?: Partial<CentralBranchLiveStats>): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
   await waitForFirebaseAuth();
@@ -407,9 +431,7 @@ export async function syncOrdersBatchToFirestore(orders: Order[], branch: Branch
 
   // Update branch heartbeat
   if (successCount > 0) {
-    await syncBranchToFirestore(branch, {
-      lastActiveAt: new Date().toISOString()
-    });
+    await pingBranchToFirestore(branch.id);
   }
 
   return { success: successCount, failed: failedCount, syncedIds };
@@ -735,7 +757,15 @@ export function subscribeToCentralBranches(
             lowStockCount: data.lowStockCount || 0,
             isOnline: data.isOnline !== false,
             lastSyncedOrderNo: data.lastSyncedOrderNo,
-            lastOrderAmount: data.lastOrderAmount
+            lastOrderAmount: data.lastOrderAmount,
+            details: {
+              name: String(data.name || ''),
+              nameEn: String(data.nameEn || ''),
+              address: String(data.address || ''),
+              phone: String(data.phone || ''),
+              taxId: String(data.taxId || ''),
+              promptpayMobileOrTaxId: String(data.promptpayMobileOrTaxId || '')
+            }
           };
         });
         onUpdate(result);
@@ -2434,7 +2464,7 @@ export async function syncFullCatalogToFirestore(
     }
 
     // 6. Heartbeat & Branch Metadata
-    await syncBranchToFirestore(branch, {
+    await pingBranchToFirestore(branch.id, {
       lowStockCount: ingredients.filter(isLowStock).length
     });
 

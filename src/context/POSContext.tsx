@@ -57,6 +57,7 @@ import {
 import { detectSyncConflicts } from '../utils/conflictDetector';
 import {
   syncBranchToFirestore,
+  pingBranchToFirestore,
   syncOrderToFirestore,
   syncOrdersBatchToFirestore,
   syncInventoryToFirestore,
@@ -1074,7 +1075,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const silent = setTimeout(() => {
       if (!answered && !cloudLiveRef.current) setFirebaseSyncState(prev => (prev.status === 'connected' ? prev : { ...prev, status: 'error', errorMessage: 'คลาวด์ไม่ตอบกลับ ลองกด "เชื่อมต่อคลาวด์ใหม่"' }));
     }, 25_000);
-    syncBranchToFirestore(currentBranch, {
+    pingBranchToFirestore(currentBranch.id, {
       totalSalesToday: todaySales,
       orderCountToday: todayOrders.length,
       lowStockCount: lowStock,
@@ -1120,6 +1121,21 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     );
   }, [currentBranch.id, effectiveOffline]);
+
+  // The branch's details from the cloud (changed on another device): this device shows the same
+  // name, address and tax ID on its receipts and documents
+  useEffect(() => {
+    const d = centralBranchesLive[currentBranch.id]?.details;
+    if (!d || !d.name) return;
+    const change: Partial<Branch> = {};
+    (['name', 'nameEn', 'address', 'phone', 'taxId', 'promptpayMobileOrTaxId'] as const).forEach(k => {
+      if (d[k] && d[k] !== ((currentBranch as any)[k] || '')) (change as any)[k] = d[k];
+    });
+    if (!Object.keys(change).length) return;
+    setCurrentBranch(prev => (prev && prev.id === currentBranch.id ? { ...prev, ...change } : prev));
+    setBranches(prev => prev.map(b => (b.id === currentBranch.id ? { ...b, ...change } : b)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [centralBranchesLive, currentBranch.id]);
 
   // Real-time listener for central multi-branch statuses
   useEffect(() => {
@@ -1746,7 +1762,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         await flushPendingStock();
         await flushPendingHistory();
         await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false, onlyMissing: true });
-        if (!(await syncBranchToFirestore(currentBranch))) {
+        if (!(await pingBranchToFirestore(currentBranch.id))) {
           setFirebaseSyncState(prev => ({ ...prev, status: 'error', errorMessage: 'บันทึกขึ้นคลาวด์ไม่ได้ ตรวจสอบการเชื่อมบัญชีร้าน' }));
           return;
         }
