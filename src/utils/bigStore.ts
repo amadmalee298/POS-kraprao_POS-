@@ -20,6 +20,7 @@ export const BIG_KEYS = [
   'POS_INGREDIENTS_DATA'
 ] as const;
 
+const RECORD_KEYS = ['POS_ORDERS_DATA', 'POS_EXPENSES_DATA', 'POS_INCOMES_DATA', 'POS_MENU_ITEMS_DATA', 'POS_INGREDIENTS_DATA'];
 const DB_NAME = 'kaprao-pos-local';
 const STORE = 'kv';
 // Other keys moved to the database by the code that uses them (bigStore.adopt), e.g. the shared lists
@@ -334,7 +335,11 @@ export const bigStore = {
   },
   setItem(key: string, value: string): void {
     if (memoryOnly && (isBig(key) || isBigKey(key))) {
-      if (!writeOnly.has(key)) cache.set(key, value);
+      // The records themselves (orders, expenses…) are only read back when the app starts, and a
+      // device that keeps nothing starts without them: a second copy as text here doubled the
+      // memory they take on phones (megabytes of orders), so it is not kept
+      if (RECORD_KEYS.includes(key)) cache.delete(key);
+      else if (!writeOnly.has(key)) cache.set(key, value);
       return;
     }
     if (unreachable && isBigKey(key)) return;

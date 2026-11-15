@@ -56,7 +56,7 @@ export const OrderHistoryView: React.FC = () => {
   const [customEndDate, setCustomEndDate] = useState('');
   // A device keeps the recent weeks: an older chosen period is read from the cloud
   useEffect(() => {
-    if (dateFilter === 'custom' && customStartDate) loadHistory(customStartDate);
+    if (dateFilter === 'custom' && customStartDate) loadHistory(customStartDate, true);
   }, [dateFilter, customStartDate, loadHistory]);
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'in_progress' | 'cancelled'>('all');
   const [paymentFilter, setPaymentFilter] = useState<'all' | PaymentMethod>('all');

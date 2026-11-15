@@ -140,6 +140,12 @@ type Entry = TypedEntry & { category?: Expense['category']; includeVat?: boolean
 type Saved = { kind: 'expense'; rec: Expense } | { kind: 'income'; rec: OtherIncome };
 
 /** Handles one Telegram update from the shop's chat */
+/** Errors of the network or a busy service, worth one more try */
+export const isTransient = (e: unknown) =>
+  /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang up|network|overloaded|Bad Gateway|Service Unavailable|Gateway Time|\b(429|500|502|503|504|529)\b/i.test(
+    String((e as any)?.message || e || '') + ' ' + String((e as any)?.cause?.code || '')
+  );
+
 export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: any): Promise<void> {
   const { chatId } = ctx;
   const fromId = update.callback_query?.from?.id ?? (update.message || update.channel_post)?.from?.id;
@@ -509,6 +515,21 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
   const sleep = ctx.sleep || ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
   const albumKey = (group: string) => `${chatId}_${group}`;
 
+  /**
+   * A network hiccup (fetch failed, a reset connection, the AI busy) tried once more after a moment,
+   * when it failed quickly: a bill failed with "fetch failed" and waited to be typed by hand
+   */
+  const onceMore = async <T,>(work: () => Promise<T>): Promise<T> => {
+    const began = Date.now();
+    try {
+      return await work();
+    } catch (e: any) {
+      if (!isTransient(e) || Date.now() - began > 15_000) throw e;
+      await sleep(2000);
+      return work();
+    }
+  };
+
   /** The bill that owns an album: `itemId` when this photo is its first */
   const albumOwner = async (group: string, itemId: string): Promise<string> => {
     if (store.album) return store.album.claim(albumKey(group), itemId);
@@ -702,8 +723,8 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
     const progressId = (again || progress?.message_id) as number | undefined;
     if (progressId && !again) await store.patchInbox(id, { progressMessageId: progressId });
     try {
-      const images = await ctx.readPhoto(photo);
-      const data = toPendingData(await ctx.scan(images.scan, today), item.receivedAt.slice(0, 10));
+      const images = await onceMore(() => ctx.readPhoto(photo));
+      const data = toPendingData(await onceMore(() => ctx.scan(images.scan, today)), item.receivedAt.slice(0, 10));
       const fromCaption = captionTitle(photo.caption || '');
       if (fromCaption) data.title = fromCaption;
       const twin = await findTwin(id, item.kind, data.amount, data.date, data.refNumber);
@@ -746,6 +767,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       // The album's other pages stay with this bill (kept when the amount is typed)
       if (!pages.length) pages = await albumPages(photo.mediaGroupId);
       const extraFileIds = pages.slice(0, MAX_ATTACHMENTS - 1).map(pg => pg.storeFileId || pg.fileId);
+      if (e && typeof e === 'object' && isTransient(e)) e.message = `ติดต่อ AI หรือ Telegram ไม่ได้ชั่วคราว (${e.message}) — กด “อ่านใหม่” หรือส่งรูปนี้อีกครั้ง`;
       await store.patchInbox(id, { status: 'failed', error: e?.message || 'อ่านบิลไม่สำเร็จ', ...(extraFileIds.length ? { extraFileIds } : {}) });
       // The amount can be typed as the answer, and the photo is kept with the entry
       await store.setWaiting(chatId, userId, { action: 'amount', recordId: id });
