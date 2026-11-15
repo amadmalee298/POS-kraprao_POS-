@@ -62,11 +62,18 @@ describe('ใบรับรองแทนใบเสร็จรับเง�
     const img = (n: number) => ({ name: `p${n}.jpg`, dataUrl: `data:image/jpeg;base64,P${n}` });
     expect(purchasePhotoPages(exp({ purchaseImages: [img(1), img(2), img(3)] }))).toHaveLength(2);
     expect(purchasePhotoPages(exp({ purchaseImages: [img(1), { name: 'x', dataUrl: 'javascript:1' }] }))).toHaveLength(1);
+    // The form, the slip and the first photo on one sheet
     const pages = expenseDocPages(exp({ receiptImage: 'data:image/jpeg;base64,S', purchaseImages: [img(1)] }), shop);
-    expect(pages).toHaveLength(3);
+    expect(pages).toHaveLength(1);
     expect(pages[0]).toContain('ใบรับรองแทนใบเสร็จรับเงิน');
-    expect(pages[1]).toContain('หลักฐานการชำระเงิน');
-    expect(pages[2]).toContain('หลักฐานการซื้อสินค้า');
+    expect(pages[0]).toContain('data:image/jpeg;base64,S');
+    expect(pages[0]).toContain('data:image/jpeg;base64,P1');
+    // More photos follow, two to a page
+    const more = expenseDocPages(exp({ receiptImage: 'data:image/jpeg;base64,S', purchaseImages: [img(1), img(2), img(3)] }), shop);
+    expect(more).toHaveLength(2);
+    expect(more[1]).toContain('P2');
+    expect(more[1]).toContain('P3');
+    expect(more[0]).not.toContain('P2');
     // A normal expense with only photos still has a document
     expect(expenseDocPages(exp({ substituteReceipt: undefined, purchaseImages: [img(1)] }), shop)).toHaveLength(1);
   });
