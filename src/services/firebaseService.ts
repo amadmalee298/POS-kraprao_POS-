@@ -2029,13 +2029,16 @@ export async function syncSettingsToFirestore(
 export function subscribeToBranchDoc(
   branchId: string,
   key: string,
-  /** fromCache: the answer is this device's memory, not the cloud's (e.g. offline) */
-  onData: (data: DocumentData | null, fromCache?: boolean) => void
+  /**
+   * fromCache: the answer is this device's memory, not the cloud's (e.g. offline).
+   * pendingWrites: it includes this device's own save the cloud has not confirmed yet
+   */
+  onData: (data: DocumentData | null, fromCache?: boolean, pendingWrites?: boolean) => void
 ): () => void {
   if (!dbInstance) return () => {};
   return onSnapshot(
     doc(dbInstance, 'branches', branchId, 'config', key),
-    snap => onData(snap.exists() ? snap.data() : null, snap.metadata.fromCache),
+    snap => onData(snap.exists() ? snap.data() : null, snap.metadata.fromCache, snap.metadata.hasPendingWrites),
     err => console.warn(`[Firebase Service] Shared document ${key} listener error:`, err)
   );
 }
