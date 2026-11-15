@@ -2017,7 +2017,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { count: 0, success: false };
     }
     try {
-      const cloudOrders = await fetchCentralOrdersFromFirestore(1000);
+      const cloudOrders = await fetchCentralOrdersFromFirestore(300);
       if (!cloudOrders || cloudOrders.length === 0) {
         return { count: 0, success: true };
       }
@@ -2737,12 +2737,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => clearTimeout(t);
   }, [isStorageLoaded]);
 
-  // Auto-pull incoming central orders on app startup (DO NOT auto-pull menus/inventory to protect local edits!)
-  useEffect(() => {
-    if (!isStorageLoaded) return;
-    console.log('[POS Startup] ☁️ Pulling central orders from Firestore...');
-    pullCloudOrders();
-  }, [isStorageLoaded, pullCloudOrders]);
+  // (Each opening used to also read the latest 1,000 orders here, on top of the live list of recent
+  // orders above: over 1,300 billed reads per opening, which ran out the free daily quota by
+  // evening, and then nothing saved or showed. The live list and loadHistory cover it)
 
   // Staff cards and work shifts (clock-ins) are shared by every device of the branch, so the
   // timeclock on one device and the payroll on another see the same records
