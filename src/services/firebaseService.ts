@@ -482,8 +482,11 @@ export async function syncInventoryToFirestore(
       try {
         const snap = await getDocs(collection(dbInstance, 'branches', branch.id, 'inventory'));
         knownIds = new Set(snap.docs.map(d => d.id));
-      } catch {
-        knownIds = new Set();
+      } catch (err) {
+        // Not known which the cloud has (e.g. the daily quota used up): nothing is written. Taking
+        // it as "none" wrote every ingredient with this device's stock over the shared levels
+        console.warn('[Firebase Service] Could not read the branch inventory; nothing sent:', err);
+        return false;
       }
     }
 
