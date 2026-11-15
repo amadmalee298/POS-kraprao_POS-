@@ -1,3 +1,4 @@
+import { isPhoneLike, phoneHistoryFloor } from '../utils/device';
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from 'react';
 import { isLowStock } from '../utils/stockTypes';
 import { DEFAULT_PIN_HASH, hashPin, hashPinWithSalt, isHashedPin, pinMatches } from '../utils/pins';
@@ -434,9 +435,12 @@ interface POSContextType {
   }>;
   pullCloudOrders: () => Promise<{ count: number; success: boolean }>;
   /** Make sure sales, expenses and income from this day on are on this device (reports, books) */
-  loadHistory: (fromDay: string) => Promise<boolean>;
+  /** force: also on a phone, past the recent months (asked for by the person) */
+  loadHistory: (fromDay: string, force?: boolean) => Promise<boolean>;
   /** The day being loaded by loadHistory, while it loads */
   historyLoading: string | null;
+  /** On a phone: an earlier day a page wanted, not loaded until the person asks (memory) */
+  historyHeld: string | null;
   pullCloudAllData: () => Promise<{ ordersCount: number; ingredientsCount: number; menuItemsCount: number; success: boolean }>;
 
   // Conflict Resolution
@@ -2024,9 +2028,28 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [historyLoading, setHistoryLoading] = useState<string | null>(null);
   const historyInFlight = useRef<Promise<boolean> | null>(null);
   const historyCovered = useRef('');
+  const [historyHeld, setHistoryHeld] = useState<string | null>(null);
+  const historyHeldRef = useRef<string | null>(null);
+  historyHeldRef.current = historyHeld;
   const loadHistory = useCallback(
-    async (fromDay: string): Promise<boolean> => {
+    async (fromDay: string, force = false): Promise<boolean> => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDay) || !isFirebaseAvailable() || effectiveOffline) return false;
+      // A phone keeps the recent months only: a page opening a year of orders (the books from the
+      // start of the year) ran iPhones out of memory, and read thousands of documents each time.
+      // Older ones load when the person asks (historyHeld shows the button)
+      const hold = (day: string | null) => {
+        historyHeldRef.current = day;
+        setHistoryHeld(day);
+      };
+      const reached = !!historyCovered.current && historyCovered.current <= fromDay;
+      if (!force && !reached && isPhoneLike() && fromDay < phoneHistoryFloor()) {
+        const floor = phoneHistoryFloor();
+        hold(fromDay);
+        if (historyCovered.current && historyCovered.current <= floor) return false;
+        return loadHistoryRef.current(floor, true).then(() => false);
+      }
+      // The latest page's own range is within reach, or the person asked for at least the held one
+      if (!force || !historyHeldRef.current || fromDay <= historyHeldRef.current) hold(null);
       // How far back this visit holds (a device that keeps nothing starts each visit without it)
       let covered = historyCovered.current;
       if (!retiredStart && !covered) {
@@ -2091,6 +2114,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     },
     [effectiveOffline]
   );
+  const loadHistoryRef = useRef(loadHistory);
+  loadHistoryRef.current = loadHistory;
 
   const pullCloudAllData = useCallback(async (): Promise<{
     ordersCount: number;
@@ -5138,6 +5163,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         pullCloudOrders,
         loadHistory,
         historyLoading,
+        historyHeld,
         pullCloudAllData,
         conflictReport,
         isConflictResolverOpen,

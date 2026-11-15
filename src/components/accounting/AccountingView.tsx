@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { splitBillCost } from '../../utils/stockIntake';
 import { LedgerBooks, LedgerTab } from './LedgerBooks';
+import { HistoryHeldNotice } from '../common/HistoryHeldNotice';
 import { profitAndLoss, type PaidFrom } from '../../utils/ledger';
 import { useLedger } from '../../hooks/useLedger';
 import { VatReportPanel } from './VatReportPanel';
@@ -1984,6 +1985,7 @@ export const AccountingView: React.FC = () => {
         {/* Printable & Capture PDF Container */}
         <div ref={reportRef} id="accounting-report-content" className="space-y-4 sm:space-y-6 bg-slate-950 p-2 sm:p-4 rounded-2xl">
         {/* Statements: the double-entry books (profit and loss, balance sheet, cash flow, journal, trial balance, ledger) */}
+        {activeTab !== 'books' && activeTab !== 'telegram' && <HistoryHeldNotice />}
         {activeTab === 'books' && <LedgerBooks tab={ledgerTab} onTab={setLedgerTab} />}
         {activeTab === 'vat' && <VatReportPanel />}
 

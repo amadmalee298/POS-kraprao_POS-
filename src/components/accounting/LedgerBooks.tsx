@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FinanceDashboard } from './FinanceDashboard';
+import { HistoryHeldNotice } from '../common/HistoryHeldNotice';
 import { dashboardSince } from '../../utils/financeDashboard';
 import { CheckCircle2, ChevronRight, Plus, Printer, RotateCcw, Trash2, TriangleAlert } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
@@ -180,7 +181,8 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
     const start = settings.booksStartAt ? thaiDay(settings.booksStartAt) : `${asOf.slice(0, 4)}-01-01`;
     // The dashboard: its twelve months (and profit to date from the start of the books)
     const dashFrom = tab === 'dashboard' ? dashboardFrom : from;
-    return [start, from, dashFrom].sort()[0];
+    // A statement of a period needs that period only (it loaded from the start of the year before)
+    return [tab === 'balance' || tab === 'trial' ? start : from, from, dashFrom].sort()[0];
   }, [settings.booksStartAt, asOf, from, tab, dashboardFrom]);
   useEffect(() => {
     let alive = true;
@@ -433,6 +435,8 @@ export const LedgerBooks: React.FC<{ tab: LedgerTab; onTab: (t: LedgerTab) => vo
       ) : historyFailed ? (
         <p className="text-[11px] text-slate-500">ยังโหลดรายการย้อนหลังจากคลาวด์ไม่ได้ (ออฟไลน์?) ตัวเลขนี้มาจากข้อมูลในเครื่องนี้</p>
       ) : null}
+
+      <HistoryHeldNotice />
 
       <nav className="flex flex-wrap gap-2" aria-label="บัญชีและงบการเงิน">
         {(Object.keys(LEDGER_TAB_LABELS) as LedgerTab[]).map(t => (
