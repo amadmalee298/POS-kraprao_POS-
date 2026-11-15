@@ -835,7 +835,8 @@ export const AccountingView: React.FC = () => {
 
   // Daily Detailed Report State
   const [dailySearchQuery, setDailySearchQuery] = useState('');
-  const [selectedDetailDay, setSelectedDetailDay] = useState<any | null>(null);
+  // The day shown in the day detail: its figures follow the records (an expense added there shows at once)
+  const [selectedDetailDate, setSelectedDetailDate] = useState<string | null>(null);
   const [isDayDetailModalOpen, setIsDayDetailModalOpen] = useState(false);
 
   // Balance Sheet State & Edit Form
@@ -1261,6 +1262,8 @@ export const AccountingView: React.FC = () => {
     }
     return daysArr;
   }, [selectedMonth, orders, expenses, incomes, currentBranch.id, vatRegistered]);
+
+  const selectedDetailDay = useMemo(() => (selectedDetailDate ? dailyFinancials.find(d => d.date === selectedDetailDate) || null : null), [dailyFinancials, selectedDetailDate]);
 
   const filteredDailyFinancials = useMemo(() => {
     if (!dailySearchQuery.trim()) return dailyFinancials;
@@ -3494,7 +3497,7 @@ export const AccountingView: React.FC = () => {
                         <td className="py-2.5 px-3 text-center whitespace-nowrap">
                           <button
                             onClick={() => {
-                              setSelectedDetailDay(day);
+                              setSelectedDetailDate(day.date);
                               setIsDayDetailModalOpen(true);
                             }}
                             className="px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 rounded-lg text-[11px] font-bold transition flex items-center space-x-1 mx-auto active:scale-95"
