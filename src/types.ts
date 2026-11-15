@@ -727,6 +727,8 @@ export interface CentralBranchLiveStats {
   isOnline: boolean;
   lastSyncedOrderNo?: string;
   lastOrderAmount?: number;
+  /** The branch's details as saved in the cloud (name, address, tax ID…) */
+  details?: { name: string; nameEn: string; address: string; phone: string; taxId: string; promptpayMobileOrTaxId: string };
 }
 
 export interface FirebaseSyncState {
