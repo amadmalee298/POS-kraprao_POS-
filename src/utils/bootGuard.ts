@@ -14,12 +14,14 @@ const HEARTBEAT_MS = 20_000;
 // A run last seen on screen longer ago than this ended some other way (e.g. the phone slept)
 const CRASH_WINDOW_MS = 3 * 60_000;
 
-type RunState = { visible: boolean; at: number; crashes: number; page?: string };
+type RunState = { visible: boolean; at: number; crashes: number; page?: string; detail?: string; action?: string; build?: string };
 
 export function readRunState(raw: string | null): RunState | null {
   try {
     const s = JSON.parse(raw || 'null');
-    return s && typeof s.at === 'number' ? { visible: !!s.visible, at: s.at, crashes: Number(s.crashes) || 0, ...(typeof s.page === 'string' && s.page ? { page: s.page } : {}) } : null;
+    if (!s || typeof s.at !== 'number') return null;
+    const text = (k: string) => (typeof s[k] === 'string' && s[k] ? { [k]: s[k] as string } : {});
+    return { visible: !!s.visible, at: s.at, crashes: Number(s.crashes) || 0, ...text('page'), ...text('detail'), ...text('action'), ...text('build') };
   } catch {
     return null;
   }
@@ -37,9 +39,37 @@ let crashedOn = '';
 /** The page this run is on (kept with each note, so a crash says where it happened) */
 let page = '';
 let markNow: (() => void) | null = null;
+/** Where on the page (e.g. its tab) and the last thing done there, kept with each note */
+let detail = '';
+let action = '';
+let crashedRun: RunState | null = null;
 export const crashPage = () => crashedOn;
+/** The closed run's tab, last action and app build (to find what used the memory) */
+export const crashInfo = () => crashedRun;
+/** The part of the page now shown (e.g. a tab) */
+export function setRunDetail(name: string): void {
+  if (detail === name) return;
+  detail = name;
+  action = '';
+  markNow?.();
+}
+/** Something done that may take memory (opening a picture, approving a bill…) */
+export function noteRunAction(name: string): void {
+  action = `${name} ${new Date().toTimeString().slice(0, 5)}`;
+  markNow?.();
+}
+/** The app's build (the name of its main script) */
+const build = () => {
+  try {
+    const src = (document.querySelector('script[type="module"][src*="index-"]') as HTMLScriptElement | null)?.src || '';
+    return (src.match(/index-([\w-]+)\.js/) || [])[1] || '';
+  } catch {
+    return '';
+  }
+};
 /** The page now shown (called when it changes) */
 export function setRunPage(name: string): void {
+  if (page !== name) detail = action = '';
   page = name;
   markNow?.();
 }
@@ -61,6 +91,7 @@ export async function bootGuard(): Promise<void> {
     const prev = readRunState(localStorage.getItem(KEY));
     crashes = crashesBefore(prev, Date.now());
     crashedOn = crashes ? prev?.page || '' : '';
+    crashedRun = crashes ? prev : null;
   } catch {
     crashes = 0;
   }
@@ -73,7 +104,9 @@ export async function bootGuard(): Promise<void> {
 
   // Counted as closed by the phone until it has been on screen for a minute
   let stored = crashes;
-  const mark = () => save({ visible: document.visibilityState !== 'hidden', at: Date.now(), crashes: stored, ...(page ? { page } : {}) });
+  const b = build();
+  const extra = () => ({ ...(page ? { page } : {}), ...(detail ? { detail } : {}), ...(action ? { action } : {}), ...(b ? { build: b } : {}) });
+  const mark = () => save({ visible: document.visibilityState !== 'hidden', at: Date.now(), crashes: stored, ...extra() });
   markNow = mark;
   mark();
   setTimeout(() => {
@@ -85,5 +118,5 @@ export async function bootGuard(): Promise<void> {
   }, HEARTBEAT_MS);
   // Going to the background or closing the tab is a normal end
   document.addEventListener('visibilitychange', mark);
-  window.addEventListener('pagehide', () => save({ visible: false, at: Date.now(), crashes: stored, ...(page ? { page } : {}) }));
+  window.addEventListener('pagehide', () => save({ visible: false, at: Date.now(), crashes: stored, ...extra() }));
 }

@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { splitBillCost } from '../../utils/stockIntake';
 import { LedgerBooks, LedgerTab } from './LedgerBooks';
 import { HistoryHeldNotice } from '../common/HistoryHeldNotice';
+import { setRunDetail } from '../../utils/bootGuard';
 import { profitAndLoss, type PaidFrom } from '../../utils/ledger';
 import { useLedger } from '../../hooks/useLedger';
 import { VatReportPanel } from './VatReportPanel';
@@ -403,6 +404,10 @@ export const AccountingView: React.FC = () => {
   const initialSection = useState(() => takePageSection<string>('accounting'))[0];
   const [ledgerTab, setLedgerTab] = useState<LedgerTab>(() => LEGACY_TAB[initialSection || ''] || 'pnl');
   const [activeTab, setActiveTabRaw] = useState<ViewTab>(() => (!initialSection || LEGACY_TAB[initialSection] ? 'books' : (initialSection as ViewTab)));
+  // Each run notes the tab (and the books' own tab): a closing by the phone then says where
+  useEffect(() => {
+    setRunDetail(activeTab === 'books' ? `books/${ledgerTab}` : activeTab);
+  }, [activeTab, ledgerTab]);
   /** Old section names open the matching statement of the ledger books */
   const setActiveTab = (t: string) => {
     if (LEGACY_TAB[t]) {

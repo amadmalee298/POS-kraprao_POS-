@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { isFirebaseAvailable, mergeBranchDoc } from './services/firebaseService';
 import { POSProvider, usePOS } from './context/POSContext';
 import { HeaderNavbar } from './components/HeaderNavbar';
 import { SidebarDrawer } from './components/SidebarDrawer';
@@ -41,7 +42,7 @@ import { ShopAccountBanner } from './components/ShopAccountBanner';
 import { UpdateWatcher } from './components/UpdateWatcher';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { AutoCloudPictureCleanup } from './components/settings/CloudPictureCleanup';
-import { crashPage, setRunPage, startupCrashes } from './utils/bootGuard';
+import { crashInfo, crashPage, noteRunAction, setRunPage, startupCrashes } from './utils/bootGuard';
 import { canOpenTab, firstAllowedTab } from './utils/access';
 import { PrepCostSync } from './components/inventory/PrepCostSync';
 import { MobileClockPage, readClockHash } from './components/attendance/MobileClockPage';
@@ -74,6 +75,35 @@ const MainLayout: React.FC = () => {
   useEffect(() => {
     setRunPage(activeTab);
   }, [activeTab]);
+  // The last button pressed, kept with the run (a closing then says what was being done)
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement | null)?.closest?.('button, a, [role="button"], [role="tab"]') as HTMLElement | null;
+      const label = (el?.getAttribute('aria-label') || el?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+      if (label) noteRunAction(`กด “${label}”`);
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
+  }, []);
+  // The closed run noted in the cloud once (the server's scheduled run reports it, so the heavy part
+  // is found without asking the owner): one small write per closing
+  const crashLogged = useRef(false);
+  useEffect(() => {
+    const info = crashInfo();
+    if (!info || crashLogged.current || !currentUser || !currentBranch?.id || !isFirebaseAvailable()) return;
+    crashLogged.current = true;
+    void mergeBranchDoc(currentBranch.id, 'crash_log', {
+      last: {
+        at: new Date().toISOString(),
+        page: info.page || '',
+        detail: info.detail || '',
+        action: info.action || '',
+        build: info.build || '',
+        times: startupCrashes(),
+        device: navigator.userAgent.slice(0, 120)
+      }
+    }).catch(() => undefined);
+  }, [currentUser, currentBranch?.id]);
   const effectiveOffline = isOffline || forceOfflineMode;
 
   const [mobileClock, setMobileClock] = useState<{ code: string; at: number } | null>(() => {
@@ -174,7 +204,10 @@ const MainLayout: React.FC = () => {
       {!isLocked && crashNotice && (
         <div className="bg-sky-950 border-b border-sky-800 text-sky-100 px-4 py-2 text-xs flex items-center justify-between gap-3">
           <span>
-            แอปถูกปิดไปเองเมื่อครู่{crashPage() ? ` ขณะอยู่หน้า ${PAGE_NAMES[crashPage()] || crashPage()}` : ''} (หน่วยความจำเครื่องเต็ม) จึงเปิดที่หน้าขายและโหลดข้อมูลคลาวด์ทีละส่วน ข้อมูลไม่หาย
+            แอปถูกปิดไปเองเมื่อครู่{crashPage() ? ` ขณะอยู่หน้า ${PAGE_NAMES[crashPage()] || crashPage()}` : ''}
+            {crashInfo()?.detail ? ` › ${crashInfo()!.detail}` : ''}
+            {crashInfo()?.action ? ` (หลัง ${crashInfo()!.action})` : ''} (หน่วยความจำเครื่องเต็ม) จึงเปิดที่หน้าขายและโหลดข้อมูลคลาวด์ทีละส่วน ข้อมูลไม่หาย
+            {crashInfo()?.build ? ` · v ${crashInfo()!.build}` : ''}
           </span>
           <button type="button" onClick={() => setCrashNotice(false)} className="shrink-0 h-8 px-3 rounded-lg bg-sky-800 font-bold">
             ตกลง
