@@ -21,3 +21,17 @@ describe('crashesBefore', () => {
     expect(readRunState(null)).toBeNull();
   });
 });
+
+describe('what a closed run was doing', () => {
+  it('keeps the tab, the last button and the build', () => {
+    expect(readRunState('{"visible":true,"at":5,"crashes":1,"page":"finance","detail":"telegram","action":"กด “รับเข้าสต็อก” 14:36","build":"Ab1"}')).toEqual({
+      visible: true,
+      at: 5,
+      crashes: 1,
+      page: 'finance',
+      detail: 'telegram',
+      action: 'กด “รับเข้าสต็อก” 14:36',
+      build: 'Ab1'
+    });
+  });
+});

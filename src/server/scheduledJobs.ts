@@ -340,6 +340,13 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
     // When Telegram last delivered to the server (none for long: its webhook is gone)
     const last = Date.parse(String(state?.lastDeliveryAt || ''));
     done.push(`bot last delivery ${Number.isFinite(last) ? `${Math.round((Date.now() - last) / 60000)}m ago (${String(state?.lastDeliveryResult || '')})` : 'never'}`);
+    // The last time a phone closed the app (memory): where, after what, which build
+    const crash: any = (await db.get(`branches/${b}/config/crash_log`))?.last;
+    const crashAt = Date.parse(String(crash?.at || ''));
+    if (Number.isFinite(crashAt) && Date.now() - crashAt < 3 * 86_400_000) {
+      const os = (String(crash.device || '').match(/(iPhone OS|Android|Mac OS X|Windows NT) [\d_.]+/) || [''])[0];
+      done.push(`app closed ${Math.round((Date.now() - crashAt) / 60000)}m ago on ${crash.page || '?'}/${crash.detail || '-'} after ${crash.action || '-'} build ${crash.build || '?'} x${crash.times || 1} ${os}`);
+    }
     const err = String(state?.lastError || '');
     const kind = (err.match(/exceed|maximum|size|deadline|timeout|timed out|permission|quota|credit|unavailable|fetch failed|ECONN|abort/i) || [''])[0];
     if (err) done.push(`bot error ${err.slice(0, 24)} ${kind || 'other'}`);
