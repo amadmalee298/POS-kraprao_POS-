@@ -1018,6 +1018,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(new Date().toISOString());
 
   const effectiveOffline = isOffline || forceOfflineMode;
+  /**
+   * The cloud lists are followed from the first time the device is online until "offline mode" is
+   * chosen. They were stopped and started again on every network drop (a phone switching between
+   * Wi-Fi and 5G), and each start read every list again (orders, expenses, menu, stock…): a large
+   * share of the daily read quota. Firestore keeps them and catches up by itself after a drop
+   */
+  const [wasOnline, setWasOnline] = useState<boolean>(navigator.onLine);
+  useEffect(() => {
+    if (!isOffline) setWasOnline(true);
+  }, [isOffline]);
+  const listenOffline = forceOfflineMode || !wasOnline;
   const pendingOfflineCount = orders.filter(o => o.isOfflineOrder && !o.isSynced).length;
 
   // Firebase Cloud & Multi-Branch Synchronization State
@@ -1139,7 +1150,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Real-time listener for central multi-branch statuses
   useEffect(() => {
-    if (!isFirebaseAvailable() || effectiveOffline) return;
+    if (!isFirebaseAvailable() || listenOffline) return;
 
     const unsubscribe = subscribeToCentralBranches(
       (branchesMap) => {
@@ -1153,7 +1164,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => {
       unsubscribe();
     };
-  }, [effectiveOffline]);
+  }, [listenOffline]);
 
   const deletedMenuIdsRef = useRef(deletedMenuItemIds);
   deletedMenuIdsRef.current = deletedMenuItemIds;
@@ -1161,7 +1172,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   deletedIngredientIdsRef.current = deletedIngredientIds;
   // Real-time listener for central orders, expenses, incomes, menu, inventory, and deletions from Firestore
   useEffect(() => {
-    if (!isStorageLoaded || !isFirebaseAvailable() || effectiveOffline) return;
+    if (!isStorageLoaded || !isFirebaseAvailable() || listenOffline) return;
 
     // Once a day per device (it reads 500 orders)
     try {
@@ -1600,7 +1611,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // (The deleted ids are read when cloud lists arrive, not followed: a change to them restarted
     // every listener here, so each app start downloaded the orders, expenses and stock twice and
     // used up the project's free daily reads)
-  }, [isStorageLoaded, effectiveOffline, currentBranch?.id]);
+  }, [isStorageLoaded, listenOffline, currentBranch?.id]);
 
   // The shop's own lists (people and PINs, staff, shifts, cash drawer, tables, categories,
   // toppings, stock lots…) in the cloud too, the same on every device: before, they lived only on
@@ -1616,7 +1627,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Followed live: a device that removes its copy while this one is open is heard at once
   const [metaWritten, setMetaWritten] = useState(false);
   useEffect(() => {
-    if (!isStorageLoaded || effectiveOffline || !mirrorBranch || !isFirebaseAvailable()) return;
+    if (!isStorageLoaded || listenOffline || !mirrorBranch || !isFirebaseAvailable()) return;
     return subscribeToBranchDoc(mirrorBranch, 'state_meta', (data, fromCache) => {
       if (data?.cloudOnly) {
         setCloudOnly(true);
@@ -1627,10 +1638,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         else setCloudOnly(false);
       }
     });
-  }, [isStorageLoaded, effectiveOffline, mirrorBranch, retiredStart, firebaseSyncState.status]);
+  }, [isStorageLoaded, listenOffline, mirrorBranch, retiredStart, firebaseSyncState.status]);
   // The lists are followed once the answer is known: without it the cloud cannot be read either
   // (offline, or the shop account not signed in), and the subscription brings it as soon as it can
-  const mirrorOn = isStorageLoaded && !effectiveOffline && isFirebaseAvailable() && cloudOnly !== null;
+  const mirrorOn = isStorageLoaded && !listenOffline && isFirebaseAvailable() && cloudOnly !== null;
   const recentMonths = useMemo(() => {
     const now = new Date();
     return Array.from({ length: 13 }, (_, i) => {
@@ -1751,6 +1762,26 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Timers and listeners call the latest version (their own copy would hold stale data)
   const syncOfflineQueueRef = useRef<() => Promise<void>>(async () => undefined);
+  /**
+   * Ingredients the cloud does not have yet, sent: checked only when this device's list of
+   * ingredients changed. It read every ingredient document of the branch on each automatic sync
+   * (every 30 seconds on every open device): thousands of billed reads an hour, the main reason
+   * the free daily quota ran out
+   */
+  const inventoryCheckedRef = useRef('');
+  const sendMissingIngredients = async () => {
+    const key = `${currentBranch.id}|${ingredients.map(i => i.id).sort().join(',')}`;
+    if (inventoryCheckedRef.current === key) return;
+    if (await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false, onlyMissing: true })) inventoryCheckedRef.current = key;
+  };
+  /** The branch's heartbeat at most every 5 minutes (two billed writes each; it went every 30 seconds) */
+  const lastPingRef = useRef(0);
+  const pingBranchRarely = async (): Promise<boolean> => {
+    if (Date.now() - lastPingRef.current < 5 * 60_000) return true;
+    const ok = await pingBranchToFirestore(currentBranch.id);
+    if (ok) lastPingRef.current = Date.now();
+    return ok;
+  };
   const syncOfflineQueue = async () => {
     const nowIso = new Date().toISOString();
     const pendingOrders = orders.filter(o => o.isOfflineOrder && !o.isSynced);
@@ -1761,8 +1792,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setFirebaseSyncState(prev => (cloudLiveRef.current ? prev : { ...prev, status: 'syncing' }));
         await flushPendingStock();
         await flushPendingHistory();
-        await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false, onlyMissing: true });
-        if (!(await pingBranchToFirestore(currentBranch.id))) {
+        await sendMissingIngredients();
+        if (!(await pingBranchRarely())) {
           setFirebaseSyncState(prev => ({ ...prev, status: 'error', errorMessage: 'บันทึกขึ้นคลาวด์ไม่ได้ ตรวจสอบการเชื่อมบัญชีร้าน' }));
           return;
         }
@@ -1794,7 +1825,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         batchResult.syncedIds.forEach(id => uploaded.add(id));
         await flushPendingStock();
         await flushPendingHistory();
-        await syncInventoryToFirestore(ingredients, currentBranch, { withStock: false, onlyMissing: true });
+        await sendMissingIngredients();
         console.log(`[Firebase Service] ☁️ Synced ${batchResult.success} orders and inventory to Firestore.`);
       } catch (err) {
         console.error('[Firebase Service] ❌ Batch sync failed:', err);
