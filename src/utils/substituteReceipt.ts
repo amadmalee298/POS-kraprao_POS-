@@ -2,12 +2,53 @@ import type { Expense } from '../types';
 import type { Party } from './staffDocs';
 import { thaiBahtText } from './thaiBaht';
 import { formatThaiId } from './withholding';
+import { driveImageUrl, isDriveRef, isPdfImage } from './imageRef';
 
 /**
  * ใบรับรองแทนใบเสร็จรับเงิน: when a seller gives no receipt (market stalls, street vendors), the
  * person who paid certifies the expense and the owner approves it, so it can be booked as a
- * business expense. One page per expense, plus a page with the payment proof when there is one.
+ * business expense. One A4 sheet: the form with the payment slip and the first photo of the bill
+ * under it (when they fit); further photos follow on their own pages.
  */
+
+/**
+ * A picture a printout can show: the picture itself or its Drive address ('' for anything else,
+ * e.g. a PDF or a reference not read). A Drive reference becomes its picture address
+ */
+export function printableSrc(src: string | undefined | null): string {
+  if (!src) return '';
+  if (src.startsWith('data:image/') || src.startsWith('https://drive.google.com/')) return src;
+  if (isDriveRef(src) && !isPdfImage(src)) return driveImageUrl(src);
+  return '';
+}
+
+/** The photos of what was bought that a printout can show */
+export const printablePhotos = (e: Pick<Expense, 'purchaseImages'>) =>
+  (e.purchaseImages || []).map(i => ({ ...i, dataUrl: printableSrc(i.dataUrl) })).filter(i => !!i.dataUrl);
+
+/** Lines a text takes at about `perLine` characters a line */
+const lines = (text: string | undefined, perLine: number) => Math.max(1, Math.ceil((text || '').length / perLine));
+
+/**
+ * How tall the pictures under the form may be (mm) so the whole sheet stays on one A4 page (277 mm
+ * inside the margins), from how many lines its texts take; 0 when too little room is left (the
+ * pictures then go on their own pages)
+ */
+export function attachedPictureHeight(e: Expense, shop: Party & { phone?: string }): number {
+  const sr = e.substituteReceipt;
+  const detail = `${e.title}${sr?.payee ? ` (ผู้รับเงิน: ${sr.payee})` : ''}`;
+  const certify = `ข้าพเจ้า ${sr?.spender || ''} (ผู้เบิกจ่าย) ขอรับรองว่า รายจ่ายข้างต้นนี้ไม่อาจเรียกเก็บใบเสร็จรับเงินจากผู้รับได้ และข้าพเจ้าได้จ่ายไปในงานของ ${shop.name || 'กิจการ'} โดยแท้ ตั้งแต่วันที่ 00/00/0000 ถึงวันที่ 00/00/0000`;
+  const form =
+    125 +
+    6 * (lines(`ผู้ซื้อ/ผู้รับบริการ: ${shop.name || ''}`, 95) - 1) +
+    6 * (lines(`ที่อยู่: ${shop.address || ''}`, 95) - 1) +
+    6.5 * (lines(detail, 50) - 1) +
+    6 * Math.max(0, lines(certify, 100) - 2) +
+    (sr?.approvedAt ? 5 : 0);
+  // The heading, the labels under the pictures and the margins of that part, and a little to spare
+  const room = 277 - form - 18 - 6;
+  return room < 55 ? 0 : Math.min(105, Math.floor(room));
+}
 
 const esc = (s: string | number | undefined | null) =>
   String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -28,8 +69,8 @@ export { nextSubstituteNo } from './expenseDocNo';
  * `attached`: pictures shown under the form on the same page (the slip and the photos of the bill),
  * so one expense prints on one sheet; the form is set tighter then
  */
-export function substituteReceiptPage(e: Expense, shop: Party & { phone?: string }, attached: { src: string; label: string }[] = []): string {
-  const tight = attached.length > 0;
+export function substituteReceiptPage(e: Expense, shop: Party & { phone?: string }, attached: { src: string; label: string }[] = [], pictureHeight = 0): string {
+  const tight = attached.length > 0 && pictureHeight > 0;
   const sr = e.substituteReceipt;
   const spender = sr?.spender || '......................................';
   const approver = sr?.approver || '......................................';
@@ -62,7 +103,10 @@ ${
     ? `<div style="margin-top:5mm;border-top:1px solid #ccc;padding-top:3mm">
 <div class="bold" style="font-size:12px">หลักฐานการชำระเงิน / การซื้อ</div>
 <div style="display:flex;gap:4mm;justify-content:center;align-items:flex-start;margin-top:2mm">
-${attached.map(a => `<div style="flex:1;min-width:0;text-align:center"><img src="${a.src}" alt="${esc(a.label)}" style="display:block;width:100%;max-height:${attached.length > 1 ? 112 : 110}mm;object-fit:contain;margin:0 auto"><div class="small muted">${esc(a.label)}</div></div>`).join('')}
+${attached
+  // No forced width: the picture keeps its own shape within both limits (the PDF maker ignores object-fit)
+  .map(a => `<div style="flex:1;min-width:0;text-align:center"><img src="${a.src}" alt="${esc(a.label)}" style="display:block;width:auto;height:auto;max-width:100%;max-height:${pictureHeight}mm;margin:0 auto"><div class="small muted">${esc(a.label)}</div></div>`)
+  .join('')}
 </div>
 </div>`
     : ''
@@ -79,23 +123,32 @@ const signatureImg = (dataUrl?: string) =>
 /** The payment proof (transfer slip / photo of the bill) on its own page */
 export function proofPage(e: Pick<Expense, 'title' | 'date' | 'amount' | 'receiptImage'>, heading = 'หลักฐานการชำระเงิน'): string {
   if (!e.receiptImage) return '';
-  const isPdf = e.receiptImage.startsWith('data:application/pdf');
+  const isPdf = isPdfImage(e.receiptImage);
+  const src = printableSrc(e.receiptImage);
+  if (!isPdf && !src) return '';
   return `<div class="page a4">
 <h2>${esc(heading)}</h2>
 <div class="small muted">${esc(e.title)} · ${esc(thaiLongDate(e.date))} · ${money(e.amount)} บาท</div>
-${isPdf ? '<p class="small">(ไฟล์ PDF แนบแยกไว้ในโฟลเดอร์เดียวกัน)</p>' : `<img src="${e.receiptImage}" style="display:block;max-width:100%;max-height:240mm;margin:6mm auto 0;object-fit:contain">`}
+${isPdf ? '<p class="small">(ไฟล์ PDF แนบแยกไว้ในโฟลเดอร์เดียวกัน)</p>' : `<img src="${src}" style="display:block;max-width:100%;max-height:240mm;margin:6mm auto 0;object-fit:contain">`}
 </div>`;
 }
 
-/** Photos of what was bought, two to a page */
-export function purchasePhotoPages(e: Pick<Expense, 'title' | 'date' | 'amount' | 'purchaseImages'>): string[] {
+/**
+ * Photos of what was bought, two to a page. `shownBefore`: photos already on an earlier page (the
+ * form's sheet), so each page says which of all the photos it holds
+ */
+export function purchasePhotoPages(e: Pick<Expense, 'title' | 'date' | 'amount' | 'purchaseImages'>, shownBefore = 0): string[] {
   // Pictures, or their Drive address when this device has no copy (printing loads them)
-  const imgs = (e.purchaseImages || []).filter(i => i.dataUrl?.startsWith('data:image/') || i.dataUrl?.startsWith('https://drive.google.com/'));
+  const all = printablePhotos(e);
+  const imgs = all.slice(shownBefore);
   const pages: string[] = [];
   for (let i = 0; i < imgs.length; i += 2) {
     const pair = imgs.slice(i, i + 2);
+    const from = shownBefore + i + 1;
+    const to = from + pair.length - 1;
+    const which = all.length > 1 ? ` (รูปที่ ${from === to ? from : `${from}–${to}`} จาก ${all.length})` : '';
     pages.push(`<div class="page a4">
-<h2>หลักฐานการซื้อสินค้า${imgs.length > 2 ? ` (${i / 2 + 1}/${Math.ceil(imgs.length / 2)})` : ''}</h2>
+<h2>หลักฐานการซื้อสินค้า${which}</h2>
 <div class="small muted">${esc(e.title)} · ${esc(thaiLongDate(e.date))} · ${money(e.amount)} บาท</div>
 ${pair.map(p => `<img src="${p.dataUrl}" alt="${esc(p.name)}" style="display:block;max-width:100%;max-height:${pair.length > 1 ? 118 : 240}mm;margin:5mm auto 0;object-fit:contain">`).join('')}
 </div>`);
@@ -105,22 +158,27 @@ ${pair.map(p => `<img src="${p.dataUrl}" alt="${esc(p.name)}" style="display:blo
 
 /** Every page of an expense's documents: the substitute receipt, payment proof and purchase photos */
 export function expenseDocPages(e: Expense, shop: Party & { phone?: string }): string[] {
-  const isPdfProof = !!e.receiptImage?.startsWith('data:application/pdf');
   if (e.substituteReceipt) {
-    // One sheet: the form, then the slip and the first photo of the bill under it (more photos follow, two to a page)
-    const photos = (e.purchaseImages || []).filter(i => i.dataUrl?.startsWith('data:image/') || i.dataUrl?.startsWith('https://drive.google.com/'));
+    // One sheet: the form, then the slip and the first photo of the bill under it when they fit
+    const slip = printableSrc(e.receiptImage);
+    const photos = printablePhotos(e);
+    const height = attachedPictureHeight(e, shop);
+    const onSheet = height > 0 ? 2 : 0;
+    const slipOnSheet = onSheet > 0 && !!slip;
+    const photosOnSheet = Math.min(photos.length, onSheet - (slipOnSheet ? 1 : 0));
     const attached = [
-      ...(e.receiptImage && !isPdfProof ? [{ src: e.receiptImage, label: 'หลักฐานการชำระเงิน' }] : []),
-      ...photos.map(p => ({ src: p.dataUrl, label: 'หลักฐานการซื้อสินค้า' }))
-    ].slice(0, 2);
-    const usedPhotos = attached.filter(a => a.label === 'หลักฐานการซื้อสินค้า').length;
-    return [substituteReceiptPage(e, shop, attached), ...purchasePhotoPages({ ...e, purchaseImages: photos.slice(usedPhotos) })].filter(Boolean);
+      ...(slipOnSheet ? [{ src: slip, label: 'หลักฐานการชำระเงิน' }] : []),
+      ...photos.slice(0, photosOnSheet).map(p => ({ src: p.dataUrl, label: 'หลักฐานการซื้อสินค้า' }))
+    ];
+    return [
+      substituteReceiptPage(e, shop, attached, height),
+      // A slip that did not fit on its own page
+      !slipOnSheet && slip ? proofPage(e) : '',
+      ...purchasePhotoPages(e, photosOnSheet)
+    ].filter(Boolean);
   }
-  return [
-    e.substituteReceipt ? substituteReceiptPage(e, shop) : '',
-    e.receiptImage && !isPdfProof ? proofPage(e, e.substituteReceipt ? 'หลักฐานการชำระเงิน' : 'ใบเสร็จ / หลักฐานการชำระเงิน') : '',
-    ...purchasePhotoPages(e)
-  ].filter(Boolean);
+  // (A PDF proof is a file of its own next to this document, not a page here)
+  return [printableSrc(e.receiptImage) ? proofPage(e, 'ใบเสร็จ / หลักฐานการชำระเงิน') : '', ...purchasePhotoPages(e)].filter(Boolean);
 }
 
 /** Drive folder for an expense: รายจ่าย/2569-10 */
