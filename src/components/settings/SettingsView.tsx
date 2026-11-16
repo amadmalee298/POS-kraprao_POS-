@@ -2790,7 +2790,7 @@ export const SettingsView: React.FC = () => {
                       <div>{receiptHeader || settings.shopName}</div>
                       {receiptShowTaxId && (
                         <div className="text-[9px] text-slate-600 font-normal mt-0.5">
-                          เลขภาษี: {taxId || settings.shopTaxId || '0105562089123'}
+                          เลขภาษี: {taxId || settings.shopTaxId || '-'}
                         </div>
                       )}
                     </div>
