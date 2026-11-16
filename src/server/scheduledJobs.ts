@@ -340,6 +340,13 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
     // When Telegram last delivered to the server (none for long: its webhook is gone)
     const last = Date.parse(String(state?.lastDeliveryAt || ''));
     done.push(`bot last delivery ${Number.isFinite(last) ? `${Math.round((Date.now() - last) / 60000)}m ago (${String(state?.lastDeliveryResult || '')})` : 'never'}`);
+    // Expenses in the cloud for yesterday and today (amounts only): what the app should show
+    const yesterday = new Date(Date.parse(`${at.day}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    const recent: any[] = await db.whereAtLeast('expenses', 'date', yesterday, 300, ['branchId', 'date', 'amount', 'category']);
+    for (const day of [yesterday, at.day]) {
+      const list = recent.filter(x => x.date === day && (!x.branchId || x.branchId === b));
+      done.push(`expenses ${day}: ${list.length} (${list.map(x => `${x.category || '?'} ${Number(x.amount) || 0}`).join(', ')})`);
+    }
     // The last time a phone closed the app (memory): where, after what, which build
     const crash: any = (await db.get(`branches/${b}/config/crash_log`))?.last;
     const crashAt = Date.parse(String(crash?.at || ''));
