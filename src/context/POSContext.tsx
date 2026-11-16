@@ -59,6 +59,7 @@ import {
   syncBranchToFirestore,
   pingBranchToFirestore,
   lastCloudWriteError,
+  saveMoneyRecordDirect,
   syncOrderToFirestore,
   syncOrdersBatchToFirestore,
   syncInventoryToFirestore,
@@ -4495,6 +4496,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // The record goes at once; its pictures follow in the background (a large picture first in
     // line held the record and everything after it)
     void answeredSoon(send(rec))
+      // Not answered: the same record over a plain request (see saveMoneyRecordDirect)
+      .then(ok => ok || saveMoneyRecordDirect(kind, rec, currentBranch))
       .then(ok => {
         if (ok) {
           markUnsent(key, false);
@@ -4592,13 +4595,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const rec = incomesRef.current.find(r => r.id === id) || (box[key] as OtherIncome | undefined);
               if (!rec) return true; // deleted since
               if (!incomesRef.current.some(r => r.id === id)) setIncomes(prev => (prev.some(r => r.id === id) ? prev : [rec, ...prev]));
-              return answeredSoon(syncIncomeToFirestore(rec, currentBranch));
+              return (await answeredSoon(syncIncomeToFirestore(rec, currentBranch))) || saveMoneyRecordDirect('i', rec, currentBranch);
             })()
           : await (async () => {
               const rec = expensesRef.current.find(r => r.id === id) || (box[key] as Expense | undefined);
               if (!rec) return true;
               if (!expensesRef.current.some(r => r.id === id)) setExpenses(prev => (prev.some(r => r.id === id) ? prev : [rec, ...prev]));
-              return answeredSoon(syncExpenseToFirestore(rec, currentBranch));
+              return (await answeredSoon(syncExpenseToFirestore(rec, currentBranch))) || saveMoneyRecordDirect('e', rec, currentBranch);
             })();
       if (ok) {
         markUnsent(key, false);
