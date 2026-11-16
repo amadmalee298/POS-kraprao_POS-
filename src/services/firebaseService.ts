@@ -44,6 +44,7 @@ import {
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { isStubOrderDoc, leftLimitedWindow } from '../utils/orderUtils';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { toFsFields } from '../server/firestoreRest';
 import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem, CategoryItem, AddOnOption, SystemSettings } from '../types';
 
 /** Stock types saved with an ingredient (see utils/stockTypes) */
@@ -1018,6 +1019,91 @@ function cloudPurchaseImages(expense: Expense, maxEach = Infinity): { name: stri
   return others + total < 900_000 ? imgs : null;
 }
 
+/** An expense as its cloud document (without updatedAt, which each way of saving stamps itself) */
+function expensePayload(expense: Expense, branch: Branch | undefined, nowIso: string): Record<string, unknown> {
+  return {
+    id: expense.id,
+    branchId: expense.branchId || branch?.id || '',
+    category: expense.category,
+    title: expense.title,
+    amount: Number(expense.amount) || 0,
+    includeVat: !!expense.includeVat,
+    vatAmount: Number(expense.vatAmount) || 0,
+    netAmount: Number(expense.netAmount) || 0,
+    refNumber: expense.refNumber || '',
+    note: expense.note || '',
+    date: expense.date,
+    receiptImage: expense.receiptImage || null,
+    receiptImageName: expense.receiptImageName || null,
+    substituteReceipt: expense.substituteReceipt || null,
+    paidFrom: expense.paidFrom || null,
+    vat36: expense.vat36 || null,
+    driveFiles: expense.driveFiles || null,
+    purchaseImages: cloudPurchaseImages(expense),
+    syncedAt: nowIso
+  };
+}
+
+/** An income record as its cloud document (without updatedAt) */
+function incomePayload(income: OtherIncome, branch: Branch | undefined, nowIso: string): Record<string, unknown> {
+  return {
+    id: income.id,
+    branchId: income.branchId || branch?.id || '',
+    category: income.category,
+    title: income.title,
+    amount: Number(income.amount) || 0,
+    date: income.date,
+    paymentMethod: income.paymentMethod || 'promptpay',
+    payerName: income.payerName || '',
+    refNumber: income.refNumber || '',
+    note: income.note || '',
+    slipImage: income.slipImage && income.slipImage.length < 250000 ? income.slipImage : null,
+    slipImageName: income.slipImageName || null,
+    syncedAt: nowIso
+  };
+}
+
+/**
+ * An expense or income saved with one plain HTTPS request (Firestore's REST API, as the shop
+ * account), not through the Firebase library. On the owner's phone the library's saves stopped
+ * being answered (reads still worked) and every record waited behind them; this way does not wait
+ * in that line. The same security rules apply.
+ */
+export async function saveMoneyRecordDirect(kind: 'e' | 'i', rec: Expense | OtherIncome, branch?: Branch): Promise<boolean> {
+  const u = authInstance?.currentUser;
+  if (!u || u.isAnonymous || !navigator.onLine) return false;
+  try {
+    const token = await u.getIdToken();
+    const cfg = firebaseConfig as any;
+    const collectionName = kind === 'e' ? 'expenses' : 'incomes';
+    const prefix = kind === 'e' ? 'exp-' : 'inc-';
+    const id = rec.id.startsWith(prefix) ? rec.id : `${prefix}${rec.id}`;
+    const nowIso = new Date().toISOString();
+    const data = { ...(kind === 'e' ? expensePayload(rec as Expense, branch, nowIso) : incomePayload(rec as OtherIncome, branch, nowIso)), updatedAt: new Date() };
+    const mask = Object.keys(data).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+    const url = `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/${encodeURIComponent(cfg.firestoreDatabaseId || '(default)')}/documents/${collectionName}/${encodeURIComponent(id)}?${mask}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: toFsFields(data) }),
+        signal: controller.signal
+      });
+      if (res.ok) return true;
+      const body = await res.json().catch(() => ({}));
+      lastWriteError = `HTTP ${res.status} ${String((body as any)?.error?.message || '').slice(0, 140)}`.trim();
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    noteWriteError(err);
+    return false;
+  }
+}
+
 /** Why the last save of an expense or income failed (shown to the person while records wait) */
 let lastWriteError = '';
 export const lastCloudWriteError = () => lastWriteError;
@@ -1034,28 +1120,7 @@ export async function syncExpenseToFirestore(expense: Expense, branch?: Branch):
     const expenseRef = doc(dbInstance, 'expenses', expenseDocId);
     const nowIso = new Date().toISOString();
 
-    const payload = {
-      id: expense.id,
-      branchId: expense.branchId || branch?.id || '',
-      category: expense.category,
-      title: expense.title,
-      amount: Number(expense.amount) || 0,
-      includeVat: !!expense.includeVat,
-      vatAmount: Number(expense.vatAmount) || 0,
-      netAmount: Number(expense.netAmount) || 0,
-      refNumber: expense.refNumber || '',
-      note: expense.note || '',
-      date: expense.date,
-      receiptImage: expense.receiptImage || null,
-      receiptImageName: expense.receiptImageName || null,
-      substituteReceipt: expense.substituteReceipt || null,
-      paidFrom: expense.paidFrom || null,
-      vat36: expense.vat36 || null,
-      driveFiles: expense.driveFiles || null,
-      purchaseImages: cloudPurchaseImages(expense),
-      syncedAt: nowIso,
-      updatedAt: serverTimestamp()
-    };
+    const payload = { ...expensePayload(expense, branch, nowIso), updatedAt: serverTimestamp() };
 
     await setDoc(expenseRef, payload, { merge: true });
     return true;
@@ -1185,22 +1250,7 @@ export async function syncIncomeToFirestore(income: OtherIncome, branch?: Branch
     const incomeRef = doc(dbInstance, 'incomes', incomeDocId);
     const nowIso = new Date().toISOString();
 
-    const payload = {
-      id: income.id,
-      branchId: income.branchId || branch?.id || '',
-      category: income.category,
-      title: income.title,
-      amount: Number(income.amount) || 0,
-      date: income.date,
-      paymentMethod: income.paymentMethod || 'promptpay',
-      payerName: income.payerName || '',
-      refNumber: income.refNumber || '',
-      note: income.note || '',
-      slipImage: (income.slipImage && income.slipImage.length < 250000) ? income.slipImage : null,
-      slipImageName: income.slipImageName || null,
-      syncedAt: nowIso,
-      updatedAt: serverTimestamp()
-    };
+    const payload = { ...incomePayload(income, branch, nowIso), updatedAt: serverTimestamp() };
 
     await setDoc(incomeRef, payload, { merge: true });
     return true;
