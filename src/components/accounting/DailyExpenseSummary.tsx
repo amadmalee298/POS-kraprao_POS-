@@ -3,6 +3,7 @@ import { CalendarDays } from 'lucide-react';
 import type { Expense, ExpenseCategory } from '../../types';
 import { money } from '../../utils/accounting';
 import { dailyExpenseSummary } from '../../utils/dailyExpenses';
+import { useNarrowScreen } from '../../hooks/useNarrowScreen';
 
 /**
  * สรุปค่าใช้จ่ายรายวัน: every day of the month with an expense, the money paid out that day by
@@ -16,6 +17,7 @@ export const DailyExpenseSummary: React.FC<{
   onOpenDay: (date: string) => void;
 }> = ({ expenses, month, labels, onOpenDay }) => {
   const s = useMemo(() => dailyExpenseSummary(expenses), [expenses]);
+  const narrow = useNarrowScreen();
   const dayLabel = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('th-TH', { weekday: 'short', day: 'numeric', month: 'short' });
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
@@ -28,6 +30,42 @@ export const DailyExpenseSummary: React.FC<{
       <p className="text-[11px] text-slate-500">เงินที่จ่ายออกจริงแต่ละวัน รวมซื้อวัตถุดิบและอุปกรณ์ · กดวันเพื่อดูรายละเอียด</p>
       {s.days.length === 0 ? (
         <div className="p-3 rounded-xl bg-slate-950 text-center text-xs text-slate-500">ยังไม่มีค่าใช้จ่ายในเดือนนี้</div>
+      ) : narrow ? (
+        // Phone: one card a day (the table's date column wrapped into a narrow strip)
+        <div className="space-y-2">
+          {s.days.map(d => (
+            <button key={d.date} type="button" onClick={() => onOpenDay(d.date)} className="w-full text-left p-3 rounded-xl bg-slate-950 border border-slate-800 active:scale-[0.99]">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="font-bold text-sky-300 whitespace-nowrap">{dayLabel(d.date)}</span>
+                <span className="font-mono font-bold text-rose-300 whitespace-nowrap">฿{money(d.total)}</span>
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {s.categories
+                  .filter(c => d.byCategory[c])
+                  .map(c => (
+                    <span key={c} className="px-2 py-0.5 rounded-md bg-slate-800 text-[11px] text-slate-300">
+                      {labels[c] || c} <span className="font-mono text-slate-100">{money(d.byCategory[c] || 0)}</span>
+                    </span>
+                  ))}
+                <span className="text-[11px] text-slate-500 self-center">{d.count} รายการ ›</span>
+              </div>
+            </button>
+          ))}
+          <div className="p-3 rounded-xl border border-rose-500/30 bg-rose-950/20">
+            <div className="flex items-baseline justify-between gap-2 font-bold">
+              <span className="text-slate-200">รวมทั้งเดือน</span>
+              <span className="font-mono text-rose-300">฿{money(s.total)}</span>
+            </div>
+            <div className="mt-1.5 space-y-0.5">
+              {s.categories.map(c => (
+                <div key={c} className="flex justify-between text-[11px] text-slate-300">
+                  <span>{labels[c] || c}</span>
+                  <span className="font-mono">{money(s.byCategory[c] || 0)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="overflow-x-auto -mx-1 px-1">
           <table className="w-full text-xs min-w-[520px]">
@@ -44,7 +82,7 @@ export const DailyExpenseSummary: React.FC<{
               {s.days.map(d => (
                 <tr key={d.date} className="border-b border-slate-800/60">
                   <td className="py-2 pr-2">
-                    <button type="button" onClick={() => onOpenDay(d.date)} className="text-left text-sky-300 underline-offset-2 hover:underline min-h-[36px]">
+                    <button type="button" onClick={() => onOpenDay(d.date)} className="text-left text-sky-300 underline-offset-2 hover:underline min-h-[36px] whitespace-nowrap">
                       {dayLabel(d.date)}
                       <span className="block text-[10px] text-slate-500">{d.count} รายการ</span>
                     </button>
