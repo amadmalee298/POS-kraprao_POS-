@@ -2,6 +2,9 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { splitBillCost } from '../../utils/stockIntake';
 import { LedgerBooks, LedgerTab } from './LedgerBooks';
 import { HistoryHeldNotice } from '../common/HistoryHeldNotice';
+import { DailyExpenseSummary } from './DailyExpenseSummary';
+import { sellerInfo } from '../../utils/seller';
+import { formatThaiId } from '../../utils/withholding';
 import { setRunDetail } from '../../utils/bootGuard';
 import { profitAndLoss, type PaidFrom } from '../../utils/ledger';
 import { useLedger } from '../../hooks/useLedger';
@@ -2820,6 +2823,17 @@ export const AccountingView: React.FC = () => {
               </div>
             )}
 
+            {/* Money paid out each day of the month, by category */}
+            <DailyExpenseSummary
+              expenses={selectedBranchExpenses}
+              month={selectedMonth}
+              labels={categoryLabels}
+              onOpenDay={date => {
+                setSelectedDetailDate(date);
+                setIsDayDetailModalOpen(true);
+              }}
+            />
+
             {/* Formal Report Header Box */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-3.5">
@@ -2835,7 +2849,7 @@ export const AccountingView: React.FC = () => {
                     <span>รายงานสรุปสมุดบัญชีรายจ่าย & ภาษีซื้อประจำเดือน ({selectedMonth})</span>
                   </h2>
                   <p className="text-xs text-slate-400">
-                    เลขประจำตัวผู้เสียภาษี: 0-1055-66012-99-0 | รอบบัญชี: {selectedMonth}
+                    เลขประจำตัวผู้เสียภาษี: {formatThaiId(sellerInfo(settings, currentBranch).taxId || '') || '-'} | รอบบัญชี: {selectedMonth}
                   </p>
                 </div>
 
