@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { expenseDocName, expenseDocPages, expenseDriveFolder, nextSubstituteNo, proofPage, purchasePhotoPages, substituteReceiptPage } from '../substituteReceipt';
+import { attachedPictureHeight, expenseDocName, expenseDocPages, expenseDriveFolder, nextSubstituteNo, proofPage, purchasePhotoPages, substituteReceiptPage } from '../substituteReceipt';
 import { appsScriptCode, SCRIPT_VERSION } from '../../services/sheetsScript';
 import type { Expense } from '../../types';
 
@@ -76,6 +76,28 @@ describe('ใบรับรองแทนใบเสร็จรับเง�
     expect(more[0]).not.toContain('P2');
     // A normal expense with only photos still has a document
     expect(expenseDocPages(exp({ substituteReceipt: undefined, purchaseImages: [img(1)] }), shop)).toHaveLength(1);
+  });
+
+  it('keeps one sheet on one page: pictures in their own shape, a slip in Drive shown, photos numbered', () => {
+    const img = (n: number) => ({ name: `p${n}.jpg`, dataUrl: `data:image/jpeg;base64,P${n}` });
+    const one = expenseDocPages(exp({ receiptImage: 'data:image/jpeg;base64,S', purchaseImages: [img(1)] }), shop)[0];
+    expect(one).toContain('width:auto;height:auto;max-width:100%');
+    expect(one).not.toContain('object-fit');
+    // A slip moved to Drive is shown from there (not a broken picture)
+    const drive = expenseDocPages(exp({ receiptImage: 'gdrive:FILE1|image/jpeg' }), shop)[0];
+    expect(drive).toContain('https://drive.google.com/thumbnail?id=FILE1');
+    expect(drive).not.toContain('gdrive:');
+    // Long texts: the pictures get less room, or their own pages when too little is left
+    const long = { ...shop, address: 'ที่อยู่ยาวมาก '.repeat(110) };
+    expect(attachedPictureHeight(exp(), long)).toBe(0);
+    const pages = expenseDocPages(exp({ receiptImage: 'data:image/jpeg;base64,S', purchaseImages: [img(1)] }), long);
+    expect(pages).toHaveLength(3);
+    expect(pages[0]).not.toContain('base64,S');
+    expect(attachedPictureHeight(exp(), shop)).toBeGreaterThan(80);
+    // Photos after the sheet say which of all they are
+    const more = expenseDocPages(exp({ receiptImage: 'data:image/jpeg;base64,S', purchaseImages: [img(1), img(2), img(3), img(4)] }), shop);
+    expect(more[1]).toContain('รูปที่ 2–3 จาก 4');
+    expect(more[2]).toContain('รูปที่ 4 จาก 4');
   });
 
   it('names the Drive folder and file', () => {

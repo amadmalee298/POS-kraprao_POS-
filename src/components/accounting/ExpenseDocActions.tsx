@@ -79,7 +79,7 @@ export function useSavedSignatures() {
   return { find, remember };
 }
 
-/** Print the ใบรับรองแทนใบเสร็จรับเงิน (with the payment proof page when there is one) */
+/** Print the ใบรับรองแทนใบเสร็จรับเงิน (the slip and the first photo of the bill on the same sheet) */
 export function printSubstituteReceipt(e: Expense, shop: ReturnType<typeof sellerInfo>): boolean {
   const title = e.substituteReceipt ? `ใบรับรองแทนใบเสร็จ ${e.substituteReceipt.docNo}` : `หลักฐานรายจ่าย ${e.title}`;
   // The bill pictures are read from storage first (the record holds references to them)
