@@ -229,12 +229,21 @@ function reply(obj) {
 
 async function post(url: string, body: unknown): Promise<ScriptReply> {
   if (!isScriptUrl(url)) throw new Error('ลิงก์ไม่ถูกต้อง ต้องเป็นลิงก์ Web app ที่ลงท้ายด้วย /exec');
-  let res: Response;
-  try {
-    // text/plain keeps this a simple request (Apps Script does not answer CORS preflight)
-    res = await fetch(url.trim(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
-  } catch {
-    throw new Error('ติดต่อ Apps Script ไม่ได้ ตรวจสอบอินเทอร์เน็ต และว่าตอนเผยแพร่เลือก “ผู้ที่มีสิทธิ์เข้าถึง: ทุกคน”');
+  let res: Response | null = null;
+  const payload = JSON.stringify(body);
+  // A dropped connection (a phone on mobile data, a large document) is tried once more after a moment
+  for (let attempt = 0; attempt < 2 && !res; attempt++) {
+    try {
+      // text/plain keeps this a simple request (Apps Script does not answer CORS preflight)
+      res = await fetch(url.trim(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: payload });
+    } catch {
+      if (attempt === 0) await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  if (!res) {
+    throw new Error(
+      'ติดต่อ Apps Script ไม่ได้ (ลองแล้ว 2 ครั้ง): เน็ตอาจสะดุด ลองกดอีกครั้งตอนสัญญาณดี ถ้ายังไม่ได้ ให้เปิด Apps Script บนคอมพิวเตอร์ → ทำให้ใช้งานได้ → จัดการการทำให้ใช้งานได้ ตรวจว่า “เรียกใช้ในฐานะ: ฉัน” และ “ผู้ที่มีสิทธิ์เข้าถึง: ทุกคน” แล้วเลือกฟังก์ชัน authorize (หรือ saveFile) กด ▶ เรียกใช้ และอนุญาตทุกช่อง'
+    );
   }
   const text = await res.text();
   let reply: ScriptReply;
