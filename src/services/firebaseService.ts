@@ -1018,6 +1018,13 @@ function cloudPurchaseImages(expense: Expense, maxEach = Infinity): { name: stri
   return others + total < 900_000 ? imgs : null;
 }
 
+/** Why the last save of an expense or income failed (shown to the person while records wait) */
+let lastWriteError = '';
+export const lastCloudWriteError = () => lastWriteError;
+const noteWriteError = (err: any) => {
+  lastWriteError = `${err?.code || ''} ${String(err?.message || err || '')}`.trim().slice(0, 160);
+};
+
 export async function syncExpenseToFirestore(expense: Expense, branch?: Branch): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return false;
   await waitForFirebaseAuth();
@@ -1053,6 +1060,7 @@ export async function syncExpenseToFirestore(expense: Expense, branch?: Branch):
     await setDoc(expenseRef, payload, { merge: true });
     return true;
   } catch (err) {
+    noteWriteError(err);
     console.error(`[Firebase Service] ❌ Failed to sync expense ${expense.id}:`, err);
     // Fallback: If document size exceeds Firestore limit (1MB) due to receiptImage, retry without image so financial log is never lost
     try {
@@ -1197,6 +1205,7 @@ export async function syncIncomeToFirestore(income: OtherIncome, branch?: Branch
     await setDoc(incomeRef, payload, { merge: true });
     return true;
   } catch (err) {
+    noteWriteError(err);
     console.error(`[Firebase Service] ❌ Failed to sync income ${income.id}:`, err);
     // Fallback: Retry without slipImage if too large
     try {

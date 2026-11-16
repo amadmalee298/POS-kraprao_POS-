@@ -58,6 +58,7 @@ import { detectSyncConflicts } from '../utils/conflictDetector';
 import {
   syncBranchToFirestore,
   pingBranchToFirestore,
+  lastCloudWriteError,
   syncOrderToFirestore,
   syncOrdersBatchToFirestore,
   syncInventoryToFirestore,
@@ -421,6 +422,10 @@ interface POSContextType {
   pushAllBranchDataToCloud: () => Promise<boolean>;
   /** Reload and connect to the cloud in the other connection mode */
   reconnectCloud: () => Promise<void>;
+  /** Expenses and income saved here that the cloud has not taken yet, and why the last try failed */
+  unsentCount: number;
+  lastSendError: string;
+  resendUnsent: () => Promise<void>;
   cleanAndSyncCloudNow: (options?: { purgeCloud?: boolean; withStock?: boolean }) => Promise<{
     success: boolean;
     message: string;
@@ -4441,15 +4446,66 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // storage full: sent again only when the record changes
     }
   };
+  /**
+   * The records themselves until the cloud has them. Only their ids were kept: a device that keeps
+   * nothing (or one closed before the cloud answered) lost the record, and the resend then took
+   * it as deleted, so expenses saved on a phone were gone for good
+   */
+  const OUTBOX_KEY = 'POS_UNSENT_RECORDS';
+  const readOutbox = (): Record<string, Expense | OtherIncome> => {
+    try {
+      const v = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '{}');
+      return v && typeof v === 'object' ? v : {};
+    } catch {
+      return {};
+    }
+  };
+  const writeOutbox = (box: Record<string, Expense | OtherIncome>) => {
+    try {
+      localStorage.setItem(OUTBOX_KEY, JSON.stringify(box));
+    } catch {
+      // storage full: the in-memory record and its id still hold it this visit
+    }
+    setUnsentCount(Object.keys(box).length);
+  };
+  const keepUnsent = (key: string, rec: Expense | OtherIncome | null) => {
+    const box = readOutbox();
+    if (rec) box[key] = rec;
+    else delete box[key];
+    writeOutbox(box);
+  };
+  const [unsentCount, setUnsentCount] = useState(() => Object.keys(readOutbox()).length);
+  const [lastSendError, setLastSendError] = useState('');
+  /** A save the cloud has not answered in 25 seconds counts as not sent yet (it is tried again; saving twice is harmless) */
+  const answeredSoon = (p: Promise<boolean>) =>
+    Promise.race([
+      p,
+      new Promise<boolean>(resolve =>
+        setTimeout(() => {
+          setLastSendError('คลาวด์ไม่ตอบกลับ (เกิน 25 วินาที)');
+          resolve(false);
+        }, 25_000)
+      )
+    ]);
   const sendWithPictures = <T extends Expense | OtherIncome>(kind: 'e' | 'i', rec: T, send: (r: T) => Promise<boolean>) => {
     const key = `${kind}:${rec.id}`;
     markUnsent(key, true);
+    keepUnsent(key, rec);
     if (!isFirebaseAvailable()) return;
     // The record goes at once; its pictures follow in the background (a large picture first in
     // line held the record and everything after it)
-    void send(rec)
-      .then(ok => ok && markUnsent(key, false))
-      .catch(err => console.warn('[POSContext] Failed to sync record to Firestore:', err));
+    void answeredSoon(send(rec))
+      .then(ok => {
+        if (ok) {
+          markUnsent(key, false);
+          keepUnsent(key, null);
+          setLastSendError('');
+        } else if (lastCloudWriteError()) setLastSendError(lastCloudWriteError());
+      })
+      .catch(err => {
+        setLastSendError(String(err?.message || err));
+        console.warn('[POSContext] Failed to sync record to Firestore:', err);
+      });
   };
   /** Send the expenses and income the cloud did not take yet */
   /**
@@ -4526,27 +4582,50 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const resendMoneyRef = useRef(async () => undefined as void);
   resendMoneyRef.current = async () => {
     if (!isFirebaseAvailable()) return;
-    for (const key of readUnsent()) {
+    const box = readOutbox();
+    for (const key of [...new Set([...readUnsent(), ...Object.keys(box)])]) {
       const id = key.slice(2);
+      // This visit's copy, else the one kept until the cloud has it (a reopened phone has only that)
       const ok =
         key.startsWith('i:')
           ? await (async () => {
-              const rec = incomesRef.current.find(r => r.id === id);
+              const rec = incomesRef.current.find(r => r.id === id) || (box[key] as OtherIncome | undefined);
               if (!rec) return true; // deleted since
-              return syncIncomeToFirestore(rec, currentBranch);
+              if (!incomesRef.current.some(r => r.id === id)) setIncomes(prev => (prev.some(r => r.id === id) ? prev : [rec, ...prev]));
+              return answeredSoon(syncIncomeToFirestore(rec, currentBranch));
             })()
           : await (async () => {
-              const rec = expensesRef.current.find(r => r.id === id);
+              const rec = expensesRef.current.find(r => r.id === id) || (box[key] as Expense | undefined);
               if (!rec) return true;
-              return syncExpenseToFirestore(rec, currentBranch);
+              if (!expensesRef.current.some(r => r.id === id)) setExpenses(prev => (prev.some(r => r.id === id) ? prev : [rec, ...prev]));
+              return answeredSoon(syncExpenseToFirestore(rec, currentBranch));
             })();
-      if (ok) markUnsent(key, false);
-      else break; // the cloud is not taking writes: try again later
+      if (ok) {
+        markUnsent(key, false);
+        keepUnsent(key, null);
+        setLastSendError('');
+      } else {
+        if (lastCloudWriteError()) setLastSendError(lastCloudWriteError());
+        break; // the cloud is not taking writes: try again later
+      }
     }
   };
   useEffect(() => {
     if (firebaseSyncState.status === 'connected') void resendMoneyRef.current();
   }, [firebaseSyncState.status]);
+  // Records still waiting are tried again every 2 minutes (and when the app comes back to the front)
+  useEffect(() => {
+    if (!unsentCount) return;
+    const again = () => {
+      if (document.visibilityState !== 'hidden') void resendMoneyRef.current();
+    };
+    const t = setInterval(again, 120_000);
+    document.addEventListener('visibilitychange', again);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', again);
+    };
+  }, [unsentCount]);
 
   /**
    * Connect to the cloud again in the other mode (plain requests ↔ streaming) after a reload. The
@@ -4606,6 +4685,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteExpense = (expenseId: string) => {
     const gone = expenses.find(e => e.id === expenseId);
+    keepUnsent(`e:${expenseId}`, null);
+    markUnsent(`e:${expenseId}`, false);
     setExpenses(prev => keepList('POS_EXPENSES_DATA', prev.filter(e => e.id !== expenseId)));
     // Its pictures and Drive files go with it
     if (gone) void removeRecordFiles(gone.branchId || currentBranch.id, gone, settings).catch(() => {});
@@ -4641,6 +4722,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteIncome = (incomeId: string) => {
     const gone = incomes.find(i => i.id === incomeId);
+    keepUnsent(`i:${incomeId}`, null);
+    markUnsent(`i:${incomeId}`, false);
     setIncomes(prev => keepList('POS_INCOMES_DATA', prev.filter(inc => inc.id !== incomeId)));
     if (gone) void removeRecordFiles(gone.branchId || currentBranch.id, gone, settings).catch(() => {});
 
@@ -5203,6 +5286,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         centralBranchesLive,
         pushAllBranchDataToCloud,
         reconnectCloud,
+        unsentCount,
+        lastSendError,
+        resendUnsent: () => resendMoneyRef.current(),
         cleanAndSyncCloudNow,
         pullCloudOrders,
         loadHistory,

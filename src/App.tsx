@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { isFirebaseAvailable, mergeBranchDoc } from './services/firebaseService';
+import { UnsentBanner } from './components/common/UnsentBanner';
 import { POSProvider, usePOS } from './context/POSContext';
 import { HeaderNavbar } from './components/HeaderNavbar';
 import { SidebarDrawer } from './components/SidebarDrawer';
@@ -200,6 +201,8 @@ const MainLayout: React.FC = () => {
       {/* Staff device not signed in with the shop account: cloud sync is blocked by the rules */}
       {!isLocked && <ShopAccountBanner />}
       <UpdateWatcher />
+
+      <UnsentBanner />
 
       {!isLocked && crashNotice && (
         <div className="bg-sky-950 border-b border-sky-800 text-sky-100 px-4 py-2 text-xs flex items-center justify-between gap-3">
