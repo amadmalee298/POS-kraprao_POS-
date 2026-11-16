@@ -344,9 +344,11 @@ export async function runShop(signIn: ShopSignIn, now: Date, doFetch: Fetch = fe
     const yesterday = new Date(Date.parse(`${at.day}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
     const recent: any[] = await db.whereAtLeast('expenses', 'date', yesterday, 300, ['branchId', 'date', 'amount', 'category']);
     for (const day of [yesterday, at.day]) {
-      const list = recent.filter(x => x.date === day && (!x.branchId || x.branchId === b));
-      done.push(`expenses ${day}: ${list.length} (${list.map(x => `${x.category || '?'} ${Number(x.amount) || 0}`).join(', ')})`);
+      const list = recent.filter(x => String(x.date || '').slice(0, 10) === day);
+      done.push(`expenses ${day}: ${list.length} (${list.map(x => `${x.category || '?'} ${Number(x.amount) || 0}${x.branchId && x.branchId !== b ? ` @${x.branchId}` : ''}${String(x.date).length > 10 ? ' T' : ''}`).join(', ')})`);
     }
+    const later = recent.filter(x => String(x.date || '').slice(0, 10) > at.day);
+    if (later.length) done.push(`expenses after today: ${later.map(x => `${x.date} ${Number(x.amount) || 0}`).join(', ')}`);
     // The last time a phone closed the app (memory): where, after what, which build
     const crash: any = (await db.get(`branches/${b}/config/crash_log`))?.last;
     const crashAt = Date.parse(String(crash?.at || ''));
