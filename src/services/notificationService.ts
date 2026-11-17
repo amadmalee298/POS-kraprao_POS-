@@ -617,6 +617,9 @@ export function generateVoidOrderMessage(order: Order, reason: string, note?: st
   ]);
 }
 
+/** A quantity as people write it: at most 2 decimals, no trailing zeros (0.78000000000000216 → 0.78) */
+export const qty = (n: number) => (Number.isFinite(n) ? Number(n.toFixed(2)).toLocaleString('th-TH', { maximumFractionDigits: 2 }) : '0');
+
 export function generateLowStockMessage(lowStockItems: Ingredient[], branch?: Branch, onlyCritical = false, settings?: SystemSettings): string {
   if (lowStockItems.length === 0) {
     return compose([`✅ <b>วัตถุดิบยังพอทุกรายการ</b>`, LINE, `ตรวจเมื่อ ${timeOf()} น.`, shopLine(settings?.shopName, branch)]);
@@ -624,7 +627,7 @@ export function generateLowStockMessage(lowStockItems: Ingredient[], branch?: Br
   return compose([
     `⚠️ <b>${onlyCritical ? 'วัตถุดิบเหลือน้อยมาก' : 'วัตถุดิบใกล้หมด'} ${lowStockItems.length} รายการ</b>`,
     LINE,
-    ...lowStockItems.map(i => `• ${escHtml(i.name)} เหลือ ${i.currentStock} ${escHtml(i.unit)} (เตือนที่ ${i.minStockAlert} ${escHtml(i.unit)})`),
+    ...lowStockItems.map(i => `• ${escHtml(i.name)} เหลือ ${qty(i.currentStock)} ${escHtml(i.unit)} (เตือนที่ ${qty(i.minStockAlert)} ${escHtml(i.unit)})`),
     '🛒 ควรสั่งซื้อเพิ่ม',
     shopLine(settings?.shopName, branch)
   ]);

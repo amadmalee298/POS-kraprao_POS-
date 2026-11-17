@@ -67,7 +67,8 @@ export function applyStockDeductions(ingredients: Ingredient[], deltas: Map<stri
   return ingredients.map(ing => {
     const amount = deltas.get(ing.id);
     if (!amount) return ing;
-    return { ...ing, currentStock: Math.max(0, ing.currentStock - amount) };
+    // Rounded so repeated sales do not leave 0.78000000000000216
+    return { ...ing, currentStock: Math.max(0, Number((ing.currentStock - amount).toFixed(4))) };
   });
 }
 
