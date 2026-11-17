@@ -880,6 +880,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return INITIAL_INGREDIENTS;
     }
   });
+  // Latest ingredients for timers (their render's copy is older than a sale just made)
+  const ingredientsRef = useRef<Ingredient[]>([]);
+  ingredientsRef.current = ingredients;
   const [stockLots, setStockLots] = useState<StockLot[]>(() => (retiredStart ? [] : INITIAL_STOCK_LOTS));
   const [wasteLogs, setWasteLogs] = useState<WasteLog[]>(() => (retiredStart ? [] : INITIAL_WASTE_LOGS));
   const [stockAdjustmentLogs, setStockAdjustmentLogs] = useState<StockAdjustmentLog[]>(() => (retiredStart ? [] : INITIAL_STOCK_ADJUSTMENT_LOGS));
@@ -3641,24 +3644,35 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         dispatchNotification(`ออเดอร์ใหม่ (${newOrder.orderNumber})`, msg).catch(console.error);
       }
 
-      // 2. Low Stock Detection Notification (debounced 15 mins)
+      // 2. Low stock: each ingredient once a day when it first runs low (it was sent again with every
+      // sale, 15 minutes apart, from every device). Claimed in the cloud, so one device sends it
       if (triggers.lowStock) {
         setTimeout(() => {
-          setIngredients(currIngredients => {
-            const lowItems = currIngredients.filter(i => {
-              if (rules.onlyCriticalStock) {
-                return isLowStock(i) && i.currentStock <= i.minStockAlert * 0.2;
-              }
-              return isLowStock(i);
-            });
-            const lastAlertTime = parseInt(localStorage.getItem('kaprao_last_low_stock_alert_time') || '0', 10);
-            const nowMs = Date.now();
-            if (lowItems.length > 0 && (nowMs - lastAlertTime > 15 * 60 * 1000)) {
-              localStorage.setItem('kaprao_last_low_stock_alert_time', nowMs.toString());
-              const msg = generateLowStockMessage(lowItems, currentBranch, rules.onlyCriticalStock, settings);
-              dispatchNotification('เตือนวัตถุดิบใกล้หมดสต็อก', msg).catch(console.error);
-            }
-            return currIngredients;
+          const lowItems = ingredientsRef.current.filter(i =>
+            rules.onlyCriticalStock ? isLowStock(i) && i.currentStock <= i.minStockAlert * 0.2 : isLowStock(i)
+          );
+          if (lowItems.length === 0) return;
+          const day = new Date().toLocaleDateString('sv-SE');
+          let told: Record<string, string> = {};
+          try {
+            told = JSON.parse(localStorage.getItem('POS_LOW_STOCK_TOLD') || '{}') || {};
+          } catch {
+            told = {};
+          }
+          const fresh = lowItems.filter(i => told[i.id] !== day);
+          if (fresh.length === 0) return;
+          fresh.forEach(i => (told[i.id] = day));
+          try {
+            // Only today's kept
+            localStorage.setItem('POS_LOW_STOCK_TOLD', JSON.stringify(Object.fromEntries(Object.entries(told).filter(([, d]) => d === day))));
+          } catch {
+            // storage unavailable
+          }
+          void Promise.all(fresh.map(i => claimDailyJob(currentBranch.id, `lowstock_${i.id}`, day).then(mine => (mine ? i : null)))).then(mine => {
+            const toSend = mine.filter((i): i is Ingredient => !!i);
+            if (toSend.length === 0) return;
+            const msg = generateLowStockMessage(toSend, currentBranch, rules.onlyCriticalStock, settings);
+            dispatchNotification('เตือนวัตถุดิบใกล้หมดสต็อก', msg).catch(console.error);
           });
         }, 150);
       }
