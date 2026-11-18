@@ -1,3 +1,4 @@
+import { cleanExpenseItems } from '../utils/expenseItems.js';
 import type { Expense, OtherIncome, PendingReceipt } from '../types';
 import type { BotWaiting } from '../services/telegramBot';
 import { AlbumPage, AlbumStore, BotContext, BotStore, handleBotUpdate } from '../services/botEngine.js';
@@ -102,7 +103,8 @@ export function expenseFromDoc(d: any): Expense {
     paidFrom: d.paidFrom || undefined,
     vat36: d.vat36 || undefined,
     driveFiles: Array.isArray(d.driveFiles) ? d.driveFiles : undefined,
-    purchaseImages: Array.isArray(d.purchaseImages) && d.purchaseImages.length ? d.purchaseImages : undefined
+    purchaseImages: Array.isArray(d.purchaseImages) && d.purchaseImages.length ? d.purchaseImages : undefined,
+    items: Array.isArray(d.items) && d.items.length ? cleanExpenseItems(d.items) : undefined
   };
 }
 
@@ -145,6 +147,7 @@ export function expenseDoc(e: Expense): Record<string, unknown> {
     vat36: e.vat36 || null,
     driveFiles: e.driveFiles || null,
     purchaseImages: e.purchaseImages?.length ? e.purchaseImages : null,
+    items: e.items?.length ? cleanExpenseItems(e.items) : null,
     syncedAt: new Date().toISOString(),
     updatedAt: new Date()
   };

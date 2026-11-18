@@ -3,6 +3,7 @@ import { splitBillCost } from '../../utils/stockIntake';
 import { LedgerBooks, LedgerTab } from './LedgerBooks';
 import { HistoryHeldNotice } from '../common/HistoryHeldNotice';
 import { DailyExpenseSummary } from './DailyExpenseSummary';
+import { draftsToItems, ExpenseItemsEditor, type ItemDraft } from './ExpenseItemsEditor';
 import { sellerInfo } from '../../utils/seller';
 import { formatThaiId } from '../../utils/withholding';
 import { setRunDetail } from '../../utils/bootGuard';
@@ -492,6 +493,7 @@ export const AccountingView: React.FC = () => {
   const [expPaidFrom, setExpPaidFrom] = useState<PaidFrom>('bank');
   const [expRefNumber, setExpRefNumber] = useState('');
   const [expNote, setExpNote] = useState('');
+  const [expItems, setExpItems] = useState<ItemDraft[]>([]);
   const [expReceiptImage, setExpReceiptImage] = useState<string | null>(null);
   const [expReceiptName, setExpReceiptName] = useState<string | null>(null);
   // No receipt from the seller: issue a ใบรับรองแทนใบเสร็จรับเงิน (null = follow the VAT box:
@@ -676,6 +678,7 @@ export const AccountingView: React.FC = () => {
     setExpDate(dateStr);
     setExpRefNumber('');
     setExpNote('');
+    setExpItems([]);
     setExpReceiptImage(null);
     setExpReceiptName(null);
     setExpSubstitute(null);
@@ -1305,6 +1308,7 @@ export const AccountingView: React.FC = () => {
       netAmount,
       refNumber: expRefNumber.trim(),
       note: expNote.trim(),
+      ...(draftsToItems(expItems).length ? { items: draftsToItems(expItems) } : {}),
       receiptImage: expReceiptImage || undefined,
       receiptImageName: expReceiptName || undefined,
       purchaseImages: expPurchaseImages.length ? expPurchaseImages : undefined,
@@ -1383,6 +1387,7 @@ export const AccountingView: React.FC = () => {
     setExpAmount(0);
     setExpRefNumber('');
     setExpNote('');
+    setExpItems([]);
     setExpReceiptImage(null);
     setExpReceiptName(null);
     setExpSubstitute(null);
@@ -3877,6 +3882,8 @@ export const AccountingView: React.FC = () => {
                   />
                 </div>
               </div>
+
+              <ExpenseItemsEditor drafts={expItems} onChange={setExpItems} amount={expAmount || 0} onUseTotal={total => setExpAmount(total)} />
 
               <div>
                 <label className="block text-slate-400 mb-1">จ่ายด้วย</label>

@@ -1,3 +1,4 @@
+import { cleanExpenseItems } from '../utils/expenseItems.js';
 import type { Expense, OtherIncome, Order, PendingReceipt } from '../types';
 import type { VerifiedReceiptData } from '../utils/receiptOcr';
 import { nextSubstituteNo } from '../utils/expenseDocNo.js';
@@ -136,7 +137,7 @@ const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const vatInside = (gross: number, rate: number) => round2((gross * rate) / (100 + rate));
 const defaultId = (prefix: 'exp' | 'inc') => (prefix === 'exp' ? `exp-${Date.now()}` : `inc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
 
-type Entry = TypedEntry & { category?: Expense['category']; includeVat?: boolean; vatAmount?: number; refNumber?: string; note?: string };
+type Entry = TypedEntry & { category?: Expense['category']; includeVat?: boolean; vatAmount?: number; refNumber?: string; note?: string; items?: Expense['items'] };
 type Saved = { kind: 'expense'; rec: Expense } | { kind: 'income'; rec: OtherIncome };
 
 /** Handles one Telegram update from the shop's chat */
@@ -241,7 +242,9 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       // A slip is a transfer; an entry typed without one was most likely paid in cash
       paidFrom: image ? 'bank' : 'cash',
       substituteReceipt: includeVat ? undefined : { docNo, spender: sender, payee: entry.vendor || undefined },
-      ...(extras?.length ? { purchaseImages: extras.slice(0, MAX_PURCHASE_PHOTOS) } : {})
+      ...(extras?.length ? { purchaseImages: extras.slice(0, MAX_PURCHASE_PHOTOS) } : {}),
+      // What the bill lists, line by line (shown on the ใบรับรองแทนใบเสร็จ)
+      ...(cleanExpenseItems(entry.items).length ? { items: cleanExpenseItems(entry.items) } : {})
     };
     await store.saveExpense(rec);
     return { kind: 'expense', rec };
@@ -754,7 +757,7 @@ export async function handleBotUpdate(ctx: BotContext, store: BotStore, update: 
       // A transfer slip names the bank transfer, not what was paid for: the payee says more
       const title = /^(โอนเงิน|โอน|สลิป|ชำระเงิน|จ่ายเงิน|transfer|payment)/i.test(data.title) && data.vendorName && !fromCaption ? `จ่าย ${data.vendorName}` : data.title;
       const saved = await record(
-        { kind: item.kind, date: data.date, title, amount: data.amount, vendor: data.vendorName, category: data.category, includeVat: data.includeVat, vatAmount: data.vatAmount, refNumber: data.refNumber, note: data.note },
+        { kind: item.kind, date: data.date, title, amount: data.amount, vendor: data.vendorName, category: data.category, includeVat: data.includeVat, vatAmount: data.vatAmount, refNumber: data.refNumber, note: data.note, items: data.lineItems },
         photo.senderName,
         images.store,
         `telegram-${photo.messageId}.jpg`,

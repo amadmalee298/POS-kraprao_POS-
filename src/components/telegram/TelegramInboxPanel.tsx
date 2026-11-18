@@ -1,3 +1,4 @@
+import { cleanExpenseItems } from '../../utils/expenseItems';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ImageIcon, Loader2, Package, RefreshCw, Send, XCircle } from 'lucide-react';
 import type { ExpenseCategory, IncomeCategory, Ingredient, PendingReceipt } from '../../types';
@@ -400,7 +401,9 @@ export const TelegramInboxPanel: React.FC<{ incomeLabels: Record<IncomeCategory,
           receiptImageName: image ? `telegram-${p.messageId}.jpg` : undefined,
           // No tax invoice: the shop's own ใบรับรองแทนใบเสร็จ, numbered now (signed later in the POS)
           ...(f.includeVat ? {} : { substituteReceipt: substituteFor(p, f.date, p.data?.vendorName) }),
-          ...(extras.length ? { purchaseImages: extras.map((dataUrl, i) => ({ name: `telegram-${p.messageId}-${i + 2}.jpg`, dataUrl })) } : {})
+          ...(extras.length ? { purchaseImages: extras.map((dataUrl, i) => ({ name: `telegram-${p.messageId}-${i + 2}.jpg`, dataUrl })) } : {}),
+          // What the bill lists, line by line (shown on the ใบรับรองแทนใบเสร็จ)
+          ...(cleanExpenseItems(p.data?.lineItems).length ? { items: cleanExpenseItems(p.data?.lineItems) } : {})
         });
         // The bill photo into Google Drive too, when the shop turned that on (a computer does it; on a
         // phone drawing the PDF froze the app: it is saved by hand there, or by the next computer)
