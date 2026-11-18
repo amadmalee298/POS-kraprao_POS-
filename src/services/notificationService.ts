@@ -68,8 +68,19 @@ const STORAGE_KEYS = {
   RULES: 'kaprao_notification_rules',
   LOGS: 'kaprao_notification_logs',
   LAST_DAILY_DATE: 'kaprao_last_daily_summary_date',
-  LAST_LOW_STOCK_ALERT: 'kaprao_last_low_stock_alert_time',
+  /** Low-stock alerts this device sent (or saw sent) today, per branch: { [branchId]: { day, ids } } */
+  LOW_STOCK_TOLD: 'kaprao_low_stock_told',
 };
+export const LOW_STOCK_TOLD_KEY = STORAGE_KEYS.LOW_STOCK_TOLD;
+// The earlier once-every-15-minutes timer (no longer used)
+try {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('kaprao_last_low_stock_alert_time');
+    localStorage.removeItem('POS_LOW_STOCK_TOLD');
+  }
+} catch {
+  // storage unavailable
+}
 
 export const DEFAULT_TRIGGERS: NotificationTriggers = {
   dailySummary: true,
@@ -618,7 +629,8 @@ export function generateVoidOrderMessage(order: Order, reason: string, note?: st
 }
 
 /** A quantity as people write it: at most 2 decimals, no trailing zeros (0.78000000000000216 → 0.78) */
-export const qty = (n: number) => (Number.isFinite(n) ? Number(n.toFixed(2)).toLocaleString('th-TH', { maximumFractionDigits: 2 }) : '0');
+export const qty = (n: number) =>
+  !Number.isFinite(n) ? '0' : n > 0 && n < 0.01 ? 'น้อยกว่า 0.01' : n.toLocaleString('th-TH', { maximumFractionDigits: 2 });
 
 export function generateLowStockMessage(lowStockItems: Ingredient[], branch?: Branch, onlyCritical = false, settings?: SystemSettings): string {
   if (lowStockItems.length === 0) {

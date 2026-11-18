@@ -7,6 +7,8 @@ describe('low stock message', () => {
     expect(qty(0.78000000000000216)).toBe('0.78');
     expect(qty(1)).toBe('1');
     expect(qty(1250.5)).toBe('1,250.5');
+    expect(qty(0.004)).toBe('น้อยกว่า 0.01');
+    expect(qty(0)).toBe('0');
     const msg = generateLowStockMessage([{ id: 'oil', name: 'น้ำมันถั่วเหลือง', unit: 'l', currentStock: 0.6700000000000215, minStockAlert: 1 } as any]);
     expect(msg).toContain('เหลือ 0.67 l (เตือนที่ 1 l)');
     expect(msg).not.toContain('000000');
