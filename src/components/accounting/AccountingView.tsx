@@ -548,6 +548,8 @@ export const AccountingView: React.FC = () => {
     packageQty?: number;
     packageUnit?: string;
     packageSize?: number;
+    /** Price paid for this line (baht); empty = a share of the rest of the bill */
+    price?: number;
   }>>([]);
 
   const openAddIncomeModal = (prefilledDate?: string | React.MouseEvent) => {
@@ -793,6 +795,7 @@ export const AccountingView: React.FC = () => {
       packageQty?: number;
       packageUnit?: string;
       packageSize?: number;
+      price?: number;
     }>,
     value?: string | number | boolean
   ) => {
@@ -1282,13 +1285,24 @@ export const AccountingView: React.FC = () => {
   // Handlers
   const handleCreateExpense = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!expTitle.trim() || expAmount <= 0) return;
+    // Prices typed on the stock lines: their total is the amount when none was typed
+    const stockLines = expAutoUpdateStock ? expStockEntries.filter(x => x.ingredientId && x.quantity > 0) : [];
+    const pricedTotal = round2(stockLines.reduce((sum, x) => sum + (Number(x.price) || 0), 0));
+    const amountNow = expAmount > 0 ? expAmount : pricedTotal;
+    if (!expTitle.trim() || amountNow <= 0) {
+      setExpenseFormError(!expTitle.trim() ? 'ใส่ชื่อรายการก่อน' : 'ใส่จำนวนเงิน (หรือราคาของแต่ละรายการวัตถุดิบ)');
+      return;
+    }
+    if (amountNow !== expAmount) setExpAmount(amountNow);
+    const expAmountFinal = amountNow;
+    // What was bought: the lines typed, else the stock lines (name, quantity, price)
+    const typedItems = draftsToItems(expItems);
 
     let vatAmount = 0;
-    let netAmount = expAmount;
+    let netAmount = expAmountFinal;
     if (expIncludeVat) {
-      vatAmount = vatInside(expAmount, vatRate);
-      netAmount = round2(expAmount - vatAmount);
+      vatAmount = vatInside(expAmountFinal, vatRate);
+      netAmount = round2(expAmountFinal - vatAmount);
     }
 
     const chosenDate = expDate || getLocalDateString();
@@ -1300,7 +1314,7 @@ export const AccountingView: React.FC = () => {
       date: chosenDate,
       category: expCategory,
       title: expTitle.trim(),
-      amount: expAmount,
+      amount: expAmountFinal,
       includeVat: expIncludeVat && !expVat36,
       paidFrom: expPaidFrom,
       vat36: vatRegistered && expVat36 ? true : undefined,
@@ -1308,7 +1322,21 @@ export const AccountingView: React.FC = () => {
       netAmount,
       refNumber: expRefNumber.trim(),
       note: expNote.trim(),
-      ...(draftsToItems(expItems).length ? { items: draftsToItems(expItems) } : {}),
+      ...(typedItems.length
+        ? { items: typedItems }
+        : stockLines.length
+          ? {
+              items: (() => {
+                const shares = splitBillCost(stockLines.map(x => ({ ingredientId: x.ingredientId, quantity: x.quantity, lineAmount: x.price })), ingredients, expAmountFinal);
+                return stockLines.map((x, i) => {
+                  const ing = ingredients.find(g => g.id === x.ingredientId);
+                  const pkg = x.usePackage && x.packageQty && x.packageUnit;
+                  const qty = pkg ? x.packageQty! : x.quantity;
+                  return { name: ing?.name || 'วัตถุดิบ', quantity: qty, unit: pkg ? x.packageUnit : ing?.unit, unitPrice: qty > 0 ? round2(shares[i] / qty) : undefined, amount: shares[i] };
+                }).filter(it => it.amount > 0);
+              })()
+            }
+          : {}),
       receiptImage: expReceiptImage || undefined,
       receiptImageName: expReceiptName || undefined,
       purchaseImages: expPurchaseImages.length ? expPurchaseImages : undefined,
@@ -1330,7 +1358,7 @@ export const AccountingView: React.FC = () => {
     // Copies of the documents into Google Drive, in the background
     if (expenseDrive.enabled && hasExpenseDocs(savedExpense)) void expenseDrive.save(savedExpense);
 
-    setSaveExpenseSuccess(`บันทึกค่าใช้จ่าย "${expTitle.trim()}" จำนวน ฿${money(expAmount)} (${chosenDate}) เรียบร้อยแล้ว`);
+    setSaveExpenseSuccess(`บันทึกค่าใช้จ่าย "${expTitle.trim()}" จำนวน ฿${money(expAmountFinal)} (${chosenDate}) เรียบร้อยแล้ว`);
     setTimeout(() => {
       setSaveExpenseSuccess(null);
     }, 5000);
@@ -1340,8 +1368,8 @@ export const AccountingView: React.FC = () => {
       if (validEntries.length > 0) {
         // Stock is valued at cost: before VAT when the shop claims input VAT back. The bill is
         // shared by the items' value at their current cost, not equally.
-        const costBasis = vatRegistered && expIncludeVat ? expAmount - vatInside(expAmount, vatRate) : expAmount;
-        const shares = splitBillCost(validEntries.map(e => ({ ingredientId: e.ingredientId, quantity: e.quantity })), ingredients, costBasis);
+        const costBasis = vatRegistered && expIncludeVat ? expAmountFinal - vatInside(expAmountFinal, vatRate) : expAmountFinal;
+        const shares = splitBillCost(validEntries.map(e => ({ ingredientId: e.ingredientId, quantity: e.quantity, lineAmount: e.price && e.price > 0 ? (vatRegistered && expIncludeVat ? e.price - vatInside(e.price, vatRate) : e.price) : undefined })), ingredients, costBasis);
         validEntries.forEach((entry, idx) => {
           recordIngUsage(entry.ingredientId, 1);
           const matchedIng = ingredients.find(i => i.id === entry.ingredientId);
@@ -3783,6 +3811,7 @@ export const AccountingView: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateExpense} className="space-y-3 text-xs">
+              {expenseFormError && <div role="alert" className="p-2.5 rounded-xl border border-rose-600/60 bg-rose-950/40 text-rose-200 font-bold">{expenseFormError}</div>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-400 mb-1 font-medium">หมวดหมู่ค่าใช้จ่าย *</label>
@@ -3863,7 +3892,9 @@ export const AccountingView: React.FC = () => {
                   <label className="block text-slate-400 mb-1">จำนวนเงิน (บาท) *</label>
                   <input
                     type="number"
-                    required
+                    inputMode="decimal"
+                    step="any"
+                    min="0"
                     placeholder="0.00"
                     value={expAmount || ''}
                     onChange={e => setExpAmount(Number(e.target.value))}
@@ -4000,6 +4031,20 @@ export const AccountingView: React.FC = () => {
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <span className="text-[10px] font-bold text-slate-400">
                         รายการวัตถุดิบที่ต้องการรับเข้าคลัง:
+                        {(() => {
+                          const priced = round2(expStockEntries.reduce((sum, x) => sum + (Number(x.price) || 0), 0));
+                          if (!priced) return null;
+                          return (
+                            <span className={`ml-1 ${Math.abs(priced - expAmount) < 0.01 ? 'text-emerald-300' : 'text-amber-300'}`}>
+                              รวมราคาที่ใส่ ฿{money(priced)}
+                              {expAmount !== priced && (
+                                <button type="button" onClick={() => setExpAmount(priced)} className="ml-1 underline">
+                                  ใช้เป็นยอดเงิน
+                                </button>
+                              )}
+                            </span>
+                          );
+                        })()}
                       </span>
                       <div className="flex items-center gap-2">
                         <button
@@ -4294,6 +4339,19 @@ export const AccountingView: React.FC = () => {
                                   </div>
                                 </div>
                               )}
+                              <div className="flex items-center gap-2 pt-1">
+                                <label className="text-[10px] font-bold text-slate-400 shrink-0">ราคา (บาท):</label>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0"
+                                  step="any"
+                                  value={entry.price ?? ''}
+                                  placeholder="ไม่ใส่ = แบ่งจากยอดบิล"
+                                  onChange={e => handleUpdateExpStockEntry(entry.id, { price: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                  className="flex-1 min-w-0 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-amber-200 font-mono text-xs focus:border-amber-500 focus:outline-none"
+                                />
+                              </div>
                             </div>
                           </div>
                         );

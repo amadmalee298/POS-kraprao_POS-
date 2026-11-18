@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { CloudUpload, ExternalLink, FileSignature, Image as ImageIcon, Loader2, PenLine } from 'lucide-react';
+import { CloudUpload, ExternalLink, FileSignature, Image as ImageIcon, ListPlus, Loader2, PenLine } from 'lucide-react';
+import { draftsToItems, emptyItem, ExpenseItemsEditor, type ItemDraft } from './ExpenseItemsEditor';
 import { usePOS } from '../../context/POSContext';
 import { useKeyedList } from '../../hooks/useKeyedList';
 import { SavedSignature, SignaturePad } from '../common/SignaturePad';
@@ -91,6 +92,23 @@ export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<t
   const { settings, currentBranch, updateExpense, permissions, expenses, currentUser } = usePOS();
   const signatures = drive.signatures;
   const [signing, setSigning] = useState<'spender' | 'approver' | null>(null);
+  // รายละเอียดสินค้า of a saved expense (shown on its ใบรับรองแทนใบเสร็จ)
+  const [editingItems, setEditingItems] = useState<ItemDraft[] | null>(null);
+  const openItems = () =>
+    setEditingItems(
+      (e.items || []).length
+        ? e.items!.map(i => ({ name: i.name, quantity: i.quantity ? String(i.quantity) : '', unit: i.unit || '', unitPrice: i.unitPrice ? String(i.unitPrice) : '', amount: String(i.amount) }))
+        : [emptyItem()]
+    );
+  const saveItems = () => {
+    if (!editingItems) return;
+    const items = draftsToItems(editingItems);
+    const next: Expense = { ...e, items: items.length ? items : undefined };
+    updateExpense(e.id, { items: items.length ? items : undefined });
+    setEditingItems(null);
+    // The copy in Drive shows the new lines
+    if (drive.enabled && saved) void drive.save(next);
+  };
   const saved = e.driveFiles?.[0];
   const sr = e.substituteReceipt;
   // Bought without a tax invoice (e.g. from the Telegram bot) and no ใบรับรองแทนใบเสร็จ yet
@@ -165,6 +183,24 @@ export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<t
           onSave={(d, r) => sign(signing, d, r)}
           onClose={() => setSigning(null)}
         />
+      )}
+      {(sr || canIssue) && (
+        <button type="button" onClick={openItems} title="รายละเอียดสินค้าในใบรับรองแทนใบเสร็จ" className="h-8 px-2 rounded-lg border border-slate-600 text-slate-200 text-[11px] inline-flex items-center gap-1">
+          <ListPlus className="w-3.5 h-3.5" /> รายการสินค้า{e.items?.length ? ` (${e.items.length})` : ''}
+        </button>
+      )}
+      {editingItems && (
+        <div className="fixed inset-0 z-[80] bg-slate-950/85 flex items-end sm:items-center justify-center p-2" role="dialog" aria-modal="true" aria-label="รายละเอียดสินค้า">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-2xl p-4 space-y-3 text-xs">
+            <div className="font-bold text-sm text-slate-100">รายละเอียดสินค้า · {e.title}</div>
+            <div className="text-slate-400">ยอดจ่าย ฿{e.amount.toFixed(2)} · {e.date}</div>
+            <ExpenseItemsEditor drafts={editingItems} onChange={setEditingItems} amount={e.amount} />
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={() => setEditingItems(null)} className="flex-1 h-11 rounded-xl border border-slate-700 font-bold">ยกเลิก</button>
+              <button type="button" onClick={saveItems} className="flex-1 h-11 rounded-xl bg-emerald-600 text-white font-bold">บันทึก</button>
+            </div>
+          </div>
+        </div>
       )}
       {e.substituteReceipt && (
         <button
