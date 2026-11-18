@@ -384,6 +384,37 @@ async function anonToken(apiKey: string, referer: string | undefined, refresh: s
   return { idToken: data.idToken, refresh: data.refreshToken, fresh: true };
 }
 
+/**
+ * One shop's sign-in, from the sealed copy its owner's device keeps (public_menu/sched-<branch>):
+ * lets other server functions (the MCP server for Claude) reach the shop's data as the shop account
+ */
+export async function openShopSignIn(
+  input: { projectId: string; apiKey: string; databaseId?: string; referer?: string },
+  branchId: string,
+  serverKey: string,
+  doFetch: Fetch = fetch
+): Promise<ShopSignIn | null> {
+  const anon = await anonToken(input.apiKey, input.referer, '', doFetch);
+  try {
+    const base = `https://firestore.googleapis.com/v1/projects/${input.projectId}/databases/${input.databaseId || '(default)'}/documents`;
+    const res = await doFetch(`${base}/${SCHEDULE_COLLECTION}/${scheduleDocId(branchId)}?mask.fieldPaths=sched`, { headers: { Authorization: `Bearer ${anon.idToken}` } });
+    const data: any = await res.json().catch(() => ({}));
+    const sealed = data?.fields?.sched?.stringValue;
+    if (!res.ok || !sealed) return null;
+    const signIn = await openSchedule(sealed, serverKey);
+    return signIn && signIn.branchId === branchId ? signIn : null;
+  } finally {
+    // The anonymous sign-in was made for this call only
+    if (anon.fresh) {
+      await doFetch(`https://identitytoolkit.googleapis.com/v1/accounts:delete?key=${encodeURIComponent(input.apiKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(input.referer ? { Referer: input.referer } : {}) },
+        body: JSON.stringify({ idToken: anon.idToken })
+      }).catch(() => undefined);
+    }
+  }
+}
+
 /** Every shop that turned this on: the jobs due now */
 export async function runScheduledJobs(
   input: { projectId: string; apiKey: string; databaseId?: string; referer?: string; anon?: string; keepAnon?: boolean; serverBase?: string },
