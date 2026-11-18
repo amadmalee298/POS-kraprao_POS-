@@ -338,10 +338,4 @@ export async function handleMcp(ctx: McpContext, body: unknown): Promise<unknown
   return handleOne(ctx, body as RpcRequest);
 }
 
-/** SHA-256 of the connector key in hex (only the hash is kept in the shop's settings) */
-export async function keyHash(key: string): Promise<string> {
-  const c: any = (globalThis as any).crypto;
-  const subtle: SubtleCrypto = c?.subtle || (await import('node:crypto')).webcrypto.subtle;
-  const digest = await subtle.digest('SHA-256', new TextEncoder().encode(key));
-  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
-}
+export { keyHash } from './shopAccess.js';

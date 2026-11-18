@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Banknote,
@@ -22,6 +22,7 @@ import { PaymentMethod, OrderType, CustomerTaxInfo, Order, QrPaymentOption } fro
 import { resolvePromptPayId } from '../../utils/promptpay';
 import { PromptPayQR } from '../common/PromptPayQR';
 import { GatewayPromptPayPanel } from '../common/GatewayPromptPayPanel';
+import { claimQrProof, QrPaymentCheck, type QrProof } from './QrPaymentCheck';
 import { gatewayEnabled } from '../../services/paymentGateway';
 import { computeCartTotals } from '../../utils/orderUtils';
 import { TouchNumpadModal } from './TouchNumpad';
@@ -96,6 +97,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [promptpayCountdown, setPromptpayCountdown] = useState(180);
   // The payment gateway has reported this bill as paid
   const [gatewayPaid, setGatewayPaid] = useState(false);
+  // The bank's "money in" notice or a checked slip for this bill (given to it when it is paid)
+  const [qrProof, setQrProof] = useState<QrProof | null>(null);
 
   // Calculate totals
   const {
@@ -118,6 +121,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       setTenderedAmount(grandTotal);
       setPromptpayCountdown(180);
       setGatewayPaid(false);
+      setQrProof(null);
     }
   }, [isOpen, grandTotal, initialPaymentMethod, initialOrderType, initialTable]);
 
@@ -129,6 +133,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     }, 1000);
     return () => clearInterval(interval);
   }, [isOpen, paymentMethod]);
+
+  // The latest checkout (a notice that arrives later calls it)
+  const handleProcessCheckoutRef = useRef<(paidByGateway?: boolean) => void>(() => undefined);
 
   if (!isOpen) return null;
 
@@ -152,6 +159,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       gatewayEnabled(settings) &&
       !paidByGateway &&
       !gatewayPaid &&
+      !qrProof &&
       !window.confirm('ระบบยังไม่ได้รับยอดจากการสแกนนี้\nตรวจสลิปหรือแอปธนาคารแล้ว ยืนยันชำระเลยหรือไม่?')
     ) {
       return;
@@ -181,9 +189,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       isFullTaxInvoice
     );
 
+    if (qrProof && paymentMethod === 'promptpay') void claimQrProof(currentBranch.id, qrProof, completedOrder.orderNumber).catch(() => undefined);
     onOrderCompleted(completedOrder);
     onClose();
   };
+  handleProcessCheckoutRef.current = handleProcessCheckout;
 
   // Resolve active PromptPay and TrueMoney accounts from configured QR Payment Methods or Branch
   const activeTrueMoneyMethod = settings.qrPaymentMethods?.find(m => m.type === 'truemoney' && m.enabled !== false);
@@ -207,6 +217,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           หมดเวลาใน: {Math.floor(promptpayCountdown / 60)}:{(promptpayCountdown % 60).toString().padStart(2, '0')} นาที
         </div>
       </div>
+      <QrPaymentCheck
+        amount={grandTotal}
+        onProof={p => {
+          setQrProof(p);
+          // The bank's own notice can close the bill by itself when the shop chose so
+          if (p?.kind === 'payin' && settings.merchantSettings?.autoConfirmPayment === true) setTimeout(() => handleProcessCheckoutRef.current(true), 600);
+        }}
+      />
     </div>
   );
 

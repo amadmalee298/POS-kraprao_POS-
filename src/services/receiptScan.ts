@@ -1,3 +1,4 @@
+import type { SlipData } from '../utils/slipCheck';
 import type { VerifiedReceiptData } from '../utils/receiptOcr';
 import { runReceiptOcr } from '../utils/receiptOcr';
 import { apiUrl, hasBackend } from '../utils/apiClient';
@@ -32,6 +33,32 @@ async function viaServer(url: string, image: string, mimeType: string): Promise<
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.receiptData) throw new Error(data.message || data.error || `อ่านใบเสร็จไม่สำเร็จ (${res.status})`);
     return data.receiptData;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * A customer's transfer slip read by the shop's AI on its Vercel site (the slip checks are made by
+ * utils/slipCheck). Needs a device signed in with the shop account.
+ */
+export async function scanSlipImage(base64: string, mimeType = 'image/jpeg', serverUrl?: string): Promise<SlipData> {
+  const data = base64.replace(/^data:[^;]+;base64,/, '');
+  const base = hasBackend() ? '' : vercelBase(serverUrl) || 'https://pos-kraprao-pos.vercel.app';
+  const url = hasBackend() ? apiUrl('/api/ai/scan-receipt') : `${base}/api/ai/scan-receipt`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+  try {
+    const token = await shopAccountIdToken();
+    const res = await fetch(url, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ mode: 'slip', image: data, mimeType, todayIso: new Date().toLocaleDateString('en-CA') })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.slipData) throw new Error(friendlyAiError(body.message || body.error || `อ่านสลิปไม่สำเร็จ (${res.status})`));
+    return body.slipData as SlipData;
   } finally {
     clearTimeout(timer);
   }

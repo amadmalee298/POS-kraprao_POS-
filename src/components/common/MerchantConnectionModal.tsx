@@ -1,3 +1,4 @@
+import { PayInSettings } from '../settings/PayInSettings';
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, AlertTriangle, X, RefreshCw, ShieldCheck, ExternalLink } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
@@ -172,6 +173,8 @@ export const MerchantConnectionModal: React.FC<MerchantConnectionModalProps> = (
             </ol>
             <p className="mt-2 text-slate-500">Secret Key อยู่บนเซิร์ฟเวอร์เท่านั้น ไม่ได้เก็บในแอปหรือ Firebase · ค่าธรรมเนียมตามที่ Opn กำหนด · ยอดขั้นต่ำต่อบิล ฿20</p>
           </details>
+
+          <PayInSettings />
         </div>
 
         <div className="p-5 border-t border-slate-800 flex gap-2">
