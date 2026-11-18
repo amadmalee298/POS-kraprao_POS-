@@ -7,6 +7,7 @@
 import { runReceiptOcr } from '../../src/utils/receiptOcr.js';
 import { createClaudeJsonCaller, ClaudeCallError } from '../../src/utils/claudeClient.js';
 import { bearerToken, isShopStaff } from '../../src/server/staffAuth.js';
+import { buildSlipPrompt, SLIP_SCHEMA, SLIP_SYSTEM, toSlipData } from '../../src/utils/slipCheck.js';
 
 const ALLOWED_ORIGIN = /^https:\/\/([a-z0-9-]+\.github\.io|[a-z0-9-]+\.vercel\.app)$|^http:\/\/localhost(:\d+)?$/i;
 
@@ -41,6 +42,18 @@ export default async function handler(req: any, res: any) {
     const [head, data] = image.split(';base64,');
     mimeType = head.replace(/^data:/, '') || mimeType;
     image = data;
+  }
+  // A customer's transfer slip at the till (mode: 'slip'): only what the checks need, read quickly
+  if (body.mode === 'slip') {
+    try {
+      const ai = createClaudeJsonCaller({ apiKey: key });
+      const today = typeof body.todayIso === 'string' ? body.todayIso : new Date().toISOString().slice(0, 10);
+      const text = await ai({ prompt: buildSlipPrompt(today), system: SLIP_SYSTEM, schema: SLIP_SCHEMA as any, image: { data: image, mimeType }, effort: 'low', maxTokens: 1500, timeoutMs: 45_000 });
+      return res.status(200).json({ slipData: toSlipData(JSON.parse(text)) });
+    } catch (err: any) {
+      const status = err instanceof ClaudeCallError && !err.retryable ? 400 : 502;
+      return res.status(status).json({ error: err?.message || 'AI อ่านสลิปไม่สำเร็จ' });
+    }
   }
   try {
     const ai = createClaudeJsonCaller({ apiKey: key });
