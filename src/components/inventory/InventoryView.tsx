@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { IngredientCleanupPanel } from './IngredientCleanupPanel';
 import { useNarrowScreen } from '../../hooks/useNarrowScreen';
 import { onPageSectionRequest, takePageSection } from '../../utils/pageNav';
 import { STOCK_TYPES, misfiledStock, stockTypeLabel, stockTypeOf, stockValueByType, isLowStock } from '../../utils/stockTypes';
@@ -998,6 +999,7 @@ export const InventoryView: React.FC = () => {
         {/* สต็อก: what is left, receiving and taking out */}
         {activeTab === 'stock' && (
           <div className="space-y-4">
+            <IngredientCleanupPanel />
             {/* Kinds of stock */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2" role="tablist" aria-label="ประเภทสต็อก">
               {([['all', 'ทั้งหมด', ingredients.length, null, 'รวมทุกประเภท'] as const, ...STOCK_TYPES.map(t => [t.id, t.label, stockTypeTotals[t.id].items, stockTypeTotals[t.id].value, t.hint] as const)]).map(
