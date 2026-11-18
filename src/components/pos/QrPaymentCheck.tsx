@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BadgeCheck, Camera, Loader2, ShieldAlert, Smartphone } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
-import { isFirebaseAvailable, loadBranchDoc, mergeBranchDoc, subscribeToBranchDoc } from '../../services/firebaseService';
+import { holdPayIn, isFirebaseAvailable, loadBranchDoc, mergeBranchDoc, releasePayIn, subscribeToBranchDoc } from '../../services/firebaseService';
 import { scanSlipImage } from '../../services/receiptScan';
 import { compressImageFile } from '../../utils/imageCompressor';
 import { matchPayIn, type PayIn } from '../../utils/payIn';
@@ -50,15 +50,62 @@ export const QrPaymentCheck: React.FC<{ amount: number; onProof: (proof: QrProof
     };
   }, [branchId]);
 
-  const match = useMemo(() => (notices ? matchPayIn(notices, amount, since.current) : null), [notices, amount]);
+  // This till's name on a notice it holds (two tills waiting for the same amount cannot both take it)
+  const token = useRef(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`);
+  const [refused, setRefused] = useState<Set<string>>(() => new Set());
+  const proofRef = useRef<QrProof | null>(null);
+  proofRef.current = proof;
+
+  const giveBack = () => {
+    const p = proofRef.current;
+    if (p?.kind === 'payin' && branchId) void releasePayIn(branchId, p.id, token.current);
+  };
+
+  // A new amount is a new bill: what showed the old amount was paid no longer counts
+  const firstAmount = useRef(true);
   useEffect(() => {
-    if (match && proof?.kind !== 'payin') {
-      const p: QrProof = { kind: 'payin', id: match.id, amount: match.amount };
+    if (firstAmount.current) {
+      firstAmount.current = false;
+      return;
+    }
+    giveBack();
+    setProof(null);
+    setVerdict(null);
+    setRefused(new Set());
+    onProof(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [amount]);
+
+  // Closed without taking the payment: the notice is free for another bill (a final claim is kept)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => giveBack(), []);
+
+  const candidate = useMemo(
+    () => (notices && proof?.kind !== 'payin' ? matchPayIn(notices, amount, since.current, refused, { mine: token.current }) : null),
+    [notices, amount, refused, proof?.kind]
+  );
+  useEffect(() => {
+    if (!candidate || !branchId) return;
+    let alive = true;
+    void holdPayIn(branchId, candidate.id, token.current).then(ok => {
+      if (!alive) {
+        if (ok) void releasePayIn(branchId, candidate.id, token.current);
+        return;
+      }
+      if (!ok) {
+        setRefused(prev => new Set(prev).add(candidate.id));
+        return;
+      }
+      const p: QrProof = { kind: 'payin', id: candidate.id, amount: candidate.amount };
       setProof(p);
       onProof(p);
-    }
+    });
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [match?.id]);
+  }, [candidate?.id, branchId]);
+  const match = proof?.kind === 'payin' ? notices?.find(n => n.id === proof.id) || null : null;
 
   const checkSlipPhoto = async (file: File) => {
     setSlipBusy(true);

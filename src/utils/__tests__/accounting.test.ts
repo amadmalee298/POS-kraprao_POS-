@@ -219,3 +219,23 @@ describe('sales recorded by hand', () => {
     expect(pl.otherIncome).toBe(0);
   });
 });
+
+describe('priced stock lines of an expense form', () => {
+  it('counts only lines with an ingredient and quantity, and knows when every line is priced', async () => {
+    const { pricedStockLines, costBeforeVat } = await import('../accounting');
+    const all = pricedStockLines([
+      { ingredientId: 'a', quantity: 2, price: 40 },
+      { ingredientId: 'b', quantity: 1, price: 25.5 },
+      { ingredientId: '', quantity: 3, price: 99 },
+      { ingredientId: 'c', quantity: 0, price: 10 }
+    ]);
+    expect(all.lines.map(l => l.ingredientId)).toEqual(['a', 'b']);
+    expect(all.total).toBe(65.5);
+    expect(all.allPriced).toBe(true);
+    const some = pricedStockLines([{ ingredientId: 'a', quantity: 2, price: 40 }, { ingredientId: 'b', quantity: 1 }]);
+    expect(some.total).toBe(40);
+    expect(some.allPriced).toBe(false);
+    expect(costBeforeVat(107, true, 7)).toBe(100);
+    expect(costBeforeVat(107, false, 7)).toBe(107);
+  });
+});

@@ -402,3 +402,20 @@ export function downloadCsv(filename: string, headers: string[], rows: (string |
   document.body.removeChild(link);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/** The amount stock is valued at: before VAT when the shop claims the VAT inside back */
+export const costBeforeVat = (amount: number, vatInsideAmount: boolean, rate: number): number =>
+  vatInsideAmount ? round2(amount - vatInside(amount, rate)) : amount;
+
+/** The stock lines of an expense form that count (an ingredient and a quantity) and their typed prices */
+export function pricedStockLines<T extends { ingredientId?: string; quantity: number; price?: number }>(entries: T[]) {
+  const lines = entries.filter(x => !!x.ingredientId && x.quantity > 0);
+  const priced = lines.filter(x => Number(x.price) > 0);
+  return {
+    lines,
+    /** Sum of the prices typed */
+    total: round2(priced.reduce((sum, x) => sum + Number(x.price), 0)),
+    /** Every line has a price (their total can stand for the bill) */
+    allPriced: lines.length > 0 && priced.length === lines.length
+  };
+}

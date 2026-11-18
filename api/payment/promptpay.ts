@@ -4,9 +4,10 @@
  *   POST {amount, reference}  create a charge, returns the QR
  *   GET  ?id=chrg_...    charge status
  *   POST {action: 'mark_paid', id}  test keys only
- * Needs env OMISE_SECRET_KEY. Callable from the GitHub Pages site (CORS), like api/notify/line.ts.
+ * Needs env OMISE_SECRET_KEY and the caller's shop-account ID token (Authorization: Bearer). Callable from the GitHub Pages site (CORS), like api/notify/line.ts.
  */
 import { handleOpnPromptPay } from '../_opn.js'; // .js: the package is ESM and Vercel runs it as plain Node
+import { bearerToken, isShopStaff } from '../../src/server/staffAuth.js';
 
 const ALLOWED_ORIGIN = /^https:\/\/([a-z0-9-]+\.github\.io|[a-z0-9-]+\.vercel\.app)$|^http:\/\/localhost(:\d+)?$/i;
 
@@ -17,10 +18,15 @@ export default async function handler(req: any, res: any) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   }
   if (req.method === 'OPTIONS') return res.status(204).end();
   res.setHeader('Cache-Control', 'no-store');
+  // Creating charges and (with test keys) marking them paid uses the shop's Opn account: shop devices only
+  const staff = await isShopStaff(bearerToken(req.headers?.authorization)).catch(() => false);
+  if (!staff) {
+    return res.status(401).json({ error: 'NOT_SHOP_DEVICE', message: 'ใช้ระบบชำระเงินได้เฉพาะเครื่องที่เข้าสู่ระบบบัญชีร้านแล้ว (ตั้งค่า → บัญชีร้าน)' });
+  }
   const body = typeof req.body === 'string' ? safeJson(req.body) : req.body;
   try {
     const result = await handleOpnPromptPay(req.method, req.query || {}, body, process.env.OMISE_SECRET_KEY);

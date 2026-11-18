@@ -5,14 +5,14 @@
  * Merchant Pro); only its key's SHA-256 is kept (branches/<b>/config/payin).
  */
 import { recordPayIn } from '../../src/server/payNotify.js';
-import { shopForKey } from '../../src/server/shopAccess.js';
+import { callerOf, shopForKey } from '../../src/server/shopAccess.js';
 
 const one = (v: unknown) => String(Array.isArray(v) ? v[0] : v ?? '');
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST' && req.method !== 'GET') return res.status(405).json({ ok: false, error: 'Method not allowed' });
   const q = req.query || {};
-  const shop = await shopForKey(one(q.b), one(q.k), 'payin').catch((e: any) => ({ status: 500, error: e?.message || 'failed' }));
+  const shop = await shopForKey(one(q.b), one(q.k), 'payin', callerOf(req)).catch((e: any) => ({ status: 500, error: e?.message || 'failed' }));
   if ('error' in shop) return res.status(shop.status).json({ ok: false, error: shop.error });
   // MacroDroid sends JSON, a form or plain text; a GET with ?text= works for a quick test
   const body = typeof req.body === 'string' ? req.body : req.body || {};

@@ -8,7 +8,7 @@
  */
 // .js: the package is ESM and Vercel runs it as plain Node
 import { handleMcp } from '../src/server/mcp.js';
-import { shopForKey } from '../src/server/shopAccess.js';
+import { callerOf, shopForKey } from '../src/server/shopAccess.js';
 
 export const maxDuration = 30;
 export const config = { maxDuration: 30 };
@@ -27,7 +27,7 @@ export default async function handler(req: any, res: any) {
   const branchId = one(q.b);
   const fail = (status: number, message: string) => res.status(status).json({ jsonrpc: '2.0', id: null, error: { code: -32001, message } });
   try {
-    const shop = await shopForKey(branchId, one(q.k), 'mcp');
+    const shop = await shopForKey(branchId, one(q.k), 'mcp', callerOf(req));
     if ('error' in shop) return fail(shop.status, `${shop.error} (ตั้งค่า → เชื่อม Claude)`);
     const body = typeof req.body === 'string' ? JSON.parse(req.body || 'null') : req.body;
     const answer = await handleMcp({ db: shop.db, branchId }, body);

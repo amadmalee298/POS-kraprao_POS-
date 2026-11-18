@@ -45,6 +45,7 @@ import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { isStubOrderDoc, leftLimitedWindow } from '../utils/orderUtils';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { cleanExpenseItems } from '../utils/expenseItems';
+import { holdName, payInTaken, type PayIn } from '../utils/payIn';
 import { toFsFields } from '../server/firestoreRest';
 import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem, CategoryItem, AddOnOption, SystemSettings } from '../types';
 
@@ -2284,6 +2285,45 @@ export async function claimLowStock(branchId: string, day: string, ids: string[]
   } catch (err) {
     console.warn('[Firebase Service] Could not claim low-stock alerts:', err);
     return null;
+  }
+}
+
+/**
+ * Holds a money-in notice for the bill on this till's payment screen, in one transaction, so two
+ * tills waiting for the same amount cannot both take it. True when this till holds it now.
+ */
+export async function holdPayIn(branchId: string, id: string, token: string): Promise<boolean> {
+  if (!dbInstance || !navigator.onLine) return false;
+  await waitForFirebaseAuth();
+  try {
+    const ref = doc(dbInstance, 'branches', branchId, 'config', 'payins');
+    return await runTransaction(dbInstance, async tx => {
+      const snap = await tx.get(ref);
+      const n = (snap.exists() ? (snap.data() as any)?.byId?.[id] : null) as PayIn | null;
+      if (!n || payInTaken(n, Date.now(), token)) return false;
+      tx.update(ref, new FieldPath('byId', id, 'claimedBy'), holdName(token), new FieldPath('byId', id, 'reservedAt'), new Date().toISOString());
+      return true;
+    });
+  } catch (err) {
+    console.warn('[Firebase Service] Could not hold the money-in notice:', err);
+    return false;
+  }
+}
+
+/** Gives back a notice this till held (the bill was closed or its amount changed); a final claim stays */
+export async function releasePayIn(branchId: string, id: string, token: string): Promise<void> {
+  if (!dbInstance || !navigator.onLine) return;
+  await waitForFirebaseAuth();
+  try {
+    const ref = doc(dbInstance, 'branches', branchId, 'config', 'payins');
+    await runTransaction(dbInstance, async tx => {
+      const snap = await tx.get(ref);
+      const n = snap.exists() ? (snap.data() as any)?.byId?.[id] : null;
+      if (n?.claimedBy !== holdName(token)) return;
+      tx.update(ref, new FieldPath('byId', id, 'claimedBy'), deleteField(), new FieldPath('byId', id, 'reservedAt'), deleteField());
+    });
+  } catch {
+    // offline: the hold lapses by itself
   }
 }
 
