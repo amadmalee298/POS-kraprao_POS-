@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { isLowStock } from '../utils/stockTypes';
 import { onPageSectionRequest, takePageSection } from '../utils/pageNav';
 import { TelegramInboxSettings } from './telegram/TelegramInboxSettings';
+import { ClaudeMcpSettings } from './settings/ClaudeMcpSettings';
 import { calcRecipeItemCostAndDeduction, canonicalUnit, convertForIngredient, getAvailableRecipeUnits, isShortOfStock, recipeCost } from '../utils/recipeUtils';
 import { ProteinOptionsEditor } from './menu/ProteinOptionsEditor';
 import { RecipeAuditPanel } from './menu/RecipeAuditPanel';
@@ -7885,6 +7886,8 @@ export const LineNotifyView: React.FC = () => {
           </form>
 
           <TelegramInboxSettings />
+
+          <ClaudeMcpSettings />
 
           {/* NOTIFICATION TRIGGERS TOGGLES PANEL */}
           <div className="bg-slate-900 border border-slate-800 p-5 rounded-3xl space-y-4 shadow-xl">

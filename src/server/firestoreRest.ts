@@ -209,6 +209,23 @@ export class Firestore {
       .map(r => ({ id: String(r.document.name).split('/').pop() || '', data: fromFsFields(r.document.fields || {}) }));
   }
 
+  /** Documents of a top-level collection whose field is from `from` up to (not including) `before`: only those are read */
+  async whereBetween(collection: string, field: string, from: string, before: string, limit = 1000, select?: string[]): Promise<{ [k: string]: Json }[]> {
+    const filter = (op: string, value: string) => ({ fieldFilter: { field: { fieldPath: field }, op, value: { stringValue: value } } });
+    const rows = await this.call(`${this.base}:runQuery`, {
+      method: 'POST',
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: collection }],
+          ...(select ? { select: { fields: select.map(f => ({ fieldPath: fieldPath(f) })) } } : {}),
+          where: { compositeFilter: { op: 'AND', filters: [filter('GREATER_THAN_OR_EQUAL', from), filter('LESS_THAN', before)] } },
+          limit
+        }
+      })
+    });
+    return (Array.isArray(rows) ? rows : []).filter(r => r.document).map(r => fromFsFields(r.document.fields || {}));
+  }
+
   /** Documents of a top-level collection whose field is at least the value */
   async whereAtLeast(collection: string, field: string, value: string, limit = 1000, select?: string[]): Promise<{ [k: string]: Json }[]> {
     const rows = await this.call(`${this.base}:runQuery`, {
