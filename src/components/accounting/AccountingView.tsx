@@ -28,6 +28,8 @@ import {
   monthOf,
   pct,
   round2,
+  costBeforeVat,
+  pricedStockLines,
   vatInside,
   vatRateOf,
   withLiveStatus,
@@ -1285,15 +1287,20 @@ export const AccountingView: React.FC = () => {
   // Handlers
   const handleCreateExpense = (e: React.FormEvent) => {
     e.preventDefault();
-    // Prices typed on the stock lines: their total is the amount when none was typed
-    const stockLines = expAutoUpdateStock ? expStockEntries.filter(x => x.ingredientId && x.quantity > 0) : [];
-    const pricedTotal = round2(stockLines.reduce((sum, x) => sum + (Number(x.price) || 0), 0));
-    const amountNow = expAmount > 0 ? expAmount : pricedTotal;
+    // Prices typed on the stock lines: their total is the amount when none was typed (every line needs one)
+    const stock = pricedStockLines(expAutoUpdateStock ? expStockEntries : []);
+    const stockLines = stock.lines;
+    const amountNow = expAmount > 0 ? expAmount : stock.allPriced ? stock.total : 0;
     if (!expTitle.trim() || amountNow <= 0) {
-      setExpenseFormError(!expTitle.trim() ? 'ใส่ชื่อรายการก่อน' : 'ใส่จำนวนเงิน (หรือราคาของแต่ละรายการวัตถุดิบ)');
+      setExpenseFormError(
+        !expTitle.trim()
+          ? 'ใส่ชื่อรายการก่อน'
+          : stock.total > 0
+            ? 'ใส่ราคาให้ครบทุกรายการวัตถุดิบ หรือใส่จำนวนเงินรวมของบิล'
+            : 'ใส่จำนวนเงิน (หรือราคาของแต่ละรายการวัตถุดิบ)'
+      );
       return;
     }
-    if (amountNow !== expAmount) setExpAmount(amountNow);
     const expAmountFinal = amountNow;
     // What was bought: the lines typed, else the stock lines (name, quantity, price)
     const typedItems = draftsToItems(expItems);
@@ -1364,12 +1371,13 @@ export const AccountingView: React.FC = () => {
     }, 5000);
 
     if (expAutoUpdateStock && expStockEntries.length > 0) {
-      const validEntries = expStockEntries.filter(e => e.ingredientId && e.quantity > 0);
+      const validEntries = stockLines;
       if (validEntries.length > 0) {
         // Stock is valued at cost: before VAT when the shop claims input VAT back. The bill is
         // shared by the items' value at their current cost, not equally.
-        const costBasis = vatRegistered && expIncludeVat ? expAmountFinal - vatInside(expAmountFinal, vatRate) : expAmountFinal;
-        const shares = splitBillCost(validEntries.map(e => ({ ingredientId: e.ingredientId, quantity: e.quantity, lineAmount: e.price && e.price > 0 ? (vatRegistered && expIncludeVat ? e.price - vatInside(e.price, vatRate) : e.price) : undefined })), ingredients, costBasis);
+        const vatOff = vatRegistered && expIncludeVat;
+        const costBasis = costBeforeVat(expAmountFinal, vatOff, vatRate);
+        const shares = splitBillCost(validEntries.map(e => ({ ingredientId: e.ingredientId, quantity: e.quantity, lineAmount: Number(e.price) > 0 ? costBeforeVat(Number(e.price), vatOff, vatRate) : undefined })), ingredients, costBasis);
         validEntries.forEach((entry, idx) => {
           recordIngUsage(entry.ingredientId, 1);
           const matchedIng = ingredients.find(i => i.id === entry.ingredientId);
@@ -4032,11 +4040,12 @@ export const AccountingView: React.FC = () => {
                       <span className="text-[10px] font-bold text-slate-400">
                         รายการวัตถุดิบที่ต้องการรับเข้าคลัง:
                         {(() => {
-                          const priced = round2(expStockEntries.reduce((sum, x) => sum + (Number(x.price) || 0), 0));
+                          const { total: priced, allPriced } = pricedStockLines(expStockEntries);
                           if (!priced) return null;
                           return (
                             <span className={`ml-1 ${Math.abs(priced - expAmount) < 0.01 ? 'text-emerald-300' : 'text-amber-300'}`}>
                               รวมราคาที่ใส่ ฿{money(priced)}
+                              {!allPriced && <span className="ml-1 text-amber-300">(ยังไม่ครบทุกรายการ)</span>}
                               {expAmount !== priced && (
                                 <button type="button" onClick={() => setExpAmount(priced)} className="ml-1 underline">
                                   ใช้เป็นยอดเงิน

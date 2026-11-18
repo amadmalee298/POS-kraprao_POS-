@@ -39,20 +39,73 @@ async function shopDb(branchId: string): Promise<Firestore | string> {
   return db;
 }
 
+// Wrong keys: each costs a settings read, so a caller (and a branch overall) that keeps failing waits a minute
+const FAIL_WINDOW = 60_000;
+const MAX_FAILS_PER_CALLER = 8;
+const MAX_FAILS_PER_BRANCH = 40;
+const fails = new Map<string, number[]>();
+
+function recentFails(id: string, now: number): number[] {
+  const list = (fails.get(id) || []).filter(t => now - t < FAIL_WINDOW);
+  if (list.length) fails.set(id, list);
+  else fails.delete(id);
+  return list;
+}
+
+function noteFail(ids: string[], now: number) {
+  if (fails.size > 2000) fails.clear();
+  for (const id of ids) fails.set(id, [...recentFails(id, now), now]);
+}
+
+/** Only for tests */
+export function resetShopAccessForTests() {
+  dbs.clear();
+  hashes.clear();
+  fails.clear();
+}
+
+/** The caller's address from Vercel's headers (for the wrong-key limit) */
+export function callerOf(req: any): string {
+  const h = req?.headers || {};
+  const fwd = String(Array.isArray(h['x-forwarded-for']) ? h['x-forwarded-for'][0] : h['x-forwarded-for'] || '');
+  return (fwd.split(',')[0] || String(h['x-real-ip'] || '')).trim() || 'unknown';
+}
+
+/** The keys the app makes: 24 random bytes in base64url (32 characters) */
+const KEY_FORMAT = /^[A-Za-z0-9_-]{24,128}$/;
+// A key that matched is trusted this long before the settings are read again (a revoked link stops within it)
+const HASH_TTL = 30_000;
+
 /** The shop's data when the link's key is the one made in the app; otherwise why not (Thai) */
-export async function shopForKey(branchId: string, key: string, configDoc: string): Promise<{ db: Firestore } | { status: number; error: string }> {
-  if (!/^[\w-]{3,80}$/.test(branchId) || key.length < 24) return { status: 401, error: 'ลิงก์ไม่ถูกต้อง: คัดลอกลิงก์ใหม่จากแอป' };
-  const db = await shopDb(branchId);
-  if (typeof db === 'string') return { status: 503, error: db };
+export async function shopForKey(
+  branchId: string,
+  key: string,
+  configDoc: string,
+  caller = 'unknown',
+  now: () => number = Date.now
+): Promise<{ db: Firestore } | { status: number; error: string }> {
+  if (!/^[\w-]{3,80}$/.test(branchId) || !KEY_FORMAT.test(key)) return { status: 401, error: 'ลิงก์ไม่ถูกต้อง: คัดลอกลิงก์ใหม่จากแอป' };
+  const callerId = `${branchId}|${caller}`;
+  const branchIdKey = `${branchId}|*`;
+  if (recentFails(callerId, now()).length >= MAX_FAILS_PER_CALLER || recentFails(branchIdKey, now()).length >= MAX_FAILS_PER_BRANCH) {
+    return { status: 429, error: 'ลองผิดหลายครั้งเกินไป: รอ 1 นาทีแล้วลองใหม่' };
+  }
   const want = await keyHash(key);
   const cacheKey = `${branchId}/${configDoc}`;
-  let known = hashes.get(cacheKey);
-  // A new key made in the app since: read the settings again
-  if (!known || known.hash !== want || Date.now() - known.at > 5 * 60_000) {
-    const cfg: any = await db.get(`branches/${branchId}/config/${configDoc}`);
-    known = { hash: String(cfg?.keyHash || ''), at: Date.now() };
-    hashes.set(cacheKey, known);
+  const known = hashes.get(cacheKey);
+  if (known && known.hash === want && now() - known.at < HASH_TTL) {
+    const db = await shopDb(branchId);
+    return typeof db === 'string' ? { status: 503, error: db } : { db };
   }
-  if (!known.hash || known.hash !== want) return { status: 401, error: 'ลิงก์นี้ถูกยกเลิกแล้ว: สร้างลิงก์ใหม่ในแอป' };
+  const db = await shopDb(branchId);
+  if (typeof db === 'string') return { status: 503, error: db };
+  const cfg: any = await db.get(`branches/${branchId}/config/${configDoc}`);
+  const hash = String(cfg?.keyHash || '');
+  if (!hash || hash !== want) {
+    hashes.delete(cacheKey);
+    noteFail([callerId, branchIdKey], now());
+    return { status: 401, error: 'ลิงก์นี้ถูกยกเลิกแล้ว: สร้างลิงก์ใหม่ในแอป' };
+  }
+  hashes.set(cacheKey, { hash, at: now() });
   return { db };
 }

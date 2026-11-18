@@ -1,6 +1,7 @@
 import type { SystemSettings } from '../types';
 import { apiUrl } from '../utils/apiClient';
 import { getStoredCredentials } from './notificationService';
+import { shopAccountIdToken } from './firebaseService';
 
 /** PromptPay minimum at Opn (THB), same as api/_opn.ts */
 export const GATEWAY_MIN_AMOUNT = 20;
@@ -28,13 +29,19 @@ export function paymentEndpoint(serverUrl?: string): string {
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
+  // The server spends the shop's Opn account, so it accepts only the shop's own devices
+  const token = await shopAccountIdToken();
   try {
-    res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } });
+    res = await fetch(url, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init?.headers || {}) }
+    });
   } catch {
     throw new Error('ติดต่อเซิร์ฟเวอร์ชำระเงินไม่ได้ (ตรวจสอบอินเทอร์เน็ต หรือที่อยู่เซิร์ฟเวอร์ Vercel)');
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (res.status === 401) throw new Error(data.message || 'ใช้ได้เฉพาะเครื่องที่เข้าสู่ระบบบัญชีร้านแล้ว (ตั้งค่า → บัญชีร้าน)');
     if (res.status === 404) throw new Error('ไม่พบเซิร์ฟเวอร์ชำระเงิน ตั้งที่อยู่ Vercel ในหน้าตั้งค่า Payment Gateway');
     throw new Error(data.error || `เซิร์ฟเวอร์ชำระเงินตอบกลับผิดพลาด (${res.status})`);
   }

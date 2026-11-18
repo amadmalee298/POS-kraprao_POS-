@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchPayIn, parsePayInAmount } from '../payIn';
+import { matchPayIn, parsePayInAmount, payInTaken, PAYIN_HOLD_MS } from '../payIn';
 import { checkSlip, toSlipData } from '../slipCheck';
 
 describe('money received notices', () => {
@@ -9,6 +9,33 @@ describe('money received notices', () => {
     expect(parsePayInAmount('You have received THB 60.50 via PromptPay')).toBe(60.5);
     expect(parsePayInAmount('เงินเข้า 85 บาท')).toBe(85);
     expect(parsePayInAmount('ยอดคงเหลือ: -')).toBeNull();
+  });
+
+  it('takes the money-in amount, not the balance or a fee', () => {
+    expect(parsePayInAmount('ยอดคงเหลือ 5,000.00 บาท รับเงิน 60.00 บาท')).toBe(60);
+    expect(parsePayInAmount('THB 5,000.00 คงเหลือ / รับเงิน 85 บาท')).toBe(85);
+    expect(parsePayInAmount('ค่าธรรมเนียม 0.00 บาท ได้รับ 120 บาท')).toBe(120);
+    expect(parsePayInAmount('Balance THB 9,999.00, received THB 45.00')).toBe(45);
+    expect(parsePayInAmount('เงินเข้าบัญชี 60 บาท ยอดเงินคงเหลือ 1,060 บาท')).toBe(60);
+  });
+
+  it("skips notices held by another till until the hold lapses, and final claims always", () => {
+    const now = Date.parse('2026-11-18T12:10:00Z');
+    const held = { id: 'h', amount: 60, at: '2026-11-18T12:05:00Z', text: '', claimedBy: 'hold:other', reservedAt: '2026-11-18T12:06:00Z' };
+    expect(payInTaken(held, now)).toBe(true);
+    expect(payInTaken(held, now, 'other')).toBe(false);
+    expect(payInTaken(held, Date.parse(held.reservedAt) + PAYIN_HOLD_MS + 1)).toBe(false);
+    expect(payInTaken({ ...held, claimedBy: 'A-0012' }, now + PAYIN_HOLD_MS * 10)).toBe(true);
+    const since = Date.parse('2026-11-18T12:00:00Z');
+    expect(matchPayIn([held], 60, since, new Set(), { now })).toBeNull();
+    expect(matchPayIn([held], 60, since, new Set(), { now, mine: 'other' })?.id).toBe('h');
+  });
+
+  it('does not take a notice from well before the bill', () => {
+    const since = Date.parse('2026-11-18T12:00:00Z');
+    const early = { id: 'e', amount: 60, at: '2026-11-18T11:59:30Z', text: '' };
+    expect(matchPayIn([early], 60, since)).toBeNull();
+    expect(matchPayIn([{ ...early, at: '2026-11-18T11:59:50Z' }], 60, since)?.id).toBe('e');
   });
 
   it('matches the earliest unclaimed notice of the same amount after the bill started waiting', () => {
