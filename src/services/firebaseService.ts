@@ -2256,6 +2256,47 @@ export async function deleteBranchDoc(branchId: string, key: string): Promise<bo
  * Claim a once-per-day job (e.g. the daily summary message) for one device only. Returns true for
  * the device that gets it; false when another device already did it today.
  */
+/**
+ * Low-stock alerts already sent today, one document per branch (status/lowstock_told: { day, ids }).
+ * Returns the ids this device may announce (the others were announced today by another device),
+ * or null when the cloud could not be asked (tried again later; nothing is marked).
+ */
+export async function claimLowStock(branchId: string, day: string, ids: string[]): Promise<string[] | null> {
+  if (!dbInstance || !navigator.onLine || ids.length === 0) return ids.length === 0 ? [] : null;
+  await waitForFirebaseAuth();
+  try {
+    const ref = doc(dbInstance, 'branches', branchId, 'status', 'lowstock_told');
+    return await runTransaction(dbInstance, async tx => {
+      const snap = await tx.get(ref);
+      const data = snap.exists() ? snap.data() : null;
+      const told: Record<string, string> = data?.day === day && data?.ids && typeof data.ids === 'object' ? { ...(data.ids as Record<string, string>) } : {};
+      const mine = ids.filter(id => !told[id]);
+      if (mine.length) {
+        const at = new Date().toISOString();
+        mine.forEach(id => (told[id] = at));
+        tx.set(ref, { day, ids: told, updatedAt: serverTimestamp() });
+      }
+      return mine;
+    });
+  } catch (err) {
+    console.warn('[Firebase Service] Could not claim low-stock alerts:', err);
+    return null;
+  }
+}
+
+/** Ids no longer told today: their alert was not sent, or the ingredient was restocked (it may alert again) */
+export async function releaseLowStock(branchId: string, ids: string[]): Promise<void> {
+  if (!dbInstance || !navigator.onLine || ids.length === 0) return;
+  await waitForFirebaseAuth();
+  try {
+    const args: unknown[] = [];
+    ids.forEach(id => args.push(new FieldPath('ids', id), deleteField()));
+    await (updateDoc as any)(doc(dbInstance, 'branches', branchId, 'status', 'lowstock_told'), ...args);
+  } catch {
+    // no document yet, or offline: nothing to release
+  }
+}
+
 export async function claimDailyJob(branchId: string, job: string, day: string): Promise<boolean> {
   if (!dbInstance || !navigator.onLine) return true;
   await waitForFirebaseAuth();
@@ -2640,7 +2681,8 @@ export function subscribeToBranchInventory(
         ings.push({
           id: data.ingredientId || d.id,
           name: data.name || '',
-          currentStock: Number(data.currentStock) || 0,
+          // Rounded: the cloud adds sales with increment(), which leaves float leftovers (0.78000000000000216)
+          currentStock: Number((Number(data.currentStock) || 0).toFixed(4)),
           minStockAlert: Number(data.minStockAlert) || 0,
           unit: data.unit || 'pcs',
           unitCost: Number(data.unitCost) || 0,

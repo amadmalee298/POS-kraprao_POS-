@@ -59,6 +59,8 @@ import {
   syncBranchToFirestore,
   pingBranchToFirestore,
   lastCloudWriteError,
+  claimLowStock,
+  releaseLowStock,
   saveMoneyRecordDirect,
   syncOrderToFirestore,
   syncOrdersBatchToFirestore,
@@ -120,8 +122,10 @@ import {
   generateNewOrderMessage,
   generateVoidOrderMessage,
   generateLowStockMessage,
-  setNotificationShopName
+  setNotificationShopName,
+  LOW_STOCK_TOLD_KEY
 } from '../services/notificationService';
+import { lowStockPlan, updateTold, type LowStockTold } from '../utils/lowStockTold';
 import {
   INITIAL_BRANCHES,
   isSampleBranch,
@@ -880,9 +884,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return INITIAL_INGREDIENTS;
     }
   });
-  // Latest ingredients for timers (their render's copy is older than a sale just made)
-  const ingredientsRef = useRef<Ingredient[]>([]);
-  ingredientsRef.current = ingredients;
   const [stockLots, setStockLots] = useState<StockLot[]>(() => (retiredStart ? [] : INITIAL_STOCK_LOTS));
   const [wasteLogs, setWasteLogs] = useState<WasteLog[]>(() => (retiredStart ? [] : INITIAL_WASTE_LOGS));
   const [stockAdjustmentLogs, setStockAdjustmentLogs] = useState<StockAdjustmentLog[]>(() => (retiredStart ? [] : INITIAL_STOCK_ADJUSTMENT_LOGS));
@@ -3644,38 +3645,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         dispatchNotification(`ออเดอร์ใหม่ (${newOrder.orderNumber})`, msg).catch(console.error);
       }
 
-      // 2. Low stock: each ingredient once a day when it first runs low (it was sent again with every
-      // sale, 15 minutes apart, from every device). Claimed in the cloud, so one device sends it
-      if (triggers.lowStock) {
-        setTimeout(() => {
-          const lowItems = ingredientsRef.current.filter(i =>
-            rules.onlyCriticalStock ? isLowStock(i) && i.currentStock <= i.minStockAlert * 0.2 : isLowStock(i)
-          );
-          if (lowItems.length === 0) return;
-          const day = new Date().toLocaleDateString('sv-SE');
-          let told: Record<string, string> = {};
-          try {
-            told = JSON.parse(localStorage.getItem('POS_LOW_STOCK_TOLD') || '{}') || {};
-          } catch {
-            told = {};
-          }
-          const fresh = lowItems.filter(i => told[i.id] !== day);
-          if (fresh.length === 0) return;
-          fresh.forEach(i => (told[i.id] = day));
-          try {
-            // Only today's kept
-            localStorage.setItem('POS_LOW_STOCK_TOLD', JSON.stringify(Object.fromEntries(Object.entries(told).filter(([, d]) => d === day))));
-          } catch {
-            // storage unavailable
-          }
-          void Promise.all(fresh.map(i => claimDailyJob(currentBranch.id, `lowstock_${i.id}`, day).then(mine => (mine ? i : null)))).then(mine => {
-            const toSend = mine.filter((i): i is Ingredient => !!i);
-            if (toSend.length === 0) return;
-            const msg = generateLowStockMessage(toSend, currentBranch, rules.onlyCriticalStock, settings);
-            dispatchNotification('เตือนวัตถุดิบใกล้หมดสต็อก', msg).catch(console.error);
-          });
-        }, 150);
-      }
+      // (Low stock is checked whenever the stock changes: see checkLowStock)
     } catch (err) {
       console.warn('[POS Notification] Order trigger error:', err);
     }
@@ -4491,6 +4461,78 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
   const [unsentCount, setUnsentCount] = useState(() => Object.keys(readOutbox()).length);
   const [lastSendError, setLastSendError] = useState('');
+  /**
+   * Low-stock alerts, checked a moment after any change of stock (a sale at the till, a QR or direct
+   * order, stock taken out, another device's change): each ingredient is announced when it first runs
+   * low on a day, and again only after it was restocked above its alert level. One device sends it
+   * (claimed in the cloud); a message not sent (quiet hours, Telegram down) is released and tried again.
+   */
+  const lowStockBusy = useRef(false);
+  const [lowStockRetry, setLowStockRetry] = useState(0);
+  const lowStockReadyAt = useRef(Date.now() + 20_000);
+  const checkLowStockRef = useRef(async () => undefined as void);
+  checkLowStockRef.current = async () => {
+    if (lowStockBusy.current || !currentUser || !currentBranch?.id) return;
+    if (!getStoredTriggers().lowStock) return;
+    // The cloud's stock first (a device's own older copy could alert for nothing)
+    if (Date.now() < lowStockReadyAt.current) {
+      setTimeout(() => setLowStockRetry(n => n + 1), lowStockReadyAt.current - Date.now() + 500);
+      return;
+    }
+    const rules = getStoredRules();
+    const branchId = currentBranch.id;
+    const day = new Date().toLocaleDateString('sv-SE');
+    const low = ingredients.filter(i => (rules.onlyCriticalStock ? isLowStock(i) && i.currentStock <= i.minStockAlert * 0.2 : isLowStock(i)));
+    let store: LowStockTold = {};
+    try {
+      store = JSON.parse(localStorage.getItem(LOW_STOCK_TOLD_KEY) || '{}') || {};
+    } catch {
+      store = {};
+    }
+    const saveTold = (next: LowStockTold) => {
+      try {
+        localStorage.setItem(LOW_STOCK_TOLD_KEY, JSON.stringify(next));
+      } catch {
+        // storage unavailable
+      }
+      store = next;
+    };
+    const plan = lowStockPlan(store, branchId, day, low.map(i => i.id));
+    if (plan.restocked.length) {
+      saveTold(updateTold(store, branchId, day, [], plan.restocked));
+      void releaseLowStock(branchId, plan.restocked);
+    }
+    if (!plan.due.length || !isFirebaseAvailable() || effectiveOffline) return;
+    lowStockBusy.current = true;
+    try {
+      // One cloud claim for all of them (which this device may announce)
+      const mine = await claimLowStock(branchId, day, plan.due);
+      if (mine === null) {
+        setTimeout(() => setLowStockRetry(n => n + 1), 5 * 60_000);
+        return;
+      }
+      // Announced today by another device: noted here too
+      const others = plan.due.filter(id => !mine.includes(id));
+      if (others.length) saveTold(updateTold(store, branchId, day, others));
+      if (!mine.length) return;
+      const items = low.filter(i => mine.includes(i.id));
+      const res = await dispatchNotification('เตือนวัตถุดิบใกล้หมดสต็อก', generateLowStockMessage(items, currentBranch, rules.onlyCriticalStock, settings)).catch(() => ({ success: false }));
+      if (res.success) saveTold(updateTold(store, branchId, day, mine));
+      else {
+        // Not sent: given back, tried again in a while
+        await releaseLowStock(branchId, mine);
+        setTimeout(() => setLowStockRetry(n => n + 1), 10 * 60_000);
+      }
+    } finally {
+      lowStockBusy.current = false;
+    }
+  };
+  useEffect(() => {
+    if (!isStorageLoaded || !currentUser) return;
+    const t = setTimeout(() => void checkLowStockRef.current(), 2000);
+    return () => clearTimeout(t);
+  }, [ingredients, currentBranch?.id, isStorageLoaded, !!currentUser, lowStockRetry]);
+
   /** A save the cloud has not answered in 25 seconds counts as not sent yet (it is tried again; saving twice is harmless) */
   const answeredSoon = (p: Promise<boolean>) =>
     Promise.race([
