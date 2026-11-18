@@ -3,6 +3,7 @@ import type { Party } from './staffDocs';
 import { thaiBahtText } from './thaiBaht';
 import { formatThaiId } from './withholding';
 import { driveImageUrl, isDriveRef, isPdfImage } from './imageRef';
+import { cleanExpenseItems, itemsTotal } from './expenseItems';
 
 /**
  * ใบรับรองแทนใบเสร็จรับเงิน: when a seller gives no receipt (market stalls, street vendors), the
@@ -43,6 +44,8 @@ export function attachedPictureHeight(e: Expense, shop: Party & { phone?: string
     6 * (lines(`ผู้ซื้อ/ผู้รับบริการ: ${shop.name || ''}`, 95) - 1) +
     6 * (lines(`ที่อยู่: ${shop.address || ''}`, 95) - 1) +
     6.5 * (lines(detail, 50) - 1) +
+    // Item lines: one row each (and the line above the table), past the single row counted
+    (cleanExpenseItems(e.items).length ? 7 * cleanExpenseItems(e.items).length + 6 : 0) +
     6 * Math.max(0, lines(certify, 100) - 2) +
     (sr?.approvedAt ? 5 : 0);
   // The heading, the labels under the pictures and the margins of that part, and a little to spare
@@ -85,11 +88,7 @@ ${shop.address ? `ที่อยู่: ${esc(shop.address)}<br>` : ''}
 ${shop.phone ? `โทร: ${esc(shop.phone)}` : ''}
 </div>
 <div class="right" style="font-size:13px;margin-top:2mm">วันที่: ${esc(thaiLongDate(e.date))}</div>
-<table class="grid" style="margin-top:4mm;font-size:13px">
-<tr><th style="width:9%">ลำดับ</th><th>รายละเอียด</th><th style="width:20%">จำนวนเงิน (บาท)</th><th style="width:18%">หมายเหตุ</th></tr>
-<tr><td class="center">1</td><td>${esc(detail)}</td><td class="right">${money(e.amount)}</td><td></td></tr>
-<tr class="bold"><td colspan="2" class="right">รวมทั้งสิ้น</td><td class="right">${money(e.amount)}</td><td></td></tr>
-</table>
+${itemsTable(e, detail, tight)}
 <p style="font-size:13px;margin-top:${tight ? 3 : 6}mm">รวมทั้งสิ้น (ตัวอักษร) &nbsp;${esc(thaiBahtText(e.amount))}</p>
 <p style="font-size:${tight ? 12 : 13}px;line-height:${tight ? 1.6 : 1.8}">ข้าพเจ้า ${esc(sr?.spender || '......................................')} (ผู้เบิกจ่าย)<br>
 ขอรับรองว่า รายจ่ายข้างต้นนี้ไม่อาจเรียกเก็บใบเสร็จรับเงินจากผู้รับได้ และข้าพเจ้าได้จ่ายไปในงานของ ${esc(shop.name || 'กิจการ')} โดยแท้
@@ -112,6 +111,35 @@ ${attached
     : ''
 }
 </div>`;
+}
+
+/**
+ * The table of what was paid for: one line per item bought (quantity, unit price, amount) when the
+ * expense has them, else the expense as one line. A difference between the lines and the total
+ * paid (delivery, rounding) is its own line, so the table always adds up to the amount
+ */
+function itemsTable(e: Expense, detail: string, tight: boolean): string {
+  const items = cleanExpenseItems(e.items);
+  const size = tight && items.length > 4 ? 12 : 13;
+  if (!items.length) {
+    return `<table class="grid" style="margin-top:4mm;font-size:13px">
+<tr><th style="width:9%">ลำดับ</th><th>รายละเอียด</th><th style="width:20%">จำนวนเงิน (บาท)</th><th style="width:18%">หมายเหตุ</th></tr>
+<tr><td class="center">1</td><td>${esc(detail)}</td><td class="right">${money(e.amount)}</td><td></td></tr>
+<tr class="bold"><td colspan="2" class="right">รวมทั้งสิ้น</td><td class="right">${money(e.amount)}</td><td></td></tr>
+</table>`;
+  }
+  const diff = Math.round((e.amount - itemsTotal(items)) * 100) / 100;
+  const rows = items.map(
+    (i, n) =>
+      `<tr><td class="center">${n + 1}</td><td>${esc(i.name)}</td><td class="right">${i.quantity ? `${esc(String(i.quantity))}${i.unit ? ` ${esc(i.unit)}` : ''}` : ''}</td><td class="right">${i.unitPrice ? money(i.unitPrice) : ''}</td><td class="right">${money(i.amount)}</td></tr>`
+  );
+  if (Math.abs(diff) >= 0.01) rows.push(`<tr><td class="center">${items.length + 1}</td><td>${diff > 0 ? 'อื่น ๆ (ค่าส่ง/ปัดเศษ)' : 'ส่วนลด'}</td><td></td><td></td><td class="right">${money(diff)}</td></tr>`);
+  return `<div style="margin-top:3mm;font-size:12px">${esc(detail)}</div>
+<table class="grid" style="margin-top:2mm;font-size:${size}px">
+<tr><th style="width:8%">ลำดับ</th><th>รายการสินค้า</th><th style="width:14%">จำนวน</th><th style="width:16%">ราคา/หน่วย</th><th style="width:18%">จำนวนเงิน (บาท)</th></tr>
+${rows.join('\n')}
+<tr class="bold"><td colspan="4" class="right">รวมทั้งสิ้น</td><td class="right">${money(e.amount)}</td></tr>
+</table>`;
 }
 
 /** A drawn signature sitting on the signature line (an empty box of the same height when unsigned) */

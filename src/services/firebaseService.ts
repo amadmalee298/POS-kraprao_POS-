@@ -44,6 +44,7 @@ import {
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { isStubOrderDoc, leftLimitedWindow } from '../utils/orderUtils';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { cleanExpenseItems } from '../utils/expenseItems';
 import { toFsFields } from '../server/firestoreRest';
 import { Order, OrderStatus, CartItem, Ingredient, Branch, StockAdjustmentLog, WasteLog, Expense, OtherIncome, MenuItem, CategoryItem, AddOnOption, SystemSettings } from '../types';
 
@@ -1040,6 +1041,7 @@ function expensePayload(expense: Expense, branch: Branch | undefined, nowIso: st
     vat36: expense.vat36 || null,
     driveFiles: expense.driveFiles || null,
     purchaseImages: cloudPurchaseImages(expense),
+    items: expense.items?.length ? cleanExpenseItems(expense.items) : null,
     syncedAt: nowIso
   };
 }
@@ -1335,7 +1337,8 @@ export function expenseFromFirestore(docId: string, d: DocumentData): Expense {
     paidFrom: d.paidFrom || undefined,
     vat36: d.vat36 || undefined,
     driveFiles: Array.isArray(d.driveFiles) ? d.driveFiles : undefined,
-    purchaseImages: Array.isArray(d.purchaseImages) && d.purchaseImages.length ? d.purchaseImages : undefined
+    purchaseImages: Array.isArray(d.purchaseImages) && d.purchaseImages.length ? d.purchaseImages : undefined,
+    items: Array.isArray(d.items) && d.items.length ? cleanExpenseItems(d.items) : undefined
   };
 }
 

@@ -336,6 +336,17 @@ export interface Expense {
    * claims it back as input VAT in the next month's ภ.พ.30. The amount is the price paid (no Thai VAT).
    */
   vat36?: boolean;
+  /** What was bought, line by line (shown on the ใบรับรองแทนใบเสร็จ); the amount stays the total paid */
+  items?: ExpenseItem[];
+}
+
+/** One line of an expense: what, how many, at what price */
+export interface ExpenseItem {
+  name: string;
+  quantity?: number;
+  unit?: string;
+  unitPrice?: number;
+  amount: number;
 }
 
 export interface PaymentRecord {
@@ -822,7 +833,7 @@ export interface PendingReceipt {
     verified: boolean;
     confidenceScore: number;
     /** Lines read from the bill (used to receive the goods into stock) */
-    lineItems?: { name: string; quantity?: number; amount: number }[];
+    lineItems?: { name: string; quantity?: number; unitPrice?: number; amount: number }[];
   };
   error?: string;
   /** Stock lots created when the bill was approved */

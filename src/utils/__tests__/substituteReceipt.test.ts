@@ -100,6 +100,22 @@ describe('ใบรับรองแทนใบเสร็จรับเง�
     expect(more[2]).toContain('รูปที่ 4 จาก 4');
   });
 
+  it('lists what was bought line by line, with any difference to the total as its own line', () => {
+    const html = substituteReceiptPage(
+      exp({ amount: 840, items: [{ name: 'กุ้งสด', quantity: 1, unit: 'กก.', unitPrice: 350, amount: 350 }, { name: 'ปลาหมึก', quantity: 1.5, unit: 'กก.', unitPrice: 260, amount: 0 }] }),
+      shop
+    );
+    expect(html).toContain('รายการสินค้า');
+    expect(html).toContain('กุ้งสด');
+    expect(html).toContain('1.5 กก.');
+    // 1.5 × 260 = 390 filled in; 840 − 740 = 100 shown as อื่น ๆ
+    expect(html).toContain('390.00');
+    expect(html).toContain('อื่น ๆ (ค่าส่ง/ปัดเศษ)');
+    expect(html).toContain('100.00');
+    // Without lines: the expense as one line, as before
+    expect(substituteReceiptPage(exp(), shop)).not.toContain('รายการสินค้า');
+  });
+
   it('names the Drive folder and file', () => {
     expect(expenseDriveFolder('2026-10-05')).toBe('รายจ่าย/2569-10');
     expect(expenseDocName(exp(), 'pdf')).toBe('2026-10-05_ใบรับรองแทนใบเสร็จ_ค่า ร้านถุงเงิน (ตำป่ากาฬสินธุ์)_000123.pdf');
