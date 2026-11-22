@@ -30,12 +30,16 @@ export function draftsToItems(drafts: ItemDraft[]): ExpenseItem[] {
  * รายละเอียดสินค้า: what was bought, line by line (shown on the ใบรับรองแทนใบเสร็จ). Optional; the
  * total can be taken as the expense's amount.
  */
-export const ExpenseItemsEditor: React.FC<{ drafts: ItemDraft[]; onChange: (d: ItemDraft[]) => void; onUseTotal?: (total: number) => void; amount: number }> = ({
-  drafts,
-  onChange,
-  onUseTotal,
-  amount
-}) => {
+export const ExpenseItemsEditor: React.FC<{
+  drafts: ItemDraft[];
+  onChange: (d: ItemDraft[]) => void;
+  onUseTotal?: (total: number) => void;
+  amount: number;
+  /** Heading over the lines */
+  label?: string;
+  /** The form shows one total for all its lines itself */
+  hideTotal?: boolean;
+}> = ({ drafts, onChange, onUseTotal, amount, label = 'รายละเอียดสินค้า (ไม่บังคับ · แสดงในใบรับรองแทนใบเสร็จ)', hideTotal }) => {
   const items = draftsToItems(drafts);
   const total = itemsTotal(items);
   const set = (i: number, change: Partial<ItemDraft>) => onChange(drafts.map((d, j) => (j === i ? { ...d, ...change } : d)));
@@ -43,7 +47,7 @@ export const ExpenseItemsEditor: React.FC<{ drafts: ItemDraft[]; onChange: (d: I
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="text-slate-400">รายละเอียดสินค้า (ไม่บังคับ · แสดงในใบรับรองแทนใบเสร็จ)</label>
+        <label className="text-slate-400">{label}</label>
         <button type="button" onClick={() => onChange([...drafts, emptyItem()])} className="h-8 px-2 rounded-lg border border-slate-700 text-slate-200 text-[11px] font-bold flex items-center gap-1">
           <Plus className="w-3.5 h-3.5" /> เพิ่มรายการ
         </button>
@@ -65,7 +69,7 @@ export const ExpenseItemsEditor: React.FC<{ drafts: ItemDraft[]; onChange: (d: I
           </div>
         );
       })}
-      {items.length > 0 && (
+      {!hideTotal && items.length > 0 && (
         <div className="flex items-center justify-between text-[11px]">
           <span className={Math.abs(total - amount) < 0.01 ? 'text-emerald-300' : 'text-amber-300'}>
             รวมรายการ ฿{total.toFixed(2)}

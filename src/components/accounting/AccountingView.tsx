@@ -4,6 +4,7 @@ import { LedgerBooks, LedgerTab } from './LedgerBooks';
 import { HistoryHeldNotice } from '../common/HistoryHeldNotice';
 import { DailyExpenseSummary } from './DailyExpenseSummary';
 import { draftsToItems, ExpenseItemsEditor, type ItemDraft } from './ExpenseItemsEditor';
+import { itemsTotal } from '../../utils/expenseItems';
 import { sellerInfo } from '../../utils/seller';
 import { formatThaiId } from '../../utils/withholding';
 import { setRunDetail } from '../../utils/bootGuard';
@@ -541,7 +542,6 @@ export const AccountingView: React.FC = () => {
   } | null>(null);
   // The picture itself is read only when it is opened (records hold references to their pictures)
   const previewImage = useImage(selectedReceiptPreview?.url);
-  const [expAutoUpdateStock, setExpAutoUpdateStock] = useState(false);
   const [expStockEntries, setExpStockEntries] = useState<Array<{
     id: string;
     ingredientId: string;
@@ -553,6 +553,20 @@ export const AccountingView: React.FC = () => {
     /** Price paid for this line (baht); empty = a share of the rest of the bill */
     price?: number;
   }>>([]);
+  // One list for the books and the stock: ingredient lines go into stock, other lines only into the books
+  const expAutoUpdateStock = expStockEntries.length > 0;
+  // The amount follows the lines until the owner types the bill's own total ("แก้ยอด")
+  const [expAmountManual, setExpAmountManual] = useState(false);
+  const [expMoreOpen, setExpMoreOpen] = useState(false);
+  const [expSubstituteOpen, setExpSubstituteOpen] = useState(false);
+  const expTypedItems = useMemo(() => draftsToItems(expItems), [expItems]);
+  const expStockPriced = useMemo(() => pricedStockLines(expStockEntries), [expStockEntries]);
+  const expHasLines = expStockPriced.lines.length > 0 || expTypedItems.length > 0;
+  const expLinesTotal = round2(expStockPriced.total + itemsTotal(expTypedItems));
+  const expAutoTotal = expHasLines && !expAmountManual;
+  useEffect(() => {
+    if (expAutoTotal) setExpAmount(expLinesTotal);
+  }, [expAutoTotal, expLinesTotal]);
 
   const openAddIncomeModal = (prefilledDate?: string | React.MouseEvent) => {
     const dateStr = typeof prefilledDate === 'string' ? prefilledDate : getLocalDateString();
@@ -690,8 +704,10 @@ export const AccountingView: React.FC = () => {
     setExpSpenderSig('');
     setExpApproverSig('');
     setExpPurchaseImages([]);
-    setExpAutoUpdateStock(false);
     setExpStockEntries([]);
+    setExpAmountManual(false);
+    setExpMoreOpen(false);
+    setExpSubstituteOpen(false);
     setExpenseFormError(null);
     setIsAddExpenseOpen(true);
   };
@@ -764,9 +780,11 @@ export const AccountingView: React.FC = () => {
     }
   };
 
-  const handleAddExpStockEntry = () => {
+  const handleAddExpStockEntry = (ingredientId?: string) => {
     if (ingredients.length === 0) return;
-    const targetIng = sortedIngredients[0] || ingredients[0];
+    // A chip tapped again does not add the same ingredient twice
+    if (ingredientId && expStockEntries.some(x => x.ingredientId === ingredientId)) return;
+    const targetIng = (ingredientId && ingredients.find(i => i.id === ingredientId)) || sortedIngredients[0] || ingredients[0];
     const isLiquid = targetIng?.unit === 'ml';
     const isWeight = targetIng?.unit === 'g';
     const hasDefaultPkg = !!(targetIng?.packageSize && targetIng.packageSize > 0);
@@ -1287,23 +1305,19 @@ export const AccountingView: React.FC = () => {
   // Handlers
   const handleCreateExpense = (e: React.FormEvent) => {
     e.preventDefault();
-    // Prices typed on the stock lines: their total is the amount when none was typed (every line needs one)
-    const stock = pricedStockLines(expAutoUpdateStock ? expStockEntries : []);
+    // The amount is the lines' total (every ingredient line needs a price), or the bill's total typed in
+    const stock = expStockPriced;
     const stockLines = stock.lines;
-    const amountNow = expAmount > 0 ? expAmount : stock.allPriced ? stock.total : 0;
-    if (!expTitle.trim() || amountNow <= 0) {
-      setExpenseFormError(
-        !expTitle.trim()
-          ? 'ใส่ชื่อรายการก่อน'
-          : stock.total > 0
-            ? 'ใส่ราคาให้ครบทุกรายการวัตถุดิบ หรือใส่จำนวนเงินรวมของบิล'
-            : 'ใส่จำนวนเงิน (หรือราคาของแต่ละรายการวัตถุดิบ)'
-      );
-      return;
-    }
+    const typedItems = expTypedItems;
+    const fail = (message: string) => setExpenseFormError(message);
+    if (!expTitle.trim()) return fail('ใส่ชื่อรายการก่อน');
+    if (expAutoTotal && stockLines.length > 0 && !stock.allPriced) return fail('ใส่ราคาให้ครบทุกรายการวัตถุดิบ หรือกด "แก้ยอด" ใส่ยอดบิลเอง');
+    const amountNow = expAutoTotal ? expLinesTotal : round2(expAmount);
+    if (!(amountNow > 0)) return fail('ใส่จำนวนเงิน (หรือราคาของแต่ละรายการ)');
     const expAmountFinal = amountNow;
-    // What was bought: the lines typed, else the stock lines (name, quantity, price)
-    const typedItems = draftsToItems(expItems);
+    // The ingredients' share of the bill: the total less the lines that do not go into stock
+    const stockBill = round2(expAmountFinal - itemsTotal(typedItems));
+    if (stockLines.length > 0 && stockBill <= 0) return fail('ยอดบิลน้อยกว่ารายการที่ไม่เข้าสต็อก: ตรวจยอดรวมอีกครั้ง');
 
     let vatAmount = 0;
     let netAmount = expAmountFinal;
@@ -1329,21 +1343,23 @@ export const AccountingView: React.FC = () => {
       netAmount,
       refNumber: expRefNumber.trim(),
       note: expNote.trim(),
-      ...(typedItems.length
-        ? { items: typedItems }
-        : stockLines.length
-          ? {
-              items: (() => {
-                const shares = splitBillCost(stockLines.map(x => ({ ingredientId: x.ingredientId, quantity: x.quantity, lineAmount: x.price })), ingredients, expAmountFinal);
+      ...(stockLines.length || typedItems.length
+        ? {
+            items: [
+              ...(() => {
+                if (!stockLines.length) return [];
+                const shares = splitBillCost(stockLines.map(x => ({ ingredientId: x.ingredientId, quantity: x.quantity, lineAmount: x.price })), ingredients, stockBill);
                 return stockLines.map((x, i) => {
                   const ing = ingredients.find(g => g.id === x.ingredientId);
                   const pkg = x.usePackage && x.packageQty && x.packageUnit;
                   const qty = pkg ? x.packageQty! : x.quantity;
                   return { name: ing?.name || 'วัตถุดิบ', quantity: qty, unit: pkg ? x.packageUnit : ing?.unit, unitPrice: qty > 0 ? round2(shares[i] / qty) : undefined, amount: shares[i] };
                 }).filter(it => it.amount > 0);
-              })()
-            }
-          : {}),
+              })(),
+              ...typedItems
+            ]
+          }
+        : {}),
       receiptImage: expReceiptImage || undefined,
       receiptImageName: expReceiptName || undefined,
       purchaseImages: expPurchaseImages.length ? expPurchaseImages : undefined,
@@ -1376,7 +1392,7 @@ export const AccountingView: React.FC = () => {
         // Stock is valued at cost: before VAT when the shop claims input VAT back. The bill is
         // shared by the items' value at their current cost, not equally.
         const vatOff = vatRegistered && expIncludeVat;
-        const costBasis = costBeforeVat(expAmountFinal, vatOff, vatRate);
+        const costBasis = costBeforeVat(stockBill, vatOff, vatRate);
         const shares = splitBillCost(validEntries.map(e => ({ ingredientId: e.ingredientId, quantity: e.quantity, lineAmount: Number(e.price) > 0 ? costBeforeVat(Number(e.price), vatOff, vatRate) : undefined })), ingredients, costBasis);
         validEntries.forEach((entry, idx) => {
           recordIngUsage(entry.ingredientId, 1);
@@ -1431,8 +1447,8 @@ export const AccountingView: React.FC = () => {
     setExpSpenderSig('');
     setExpApproverSig('');
     setExpPurchaseImages([]);
-    setExpAutoUpdateStock(false);
     setExpStockEntries([]);
+    setExpAmountManual(false);
   };
 
   const handleCreateIncome = (e: React.FormEvent) => {
@@ -3820,8 +3836,7 @@ export const AccountingView: React.FC = () => {
 
             <form onSubmit={handleCreateExpense} className="space-y-3 text-xs">
               {expenseFormError && <div role="alert" className="p-2.5 rounded-xl border border-rose-600/60 bg-rose-950/40 text-rose-200 font-bold">{expenseFormError}</div>}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
+              <div>
                   <label className="block text-slate-400 mb-1 font-medium">หมวดหมู่ค่าใช้จ่าย *</label>
                   <select
                     value={expCategory}
@@ -3838,18 +3853,6 @@ export const AccountingView: React.FC = () => {
                     <option value="other">อื่นๆ (Others)</option>
                   </select>
                 </div>
-
-                <div>
-                  <label className="block text-slate-400 mb-1 font-medium">วันที่ทำรายการ / วันที่บิล *</label>
-                  <input
-                    type="date"
-                    required
-                    value={expDate}
-                    onChange={e => setExpDate(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm focus:outline-none focus:border-rose-500 font-mono"
-                  />
-                </div>
-              </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
@@ -3895,191 +3898,50 @@ export const AccountingView: React.FC = () => {
                 )}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-400 mb-1">จำนวนเงิน (บาท) *</label>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="any"
-                    min="0"
-                    placeholder="0.00"
-                    value={expAmount || ''}
-                    onChange={e => setExpAmount(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 focus:outline-none focus:border-rose-500 font-bold text-sm"
-                  />
+              {/* WHAT WAS BOUGHT: one list for the books and the stock; the amount is its total */}
+              <div className="p-3 bg-emerald-950/30 border border-emerald-500/40 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-emerald-200 text-xs flex items-center gap-1.5">
+                    <Package className="w-4 h-4 text-emerald-400" /> รายการที่ซื้อ
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSortFrequentFirst(!sortFrequentFirst)}
+                    className={`text-[10px] px-2 py-0.5 rounded-lg font-bold flex items-center gap-1 border ${sortFrequentFirst ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'}`}
+                  >
+                    <Star className={`w-3 h-3 ${sortFrequentFirst ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
+                    {sortFrequentFirst ? 'ใช้บ่อยขึ้นก่อน' : 'เรียงปกติ'}
+                  </button>
                 </div>
-
-                <div>
-                  <label className="block text-slate-400 mb-1">เลขที่ใบกำกับ/อ้างอิง</label>
-                  <input
-                    type="text"
-                    placeholder="เช่น INV-9910"
-                    value={expRefNumber}
-                    onChange={e => setExpRefNumber(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm"
-                  />
-                </div>
-              </div>
-
-              <ExpenseItemsEditor drafts={expItems} onChange={setExpItems} amount={expAmount || 0} onUseTotal={total => setExpAmount(total)} />
-
-              <div>
-                <label className="block text-slate-400 mb-1">จ่ายด้วย</label>
-                <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="จ่ายด้วย">
-                  {(
-                    [
-                      ['bank', 'โอน / QR / บัตร'],
-                      ['cash', 'เงินสดนอกลิ้นชัก'],
-                      ['drawer', 'เงินสดจากลิ้นชัก']
-                    ] as [PaidFrom, string][]
-                  ).map(([v, label]) => (
-                    <button
-                      key={v}
-                      type="button"
-                      role="radio"
-                      aria-checked={expPaidFrom === v}
-                      onClick={() => setExpPaidFrom(v)}
-                      className={`h-10 rounded-lg border text-[11px] font-bold ${expPaidFrom === v ? 'bg-rose-600/30 border-rose-500 text-rose-100' : 'border-slate-800 text-slate-400'}`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="includeVatCheck"
-                  checked={expIncludeVat}
-                  onChange={e => {
-                    setExpIncludeVat(e.target.checked);
-                    if (e.target.checked) setExpVat36(false);
-                  }}
-                  className="w-4 h-4 rounded border-slate-800 bg-slate-950 text-rose-600 focus:ring-rose-500"
-                />
-                <label htmlFor="includeVatCheck" className="text-slate-300 font-medium cursor-pointer text-xs">
-                  มีใบกำกับภาษีเต็มรูป (ยอดนี้รวม VAT {vatRate}%)
-                  {expIncludeVat && expAmount > 0 && (
-                    <span className="block text-[11px] text-slate-400 font-normal">
-                      ก่อน VAT ฿{money(expAmount - vatInside(expAmount, vatRate))} · VAT ฿{money(vatInside(expAmount, vatRate))}
-                      {vatRegistered ? ' · ขอคืนเป็นภาษีซื้อได้' : ' · ร้านไม่ได้จด VAT จึงนับเป็นค่าใช้จ่ายทั้งหมด'}
-                    </span>
-                  )}
-                </label>
-              </div>
-
-              {vatRegistered && (
-                <div className="flex items-start space-x-2">
-                  <input
-                    type="checkbox"
-                    id="vat36Check"
-                    checked={expVat36}
-                    onChange={e => {
-                      setExpVat36(e.target.checked);
-                      if (e.target.checked) setExpIncludeVat(false);
-                    }}
-                    className="mt-0.5 w-4 h-4 rounded border-slate-800 bg-slate-950 text-rose-600 focus:ring-rose-500"
-                  />
-                  <label htmlFor="vat36Check" className="text-slate-300 font-medium cursor-pointer text-xs">
-                    ค่าบริการจากต่างประเทศ (ยื่น ภ.พ.36) เช่น ค่าโฆษณา Facebook / Google, แอปรายเดือน
-                    {expVat36 && expAmount > 0 && (
-                      <span className="block text-[11px] text-slate-400 font-normal">
-                        ร้านต้องนำส่ง VAT {vatRate}% เอง ฿{money(expAmount * (vatRate / 100))} ภายในวันที่ 7 เดือนถัดไป แล้วใช้เป็นภาษีซื้อใน ภ.พ.30 เดือนถัดไป
-                      </span>
-                    )}
-                  </label>
-                </div>
-              )}
-
-              {/* Multi-item Inventory Auto-Update Option */}
-              <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded-xl space-y-2.5 mt-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Package className="w-4 h-4 text-emerald-400" />
-                    <span className="font-bold text-emerald-200 text-xs">
-                      เชื่อมโยงรับเข้าสต็อกวัตถุดิบ (Inventory Auto-Update)
-                    </span>
-                  </div>
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={expAutoUpdateStock}
-                      onChange={e => {
-                        setExpAutoUpdateStock(e.target.checked);
-                        if (e.target.checked && expStockEntries.length === 0 && ingredients.length > 0) {
-                          const targetIng = sortedIngredients[0] || ingredients[0];
-                          const isLiquid = targetIng?.unit === 'ml';
-                          const isWeight = targetIng?.unit === 'g';
-                          const hasDefaultPkg = !!(targetIng?.packageSize && targetIng.packageSize > 0);
-                          const usePkg = hasDefaultPkg || isLiquid;
-                          const pkgUnit = targetIng?.packageUnit || (isLiquid ? 'ขวด' : isWeight ? 'ถุง' : 'แพ็ค');
-                          const pkgSize = targetIng?.packageSize || (isLiquid ? 680 : isWeight ? 1000 : 1);
-
-                          setExpStockEntries([{
-                            id: Date.now().toString(),
-                            ingredientId: targetIng.id,
-                            quantity: usePkg ? pkgSize : 1,
-                            usePackage: usePkg,
-                            packageQty: 1,
-                            packageUnit: pkgUnit,
-                            packageSize: pkgSize
-                          }]);
-                        }
-                      }}
-                      className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
-                    />
-                    <span className="text-[11px] font-bold text-emerald-300">เพิ่มสต็อกวัตถุดิบอัตโนมัติ</span>
-                  </label>
-                </div>
-
-                {expAutoUpdateStock && (
-                  <div className="space-y-2 pt-2 border-t border-emerald-900/60">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-[10px] font-bold text-slate-400">
-                        รายการวัตถุดิบที่ต้องการรับเข้าคลัง:
-                        {(() => {
-                          const { total: priced, allPriced } = pricedStockLines(expStockEntries);
-                          if (!priced) return null;
-                          return (
-                            <span className={`ml-1 ${Math.abs(priced - expAmount) < 0.01 ? 'text-emerald-300' : 'text-amber-300'}`}>
-                              รวมราคาที่ใส่ ฿{money(priced)}
-                              {!allPriced && <span className="ml-1 text-amber-300">(ยังไม่ครบทุกรายการ)</span>}
-                              {expAmount !== priced && (
-                                <button type="button" onClick={() => setExpAmount(priced)} className="ml-1 underline">
-                                  ใช้เป็นยอดเงิน
-                                </button>
-                              )}
-                            </span>
-                          );
-                        })()}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setSortFrequentFirst(!sortFrequentFirst)}
-                          className={`text-[10px] px-2 py-0.5 rounded-lg font-bold transition flex items-center gap-1 border ${
-                            sortFrequentFirst
-                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
-                              : 'bg-slate-800 text-slate-400 border-slate-700'
-                          }`}
-                          title="สลับโหมดเรียงลำดับรายการวัตถุดิบ"
-                        >
-                          <Star className={`w-3 h-3 ${sortFrequentFirst ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
-                          <span>{sortFrequentFirst ? 'เรียงใช้บ่อยขึ้นก่อน' : 'เรียงตามปกติ'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleAddExpStockEntry}
-                          className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>+ เพิ่มรายการ</span>
-                        </button>
-                      </div>
+                {ingredients.length > 0 && (expCategory === 'raw_material' || expCategory === 'supplies' || expStockEntries.length > 0) && (
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] text-slate-400">แตะวัตถุดิบเพื่อเพิ่ม (รับเข้าสต็อกให้เอง)</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {frequentIngredients.map(ing => {
+                        const added = expStockEntries.some(x => x.ingredientId === ing.id);
+                        return (
+                          <button
+                            key={ing.id}
+                            type="button"
+                            aria-pressed={added}
+                            onClick={() => (added ? setExpStockEntries(prev => prev.filter(x => x.ingredientId !== ing.id)) : handleAddExpStockEntry(ing.id))}
+                            className={`h-9 px-3 rounded-full text-xs font-bold flex items-center gap-1 border transition active:scale-95 ${added ? 'bg-emerald-500 text-slate-950 border-emerald-300' : 'bg-emerald-950/40 text-emerald-200 border-emerald-600/60'}`}
+                          >
+                            {added ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : <Plus className="w-3.5 h-3.5" />}
+                            <span className="truncate max-w-[130px]">{ing.name}</span>
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => handleAddExpStockEntry()}
+                        className="h-9 px-3 rounded-full text-xs font-bold flex items-center gap-1 border border-dashed border-slate-600 text-slate-300"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> วัตถุดิบอื่น
+                      </button>
                     </div>
-
+                  </div>
+                )}
                     <div className="space-y-2.5">
                       {expStockEntries.map((entry, index) => {
                         const selectedIng = ingredients.find(i => i.id === entry.ingredientId);
@@ -4093,44 +3955,6 @@ export const AccountingView: React.FC = () => {
                             key={entry.id}
                             className="bg-slate-900/90 p-2.5 rounded-xl border border-emerald-900/50 space-y-2 transition shadow-sm"
                           >
-                            {/* Quick Select Chips for Frequent Items */}
-                            {frequentIngredients.length > 0 && (
-                              <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className="text-[10px] font-bold text-amber-400 flex items-center gap-1">
-                                    <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                                    <span>แตะเลือกด่วน (รายการใช้บ่อย):</span>
-                                  </span>
-                                  {isIngPinned(entry.ingredientId) && (
-                                    <span className="text-[9px] font-bold text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded border border-amber-500/30">
-                                      ⭐ ปักหมุดรายการโปรด
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
-                                  {frequentIngredients.map(ing => {
-                                    const isSelected = entry.ingredientId === ing.id;
-                                    return (
-                                      <button
-                                        key={ing.id}
-                                        type="button"
-                                        onClick={() => handleUpdateExpStockEntry(entry.id, { ingredientId: ing.id })}
-                                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition shrink-0 flex items-center space-x-1 ${
-                                          isSelected
-                                            ? 'bg-emerald-500 text-slate-950 shadow-sm ring-1 ring-emerald-300 font-black'
-                                            : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 active:scale-95'
-                                        }`}
-                                      >
-                                        {isIngPinned(ing.id) && <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400 shrink-0" />}
-                                        <span className="truncate max-w-[120px]">{ing.name}</span>
-                                        {isSelected && <Check className="w-3 h-3 stroke-[3] text-slate-950 ml-0.5 shrink-0" />}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center justify-between mb-1">
@@ -4194,7 +4018,7 @@ export const AccountingView: React.FC = () => {
                                 </div>
                               </div>
 
-                              {expStockEntries.length > 1 && (
+                              {(
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveExpStockEntry(entry.id)}
@@ -4366,6 +4190,168 @@ export const AccountingView: React.FC = () => {
                         );
                       })}
                     </div>
+
+                <ExpenseItemsEditor
+                  drafts={expItems}
+                  onChange={setExpItems}
+                  amount={expAmount || 0}
+                  hideTotal
+                  label="ของอื่นที่ไม่เข้าสต็อก (ค่าส่ง ถุง แก๊ส ฯลฯ · ไม่บังคับ)"
+                />
+
+                <div className="pt-2 border-t border-dashed border-emerald-900/70 space-y-1.5">
+                  {expAutoTotal ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-300 text-xs">
+                        ยอดรวม (คิดจากรายการ)
+                        {expStockPriced.lines.length > 0 && !expStockPriced.allPriced && <span className="block text-[10px] text-amber-300">ใส่ราคาให้ครบทุกรายการ หรือกด "แก้ยอด"</span>}
+                      </span>
+                      <span className="text-right">
+                        <span className="block text-lg font-black text-emerald-300 font-mono">฿{money(expLinesTotal)}</span>
+                        <button type="button" onClick={() => setExpAmountManual(true)} className="text-[11px] text-sky-300 underline">
+                          บิลจริงไม่ตรง? แก้ยอด
+                        </button>
+                      </span>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-slate-300 mb-1 font-bold">{expHasLines ? 'ยอดบิลจริง (บาท)' : 'จำนวนเงิน (บาท) *'}</label>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        min="0"
+                        placeholder="0.00"
+                        value={expAmount || ''}
+                        onChange={e => setExpAmount(Number(e.target.value))}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:border-rose-500 font-bold text-base"
+                      />
+                      {expHasLines && (
+                        <div className="mt-1 flex items-center justify-between text-[11px]">
+                          <span className="text-slate-400">
+                            รายการรวม ฿{money(expLinesTotal)}
+                            {expStockPriced.lines.length > 0 && Math.abs(expAmount - expLinesTotal) >= 0.01 ? ' · ส่วนต่างแบ่งให้วัตถุดิบที่ไม่ใส่ราคา หรือตามสัดส่วน' : ''}
+                          </span>
+                          <button type="button" onClick={() => setExpAmountManual(false)} className="text-sky-300 underline shrink-0">
+                            ใช้ยอดจากรายการ
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1">จ่ายด้วย</label>
+                <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="จ่ายด้วย">
+                  {(
+                    [
+                      ['bank', 'โอน / QR / บัตร'],
+                      ['cash', 'เงินสดนอกลิ้นชัก'],
+                      ['drawer', 'เงินสดจากลิ้นชัก']
+                    ] as [PaidFrom, string][]
+                  ).map(([v, label]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      role="radio"
+                      aria-checked={expPaidFrom === v}
+                      onClick={() => setExpPaidFrom(v)}
+                      className={`h-10 rounded-lg border text-[11px] font-bold ${expPaidFrom === v ? 'bg-rose-600/30 border-rose-500 text-rose-100' : 'border-slate-800 text-slate-400'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* RARELY CHANGED: the bill's date, reference number, VAT */}
+              <div className="rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  aria-expanded={expMoreOpen || expIncludeVat || expVat36}
+                  onClick={() => setExpMoreOpen(!(expMoreOpen || expIncludeVat || expVat36))}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left"
+                >
+                  <span className="text-slate-300 text-xs">
+                    ⚙️ ตัวเลือกเพิ่มเติม
+                    <span className="block text-[10px] text-slate-500">
+                      วันที่ {expDate === getLocalDateString() ? 'วันนี้' : expDate} · {expIncludeVat ? 'มีใบกำกับภาษี' : expVat36 ? 'ภ.พ.36' : 'ไม่มีใบกำกับภาษี'}
+                      {expRefNumber.trim() ? ` · เลขที่ ${expRefNumber.trim()}` : ''}
+                    </span>
+                  </span>
+                  <span className="text-slate-400">{expMoreOpen || expIncludeVat || expVat36 ? '▾' : '▸'}</span>
+                </button>
+                {(expMoreOpen || expIncludeVat || expVat36) && (
+                  <div className="px-3 pb-3 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-medium">วันที่ทำรายการ / วันที่บิล *</label>
+                  <input
+                    type="date"
+                    required
+                    value={expDate}
+                    onChange={e => setExpDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm focus:outline-none focus:border-rose-500 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">เลขที่ใบกำกับ/อ้างอิง</label>
+                  <input
+                    type="text"
+                    placeholder="เช่น INV-9910"
+                    value={expRefNumber}
+                    onChange={e => setExpRefNumber(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 text-sm"
+                  />
+                </div>
+                    </div>
+              <div className="flex items-center space-x-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="includeVatCheck"
+                  checked={expIncludeVat}
+                  onChange={e => {
+                    setExpIncludeVat(e.target.checked);
+                    if (e.target.checked) setExpVat36(false);
+                  }}
+                  className="w-4 h-4 rounded border-slate-800 bg-slate-950 text-rose-600 focus:ring-rose-500"
+                />
+                <label htmlFor="includeVatCheck" className="text-slate-300 font-medium cursor-pointer text-xs">
+                  มีใบกำกับภาษีเต็มรูป (ยอดนี้รวม VAT {vatRate}%)
+                  {expIncludeVat && expAmount > 0 && (
+                    <span className="block text-[11px] text-slate-400 font-normal">
+                      ก่อน VAT ฿{money(expAmount - vatInside(expAmount, vatRate))} · VAT ฿{money(vatInside(expAmount, vatRate))}
+                      {vatRegistered ? ' · ขอคืนเป็นภาษีซื้อได้' : ' · ร้านไม่ได้จด VAT จึงนับเป็นค่าใช้จ่ายทั้งหมด'}
+                    </span>
+                  )}
+                </label>
+              </div>
+
+              {vatRegistered && (
+                <div className="flex items-start space-x-2">
+                  <input
+                    type="checkbox"
+                    id="vat36Check"
+                    checked={expVat36}
+                    onChange={e => {
+                      setExpVat36(e.target.checked);
+                      if (e.target.checked) setExpIncludeVat(false);
+                    }}
+                    className="mt-0.5 w-4 h-4 rounded border-slate-800 bg-slate-950 text-rose-600 focus:ring-rose-500"
+                  />
+                  <label htmlFor="vat36Check" className="text-slate-300 font-medium cursor-pointer text-xs">
+                    ค่าบริการจากต่างประเทศ (ยื่น ภ.พ.36) เช่น ค่าโฆษณา Facebook / Google, แอปรายเดือน
+                    {expVat36 && expAmount > 0 && (
+                      <span className="block text-[11px] text-slate-400 font-normal">
+                        ร้านต้องนำส่ง VAT {vatRate}% เอง ฿{money(expAmount * (vatRate / 100))} ภายในวันที่ 7 เดือนถัดไป แล้วใช้เป็นภาษีซื้อใน ภ.พ.30 เดือนถัดไป
+                      </span>
+                    )}
+                  </label>
+                </div>
+              )}
+
                   </div>
                 )}
               </div>
@@ -4384,7 +4370,20 @@ export const AccountingView: React.FC = () => {
                     <span className="block text-[10px] font-normal text-amber-200/70">เช่น ซื้อของตลาด ร้านริมทาง · รูปที่แนบด้านล่างจะเป็นหลักฐานการชำระในเอกสาร</span>
                   </span>
                 </label>
-                {(expSubstitute ?? !expIncludeVat) && (
+                {(expSubstitute ?? !expIncludeVat) && !expSubstituteOpen && (
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-slate-300">
+                    <span className="min-w-0">
+                      ผู้เบิก {expSpender.trim() || currentUser?.name || '-'} · ผู้อนุมัติ {expApprover.trim() || users.find(u => u.role === 'admin')?.name || '-'}
+                      {expPayee.trim() ? ` · ร้าน ${expPayee.trim()}` : ''}
+                      {' · '}
+                      {expSpenderSig || expenseDrive.signatures.find(expSpender.trim() || currentUser?.name) ? '✍️ ลายเซ็นผู้เบิก ✓' : 'ยังไม่เซ็น'}
+                    </span>
+                    <button type="button" onClick={() => setExpSubstituteOpen(true)} className="shrink-0 h-8 px-3 rounded-lg border border-amber-700/60 text-amber-200 font-bold">
+                      แก้ / เซ็น
+                    </button>
+                  </div>
+                )}
+                {(expSubstitute ?? !expIncludeVat) && expSubstituteOpen && (
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <label className="text-[11px] text-slate-400">
                       ผู้เบิกจ่าย (คนที่จ่ายเงิน)
@@ -4400,7 +4399,7 @@ export const AccountingView: React.FC = () => {
                     </label>
                   </div>
                 )}
-                {(expSubstitute ?? !expIncludeVat) && (
+                {(expSubstitute ?? !expIncludeVat) && expSubstituteOpen && (
                   <div className="flex flex-wrap items-center gap-2">
                     {([
                       ['spender', 'เซ็นชื่อผู้เบิกจ่าย', expSpenderSig, setExpSpenderSig],
@@ -4606,12 +4605,15 @@ export const AccountingView: React.FC = () => {
                 <p className="text-[10px] text-slate-500">เช่น รูปสินค้าที่ซื้อ ป้ายราคา หรือร้านค้า · แนบท้ายเอกสารและเก็บลง Google Drive ด้วย</p>
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl transition shadow-lg shadow-rose-950/60 active:scale-95 text-sm"
-              >
-                บันทึกค่าใช้จ่าย
-              </button>
+              <div className="sticky bottom-0 -mx-4 sm:-mx-6 px-4 sm:px-6 pt-2 pb-1 bg-gradient-to-t from-slate-900 via-slate-900 to-slate-900/0">
+                <button
+                  type="submit"
+                  className="w-full py-3.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl transition shadow-lg shadow-rose-950/60 active:scale-95 text-base"
+                >
+                  บันทึก{expAmount > 0 ? ` ฿${money(expAmount)}` : 'ค่าใช้จ่าย'}
+                  {expStockPriced.lines.length > 0 && <span className="block text-[11px] font-normal opacity-90">รับเข้าสต็อก {expStockPriced.lines.length} รายการ{(expSubstitute ?? !expIncludeVat) ? ' · ออกใบรับรองแทนใบเสร็จ' : ''}</span>}
+                </button>
+              </div>
             </form>
           </div>
         </div>
