@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { CancelOrderModal } from '../pos/CancelOrderModal';
+import { BillTraceModal } from '../accounting/BillTraceModal';
 import { countsAsRevenue } from '../../utils/orderUtils';
 import { Order, PaymentMethod } from '../../types';
 import { printReceiptViaWindow } from '../../utils/printReceipt';
@@ -68,6 +69,7 @@ export const OrderHistoryView: React.FC = () => {
 
   // Detail Modal
   const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<Order | null>(null);
+  const [tracedOrder, setTracedOrder] = useState<Order | null>(null);
   // Bill being cancelled (reason, approver PIN and stock return are asked in the cancel dialog)
   const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
   const [isSyncingFirestore, setIsSyncingFirestore] = useState(false);
@@ -874,6 +876,7 @@ export const OrderHistoryView: React.FC = () => {
       </div>
 
       {/* 5. Order Detail & Thermal Receipt Modal */}
+      {tracedOrder && <BillTraceModal order={tracedOrder} onClose={() => setTracedOrder(null)} />}
       {selectedOrderForDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
@@ -896,6 +899,15 @@ export const OrderHistoryView: React.FC = () => {
 
             {/* Modal Body: Thermal Paper Style Box */}
             <div className="p-5 overflow-y-auto space-y-4 flex-1">
+              {countsAsRevenue(selectedOrderForDetail) && (
+                <button
+                  type="button"
+                  onClick={() => setTracedOrder(selectedOrderForDetail)}
+                  className="w-full h-11 rounded-xl border border-sky-700/60 bg-sky-950/30 text-sky-200 text-xs font-bold"
+                >
+                  🔎 บิลนี้ไปไหนต่อ: สต็อก · บัญชี · ภาษี
+                </button>
+              )}
               <div className="bg-white text-slate-900 p-5 rounded-2xl shadow-inner font-mono text-xs space-y-3">
                 
                 {/* Store Branding Header with Logo from file 4 */}

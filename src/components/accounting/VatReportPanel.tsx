@@ -5,7 +5,7 @@ import { useKeyedList } from '../../hooks/useKeyedList';
 import { downloadCsv, isVatRegistered } from '../../utils/accounting';
 import { sellerInfo } from '../../utils/seller';
 import { documentHtml, printDocument, type WhtCertificate } from '../../utils/staffDocs';
-import { buildVatReport, prevMonthOf, vatDeadlines, type VatLine } from '../../utils/vatReport';
+import { buildVatReport, pp30Boxes, prevMonthOf, vatDeadlines, type VatLine } from '../../utils/vatReport';
 
 /**
  * รายงานภาษี VAT: what the month's ภ.พ.30 comes to (pay or reclaim), from three groups (sales VAT,
@@ -169,10 +169,49 @@ export const VatReportPanel: React.FC = () => {
         {r.purchases.whtToRemit > 0 && ` · ภาษีหัก ณ ที่จ่าย ฿${money(r.purchases.whtToRemit)} ยื่น ภ.ง.ด.3/53 ภายในวันที่ 7 (ออนไลน์ 15)`}
       </p>
 
+      {/* The form's boxes: fill the Revenue Department's site box by box; 5 and 7 open their documents */}
+      <div className="rounded-2xl border border-blue-900/70 bg-slate-900 overflow-hidden">
+        <div className="px-4 py-3 bg-blue-950/40 flex items-center justify-between gap-2">
+          <span className="font-black text-slate-100 text-sm">ภ.พ.30 ตามช่องของแบบฟอร์ม</span>
+          <span className="text-[10px] text-slate-400">กรอกเว็บสรรพากรตามได้ทีละช่อง</span>
+        </div>
+        <div className="divide-y divide-slate-800 text-xs">
+          {pp30Boxes(r).map(b => {
+            const target: Group | null = b.no === 5 ? 'sales' : b.no === 7 ? 'purchases' : null;
+            const strong = b.no === 8 || b.no === 9;
+            return (
+              <button
+                key={b.no}
+                type="button"
+                disabled={!target}
+                onClick={() => {
+                  if (!target) return;
+                  setOpen(target);
+                  setTimeout(() => document.getElementById(`vat-group-${target}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+                }}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 text-left ${target ? 'bg-blue-950/30 hover:bg-blue-950/60' : ''}`}
+              >
+                <span className="w-7 h-6 rounded-md bg-blue-900 text-blue-100 font-bold flex items-center justify-center shrink-0">{b.no}</span>
+                <span className="flex-1 min-w-0 text-slate-200">
+                  {b.label}
+                  {target && <span className="block text-[10px] text-sky-300">{b.lines?.length || 0} {b.no === 5 ? 'วัน' : 'ใบกำกับ'} · แตะดูรายการ ›</span>}
+                </span>
+                <span className={`font-mono shrink-0 ${strong && b.amount > 0 ? 'text-amber-300 font-black' : 'text-slate-100'}`}>{money(b.amount)}</span>
+              </button>
+            );
+          })}
+        </div>
+        {r.purchases.lines.some(l => !l.doc) && (
+          <div className="m-3 p-2.5 rounded-xl border border-amber-700/60 bg-amber-950/30 text-[11px] text-amber-200">
+            ⚠️ ภาษีซื้อ {r.purchases.lines.filter(l => !l.doc).length} ใบยังไม่มีเลขที่ใบกำกับภาษี: ใส่ในค่าใช้จ่ายนั้นก่อนยื่น (สรรพากรขอดูเลขที่ใบกำกับ)
+          </div>
+        )}
+      </div>
+
       {/* The three groups */}
       <div className="space-y-2">
         {groups.map(g => (
-          <div key={g.id} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+          <div key={g.id} id={`vat-group-${g.id}`} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
             <button type="button" onClick={() => setOpen(open === g.id ? null : g.id)} className="w-full flex items-center gap-3 p-3 text-left">
               <span className={`w-8 h-8 rounded-lg ${g.tone} text-white font-black flex items-center justify-center shrink-0`}>{g.n}</span>
               <span className="flex-1 min-w-0">

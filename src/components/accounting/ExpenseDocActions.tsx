@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { CloudUpload, ExternalLink, FileSignature, Image as ImageIcon, ListPlus, Loader2, PenLine } from 'lucide-react';
 import { draftsToItems, emptyItem, ExpenseItemsEditor, type ItemDraft } from './ExpenseItemsEditor';
+import { BillTraceModal } from './BillTraceModal';
 import { usePOS } from '../../context/POSContext';
 import { useKeyedList } from '../../hooks/useKeyedList';
 import { SavedSignature, SignaturePad } from '../common/SignaturePad';
@@ -94,6 +95,7 @@ export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<t
   const [signing, setSigning] = useState<'spender' | 'approver' | null>(null);
   // รายละเอียดสินค้า of a saved expense (shown on its ใบรับรองแทนใบเสร็จ)
   const [editingItems, setEditingItems] = useState<ItemDraft[] | null>(null);
+  const [tracing, setTracing] = useState(false);
   const openItems = () =>
     setEditingItems(
       (e.items || []).length
@@ -159,6 +161,10 @@ export const ExpenseDocActions: React.FC<{ expense: Expense; drive: ReturnType<t
 
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
+      <button type="button" onClick={() => setTracing(true)} title="บิลนี้ไปไหนต่อ: สต็อก บัญชี ภาษี" className="h-8 px-2 rounded-lg border border-sky-700/60 bg-sky-950/30 text-sky-200 text-[11px] inline-flex items-center gap-1">
+        🔎 ไปไหนต่อ
+      </button>
+      {tracing && <BillTraceModal expense={e} onClose={() => setTracing(false)} />}
       {canIssue && (
         <button type="button" onClick={issue} title="ออกใบรับรองแทนใบเสร็จรับเงินให้รายการนี้" className="h-8 px-2 rounded-lg border border-amber-700/60 bg-amber-950/30 text-amber-200 text-[11px] inline-flex items-center gap-1">
           <FileSignature className="w-3.5 h-3.5" /> ออกใบรับรองแทนใบเสร็จ

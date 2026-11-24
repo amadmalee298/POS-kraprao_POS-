@@ -123,3 +123,32 @@ export function vatDeadlines(month: string): { pp30: string; pp30Online: string;
   const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
   return { pp30: `${next}-15`, pp30Online: `${next}-23`, pp36: `${next}-07`, pp36Online: `${next}-15` };
 }
+
+export interface Pp30Box {
+  no: number;
+  label: string;
+  amount: number;
+  /** Lines that make up the box (shown when it is tapped) */
+  lines?: VatLine[];
+}
+
+/**
+ * The month's figures in the boxes of the ภ.พ.30 form, so the owner can fill in the Revenue
+ * Department's site box by box. The shop has no zero-rated or exempt sales (boxes 2 and 3 stay 0);
+ * last month's ภ.พ.36, once paid, is input VAT this month (box 7).
+ */
+export function pp30Boxes(r: VatReport): Pp30Box[] {
+  const inputVat = round2(r.purchases.vat + r.pp36PrevMonth);
+  const due = round2(r.sales.vat - inputVat);
+  return [
+    { no: 1, label: 'ยอดขายในเดือนนี้', amount: r.sales.base },
+    { no: 2, label: 'หัก ยอดขายที่เสียภาษีในอัตราร้อยละ 0', amount: 0 },
+    { no: 3, label: 'หัก ยอดขายที่ได้รับยกเว้น', amount: 0 },
+    { no: 4, label: 'ยอดขายที่ต้องเสียภาษี', amount: r.sales.base },
+    { no: 5, label: 'ภาษีขายเดือนนี้', amount: r.sales.vat, lines: r.sales.days },
+    { no: 6, label: 'ยอดซื้อที่มีสิทธินำภาษีซื้อมาหักในเดือนนี้', amount: round2(r.purchases.base + (r.pp36PrevMonth ? round2((r.pp36PrevMonth * 100) / r.rate) : 0)) },
+    { no: 7, label: 'ภาษีซื้อเดือนนี้', amount: inputVat, lines: r.purchases.lines },
+    { no: 8, label: 'ภาษีที่ต้องชำระเดือนนี้ (5 − 7)', amount: Math.max(0, due) },
+    { no: 9, label: 'ภาษีที่ชำระเกินเดือนนี้ (7 − 5)', amount: Math.max(0, -due) }
+  ];
+}
