@@ -228,6 +228,8 @@ export interface StockLot {
   packageSize?: number;
   /** How the delivery was paid (books: drawer, cash outside the drawer or bank) */
   paidFrom?: 'bank' | 'cash' | 'drawer';
+  /** The expense that bought it (when received from the expense form) */
+  expenseId?: string;
 }
 
 export type WasteReason = 'expired' | 'spoiled' | 'damaged' | 'overcooked' | 'trimming' | 'other';

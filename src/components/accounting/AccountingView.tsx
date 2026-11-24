@@ -40,6 +40,7 @@ import {
 } from '../../utils/accounting';
 import { sanitizeDocForHtml2Canvas, exportToPDF, printElement } from '../../utils/exportDocument';
 import { ExpenseDocActions, ExpenseDriveBulk, useExpenseDrive } from './ExpenseDocActions';
+import { TodayPanel } from './TodayPanel';
 import { SignaturePad } from '../common/SignaturePad';
 import { compressImageFile } from '../../utils/imageCompressor';
 
@@ -1409,6 +1410,7 @@ export const AccountingView: React.FC = () => {
             addStockLot({
               ingredientId: entry.ingredientId,
               lotNumber: `EXP-${Date.now().toString().slice(-6)}-${idx + 1}`,
+              expenseId: savedExpense?.id,
               quantity: qty,
               unitCost: calcUnitCost,
               receivedDate: chosenDate,
@@ -2054,6 +2056,7 @@ export const AccountingView: React.FC = () => {
         <div ref={reportRef} id="accounting-report-content" className="space-y-4 sm:space-y-6 bg-slate-950 p-2 sm:p-4 rounded-2xl">
         {/* Statements: the double-entry books (profit and loss, balance sheet, cash flow, journal, trial balance, ledger) */}
         {activeTab !== 'books' && activeTab !== 'telegram' && <HistoryHeldNotice />}
+        {activeTab === 'books' && <TodayPanel onOpen={tab => setActiveTab(tab)} />}
         {activeTab === 'books' && <LedgerBooks tab={ledgerTab} onTab={setLedgerTab} />}
         {activeTab === 'vat' && <VatReportPanel />}
 
