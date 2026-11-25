@@ -94,7 +94,13 @@ export const PayInSettings: React.FC = () => {
           <li>ติดตั้ง Merchant Pro (ธนาคารกรุงเทพ) เข้าระบบร้าน และเปิดการแจ้งเตือนเงินเข้า</li>
           <li>ติดตั้ง MacroDroid จาก Play Store</li>
           <li>Add Macro → Trigger: <b>Notification → Notification Received</b> → เลือกแอป Merchant Pro</li>
-          <li>Action: <b>Connectivity → HTTP Request</b> · Method: POST · URL: วางลิงก์ที่คัดลอก · Content type: <b>application/json</b> · Body: <code className="text-amber-300">{'{"text":"[notification]"}'}</code> (กดปุ่ม [...] เลือก Notification text)</li>
+          <li>
+            Action: <b>Connectivity → HTTP Request</b> · Method: POST · URL: วางลิงก์ที่คัดลอก · Content type: <b>application/json</b> · Body:{' '}
+            <code className="text-amber-300">{'{"text":"…","app":"…"}'}</code> แทน … ตัวแรกด้วย <b>Notification text</b> และตัวที่สองด้วย <b>Notification app name</b> (กดปุ่ม [...] เลือก)
+          </li>
+          <li>
+            ต้องส่งชื่อแอป (app) ด้วย: ระบบนับเป็นเงินเข้าเฉพาะแจ้งเตือนจากแอป Merchant Pro / บัวหลวง เท่านั้น · แจ้งเตือนจากแอปอื่นถูกปฏิเสธ · ไม่มีชื่อแอปหรือทดสอบจากเบราว์เซอร์ = แสดงเฉยๆ ไม่นับว่าจ่ายแล้ว
+          </li>
           <li>ตั้งชื่อแมโคร แล้วกดบันทึก · อนุญาตให้ MacroDroid อ่านการแจ้งเตือน และไม่ให้ระบบปิดแอปเพื่อประหยัดแบต</li>
           <li>ลองโอนเงินเข้าร้าน 1 บาท แล้วดู “แจ้งเตือนล่าสุด” ด้านล่าง ควรขึ้นยอด 1.00</li>
         </ol>
@@ -110,7 +116,9 @@ export const PayInSettings: React.FC = () => {
               <div key={n.id} className="flex justify-between gap-2 p-2 rounded-lg bg-slate-900 border border-slate-800">
                 <span className="text-slate-400">{new Date(n.at).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}</span>
                 <span className="font-mono text-emerald-300">{n.amount.toFixed(2)} ฿</span>
-                <span className="text-slate-500">{n.claimedBy ? `บิล ${n.claimedBy}` : 'ยังไม่จับคู่'}</span>
+                <span className="text-slate-500">
+                  {n.verified ? '✓ แอปธนาคาร' : (n as any).test ? 'ทดสอบ (ไม่นับ)' : '⚠️ ไม่ทราบแอป (ไม่นับ)'} · {n.claimedBy && !n.claimedBy.startsWith('hold:') ? `บิล ${n.claimedBy}` : 'ยังไม่จับคู่'}
+                </span>
               </div>
             ))
           )}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchPayIn, parsePayInAmount, payInTaken, PAYIN_HOLD_MS } from '../payIn';
+import { matchPayIn, parsePayInAmount, payInSource, payInTaken, PAYIN_HOLD_MS } from '../payIn';
 import { checkSlip, toSlipData } from '../slipCheck';
 
 describe('money received notices', () => {
@@ -21,7 +21,7 @@ describe('money received notices', () => {
 
   it("skips notices held by another till until the hold lapses, and final claims always", () => {
     const now = Date.parse('2026-11-18T12:10:00Z');
-    const held = { id: 'h', amount: 60, at: '2026-11-18T12:05:00Z', text: '', claimedBy: 'hold:other', reservedAt: '2026-11-18T12:06:00Z' };
+    const held = { id: 'h', amount: 60, at: '2026-11-18T12:05:00Z', text: '', verified: true, claimedBy: 'hold:other', reservedAt: '2026-11-18T12:06:00Z' };
     expect(payInTaken(held, now)).toBe(true);
     expect(payInTaken(held, now, 'other')).toBe(false);
     expect(payInTaken(held, Date.parse(held.reservedAt) + PAYIN_HOLD_MS + 1)).toBe(false);
@@ -33,18 +33,30 @@ describe('money received notices', () => {
 
   it('does not take a notice from well before the bill', () => {
     const since = Date.parse('2026-11-18T12:00:00Z');
-    const early = { id: 'e', amount: 60, at: '2026-11-18T11:59:30Z', text: '' };
+    const early = { id: 'e', amount: 60, at: '2026-11-18T11:59:30Z', text: '', verified: true };
     expect(matchPayIn([early], 60, since)).toBeNull();
     expect(matchPayIn([{ ...early, at: '2026-11-18T11:59:50Z' }], 60, since)?.id).toBe('e');
   });
 
   it('matches the earliest unclaimed notice of the same amount after the bill started waiting', () => {
     const t0 = Date.parse('2026-11-18T10:00:00Z');
-    const n = (id: string, amount: number, min: number, claimedBy?: string) => ({ id, amount, at: new Date(t0 + min * 60_000).toISOString(), text: '', claimedBy });
+    const n = (id: string, amount: number, min: number, claimedBy?: string) => ({ id, amount, at: new Date(t0 + min * 60_000).toISOString(), text: '', verified: true, claimedBy });
     const list = [n('old', 60, -10), n('taken', 60, 1, 'KAP-1'), n('a', 60, 2), n('b', 60, 3), n('other', 70, 2)];
     expect(matchPayIn(list, 60, t0)?.id).toBe('a');
     expect(matchPayIn(list, 60, t0, new Set(['a']))?.id).toBe('b');
     expect(matchPayIn(list, 65, t0)).toBeNull();
+  });
+
+  it('never takes a notice that was not verified as the bank app as paid', () => {
+    const t0 = Date.parse('2026-11-18T10:00:00Z');
+    const fake = { id: 'f', amount: 60, at: new Date(t0 + 60_000).toISOString(), text: 'รับเงิน 60 บาท', verified: false };
+    expect(matchPayIn([fake], 60, t0)).toBeNull();
+    expect(matchPayIn([{ ...fake, verified: undefined }], 60, t0)).toBeNull();
+    expect(payInSource('Merchant Pro')).toBe('bank');
+    expect(payInSource('บัวหลวง')).toBe('bank');
+    expect(payInSource('LINE')).toBe('other');
+    expect(payInSource('')).toBe('unknown');
+    expect(payInSource('[notification_app_name]')).toBe('unknown');
   });
 });
 

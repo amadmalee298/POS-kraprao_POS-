@@ -15,7 +15,25 @@ export interface PayIn {
   claimedBy?: string;
   /** When a till took the hold (ISO) */
   reservedAt?: string;
+  /** The app that showed the notification, as the phone reported it */
+  app?: string;
+  /** From the bank's app (counts as money in); false = unknown app or a test from the browser */
+  verified?: boolean;
 }
+
+// The bank apps whose "money in" notices count (Bangkok Bank Merchant Pro / Bualuang)
+const BANK_APP = /merchant\s*pro|bualuang|bangkok\s*bank|บัวหลวง|ธนาคารกรุงเทพ|\bbbl\b/i;
+// A notification that says money came in (not a promotion, a login, a balance)
+const MONEY_IN = /(รับเงิน|เงินเข้า|ได้รับเงิน|ได้รับ|โอนเข้า|รับชำระ|received|incoming|credited|payment\s+in)/i;
+
+/** Where a forwarded notification came from: the bank's app, another app, or not said */
+export function payInSource(app: unknown): 'bank' | 'other' | 'unknown' {
+  const name = String(app ?? '').trim();
+  if (!name || /^\[.*\]$/.test(name)) return 'unknown'; // MacroDroid sends the placeholder when it has no value
+  return BANK_APP.test(name) ? 'bank' : 'other';
+}
+
+export const looksLikeMoneyIn = (text: string) => MONEY_IN.test(String(text || ''));
 
 // Other amounts a notification can carry (the balance, a fee): a number right after these is not the payment
 const NOT_PAYMENT = /(คงเหลือ|ยอดเงินในบัญชี|ค่าธรรมเนียม|\bbalance|\bavail|\bfees?\b|\bcharges?\b)/i;
@@ -59,21 +77,22 @@ export function payInTaken(n: PayIn & { reservedAt?: string }, now: number, mine
 }
 
 /**
- * The notice for a bill: the same amount, received after the bill started waiting (15 seconds of
- * leeway for the phones' clocks), not given to another bill nor held by another till; the earliest one
+ * The notice for a bill: from the bank's app (verified), the same amount, received after the bill
+ * started waiting (15 seconds of leeway for the phones' clocks), not given to another bill nor held
+ * by another till; the earliest one
  */
 export function matchPayIn(
   notices: PayIn[],
   amount: number,
   since: number,
   taken: Set<string> = new Set(),
-  opts: { now?: number; mine?: string } = {}
+  opts: { now?: number; mine?: string; anySource?: boolean } = {}
 ): PayIn | null {
   const cents = Math.round(amount * 100);
   const now = opts.now ?? Date.now();
   return (
     [...notices]
-      .filter(n => !payInTaken(n, now, opts.mine) && !taken.has(n.id) && Math.round(n.amount * 100) === cents && Date.parse(n.at) >= since - 15_000)
+      .filter(n => (opts.anySource || n.verified === true) && !payInTaken(n, now, opts.mine) && !taken.has(n.id) && Math.round(n.amount * 100) === cents && Date.parse(n.at) >= since - 15_000)
       .sort((a, b) => a.at.localeCompare(b.at))[0] || null
   );
 }

@@ -161,7 +161,7 @@ export function closeDayChecks(d: DayInput, o: DayOverview, payIns: PayIn[] | nu
   if (payIns) {
     const numbers = new Set(qr.map(x => x.orderNumber));
     const matched = payIns.filter(n => n.claimedBy && numbers.has(n.claimedBy)).length;
-    const loose = payIns.filter(n => thaiDay(n.at) === d.day && (!n.claimedBy || n.claimedBy.startsWith('hold:'))).length;
+    const loose = payIns.filter(n => n.verified && thaiDay(n.at) === d.day && (!n.claimedBy || n.claimedBy.startsWith('hold:'))).length;
     const ok = matched === qr.length && loose === 0;
     checks.push({
       label: 'ยอดโอน/QR เทียบเงินเข้า',

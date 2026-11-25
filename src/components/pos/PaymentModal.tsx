@@ -99,6 +99,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [gatewayPaid, setGatewayPaid] = useState(false);
   // The bank's "money in" notice or a checked slip for this bill (given to it when it is paid)
   const [qrProof, setQrProof] = useState<QrProof | null>(null);
+  // The shop forwards the bank's money-in notices: a QR bill without one asks the cashier first
+  const [payInWatching, setPayInWatching] = useState(false);
 
   // Calculate totals
   const {
@@ -156,11 +158,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     }
     if (
       paymentMethod === 'promptpay' &&
-      gatewayEnabled(settings) &&
+      (gatewayEnabled(settings) || payInWatching) &&
       !paidByGateway &&
       !gatewayPaid &&
-      !qrProof &&
-      !window.confirm('ระบบยังไม่ได้รับยอดจากการสแกนนี้\nตรวจสลิปหรือแอปธนาคารแล้ว ยืนยันชำระเลยหรือไม่?')
+      qrProof?.kind !== 'payin' &&
+      !window.confirm('ระบบยังไม่ได้รับยืนยันเงินเข้าจากธนาคาร/Opn\nสลิปใช้ยืนยันการจ่ายไม่ได้ (ปลอมได้)\nดูยอดเงินเข้าในแอปธนาคารแล้ว ยืนยันรับเงินเองหรือไม่?')
     ) {
       return;
     }
@@ -219,6 +221,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       </div>
       <QrPaymentCheck
         amount={grandTotal}
+        onWatching={setPayInWatching}
         onProof={p => {
           setQrProof(p);
           // The bank's own notice can close the bill by itself when the shop chose so

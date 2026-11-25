@@ -22,7 +22,7 @@ export async function claimQrProof(branchId: string, proof: QrProof, orderNumber
  * (Merchant Pro, forwarded from the shop's Android phone) and offers to check the customer's slip
  * with AI. Either one marks the bill as paid.
  */
-export const QrPaymentCheck: React.FC<{ amount: number; onProof: (proof: QrProof | null) => void }> = ({ amount, onProof }) => {
+export const QrPaymentCheck: React.FC<{ amount: number; onProof: (proof: QrProof | null) => void; onWatching?: (on: boolean) => void }> = ({ amount, onProof, onWatching }) => {
   const { currentBranch, settings } = usePOS();
   const branchId = currentBranch?.id;
   const since = useRef(Date.now());
@@ -42,6 +42,7 @@ export const QrPaymentCheck: React.FC<{ amount: number; onProof: (proof: QrProof
     void loadBranchDoc(branchId, 'payin').then(cfg => {
       if (!alive || !cfg?.keyHash) return;
       setWatching(true);
+      onWatching?.(true);
       unsub = subscribeToBranchDoc(branchId, 'payins', data => setNotices(Object.values(((data as any)?.byId || {}) as Record<string, PayIn>)));
     });
     return () => {
@@ -105,6 +106,11 @@ export const QrPaymentCheck: React.FC<{ amount: number; onProof: (proof: QrProof
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidate?.id, branchId]);
+  // A notice of this amount from an app that was not verified as the bank's: shown, never taken as paid
+  const unverified = useMemo(
+    () => (notices && proof?.kind !== 'payin' ? notices.find(n => !n.verified && Math.round(n.amount * 100) === Math.round(amount * 100) && Date.parse(n.at) >= since.current - 15_000) || null : null),
+    [notices, amount, proof?.kind]
+  );
   const match = proof?.kind === 'payin' ? notices?.find(n => n.id === proof.id) || null : null;
 
   const checkSlipPhoto = async (file: File) => {
@@ -151,6 +157,11 @@ export const QrPaymentCheck: React.FC<{ amount: number; onProof: (proof: QrProof
           </span>
         </div>
       )}
+      {watching && unverified && (
+        <div className="p-2.5 rounded-xl border border-amber-600/60 bg-amber-950/30 text-amber-200" role="alert">
+          ⚠️ มีแจ้งเงินเข้า {unverified.amount.toFixed(2)} บาท แต่ไม่ได้ยืนยันว่ามาจากแอปธนาคาร{unverified.app ? ` (${unverified.app})` : ''} · ระบบไม่นับเป็นจ่ายแล้ว ตรวจในแอปธนาคารก่อน
+        </div>
+      )}
 
       <input
         ref={fileRef}
@@ -175,7 +186,7 @@ export const QrPaymentCheck: React.FC<{ amount: number; onProof: (proof: QrProof
         <div className={`p-2.5 rounded-xl border space-y-1 ${verdict.ok ? 'border-emerald-500/60 bg-emerald-950/30' : 'border-rose-600/60 bg-rose-950/30'}`}>
           <div className={`font-bold flex items-center gap-1.5 ${verdict.ok ? 'text-emerald-200' : 'text-rose-200'}`}>
             {verdict.ok ? <BadgeCheck className="w-4 h-4" /> : <ShieldAlert className="w-4 h-4" />}
-            {verdict.ok ? 'สลิปผ่านการตรวจ' : 'สลิปไม่ผ่าน ตรวจกับแอปธนาคารก่อนรับ'}
+            {verdict.ok ? 'สลิปดูถูกต้อง (ยังไม่ใช่หลักฐานว่าเงินเข้า)' : 'สลิปไม่ผ่าน ตรวจกับแอปธนาคารก่อนรับ'}
           </div>
           {verdict.checks.map(c => (
             <div key={c.label} className="flex gap-1.5 text-[11px]">
@@ -185,7 +196,7 @@ export const QrPaymentCheck: React.FC<{ amount: number; onProof: (proof: QrProof
               </span>
             </div>
           ))}
-          <div className="text-[10px] text-slate-500">AI อ่านจากรูปสลิป ไม่ได้ถามธนาคาร · เงินเข้าจริงดูได้จาก Merchant Pro</div>
+          <div className="text-[10px] text-amber-200/80">สลิปปลอมได้: ระบบไม่เปลี่ยนบิลเป็นจ่ายแล้วจากรูปสลิป · ยืนยันจากแจ้งเงินเข้า หรือดูยอดในแอปธนาคารเอง</div>
         </div>
       )}
     </div>
