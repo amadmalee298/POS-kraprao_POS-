@@ -14,12 +14,14 @@ export default async function handler(req: any, res: any) {
   const q = req.query || {};
   const shop = await shopForKey(one(q.b), one(q.k), 'payin', callerOf(req)).catch((e: any) => ({ status: 500, error: e?.message || 'failed' }));
   if ('error' in shop) return res.status(shop.status).json({ ok: false, error: shop.error });
-  // MacroDroid sends JSON, a form or plain text; a GET with ?text= works for a quick test
+  // MacroDroid sends JSON {text, app}; a GET with ?text= is a test from the browser (never counts as payment)
   const body = typeof req.body === 'string' ? req.body : req.body || {};
   const text = typeof body === 'string' ? body : String(body.text || body.message || body.notification || one(q.text) || '');
+  const app = typeof body === 'string' ? '' : String(body.app || body.app_name || body.package || '');
   try {
-    const result = await recordPayIn(shop.db, one(q.b), text);
-    return res.status(result.ok ? 200 : 400).json(result);
+    const result = await recordPayIn(shop.db, one(q.b), text, new Date(), { app, test: req.method === 'GET' });
+    const { status, ...rest } = result;
+    return res.status(status).json(rest);
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: e?.message || 'failed' });
   }
