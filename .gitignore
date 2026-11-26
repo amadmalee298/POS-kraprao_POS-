@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# founder-skill working files (business numbers): kept off the repo
+founder/
